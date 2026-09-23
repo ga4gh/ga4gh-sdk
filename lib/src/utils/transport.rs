@@ -36,6 +36,7 @@
 use crate::utils::configuration::Configuration;
 use log::error;
 use reqwest::Client;
+use reqwest::multipart::Form;
 use serde_json::Value;
 use std::error::Error;
 
@@ -169,6 +170,27 @@ impl Transport {
     ) -> Result<String, Box<dyn Error>> {
         self.request(reqwest::Method::POST, endpoint, data, None)
             .await
+    }
+
+    /// Sends a multipart form, as required by APIs such as WES RunWorkflow.
+    pub async fn post_multipart(
+        &self,
+        endpoint: &str,
+        form: Form,
+    ) -> Result<String, Box<dyn Error>> {
+        let url = self.config.base_path.join(endpoint)?;
+        let mut request = self.client.post(url).multipart(form);
+        if let Some(user_agent) = &self.config.user_agent {
+            request = request.header(reqwest::header::USER_AGENT, user_agent);
+        }
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if status.is_success() {
+            Ok(body)
+        } else {
+            Err(format!("Request failed with status: {}. Response: {}", status, body).into())
+        }
     }
     
     /// Sends a PUT request to the specified endpoint with the given data.

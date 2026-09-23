@@ -21,7 +21,7 @@ cargo build
 ```
 
 ## Testing
-There are 2 types of Tests: Unit tests and integration tests.
+Unit tests run by default. Integration suites are opt-in.
 
 To run the unit tests, which are being tested with mock servers, you can simply run
 ```
@@ -44,6 +44,34 @@ For checking the unit coverage, you can run:
 ```
 cargo llvm-cov nextest
 ```
+
+### Starter Kit WES Docker integration
+
+With a running local Docker daemon, run this separate WES 1.0.1 client test:
+
+```sh
+tests/run-wes-docker-integration.sh
+```
+
+The script starts `ga4gh/ga4gh-starter-kit-wes:0.2.0-nextflow` with a temporary
+YAML configuration, initialized SQLite database, shared work directory, and
+Docker socket.
+It waits up to 180 seconds for `/ga4gh/wes/v1/service-info`, then runs the SDK
+test. On failure it prints the server logs. It always removes the container and
+temporary files. `WES_STARTUP_TIMEOUT_SECONDS` and `WES_RUN_TIMEOUT_SECONDS`
+can be raised on slower hosts. The dedicated GitHub Actions workflow runs this
+test on an Ubuntu runner with Docker; default `cargo test` and Funnel tests do
+not start WES.
+
+Starter Kit WES 0.2.0 only accepts a GitHub-shaped Nextflow project URL; its
+`workflow_attachment` argument is disabled. The script puts the checked-in
+`tests/fixtures/wes-nextflow/main.nf` into Nextflow's local Git project cache
+at a deterministic commit. WES sees the required URL shape, while Nextflow
+executes the local fixture without fetching a remote workflow. This server
+also returns a fixed run list instead of recently submitted runs, and its
+cancellation endpoint returns no result without stopping the run. The test
+checks the SDK's behavior against both limitations and does not claim that a
+run was canceled.
 
 To test the CI/CD workflow locally, install `act` and run the following command:
 ```
