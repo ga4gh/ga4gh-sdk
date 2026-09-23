@@ -9,6 +9,17 @@ use crate::utils::transport::Transport;
 use serde_json::from_str;
 use log::error;
 
+// DRS identifiers are single URL path segments. Form encoding would turn spaces into '+'.
+fn encode_path_segment(value: &str) -> String {
+    value.as_bytes().iter().map(|byte| {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            (*byte as char).to_string()
+        } else {
+            format!("%{byte:02X}")
+        }
+    }).collect()
+}
+
 /// The main struct for interacting with a DRS service.
 #[derive(Debug)]
 pub struct DRS {
@@ -29,7 +40,7 @@ impl DRS {
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
         let transport = Transport::new(config);
         let service_info = ServiceInfo::new(config)?;
-        let resp = service_info.get().await;
+        let resp = service_info.get_at("/ga4gh/drs/v1/service-info").await;
 
         let instance = DRS {
             config: config.clone(),
@@ -49,7 +60,7 @@ impl DRS {
     fn check(&self) -> Result<(), String> {
         let resp = &self.service;
         match resp.as_ref() {
-            Ok(service) if service.r#type.artifact == "drs" => Ok(()),
+            Ok(service) if service.r#type.group == "org.ga4gh" && service.r#type.artifact == "drs" => Ok(()),
             Ok(_) => Err("The endpoint is not an instance of DRS".into()),
             Err(_) => Err("Error accessing the service".into()),
         }
@@ -64,6 +75,7 @@ impl DRS {
     /// - On success, returns a `DrsObject` containing the object details.
     /// - On failure, returns an error.
     pub async fn get_object(&self, object_id: &str) -> Result<DrsObject, Box<dyn std::error::Error>> {
+        let object_id = encode_path_segment(object_id);
         let url = format!("/ga4gh/drs/v1/objects/{}", object_id);
         let response = self.transport.get(&url, None).await;
 
@@ -92,6 +104,8 @@ impl DRS {
     /// - On success, returns an `AccessUrl` containing the URL and headers.
     /// - On failure, returns an error.
     pub async fn get_access_url(&self, object_id: &str, access_id: &str) -> Result<AccessUrl, Box<dyn std::error::Error>> {
+        let object_id = encode_path_segment(object_id);
+        let access_id = encode_path_segment(access_id);
         let url = format!("/ga4gh/drs/v1/objects/{}/access/{}", object_id, access_id);
         let response = self.transport.get(&url, None).await;
 
@@ -116,6 +130,24 @@ mod tests {
     use super::*;
     use crate::clients::serviceinfo::models::ServiceType;
     use mockito::{mock, server_url};
+
+    #[tokio::test]
+    async fn test_new_uses_drs_service_info_path() {
+        let _m = mock("GET", "/ga4gh/drs/v1/service-info")
+            .with_status(200)
+            .with_body(serde_json::json!({
+                "id": "org.example.drs",
+                "name": "Example DRS",
+                "type": { "group": "org.ga4gh", "artifact": "drs", "version": "1.4.0" },
+                "organization": { "name": "Example", "url": "https://example.org" },
+                "version": "1.0.0"
+            }).to_string())
+            .create();
+
+        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let drs = DRS::new(&config).await.unwrap();
+        assert_eq!(drs.service.unwrap().r#type.artifact, "drs");
+    }
 
     #[tokio::test]
     async fn test_get_object() {
@@ -191,5 +223,35 @@ mod tests {
         let access_url = result.unwrap();
         assert_eq!(access_url.url, "http://example.com/data");
         assert_eq!(access_url.headers.unwrap()[0], "Authorization: Basic Z2E0Z2g6ZHJz");
+    }
+
+    #[tokio::test]
+    async fn test_ids_are_encoded_as_path_segments() {
+        let object_id = "a/b ?#";
+        let access_id = "x/y ?#";
+        let _object = mock("GET", "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23")
+            .with_status(200)
+            .with_body(serde_json::json!({
+                "id": object_id,
+                "self_uri": "drs://example.org/a%2Fb%20%3F%23",
+                "size": 1,
+                "created_time": "2023-01-01T00:00:00Z",
+                "checksums": []
+            }).to_string())
+            .create();
+        let _access = mock("GET", "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23/access/x%2Fy%20%3F%23")
+            .with_status(200)
+            .with_body(r#"{"url":"https://example.org/data"}"#)
+            .create();
+
+        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let drs = DRS {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service::default()),
+        };
+        assert_eq!(drs.get_object(object_id).await.unwrap().id, object_id);
+        assert_eq!(drs.get_access_url(object_id, access_id).await.unwrap().url,
+                   "https://example.org/data");
     }
 }
