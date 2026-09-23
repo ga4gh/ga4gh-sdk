@@ -32,9 +32,14 @@ impl ServiceInfo {
     ///
     /// A `Result` containing the service information or an error.
     pub async fn get(&self) -> Result<models::Service, Box<dyn std::error::Error>> {
+        self.get_at("/service-info").await
+    }
+
+    /// Retrieves service information from a service-specific endpoint.
+    pub async fn get_at(&self, endpoint: &str) -> Result<models::Service, Box<dyn std::error::Error>> {
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            self.transport.get("/service-info", None)
+            self.transport.get(endpoint, None)
         ).await?;
         match response {
             Ok(response_body) => match serde_json::from_str::<models::Service>(&response_body) {
