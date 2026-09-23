@@ -2,6 +2,7 @@ pub mod serviceinfo;
 pub mod tes;
 pub mod trs;
 pub mod wes;
+pub mod drs;
 
 #[derive(Debug)]
 pub enum ServiceType {
