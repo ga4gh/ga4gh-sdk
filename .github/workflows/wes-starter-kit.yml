@@ -7,7 +7,6 @@ on:
       - 'lib/**'
       - 'tests/run-wes-docker-integration.sh'
       - 'Cargo.toml'
-      - 'Cargo.lock'
   workflow_dispatch:
 
 jobs:

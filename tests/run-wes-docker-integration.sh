@@ -125,5 +125,5 @@ done
 
 echo "Starter Kit WES ready at $WES_DOCKER_BASE_URL"
 cd "$repo_root"
-cargo test --locked -p ga4gh-lib --features wes_docker_integration_tests \
+cargo test -p ga4gh-lib --features wes_docker_integration_tests \
   --test wes_starter_kit_docker -- --nocapture
