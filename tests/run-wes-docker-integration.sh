@@ -37,8 +37,20 @@ cleanup() {
       docker logs --tail 120 "$container_id" >&2 || true
     fi
     docker rm -f "$container_id" >/dev/null 2>&1 || true
+    # WES and Nextflow run as root in this image. On Linux they leave
+    # root-owned files in the bind mount, so restore the host user's ownership
+    # from a short-lived container before deleting the temporary directory.
+    if ! docker run --rm --platform linux/amd64 --user 0:0 \
+      --entrypoint /bin/chown -v "$temp_dir:$temp_dir" \
+      "$image" -R "$(id -u):$(id -g)" "$temp_dir" >/dev/null; then
+      echo "Could not restore ownership of $temp_dir for cleanup." >&2
+      result=1
+    fi
   fi
-  rm -rf "$temp_dir"
+  if ! rm -rf "$temp_dir"; then
+    echo "Could not remove temporary WES data at $temp_dir." >&2
+    result=1
+  fi
   exit "$result"
 }
 trap cleanup EXIT INT TERM
