@@ -63,7 +63,7 @@ impl TesTask {
             inputs: None,
             outputs: None,
             resources: None,
-            executors: None,
+            executors: Some(executors),
             volumes: None,
             tags: None,
             logs: None,
