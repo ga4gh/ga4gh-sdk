@@ -1,0 +1,21 @@
+name: Starter Kit WES integration
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/wes-starter-kit.yml'
+      - 'lib/**'
+      - 'tests/run-wes-docker-integration.sh'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+jobs:
+  wes-starter-kit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test SDK against Starter Kit WES 0.2.0
+        run: tests/run-wes-docker-integration.sh

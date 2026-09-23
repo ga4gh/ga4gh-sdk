@@ -38,3 +38,4 @@ path = "src/lib.rs"
 
 [features]
 integration_tests = []
+wes_docker_integration_tests = []

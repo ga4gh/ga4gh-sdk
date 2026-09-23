@@ -5,6 +5,7 @@ use crate::clients::wes::models::WesRunId;
 use crate::clients::wes::models::WesRunListResponse;
 use crate::clients::wes::models::WesRunLog;
 use crate::clients::wes::models::WesRunRequest;
+use crate::clients::wes::models::WesRunStatus;
 use crate::clients::wes::models::WesState;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::Transport;
@@ -89,6 +90,12 @@ impl Run {
         let response = self.transport.post(&url, None).await;
         match response {
             Ok(resp_str) => {
+                if resp_str.trim().is_empty() || resp_str.trim() == "null" {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "WES server returned no cancellation result; cancellation cannot be confirmed",
+                    )));
+                }
                 let run_id: WesRunId = from_str(&resp_str)?;
                 Ok(run_id)
             }
@@ -250,7 +257,21 @@ impl WES {
 
         match response {
             Ok(resp_str) => {
-                let list: WesRunListResponse = from_str(&resp_str)?;
+                // Starter Kit WES 0.2.0 returns a bare array, while WES 1.0.1
+                // specifies an object with `runs` and `next_page_token`.
+                #[derive(serde::Deserialize)]
+                #[serde(untagged)]
+                enum RunListBody {
+                    Standard(WesRunListResponse),
+                    StarterKit(Vec<WesRunStatus>),
+                }
+                let list = match from_str::<RunListBody>(&resp_str)? {
+                    RunListBody::Standard(list) => list,
+                    RunListBody::StarterKit(runs) => WesRunListResponse {
+                        runs: Some(runs),
+                        next_page_token: None,
+                    },
+                };
                 Ok(list)
             }
             Err(e) => {
@@ -451,6 +472,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_starter_kit_unimplemented_cancel_is_explicit() {
+        let _m = mock("POST", "/runs/123/cancel")
+            .with_status(200)
+            .with_body("null")
+            .create();
+        let config = Configuration::new(Url::parse(&server_url()).unwrap());
+        let run = Run::new("123".to_string(), Transport::new(&config));
+        let err = run.cancel().await.unwrap_err();
+        assert!(err.to_string().contains("cancellation cannot be confirmed"));
+    }
+
+    #[tokio::test]
     async fn test_wes_list_runs() {
         let _m = mock("GET", "/runs")
             .with_status(200)
@@ -471,6 +504,25 @@ mod tests {
         let runs = result.unwrap().runs;
         assert!(runs.is_some());
         assert!(runs.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_starter_kit_list_runs_array() {
+        let _m = mock("GET", "/runs")
+            .with_status(200)
+            .with_body(r#"[{"run_id":"123","state":"COMPLETE"}]"#)
+            .create();
+        let config = Configuration::new(Url::parse(&server_url()).unwrap());
+        let wes = WES {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service::default()),
+        };
+        let list = wes.list_runs(None, None).await.unwrap();
+        let runs = list.runs.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, "123");
+        assert_eq!(runs[0].state, Some(WesState::Complete));
     }
 
     #[tokio::test]
