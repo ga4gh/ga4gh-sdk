@@ -91,8 +91,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                 match TES::new(&config).await {
                     Ok(tes) => {
-                        let task = tes.create(testask).await;
-                        println!("{:?}", task);
+                        match tes.create(testask).await {
+                            Ok(task) => println!("{}", task.id),
+                            Err(e) => eprintln!("Error creating task: {}", e),
+                        }
                     },
                     Err(e) => {
                         error!("Error creating TES instance: {:?}", e);
