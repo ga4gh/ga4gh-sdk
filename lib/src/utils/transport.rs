@@ -39,12 +39,21 @@ use reqwest::Client;
 use reqwest::multipart::Form;
 use serde_json::Value;
 use std::error::Error;
+use std::fmt;
 
 // note: could implement custom certs handling, such as in-TEE generated ephemerial certs
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Transport {
     pub config: Configuration,
     pub client: reqwest::Client,
+}
+
+impl fmt::Debug for Transport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Transport")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Transport {
@@ -234,6 +243,14 @@ mod tests {
 
     // effectively no sense in testing various responses, as it's reqwest's responsibility
     // we should test Transport's methods instead
+
+    #[test]
+    fn test_debug_output() {
+        let config = crate::utils::configuration::config_with_markers();
+        let output = format!("{:?}", Transport::new(&config));
+        assert_eq!(output, format!("Transport {{ config: {:?}, .. }}", config));
+        assert!(!output.contains("SENTINEL"), "{output}");
+    }
 
     #[tokio::test]
     async fn test_request() {

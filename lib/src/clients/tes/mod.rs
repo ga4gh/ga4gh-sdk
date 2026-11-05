@@ -352,6 +352,20 @@ mod tests {
     use mockito::mock;
     use mockito::server_url;
 
+    #[test]
+    fn test_debug_output() {
+        let config = crate::utils::configuration::config_with_markers();
+        let transport = Transport::new(&config);
+        let task = Task::new("123".to_string(), transport.clone());
+        let tes = TES {
+            config,
+            service: Ok(Service::default()),
+            transport,
+        };
+        for output in [format!("{:?}", task), format!("{:?}", tes)] {
+            assert!(!output.contains("SENTINEL"), "{output}");
+        }
+    }
 
     #[tokio::test]
     async fn test_tes_create() {

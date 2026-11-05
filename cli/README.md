@@ -66,6 +66,8 @@ Or as a file:
 ga4gh-cli tes create ./tests/sample.tes
 ```
 
+The command prints the ID of the new task. If the service doesn't accept the task, it prints the error to stderr, and the exit code stays 0.
+
 2. To retrieve the list of tasks run `tes list` command:
 
 ```sh

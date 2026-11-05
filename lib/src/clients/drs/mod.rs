@@ -131,6 +131,19 @@ mod tests {
     use crate::clients::serviceinfo::models::ServiceType;
     use mockito::{mock, server_url};
 
+    #[test]
+    fn test_debug_output() {
+        let config = crate::utils::configuration::config_with_markers();
+        let transport = Transport::new(&config);
+        let drs = DRS {
+            config,
+            service: Ok(Service::default()),
+            transport,
+        };
+        let output = format!("{:?}", drs);
+        assert!(!output.contains("SENTINEL"), "{output}");
+    }
+
     #[tokio::test]
     async fn test_new_uses_drs_service_info_path() {
         let _m = mock("GET", "/ga4gh/drs/v1/service-info")
