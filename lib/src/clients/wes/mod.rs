@@ -299,6 +299,21 @@ mod tests {
     use mockito::server_url;
     use url::Url;
 
+    #[test]
+    fn test_debug_output() {
+        let config = crate::utils::configuration::config_with_markers();
+        let transport = Transport::new(&config);
+        let run = Run::new("123".to_string(), transport.clone());
+        let wes = WES {
+            config,
+            service: Ok(Service::default()),
+            transport,
+        };
+        for output in [format!("{:?}", run), format!("{:?}", wes)] {
+            assert!(!output.contains("SENTINEL"), "{output}");
+        }
+    }
+
     fn valid_request() -> WesRunRequest {
         WesRunRequest {
             workflow_params: Some(json!({})),
