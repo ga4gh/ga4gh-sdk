@@ -111,3 +111,11 @@ ga4gh-cli tes status [TASK-ID]
 ```sh
 ga4gh-cli tes cancel [TASK-ID]      
 ```
+
+## Extending the CLI in Rust
+
+The `ga4gh-cli` package also exposes a Rust library. A downstream binary can
+add its own Clap subcommands to `ga4gh_cli::command()`. Call
+`ga4gh_cli::dispatch()` for the built-in commands; it returns `None` when the
+downstream binary should handle its own command. See the
+[downstream CLI test](tests/downstream_cli.rs) for a working example.
