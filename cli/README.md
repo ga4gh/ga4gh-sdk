@@ -51,10 +51,10 @@ funnel server start --Server.HTTPPort=[available-port]
 
 ### CLI Examples
 
-1. To create a new task run the `tes create` command. You can provide task definition json data as text:
+1. To create a new task, save the task definition as JSON in a file:
 
-```sh
-ga4gh-cli tes create '{
+```json
+{
     "name": "Hello world",
     "inputs": [{
         "url": "s3://funnel-bucket/hello.txt",
@@ -69,16 +69,17 @@ ga4gh-cli tes create '{
         "command": ["cat", "/inputs/hello.txt"],
         "stdout": "/outputs/stdout"
     }]
-}'
+}
 ```
 
-Or as a file:
+Then pass the file to the CLI:
 
 ```sh
 ga4gh-cli tes create ./tests/sample.tes
 ```
 
-The command prints the ID of the new task. If the service doesn't accept the task, it prints the error to stderr, and the exit code stays 0.
+The command prints only the new task ID. If the service rejects it, the CLI
+prints the HTTP status and server message to stderr and exits with code 1.
 
 2. To retrieve the list of tasks run `tes list` command:
 
@@ -105,6 +106,8 @@ ga4gh-cli tes get [TASK-ID] [VIEW]
 ```
 
 Possible `VIEW` option values: `BASIC`, `FULL`.
+The command prints the server's JSON unchanged, including fields unknown to
+the current SDK models.
 
 4. To retrieve the task status run the `tes status` command:
 
@@ -112,11 +115,16 @@ Possible `VIEW` option values: `BASIC`, `FULL`.
 ga4gh-cli tes status [TASK-ID]      
 ```
 
+The command prints the TES state, such as `QUEUED`.
+
 5. To cancel the task run the `tes cancel` command:
 
 ```sh
 ga4gh-cli tes cancel [TASK-ID]      
 ```
+
+All five TES commands exit with code 0 on success and code 1 on request or
+server errors. Missing commands or arguments use Clap's exit code 2.
 
 ## Extending the CLI in Rust
 

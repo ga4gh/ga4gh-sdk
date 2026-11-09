@@ -134,7 +134,8 @@ fn stderr(output: &Output) -> String {
 
 #[test]
 fn test_output_on_success() {
-    let task = json!({"id": TASK_ID, "state": "COMPLETE", "executors": []});
+    let task = json!({"id": TASK_ID, "state": "COMPLETE", "executors": [], "vendor_field": {"kept": true}});
+    let task_json = task.to_string();
     let prefix = "/ga4gh/tes/v1";
     let _mocks = [
         service_info_mock("/ga4gh/tes/v1/service-info"),
@@ -151,7 +152,7 @@ fn test_output_on_success() {
         .create(),
         mock("GET", "/ga4gh/tes/v1/tasks/t1?view=FULL")
             .with_status(200)
-            .with_body(task.to_string())
+            .with_body(task_json.clone())
             .create(),
         mock("GET", "/ga4gh/tes/v1/tasks/t1?view=MINIMAL")
             .with_status(200)
@@ -169,6 +170,8 @@ fn test_output_on_success() {
             assert!(output.status.success(), "{args:?}: {}", stderr(&output));
             match args[1].as_str() {
                 "create" => assert_eq!(stdout(&output), format!("{TASK_ID}\n")),
+                "get" => assert_eq!(stdout(&output), task_json),
+                "status" => assert_eq!(stdout(&output), "COMPLETE\n"),
                 "cancel" => assert!(stdout(&output).starts_with("STATUS: "), "{args:?}"),
                 _ => assert!(stdout(&output).contains(TASK_ID), "{args:?}"),
             }
@@ -178,29 +181,73 @@ fn test_output_on_success() {
 
 #[test]
 fn test_output_on_error_response() {
-    let _mocks = [
-        service_info_mock("/service-info"),
-        mock("POST", Matcher::Any)
-            .with_status(500)
-            .with_body("mock failure")
-            .create(),
-        mock("GET", Matcher::Regex(r"^/tasks".to_string()))
-            .with_status(500)
-            .with_body("mock failure")
-            .create(),
-    ];
+    for status in [401, 404, 500] {
+        let body = format!("mock failure {status}");
+        let _mocks = [
+            service_info_mock("/service-info"),
+            mock("POST", Matcher::Any)
+                .with_status(status)
+                .with_body(&body)
+                .create(),
+            mock("GET", Matcher::Regex(r"^/tasks".to_string()))
+                .with_status(status)
+                .with_body(&body)
+                .create(),
+        ];
 
-    let base_path = mockito::server_url();
-    for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
-        for (args, output) in Home::new(&config).run_all() {
-            let text = stdout(&output) + &stderr(&output);
-            assert!(text.contains("mock failure"), "{args:?}: {text}");
-            if args[1] == "create" {
-                assert_eq!(stdout(&output), "");
-                // Exit codes on failure are a separate change.
-                assert!(output.status.success());
+        let base_path = mockito::server_url();
+        for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
+            for (args, output) in Home::new(&config).run_all() {
+                assert_eq!(
+                    output.status.code(),
+                    Some(1),
+                    "{args:?}: {}",
+                    stderr(&output)
+                );
+                assert!(output.stdout.is_empty(), "{args:?}: {}", stdout(&output));
+                let message = stderr(&output);
+                assert!(message.contains(&status.to_string()), "{args:?}: {message}");
+                assert!(message.contains(&body), "{args:?}: {message}");
             }
         }
+    }
+}
+
+#[test]
+fn service_info_404_keeps_api_root_hint() {
+    let _service_info = mock("GET", "/service-info")
+        .with_status(404)
+        .with_body("service missing")
+        .create();
+    let home = Home::new(&config_with_fields(&mockito::server_url()));
+    let task_file = home.path().join("task.json");
+    let output = home.run(&["tes", "create", task_file.to_str().unwrap()], None);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stdout(&output).is_empty());
+    let message = stderr(&output);
+    assert!(message.contains("404"), "{message}");
+    assert!(message.contains("service missing"), "{message}");
+    assert!(
+        message.contains("base_path is the TES API root"),
+        "{message}"
+    );
+}
+
+#[test]
+fn canceling_terminal_task_reports_server_conflict() {
+    for state in ["COMPLETE", "SYSTEM_ERROR"] {
+        let body = format!("task already {state}");
+        let _cancel = mock("POST", "/tasks/t1:cancel")
+            .with_status(409)
+            .with_body(&body)
+            .create();
+        let home = Home::new(&config_with_fields(&mockito::server_url()));
+        let output = home.run(&["tes", "cancel", TASK_ID], None);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stdout(&output).is_empty());
+        let message = stderr(&output);
+        assert!(message.contains("409"), "{message}");
+        assert!(message.contains(&body), "{message}");
     }
 }
 
@@ -215,7 +262,8 @@ fn test_output_without_service() {
     let base_path = format!("http://127.0.0.1:{port}");
     for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
         for (args, output) in Home::new(&config).run_all() {
-            assert!(!output.status.success(), "{args:?}");
+            assert_eq!(output.status.code(), Some(1), "{args:?}");
+            assert!(output.stdout.is_empty(), "{args:?}");
             assert!(!output.stderr.is_empty(), "{args:?}");
         }
     }
