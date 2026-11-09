@@ -6,7 +6,33 @@
 A Generic SDK and CLI for GA4GH API services.
 
 ## Basic usage
-TBA
+
+Set `Configuration.base_path` to the API root, including the service's path
+prefix. For example, use `https://example.org/ga4gh/tes/v1` for TES,
+`https://example.org/ga4gh/drs/v1` for DRS, or
+`https://example.org/ga4gh/wes/v1` for WES. A trailing slash is optional.
+The SDK resolves `service-info`, `tasks`, `objects`, and `runs` below that root.
+The API root must not contain a query string or fragment.
+
+```rust
+use ga4gh_sdk::clients::tes::TES;
+use ga4gh_sdk::utils::configuration::Configuration;
+
+let config = Configuration::new(
+    url::Url::parse("https://example.org/ga4gh/tes/v1")?
+);
+let tes = TES::new(&config).await?;
+```
+
+### Migration notes
+
+Configs that previously used only the host must include the service path prefix
+shown above. `Transport::endpoint` now accepts only relative paths inside that
+root and returns `EndpointError` for invalid paths or roots; callers should not
+pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
+`wes::urlencode` now encode a path segment (so a space becomes `%20`, not `+`);
+use form encoding for query values. `Transport` now returns `HttpStatusError`
+for non-2xx HTTP responses rather than `std::io::Error`.
 
 ## Installation
 TBA
