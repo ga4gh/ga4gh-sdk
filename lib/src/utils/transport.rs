@@ -68,6 +68,65 @@ impl fmt::Display for HttpStatusError {
 
 impl Error for HttpStatusError {}
 
+/// An endpoint or API root that cannot safely be used for a request.
+#[derive(Debug)]
+pub enum EndpointError {
+    InvalidBase,
+    InvalidPath,
+    OutsideApiRoot,
+    Parse(url::ParseError),
+}
+
+impl fmt::Display for EndpointError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidBase => {
+                write!(f, "base_path must be a hierarchical URL without a query or fragment")
+            }
+            Self::InvalidPath => {
+                write!(f, "endpoint must be a relative path without dot segments or backslashes")
+            }
+            Self::OutsideApiRoot => write!(f, "endpoint resolves outside base_path"),
+            Self::Parse(error) => write!(f, "invalid endpoint URL: {error}"),
+        }
+    }
+}
+
+impl Error for EndpointError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Parse(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<url::ParseError> for EndpointError {
+    fn from(error: url::ParseError) -> Self {
+        Self::Parse(error)
+    }
+}
+
+// WHATWG URL parsing treats percent-encoded dots as dot segments too.
+fn is_dot_segment(segment: &str) -> bool {
+    let bytes = segment.as_bytes();
+    let mut index = 0;
+    let mut dots = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'.' {
+            index += 1;
+        } else if bytes.get(index..index + 3).is_some_and(|encoded| {
+            encoded[0] == b'%' && encoded[1] == b'2' && encoded[2].eq_ignore_ascii_case(&b'e')
+        }) {
+            index += 3;
+        } else {
+            return false;
+        }
+        dots += 1;
+    }
+    dots == 1 || dots == 2
+}
+
 // note: could implement custom certs handling, such as in-TEE generated ephemerial certs
 #[derive(Clone)]
 pub struct Transport {
@@ -101,14 +160,31 @@ impl Transport {
         }
     }
 
-    /// Resolves a path relative to the configured API root, whether or not it has a trailing slash.
-    /// A leading slash in `path` is treated as API-relative, too.
-    pub fn endpoint(&self, path: &str) -> Result<Url, url::ParseError> {
+    /// Resolves a relative path beneath the configured API root, with or without a trailing slash.
+    /// A leading slash in `path` is treated as API-relative, too. Absolute URLs and path
+    /// traversal are rejected before a request is sent.
+    pub fn endpoint(&self, path: &str) -> Result<Url, EndpointError> {
         let mut base = self.config.base_path.clone();
+        if base.cannot_be_a_base() || base.query().is_some() || base.fragment().is_some() {
+            return Err(EndpointError::InvalidBase);
+        }
+        let relative = path.trim_start_matches('/');
+        let path_part = relative.split(['?', '#']).next().unwrap_or_default();
+        if path.starts_with("//")
+            || Url::parse(path).is_ok()
+            || path.contains('\\')
+            || path_part.split('/').any(is_dot_segment)
+        {
+            return Err(EndpointError::InvalidPath);
+        }
         if !base.path().ends_with('/') {
             base.set_path(&format!("{}/", base.path()));
         }
-        base.join(path.trim_start_matches('/'))
+        let url = base.join(relative)?;
+        if url.origin() != base.origin() || !url.path().starts_with(base.path()) {
+            return Err(EndpointError::OutsideApiRoot);
+        }
+        Ok(url)
     }
 
     /// Sends an HTTP request with the specified method, endpoint, data, and parameters.
@@ -267,7 +343,7 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use crate::utils::configuration::Configuration;
-    use crate::utils::transport::{Transport, urlencode};
+    use crate::utils::transport::{EndpointError, Transport, urlencode};
     use mockito::mock;
     use url::Url;
 
@@ -295,6 +371,51 @@ mod tests {
             }
         }
         assert_eq!(urlencode("a/b ?#"), "a%2Fb%20%3F%23");
+    }
+
+    #[test]
+    fn test_endpoint_rejects_absolute_urls_and_dot_segments() {
+        let base = Url::parse("https://example.org/ga4gh/tes/v1").unwrap();
+        let transport = Transport::new(&Configuration::new(base));
+        for path in [
+            "https://other.example/tasks",
+            "https://example.org/ga4gh/tes/v1/tasks",
+            "//other.example/tasks",
+            "other:tasks",
+            "tasks/.",
+            "tasks/..",
+            "tasks/../secret",
+            "tasks/%2e",
+            "tasks/%2E%2e",
+            "tasks/.%2E",
+            "tasks/%2e.",
+            "tasks/..?view=FULL",
+            "tasks\\..\\secret",
+        ] {
+            assert!(
+                matches!(transport.endpoint(path), Err(EndpointError::InvalidPath)),
+                "{path} should be rejected"
+            );
+        }
+        for id in [".", ".."] {
+            for prefix in ["objects", "tasks", "runs"] {
+                let path = format!("{prefix}/{}", urlencode(id));
+                assert!(matches!(transport.endpoint(&path), Err(EndpointError::InvalidPath)));
+            }
+        }
+        assert_eq!(
+            transport.endpoint("tasks/a..b?view=FULL").unwrap().as_str(),
+            "https://example.org/ga4gh/tes/v1/tasks/a..b?view=FULL"
+        );
+    }
+
+    #[test]
+    fn test_endpoint_rejects_query_or_fragment_in_api_root() {
+        for suffix in ["?key=secret", "#fragment"] {
+            let base = Url::parse(&format!("https://example.org/ga4gh/tes/v1{suffix}")).unwrap();
+            let transport = Transport::new(&Configuration::new(base));
+            assert!(matches!(transport.endpoint("tasks"), Err(EndpointError::InvalidBase)));
+        }
     }
 
     #[tokio::test]

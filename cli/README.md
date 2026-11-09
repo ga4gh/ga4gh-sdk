@@ -22,7 +22,8 @@ The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file.
 ```
 
 `base_path` is the TES API root, with or without a trailing slash. The CLI
-requests `service-info` and `tasks` below this path.
+requests `service-info` and `tasks` below this path. Do not include a query
+string or fragment in `base_path`.
 
 ## Usage 
 

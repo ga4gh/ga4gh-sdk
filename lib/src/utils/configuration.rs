@@ -41,6 +41,7 @@ fn display_url(url: &Url) -> String {
 #[derive(Clone)]
 pub struct Configuration {
     /// The API root; endpoint paths are resolved below it, with or without a trailing slash.
+    /// Query strings and fragments are not supported in the API root.
     pub base_path: Url,
     /// The user agent to be used in API requests.
     pub user_agent: Option<String>,
@@ -122,7 +123,8 @@ impl Configuration {
     ///
     /// # Arguments
     ///
-    /// * `base_path` - The API root for requests, such as `https://host/ga4gh/tes/v1`.
+    /// * `base_path` - The API root for requests, such as `https://host/ga4gh/tes/v1`,
+    ///   without a query string or fragment.
     /// * `user_agent` - The user agent to be used in API requests.
     /// * `basic_auth` - The basic authentication credentials.
     /// * `oauth_access_token` - The OAuth access token for authentication.

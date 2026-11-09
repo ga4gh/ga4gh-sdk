@@ -31,11 +31,11 @@ fn config_with_fields(base_path: &str) -> Value {
     }})
 }
 
-/// Config with marker values in the base path only.
+/// Config with marker values in the base path credentials only.
 fn config_with_url(base_path: &str) -> Value {
     let base_path = base_path.replacen("http://", "http://SENTINEL_USER:SENTINEL_PASSWORD@", 1);
     json!({"TES": {
-        "base_path": format!("{base_path}/?key=SENTINEL_QUERY#SENTINEL_FRAGMENT"),
+        "base_path": format!("{base_path}/"),
         "basic_auth": null,
         "oauth_access_token": null,
     }})
@@ -219,6 +219,8 @@ fn test_output_with_invalid_base_path() {
     let base_paths = [
         "http://SENTINEL_USER:SENTINEL_PASSWORD@127.0.0.1:invalid",
         "SENTINEL_USER:SENTINEL_PASSWORD@127.0.0.1/v1",
+        "http://SENTINEL_USER:SENTINEL_PASSWORD@127.0.0.1/v1/?key=SENTINEL_QUERY",
+        "http://SENTINEL_USER:SENTINEL_PASSWORD@127.0.0.1/v1/#SENTINEL_FRAGMENT",
     ];
     for base_path in base_paths {
         for (args, output) in Home::new(&config_with_fields(base_path)).run_all() {
