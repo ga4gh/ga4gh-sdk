@@ -52,10 +52,16 @@ tools, versions, descriptors (also by relative path), test files, file
 listings and container files. Tool IDs, version IDs and relative paths are
 percent-encoded as single path segments, so Dockstore IDs such as
 `#workflow/github.com/org/repo` work as they are. For `PLAIN_*` descriptor
-types, the bare file is returned as a `FileWrapper` with only `content` set.
+types, the bare file is returned as a `FileWrapper` with only `content` set;
+`list_tests` then returns a list with that one wrapper (or the wrappers, if
+the registry sends a JSON array of them). Dockstore sends the
+service-info timestamps `createdAt` and `updatedAt` as numbers; the client
+drops such non-string values instead of failing.
 Not supported yet: the `format=zip` download of `files`, and the paging
 headers of `tools` (`next_page` and others); page with `offset` and `limit`
-instead. The CLI has no TRS commands yet.
+instead. Authentication isn't supported yet: the SDK's transport doesn't send
+the configured tokens, so only public registries and tools work. The CLI has
+no TRS commands yet.
 
 ## Testing
 Unit tests run by default. Integration suites are opt-in.
@@ -84,8 +90,9 @@ cargo llvm-cov nextest
 
 ### TRS public registry smoke tests
 
-These tests call WorkflowHub and Dockstore, so they need network access and
-are ignored by default:
+These tests call WorkflowHub and Dockstore, so they need network access. They
+are marked `#[ignore]` rather than gated by a Cargo feature, so they build
+with the other tests but only run on request:
 
 ```sh
 cargo test -p ga4gh-lib --test trs_public_registries -- --ignored

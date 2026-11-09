@@ -44,6 +44,7 @@ use crate::clients::serviceinfo::models::Service;
 use crate::clients::trs::models::{
     DescriptorType, DescriptorTypeWithPlain, FileWrapper, Tool, ToolClass, ToolFile, ToolVersion,
 };
+use crate::clients::wes::urlencode;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::Transport;
 use serde::de::DeserializeOwned;
@@ -51,29 +52,29 @@ use serde::Serialize;
 use serde_json::Value;
 use std::error::Error;
 
-// Percent-encodes one URL path segment, including `/`, `#` and spaces.
-// TODO: use `crate::utils::transport::urlencode` once it lands there (#109).
-fn urlencode(value: &str) -> String {
-    value
-        .as_bytes()
-        .iter()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-                (*byte as char).to_string()
-            } else {
-                format!("%{byte:02X}")
-            }
-        })
-        .collect()
-}
-
-// Encodes a path parameter. Empty values and dot segments would change the
-// path that the URL resolves to, so they are rejected before any request.
+// Encodes a path parameter as one URL path segment. Empty values and dot
+// segments would change the path that the URL resolves to, so they are
+// rejected before any request.
+// TODO: use `crate::utils::transport::urlencode` once #109 moves it there.
 fn segment(name: &str, value: &str) -> Result<String, Box<dyn Error>> {
     if value.is_empty() || value == "." || value == ".." {
         return Err(format!("TRS {name} must not be empty, '.' or '..'").into());
     }
     Ok(urlencode(value))
+}
+
+fn version_path(id: &str, version_id: &str) -> Result<String, Box<dyn Error>> {
+    Ok(format!(
+        "tools/{}/versions/{}",
+        segment("tool ID", id)?,
+        segment("version ID", version_id)?
+    ))
+}
+
+// Checks that service info describes a TRS. Some registries (e.g. Dockstore)
+// report the artifact as `TRS`, so the match ignores case.
+fn is_trs(service: &Service) -> bool {
+    service.r#type.group == "org.ga4gh" && service.r#type.artifact.eq_ignore_ascii_case("trs")
 }
 
 fn is_plain(descriptor_type: DescriptorTypeWithPlain) -> bool {
@@ -92,6 +93,21 @@ fn plain_file(content: String) -> FileWrapper {
     FileWrapper {
         content: Some(content),
         ..FileWrapper::default()
+    }
+}
+
+// The `PLAIN_*` tests endpoint may return a JSON array of `FileWrapper`s or
+// the bare test file. Every field of `FileWrapper` is optional, so an array
+// counts as wrappers only if each element has `content` or `url`.
+fn plain_tests(body: String) -> Vec<FileWrapper> {
+    match serde_json::from_str::<Vec<FileWrapper>>(&body) {
+        Ok(files)
+            if !files.is_empty()
+                && files.iter().all(|f| f.content.is_some() || f.url.is_some()) =>
+        {
+            files
+        }
+        _ => vec![plain_file(body)],
     }
 }
 
@@ -163,33 +179,20 @@ impl TRS {
     /// - A new `TRS` instance, or an error if the service info can't be
     ///   fetched or doesn't describe a TRS (`org.ga4gh`, artifact `trs`).
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn Error>> {
-        let transport = Transport::new(config);
         let mut instance = TRS {
             config: config.clone(),
-            transport,
-            service: Err("service info not fetched yet".into()),
+            transport: Transport::new(config),
+            // Replaced below; `new` never returns an instance without it.
+            service: Ok(Service::default()),
         };
         let service =
             tokio::time::timeout(std::time::Duration::from_secs(10), instance.service_info())
                 .await??;
-        instance.service = Ok(service);
-        instance.check()?;
-        Ok(instance)
-    }
-
-    // Checks that the service info describes a TRS. Some registries (e.g.
-    // Dockstore) report the artifact as `TRS`, so the match ignores case.
-    fn check(&self) -> Result<(), String> {
-        match self.service.as_ref() {
-            Ok(service)
-                if service.r#type.group == "org.ga4gh"
-                    && service.r#type.artifact.eq_ignore_ascii_case("trs") =>
-            {
-                Ok(())
-            }
-            Ok(_) => Err("The endpoint is not an instance of TRS".into()),
-            Err(e) => Err(format!("Error accessing TRS service: {e}")),
+        if !is_trs(&service) {
+            return Err("The endpoint is not an instance of TRS".into());
         }
+        instance.service = Ok(service);
+        Ok(instance)
     }
 
     // Resolves `path` below the API root, with or without a trailing slash.
@@ -328,8 +331,10 @@ impl TRS {
     /// Lists the test parameter files of a tool version
     /// (`GET /tools/{id}/versions/{version_id}/{type}/tests`).
     ///
-    /// For `PLAIN_*` types the registry returns the bare test file; it is
-    /// returned as a single `FileWrapper` with only `content` set.
+    /// For `PLAIN_*` types, registries such as Dockstore return the bare test
+    /// file (possibly several joined into one body); it is returned as a
+    /// single `FileWrapper` with only `content` set. A body that is a JSON
+    /// array of file wrappers, as the spec also allows, is returned as such.
     pub async fn list_tests(
         &self,
         id: &str,
@@ -342,7 +347,7 @@ impl TRS {
             descriptor_type
         );
         if is_plain(descriptor_type) {
-            Ok(vec![plain_file(self.get_text(&path, None).await?)])
+            Ok(plain_tests(self.get_text(&path, None).await?))
         } else {
             self.get_json(&path, None).await
         }
@@ -376,14 +381,6 @@ impl TRS {
         let path = format!("{}/containerfile", version_path(id, version_id)?);
         self.get_json(&path, None).await
     }
-}
-
-fn version_path(id: &str, version_id: &str) -> Result<String, Box<dyn Error>> {
-    Ok(format!(
-        "tools/{}/versions/{}",
-        segment("tool ID", id)?,
-        segment("version ID", version_id)?
-    ))
 }
 
 #[cfg(test)]
@@ -477,6 +474,10 @@ mod tests {
             service: Ok(Service::default()),
         };
         let output = format!("{:?}", trs);
+        assert!(
+            output.starts_with("TRS { config: Configuration {"),
+            "{output}"
+        );
         assert!(!output.contains("SENTINEL"), "{output}");
     }
 
@@ -519,11 +520,19 @@ mod tests {
         let mut info = service_info_json("TRS");
         info["createdAt"] = serde_json::json!(1593648000000u64);
         info["updatedAt"] = serde_json::json!("2026-11-09T00:00:00Z");
+        let mut numeric_update = info.clone();
+        numeric_update["updatedAt"] = serde_json::json!(1794200849592u64);
         let m = get_mock("dockstore", "service-info", &info.to_string());
         for client in clients("dockstore") {
             let service = TRS::new(&client.config).await.unwrap().service.unwrap();
             assert_eq!(service.created_at, None);
             assert_eq!(service.updated_at.as_deref(), Some("2026-11-09T00:00:00Z"));
+        }
+        m.assert();
+        let m = get_mock("dockstore-2", "service-info", &numeric_update.to_string());
+        for client in clients("dockstore-2") {
+            let service = TRS::new(&client.config).await.unwrap().service.unwrap();
+            assert_eq!((service.created_at, service.updated_at), (None, None));
         }
         m.assert();
     }
@@ -662,6 +671,29 @@ mod tests {
         for client in clients("tool-404") {
             let error = client.get_tool("missing").await.unwrap_err();
             assert!(error.to_string().contains("404"), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_returns_errors_for_bodies_that_are_not_json() {
+        let _invalid = mock("GET", path("bad-body", "toolClasses").as_str())
+            .with_status(200)
+            .with_body("[{\"id\":")
+            .create();
+        let _html = mock("GET", path("bad-body", "tools").as_str())
+            .with_status(500)
+            .with_header("content-type", "text/html")
+            .with_body("<html>Internal Server Error</html>")
+            .create();
+        let _info = mock("GET", path("bad-body", "service-info").as_str())
+            .with_status(200)
+            .with_body("<html>Not a TRS</html>")
+            .create();
+        for client in clients("bad-body") {
+            assert!(client.list_tool_classes().await.is_err());
+            let error = client.list_tools(&ToolFilter::default()).await.unwrap_err();
+            assert!(error.to_string().contains("500"), "{error}");
+            assert!(TRS::new(&client.config).await.is_err());
         }
     }
 
@@ -819,6 +851,19 @@ mod tests {
         }
         m.assert();
         plain.assert();
+    }
+
+    #[test]
+    fn test_plain_tests_accepts_wrapped_and_bare_bodies() {
+        let wrapped = r#"[{"content":"{}"},{"url":"https://example.org/t.json"}]"#;
+        assert_eq!(plain_tests(wrapped.to_string()).len(), 2);
+        // A bare test file that is itself a JSON array stays one file.
+        for bare in [r#"[{"input":1}]"#, "[]", "input: 1"] {
+            assert_eq!(
+                plain_tests(bare.to_string()),
+                vec![plain_file(bare.to_string())]
+            );
+        }
     }
 
     #[tokio::test]
