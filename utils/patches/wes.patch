@@ -5,7 +5,9 @@ The generator merges the `anyOf` items of `RunListResponse.runs` and
 variants. These edits make the fields optional that only one variant has
 (`tags`; `name` and `id`), so that `RunStatus` and `Log` items parse. They
 also read the nullable `task_logs` as a plain `Option`, which needs no
-`serde_with` dependency.
+`serde_with` dependency, and read `RunLog.request` as `None` if the server
+echoes a request without its required fields, so that the run log stays
+readable.
 
 --- a/models/run_list_response_runs_inner.rs
 +++ b/models/run_list_response_runs_inner.rs
@@ -35,7 +37,22 @@ also read the nullable `task_logs` as a plain `Option`, which needs no
  }
 --- a/models/run_log.rs
 +++ b/models/run_log.rs
-@@ -28,8 +28,9 @@
+@@ -18,7 +18,13 @@
+     /// workflow run ID
+     #[serde(rename = "run_id", skip_serializing_if = "Option::is_none")]
+     pub run_id: Option<String>,
+-    #[serde(rename = "request", skip_serializing_if = "Option::is_none")]
++    /// `None` also if the server echoes a request that lacks required fields.
++    #[serde(
++        rename = "request",
++        default,
++        deserialize_with = "lenient_request",
++        skip_serializing_if = "Option::is_none"
++    )]
+     pub request: Option<Box<models::RunRequest>>,
+     #[serde(rename = "state", skip_serializing_if = "Option::is_none")]
+     pub state: Option<models::State>,
+@@ -28,8 +34,9 @@
      #[serde(rename = "task_logs_url", skip_serializing_if = "Option::is_none")]
      pub task_logs_url: Option<String>,
      /// The logs, and other key info like timing and exit code, for each step in the workflow run. This field is deprecated and the `task_logs_url` should be used to retrieve a paginated list of steps from the workflow run. This field will be removed in the next major version of the  specification (2.0.0)
@@ -47,6 +64,19 @@ also read the nullable `task_logs` as a plain `Option`, which needs no
      /// The outputs from the workflow run.
      #[serde(rename = "outputs", skip_serializing_if = "Option::is_none")]
      pub outputs: Option<serde_json::Value>,
+@@ -49,3 +56,12 @@
+     }
+ }
+ 
++// Servers may echo partial requests (for example, a null
++// `workflow_type_version`); keep the rest of the run log readable.
++fn lenient_request<'de, D>(deserializer: D) -> Result<Option<Box<models::RunRequest>>, D::Error>
++where
++    D: serde::Deserializer<'de>,
++{
++    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
++    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
++}
 --- a/models/run_log_task_logs_inner.rs
 +++ b/models/run_log_task_logs_inner.rs
 @@ -16,8 +16,9 @@

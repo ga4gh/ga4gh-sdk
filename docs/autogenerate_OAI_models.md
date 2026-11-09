@@ -8,7 +8,8 @@ a spec version changes, or generate models for a new API.
 The `models/` folders are generated code: every run replaces them. Don't edit
 them by hand. Hand edits go into a patch (see [Hand edits](#hand-edits)), and
 hand-written types go next to `models/`, for example
-`lib/src/clients/tes/list_tasks_params.rs`.
+`lib/src/clients/tes/list_tasks_params.rs`. (`tes.patch` re-exports it from
+`tes::models` so that the existing import path keeps working.)
 
 ## Pinned specs
 
@@ -25,12 +26,18 @@ hand-written types go next to `models/`, for example
 The models are generated with OpenAPI Generator 7.9.0 and formatted with
 `rustfmt`. Running the wrapper on a clean checkout must not change any file in
 `lib/src/clients`. If it does, a spec, the generator or a patch has changed.
+No CI job checks this yet; run the wrapper and `git status lib/src/clients`
+after changing a spec or a patch.
 
 The WES models use the schema names of the spec (`RunLog`, `RunStatus`,
 `State`, `TaskLog`, ...). Two of them are generated for `anyOf` lists and
 cover both variants: `RunListResponseRunsInner` (`RunStatus` or `RunSummary`)
 and `RunLogTaskLogsInner` (`Log` or `TaskLog`). The fields that only one
-variant has are optional in them.
+variant has are optional in them. `RunLog.request` reads as `None` if a server
+echoes a request without its required fields. The WES `ServiceInfo` model
+follows 1.1.0 and requires its new fields, so it doesn't parse the service
+info of WES 1.0.1 servers; the client reads the generic Service Info model
+instead.
 
 ## Prerequisites
 
@@ -43,19 +50,13 @@ variant has are optional in them.
     7.9.0 as `openapi-generator-cli` on the `PATH`, with a Java runtime. The
     script checks the version.
 - `rustfmt` (from `rustup component add rustfmt`). Without it, the models are
-  left unformatted and the script prints a warning; run `cargo fmt` afterwards.
+  left unformatted and the script prints a warning; format them afterwards
+  with `rustfmt --edition 2021 lib/src/clients/<api>/models/*.rs`.
   The committed models are formatted with the stable `rustfmt` defaults.
 
-The image built from `Dockerfile-autogen-models` provides the generator CLI
-and Java, but not `rustfmt`:
-
-```sh
-# From the root of the repository
-docker build -t ga4gh-sdk-autogen-models -f Dockerfile-autogen-models .
-docker run -it --rm -v "$(pwd)":/app -w /app ga4gh-sdk-autogen-models \
-    bash ./utils/build_models_wrapper.sh
-cargo fmt
-```
+With Docker installed, no other setup is needed: the script pulls the pinned
+generator image. `Dockerfile-autogen-models` installs an unpinned generator
+CLI, which fails the version check, so don't run the wrapper in it.
 
 ## Usage
 

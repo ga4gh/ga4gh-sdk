@@ -1,4 +1,4 @@
-Hand edits of the TES 1.1.0 models, applied by utils/build_models.sh.
+Hand edits of the TES 1.1 models, applied by utils/build_models.sh.
 
 - `TesTask.executors` stays optional, so that task views without executors
   (for example `MINIMAL`) parse.

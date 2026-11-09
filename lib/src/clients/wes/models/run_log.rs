@@ -18,7 +18,13 @@ pub struct RunLog {
     /// workflow run ID
     #[serde(rename = "run_id", skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
-    #[serde(rename = "request", skip_serializing_if = "Option::is_none")]
+    /// `None` also if the server echoes a request that lacks required fields.
+    #[serde(
+        rename = "request",
+        default,
+        deserialize_with = "lenient_request",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub request: Option<Box<models::RunRequest>>,
     #[serde(rename = "state", skip_serializing_if = "Option::is_none")]
     pub state: Option<models::State>,
@@ -48,4 +54,14 @@ impl RunLog {
             outputs: None,
         }
     }
+}
+
+// Servers may echo partial requests (for example, a null
+// `workflow_type_version`); keep the rest of the run log readable.
+fn lenient_request<'de, D>(deserializer: D) -> Result<Option<Box<models::RunRequest>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
 }

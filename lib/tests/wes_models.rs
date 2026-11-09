@@ -183,6 +183,21 @@ fn run_log_round_trips_deprecated_log_and_task_log_items() {
 }
 
 #[test]
+fn run_log_reads_partial_request_as_none() {
+    let mut request = run_request_body();
+    request["workflow_type_version"] = Value::Null;
+    let log: RunLog = serde_json::from_value(json!({
+        "run_id": "run-1",
+        "request": request,
+        "state": "COMPLETE",
+        "outputs": {}
+    }))
+    .unwrap();
+    assert!(log.request.is_none());
+    assert_eq!(log.state, Some(State::Complete));
+}
+
+#[test]
 fn run_log_reads_null_task_logs() {
     let log: RunLog =
         serde_json::from_value(json!({ "run_id": "run-1", "task_logs": null })).unwrap();

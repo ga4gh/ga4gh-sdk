@@ -135,15 +135,15 @@ while IFS= read -r -d '' file; do
 done < <(find "$MODELS_DIR" -name '*.rs' -print0)
 
 if [ -n "$PATCH_FILE" ]; then
-    patch -p1 --batch --forward --no-backup-if-mismatch -d "$TEMP_OUTPUT_DIR/src" -i "$PATCH_FILE"
+    patch -p1 --batch --forward --fuzz=0 --no-backup-if-mismatch -d "$TEMP_OUTPUT_DIR/src" -i "$PATCH_FILE"
 fi
 
-if [ "$FORMAT" = false ]; then
-    :
-elif command -v rustfmt >/dev/null 2>&1; then
-    find "$MODELS_DIR" -name '*.rs' -exec rustfmt --edition 2021 {} +
-else
-    echo "Warning: rustfmt not found; run 'cargo fmt' on $DESTINATION_DIR/models" >&2
+if [ "$FORMAT" = true ]; then
+    if command -v rustfmt >/dev/null 2>&1; then
+        find "$MODELS_DIR" -name '*.rs' -exec rustfmt --edition 2021 {} +
+    else
+        echo "Warning: rustfmt not found; run 'cargo fmt' on $DESTINATION_DIR/models" >&2
+    fi
 fi
 
 rm -rf "$DESTINATION_DIR/models"

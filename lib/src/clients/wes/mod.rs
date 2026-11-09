@@ -137,6 +137,10 @@ impl Run {
 
     /// Fetches one task of the run (WES 1.1 `GetTask`).
     pub async fn get_task(&self, task_id: &str) -> Result<TaskLog, Box<dyn std::error::Error>> {
+        // URL resolution would turn these segments into another endpoint.
+        if task_id.is_empty() || task_id == "." || task_id == ".." {
+            return Err(format!("invalid task ID: {:?}", task_id).into());
+        }
         let path = format!("runs/{}/tasks/{}", urlencode(&self.id), urlencode(task_id));
         let url = endpoint(&self.transport.config, &path)?;
         let resp_str = self.transport.get(&url, None).await?;
@@ -742,6 +746,30 @@ mod tests {
             .task_logs
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_run_list_tasks_rejects_invalid_body() {
+        let _m = mock("GET", "/runs/bad/tasks")
+            .with_status(200)
+            .with_body(r#"{"task_logs":[{"name":"no id"}]}"#)
+            .create();
+        let run = Run::new(
+            "bad".to_string(),
+            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+        );
+        assert!(run.list_tasks(None, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_get_task_rejects_dot_segments() {
+        let run = Run::new(
+            "123".to_string(),
+            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+        );
+        for task_id in ["", ".", ".."] {
+            assert!(run.get_task(task_id).await.is_err(), "{task_id:?}");
+        }
     }
 
     #[tokio::test]
