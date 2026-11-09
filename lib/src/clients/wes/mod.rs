@@ -8,7 +8,7 @@ use crate::clients::wes::models::WesRunRequest;
 use crate::clients::wes::models::WesRunStatus;
 use crate::clients::wes::models::WesState;
 use crate::utils::configuration::Configuration;
-use crate::utils::transport::Transport;
+use crate::utils::transport::{HttpStatusError, Transport};
 /// Existing import path for the shared path-segment encoder.
 pub use crate::utils::transport::urlencode;
 use log::error;
@@ -116,13 +116,14 @@ impl WES {
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             transport.get("service-info", None),
-        ).await??;
-        let service: Service = from_str(&response)?;
+        ).await?;
+        let service: Result<Service, Box<dyn std::error::Error>> =
+            response.and_then(|body| from_str(&body).map_err(Into::into));
 
         let instance = WES {
             config: config.clone(),
             transport,
-            service: Ok(service),
+            service,
         };
 
         instance.check()?;
@@ -134,7 +135,14 @@ impl WES {
         match resp.as_ref() {
             Ok(service) if service.r#type.artifact == "wes" => Ok(()),
             Ok(_) => Err("The endpoint is not an instance of WES".into()),
-            Err(_) => Err("Error accessing the service".into()),
+            Err(error) => {
+                let mut message = format!("Error accessing WES service: {error}");
+                if error.downcast_ref::<HttpStatusError>()
+                    .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND) {
+                    message.push_str(". Check that base_path is the WES API root");
+                }
+                Err(message)
+            }
         }
     }
 
@@ -218,20 +226,19 @@ impl WES {
         next_page_token: Option<String>,
         page_size: Option<i64>,
     ) -> Result<WesRunListResponse, Box<dyn std::error::Error>> {
-        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        let mut params = serde_json::Map::new();
         if let Some(token) = next_page_token {
-            query.append_pair("page_token", &token);
+            params.insert("page_token".to_string(), json!(token));
         }
         if let Some(size) = page_size {
-            query.append_pair("page_size", &size.to_string());
+            params.insert("page_size".to_string(), json!(size));
         }
-        let query = query.finish();
-        let path = if query.is_empty() {
-            "runs".to_string()
+        let params = if params.is_empty() {
+            None
         } else {
-            format!("runs?{}", query)
+            Some(serde_json::Value::Object(params))
         };
-        let response = self.transport.get(&path, None).await;
+        let response = self.transport.get("runs", params).await;
 
         match response {
             Ok(resp_str) => {
@@ -339,6 +346,21 @@ mod tests {
             let wes = WES::new(&Configuration::new(base)).await.unwrap();
             let run = wes.run_workflow(valid_request()).await.unwrap();
             assert_eq!(run.status().await.unwrap(), WesState::Complete);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_service_info_error_keeps_status_and_404_hint() {
+        for (status, path) in [(404, "/missing/wes/v1"), (503, "/unavailable/wes/v1")] {
+            let _service = mock("GET", format!("{path}/service-info").as_str())
+                .with_status(status)
+                .with_body("service failure")
+                .create();
+            let base = Url::parse(&format!("{}{path}", server_url())).unwrap();
+            let error = WES::new(&Configuration::new(base)).await.unwrap_err().to_string();
+            assert!(error.contains(&status.to_string()), "{error}");
+            assert!(error.contains("service failure"), "{error}");
+            assert_eq!(error.contains("base_path"), status == 404, "{error}");
         }
     }
 
@@ -523,7 +545,10 @@ mod tests {
     #[tokio::test]
     async fn test_wes_encodes_page_token() {
         let _m = mock("GET", "/ga4gh/wes/v1/runs")
-            .match_query("page_token=a%2Bb%26c&page_size=5")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::Regex("(^|&)page_token=a%2Bb%26c(&|$)".to_string()),
+                Matcher::Regex("(^|&)page_size=5(&|$)".to_string()),
+            ]))
             .with_status(200)
             .with_body(r#"{"runs":[]}"#)
             .create();

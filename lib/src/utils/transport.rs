@@ -62,11 +62,27 @@ pub struct HttpStatusError {
 
 impl fmt::Display for HttpStatusError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Request failed with status: {}. Response: {}", self.status, self.body)
+        const MAX_BODY_CHARS: usize = 300;
+        let end = self.body.char_indices().nth(MAX_BODY_CHARS)
+            .map_or(self.body.len(), |(index, _)| index);
+        write!(f, "Request failed with status: {}. Response: {}", self.status, &self.body[..end])?;
+        if end < self.body.len() {
+            write!(f, "... [truncated]")?;
+        }
+        Ok(())
     }
 }
 
 impl Error for HttpStatusError {}
+
+async fn read_response_text(response: reqwest::Response) -> std::io::Result<String> {
+    response.text().await.map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Failed to read response text: {error}"),
+        )
+    })
+}
 
 /// An endpoint or API root that cannot safely be used for a request.
 #[derive(Debug)]
@@ -238,9 +254,7 @@ impl Transport {
 	        })?;
 
         let status = resp.status();
-        let content = resp.text().await.map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Failed to read response text: {}", e))
-        })?;
+        let content = read_response_text(resp).await?;
 
         if status.is_success() {
             Ok(content)
@@ -300,7 +314,7 @@ impl Transport {
         }
         let response = request.send().await?;
         let status = response.status();
-        let body = response.text().await?;
+        let body = read_response_text(response).await?;
         if status.is_success() {
             Ok(body)
         } else {
@@ -343,7 +357,7 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use crate::utils::configuration::Configuration;
-    use crate::utils::transport::{EndpointError, Transport, urlencode};
+    use crate::utils::transport::{EndpointError, HttpStatusError, Transport, urlencode};
     use mockito::mock;
     use url::Url;
 
@@ -356,6 +370,20 @@ mod tests {
         let output = format!("{:?}", Transport::new(&config));
         assert_eq!(output, format!("Transport {{ config: {:?}, .. }}", config));
         assert!(!output.contains("SENTINEL"), "{output}");
+    }
+
+    #[test]
+    fn test_http_status_error_truncates_display_but_keeps_body() {
+        let body = "é".repeat(301);
+        let error = HttpStatusError { status: reqwest::StatusCode::BAD_GATEWAY, body: body.clone() };
+        assert_eq!(error.body, body);
+        assert!(error.to_string().ends_with(&format!("{}... [truncated]", "é".repeat(300))));
+
+        let short = HttpStatusError {
+            status: reqwest::StatusCode::NOT_FOUND,
+            body: "service failure".to_string(),
+        };
+        assert!(short.to_string().ends_with("Response: service failure"));
     }
 
     #[test]

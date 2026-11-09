@@ -29,10 +29,10 @@ let tes = TES::new(&config).await?;
 Configs that previously used only the host must include the service path prefix
 shown above. `Transport::endpoint` now accepts only relative paths inside that
 root and returns `EndpointError` for invalid paths or roots; callers should not
-pass absolute URLs or `.` and `..` path segments. `tes::urlencode` now encodes a
-path segment (so a space becomes `%20`, not `+`); use form encoding for query
-values. `Transport` now returns `HttpStatusError` for non-2xx HTTP responses
-rather than `std::io::Error`.
+pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
+`wes::urlencode` now encode a path segment (so a space becomes `%20`, not `+`);
+use form encoding for query values. `Transport` now returns `HttpStatusError`
+for non-2xx HTTP responses rather than `std::io::Error`.
 
 ## Installation
 TBA
