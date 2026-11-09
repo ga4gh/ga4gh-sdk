@@ -34,7 +34,18 @@ class InputErrorsTest(unittest.TestCase):
     def test_missing_configuration_names_file(self):
         with tempfile.TemporaryDirectory() as home, patch.dict("os.environ", {"HOME": home}):
             config = Configuration("https://example.org")
-            with self.assertRaisesRegex(Exception, r"\.ga4gh-cli/config.json"):
+            with self.assertRaisesRegex(FileNotFoundError, r"\.ga4gh-cli/config.json"):
+                config.from_file(ServiceType.TES)
+
+    @unittest.skipUnless(os.name == "posix", "HOME controls the config path on Unix")
+    def test_malformed_configuration_is_value_error(self):
+        with tempfile.TemporaryDirectory() as home, patch.dict("os.environ", {"HOME": home}):
+            config_dir = os.path.join(home, ".ga4gh-cli")
+            os.mkdir(config_dir)
+            with open(os.path.join(config_dir, "config.json"), "w") as output:
+                output.write("not json")
+            config = Configuration("https://example.org")
+            with self.assertRaisesRegex(ValueError, "Invalid JSON"):
                 config.from_file(ServiceType.TES)
 
 

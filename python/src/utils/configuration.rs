@@ -1,6 +1,6 @@
 use crate::PyServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyValueError};
 use pyo3::prelude::*;
 use url::Url;
 
@@ -31,8 +31,16 @@ impl PyConfiguration {
     }
 
     pub fn from_file(&mut self, service_type: PyServiceType) -> PyResult<()> {
-        self.inner = Configuration::from_file(service_type.into())
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyException, _>(format!("{}", e)))?;
+        self.inner = Configuration::from_file(service_type.into()).map_err(|error| {
+            let message = error.to_string();
+            match error.downcast_ref::<std::io::Error>() {
+                Some(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => {
+                    PyFileNotFoundError::new_err(message)
+                }
+                Some(_) => PyOSError::new_err(message),
+                None => PyValueError::new_err(message),
+            }
+        })?;
         Ok(())
     }
 }

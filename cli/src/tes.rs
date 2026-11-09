@@ -219,9 +219,11 @@ fn parse_state(value: &str) -> anyhow::Result<TesState> {
         .strip_prefix('"')
         .and_then(|state| state.strip_suffix('"'))
         .unwrap_or(trimmed);
-    let normalized = unquoted.to_ascii_uppercase();
+    let normalized = unquoted.to_ascii_uppercase().replace(' ', "_");
     serde_json::from_value(serde_json::Value::String(normalized)).map_err(|_| {
-        anyhow::anyhow!("Invalid state '{value}': expected a TES state such as QUEUED")
+        anyhow::anyhow!(
+            "Invalid state '{value}': expected UNKNOWN, QUEUED, INITIALIZING, RUNNING, PAUSED, COMPLETE, EXECUTOR_ERROR, SYSTEM_ERROR, CANCELED, CANCELING, or PREEMPTED"
+        )
     })
 }
 
@@ -260,4 +262,21 @@ fn format_tasks_response(response: &TesListTasksResponse) -> String {
         table.push_str(&format_task(task));
     }
     table
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_state, tes_state_to_str};
+    use ga4gh_sdk::clients::tes::models::TesState;
+
+    #[test]
+    fn displayed_error_states_can_be_used_as_list_filters() {
+        for state in [TesState::ExecutorError, TesState::SystemError] {
+            assert_eq!(parse_state(tes_state_to_str(&Some(state))).unwrap(), state);
+        }
+        assert!(parse_state("invalid")
+            .unwrap_err()
+            .to_string()
+            .contains("PREEMPTED"));
+    }
 }

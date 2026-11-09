@@ -216,14 +216,30 @@ impl Configuration {
     }
 
     /// Load one named section from a JSON configuration file.
+    ///
     /// Only `base_path` is required; authentication fields are optional.
+    /// A missing file is an I/O error; malformed content is an input error.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ga4gh_sdk::utils::configuration::Configuration;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = Configuration::from_path("config.json", "TES")?;
+    /// # let _ = config;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn from_path(
         path: impl AsRef<Path>,
         section: &str,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let path = path.as_ref();
         let contents = std::fs::read_to_string(path).map_err(|error| {
-            format!("Cannot read configuration file {}: {error}", path.display())
+            std::io::Error::new(
+                error.kind(),
+                format!("Cannot read configuration file {}: {error}", path.display()),
+            )
         })?;
         let document: Value = serde_json::from_str(&contents).map_err(|error| {
             format!(
@@ -375,6 +391,10 @@ mod tests {
         let missing = dir.path().join("missing.json");
         let error = Configuration::from_path(&missing, "custom").unwrap_err();
         assert!(error.to_string().contains("missing.json"), "{error}");
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
     }
 
     #[test]
