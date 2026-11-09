@@ -19,4 +19,14 @@ ENV PATH=$NVM_DIR/versions/node/v22.11.0/bin:$PATH
 
 RUN npm install -g @openapitools/openapi-generator-cli
 
+# Keep this toolchain in sync with rust-toolchain.toml: model generation
+# finishes with the workspace's pinned rustfmt.
+RUN curl --fail --location --silent --show-error \
+    --output /tmp/rustup-init.sh https://sh.rustup.rs && \
+    sh /tmp/rustup-init.sh -y --profile minimal \
+      --default-toolchain 1.97.0 && \
+    /root/.cargo/bin/rustup component add --toolchain 1.97.0 clippy rustfmt && \
+    rm /tmp/rustup-init.sh
+ENV PATH=/root/.cargo/bin:$PATH
+
 WORKDIR /app

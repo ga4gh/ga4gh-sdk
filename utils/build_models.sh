@@ -25,6 +25,7 @@ fi
 OPENAPI_SPEC_PATH="$1"
 API_NAME="$2"
 DESTINATION_DIR="$3"
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 # Define constants
 SED_RULE="s/^use\s\+crate::models\s*;/#![allow(unused_imports)]\n#![allow(clippy::empty_docs)]\nuse crate::clients::$API_NAME::models;/"
@@ -76,6 +77,9 @@ generate_openapi_models() {
     rm -rf "$DESTINATION_DIR/models"
     mkdir -p "$DESTINATION_DIR"
     cp -r "$TEMP_OUTPUT_DIR/src/models" "$DESTINATION_DIR"
+
+    # Stable rustfmt includes generated models in the workspace formatting check.
+    cargo fmt --manifest-path "$REPO_ROOT/Cargo.toml" --all
 
     echo "OpenAPI generation complete. Models copied to $DESTINATION_DIR"
 }
