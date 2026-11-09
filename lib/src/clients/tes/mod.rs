@@ -148,12 +148,13 @@ impl Task {
         let url = format!("tasks/{}", urlencode(&self.id));
         let response = self
             .transport
-            .get(&url, Some(json!({"view": "FULL"})))
+            .get(&url, Some(json!({"view": "MINIMAL"})))
             .await;
         match response {
             Ok(resp_str) => {
                 let task: TesTask = from_str(&resp_str)?;
-                Ok(task.state.unwrap())
+                task.state
+                    .ok_or_else(|| "TES task response is missing 'state'".into())
             }
             Err(e) => {
                 let err_msg = format!("HTTP request failed: {}", e);
@@ -396,7 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_status() {
-        let _m = mock("GET", "/tasks/123?view=FULL")
+        let _m = mock("GET", "/tasks/123?view=MINIMAL")
             .with_status(200)
             .with_body(r#"{"state": "COMPLETE", "executors": []}"#)
             .create();
@@ -407,6 +408,18 @@ mod tests {
         let result = task.status().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), TesState::Complete);
+    }
+
+    #[tokio::test]
+    async fn test_task_status_missing_state_is_an_error() {
+        let _m = mock("GET", "/tasks/123?view=MINIMAL")
+            .with_status(200)
+            .with_body(r#"{"executors": []}"#)
+            .create();
+        let url = url::Url::parse(&server_url()).unwrap();
+        let task = Task::new("123".to_owned(), Transport::new(&Configuration::new(url)));
+        let error = task.status().await.unwrap_err();
+        assert!(error.to_string().contains("missing 'state'"), "{error}");
     }
 
     #[tokio::test]
@@ -502,7 +515,7 @@ mod tests {
             .create();
             let _status = mock(
                 "GET",
-                format!("{prefix}/tasks/{encoded_id}?view=FULL").as_str(),
+                format!("{prefix}/tasks/{encoded_id}?view=MINIMAL").as_str(),
             )
             .with_status(200)
             .with_body(

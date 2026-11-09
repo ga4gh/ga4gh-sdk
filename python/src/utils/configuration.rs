@@ -1,5 +1,6 @@
 use crate::PyServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use url::Url;
 
@@ -12,12 +13,16 @@ pub struct PyConfiguration {
 impl PyConfiguration {
     #[new]
     pub fn new(base_path: String) -> PyResult<Self> {
-        let config = Configuration::new(Url::parse(&base_path).unwrap());
+        let url = Url::parse(&base_path)
+            .map_err(|error| PyValueError::new_err(format!("Invalid base_path: {error}")))?;
+        let config = Configuration::new(url);
         Ok(PyConfiguration { inner: config })
     }
 
     pub fn set_base_path(&mut self, base_path: String) -> PyResult<()> {
-        self.inner.set_base_path(Url::parse(&base_path).unwrap());
+        let url = Url::parse(&base_path)
+            .map_err(|error| PyValueError::new_err(format!("Invalid base_path: {error}")))?;
+        self.inner.set_base_path(url);
         Ok(())
     }
 

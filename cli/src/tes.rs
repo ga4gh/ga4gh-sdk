@@ -103,12 +103,18 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         let name_prefix = sub.get_one::<String>("name_prefix").cloned();
         let state = sub
             .get_one::<String>("state")
-            .map(|s| serde_json::from_str(s).expect("Invalid state"));
+            .map(|s| parse_state(s))
+            .transpose()?;
         let _tag_key = sub.get_one::<String>("tag_key").cloned();
         let _tag_value = sub.get_one::<String>("tag_value").cloned();
         let page_size = sub
             .get_one::<String>("page_size")
-            .map(|s| s.parse().expect("Invalid page_size"));
+            .map(|value| {
+                value.parse::<i32>().map_err(|_| {
+                    anyhow::anyhow!("Invalid page_size '{value}': expected an integer")
+                })
+            })
+            .transpose()?;
         let page_token = sub.get_one::<String>("page_token").cloned();
         let view = sub.get_one::<String>("view").cloned();
 
@@ -148,8 +154,12 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     }
 
     if let Some(("get", sub)) = sub.subcommand() {
-        let id = sub.get_one::<String>("id").unwrap();
-        let view = sub.get_one::<String>("view").unwrap();
+        let id = sub
+            .get_one::<String>("id")
+            .ok_or_else(|| anyhow::anyhow!("id argument is required"))?;
+        let view = sub
+            .get_one::<String>("view")
+            .ok_or_else(|| anyhow::anyhow!("view argument is required"))?;
 
         match TES::new(config).await {
             Ok(tes) => {
@@ -164,7 +174,10 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     }
 
     if let Some(("status", sub)) = sub.subcommand() {
-        let id = sub.get_one::<String>("id").unwrap().to_string();
+        let id = sub
+            .get_one::<String>("id")
+            .ok_or_else(|| anyhow::anyhow!("id argument is required"))?
+            .to_string();
         let transport = Transport::new(config);
         let task = Task::new(id.clone(), transport);
         match task.status().await {
@@ -181,7 +194,10 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     }
 
     if let Some(("cancel", sub)) = sub.subcommand() {
-        let id = sub.get_one::<String>("id").unwrap().to_string();
+        let id = sub
+            .get_one::<String>("id")
+            .ok_or_else(|| anyhow::anyhow!("id argument is required"))?
+            .to_string();
         let transport = Transport::new(config);
         let task = Task::new(id, transport);
         match task.cancel().await {
@@ -195,6 +211,18 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         }
     }
     Ok(CommandOutput::success(String::new()))
+}
+
+fn parse_state(value: &str) -> anyhow::Result<TesState> {
+    let trimmed = value.trim();
+    let unquoted = trimmed
+        .strip_prefix('"')
+        .and_then(|state| state.strip_suffix('"'))
+        .unwrap_or(trimmed);
+    let normalized = unquoted.to_ascii_uppercase();
+    serde_json::from_value(serde_json::Value::String(normalized)).map_err(|_| {
+        anyhow::anyhow!("Invalid state '{value}': expected a TES state such as QUEUED")
+    })
 }
 
 // Helper functions
