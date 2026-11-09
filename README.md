@@ -47,7 +47,7 @@ cargo llvm-cov nextest
 
 ### Starter Kit WES Docker integration
 
-With a running local Docker daemon, run this separate WES 1.0.1 client test:
+With a running local Docker daemon, run this separate WES client test against a WES 1.0.1 server:
 
 ```sh
 tests/run-wes-docker-integration.sh
