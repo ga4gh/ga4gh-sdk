@@ -1,6 +1,6 @@
 //! Reusable command definitions and dispatch for the GA4GH CLI.
 //!
-//! Downstream binaries can extend the Clap 3 command and handle their own
+//! Downstream binaries can extend the Clap 4 command and handle their own
 //! subcommands after the built-in dispatcher returns `None`:
 //!
 //! ```no_run
@@ -47,7 +47,7 @@ impl CommandOutput {
 }
 
 /// Build the root command. Downstream CLIs can append their own subcommands.
-pub fn command() -> Command<'static> {
+pub fn command() -> Command {
     Command::new("ga4gh-cli")
         .bin_name("ga4gh-cli")
         .version(env!("CARGO_PKG_VERSION"))

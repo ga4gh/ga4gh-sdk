@@ -12,7 +12,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 /// Build the TES command and its subcommands.
-pub fn command() -> Command<'static> {
+pub fn command() -> Command {
     Command::new("tes")
         .about("TES subcommands")
         .subcommand_required(true)
@@ -65,7 +65,7 @@ pub fn command() -> Command<'static> {
 pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<CommandOutput> {
     if let Some(("create", sub)) = sub.subcommand() {
         let task_file = sub
-            .value_of("TASK_FILE")
+            .get_one::<String>("TASK_FILE")
             .ok_or_else(|| anyhow::anyhow!("TASK_FILE argument is required"))?;
         let path = Path::new(task_file);
         if !path.exists() {
@@ -100,17 +100,17 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     }
 
     if let Some(("list", sub)) = sub.subcommand() {
-        let name_prefix = sub.value_of("name_prefix").map(|s| s.to_string());
+        let name_prefix = sub.get_one::<String>("name_prefix").cloned();
         let state = sub
-            .value_of("state")
+            .get_one::<String>("state")
             .map(|s| serde_json::from_str(s).expect("Invalid state"));
-        let _tag_key = sub.value_of("tag_key").map(|s| s.to_string());
-        let _tag_value = sub.value_of("tag_value").map(|s| s.to_string());
+        let _tag_key = sub.get_one::<String>("tag_key").cloned();
+        let _tag_value = sub.get_one::<String>("tag_value").cloned();
         let page_size = sub
-            .value_of("page_size")
+            .get_one::<String>("page_size")
             .map(|s| s.parse().expect("Invalid page_size"));
-        let page_token = sub.value_of("page_token").map(|s| s.to_string());
-        let view = sub.value_of("view").map(|s| s.to_string());
+        let page_token = sub.get_one::<String>("page_token").cloned();
+        let view = sub.get_one::<String>("view").cloned();
 
         let parameters = ListTasksParams {
             name_prefix,
@@ -148,8 +148,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     }
 
     if let Some(("get", sub)) = sub.subcommand() {
-        let id = sub.value_of("id").unwrap();
-        let view = sub.value_of("view").unwrap();
+        let id = sub.get_one::<String>("id").unwrap();
+        let view = sub.get_one::<String>("view").unwrap();
 
         match TES::new(config).await {
             Ok(tes) => {
@@ -164,7 +164,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     }
 
     if let Some(("status", sub)) = sub.subcommand() {
-        let id = sub.value_of("id").unwrap().to_string();
+        let id = sub.get_one::<String>("id").unwrap().to_string();
         let transport = Transport::new(config);
         let task = Task::new(id.clone(), transport);
         match task.status().await {
@@ -181,7 +181,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     }
 
     if let Some(("cancel", sub)) = sub.subcommand() {
-        let id = sub.value_of("id").unwrap().to_string();
+        let id = sub.get_one::<String>("id").unwrap().to_string();
         let transport = Transport::new(config);
         let task = Task::new(id, transport);
         match task.cancel().await {

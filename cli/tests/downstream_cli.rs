@@ -16,7 +16,7 @@ async fn downstream_command_can_be_parsed_and_dispatched() {
     // The SDK CLI leaves commands it does not own to the downstream caller.
     assert!(dispatch(&matches).await.unwrap().is_none());
     let output = match matches.subcommand() {
-        Some(("custom", args)) => args.value_of("value").unwrap().to_owned(),
+        Some(("custom", args)) => args.get_one::<String>("value").unwrap().to_owned(),
         _ => panic!("custom command was not dispatched"),
     };
     assert_eq!(output, "hello");
@@ -61,4 +61,35 @@ async fn unreadable_task_file_reports_read_error() {
         .err()
         .expect("reading a directory should fail");
     assert!(error.to_string().contains("Failed to read file:"));
+}
+
+#[test]
+fn tes_list_options_keep_their_names_after_clap_upgrade() {
+    let matches = command()
+        .try_get_matches_from([
+            "ga4gh-cli",
+            "tes",
+            "list",
+            "--name_prefix",
+            "sample",
+            "--state",
+            "QUEUED",
+            "--page_size",
+            "5",
+        ])
+        .unwrap();
+    let (_, tes) = matches.subcommand().unwrap();
+    let (_, list) = tes.subcommand().unwrap();
+    assert_eq!(
+        list.get_one::<String>("name_prefix").map(String::as_str),
+        Some("sample")
+    );
+    assert_eq!(
+        list.get_one::<String>("state").map(String::as_str),
+        Some("QUEUED")
+    );
+    assert_eq!(
+        list.get_one::<String>("page_size").map(String::as_str),
+        Some("5")
+    );
 }
