@@ -1,0 +1,95 @@
+Hand edits of the WES 1.1.0 models, applied by utils/build_models.sh.
+
+The generator merges the `anyOf` items of `RunListResponse.runs` and
+`RunLog.task_logs` into one struct that has the required fields of both
+variants. These edits make the fields optional that only one variant has
+(`tags`; `name` and `id`), so that `RunStatus` and `Log` items parse. They
+also read the nullable `task_logs` as a plain `Option`, which needs no
+`serde_with` dependency.
+
+--- a/models/run_list_response_runs_inner.rs
++++ b/models/run_list_response_runs_inner.rs
+@@ -26,18 +26,19 @@
+     #[serde(rename = "end_time", skip_serializing_if = "Option::is_none")]
+     pub end_time: Option<String>,
+     /// Arbitrary key/value tags added by the client during run creation
+-    #[serde(rename = "tags")]
+-    pub tags: std::collections::HashMap<String, String>,
++    /// Optional here: `RunStatus` items, which the spec also allows, have no tags.
++    #[serde(rename = "tags", skip_serializing_if = "Option::is_none")]
++    pub tags: Option<std::collections::HashMap<String, String>>,
+ }
+ 
+ impl RunListResponseRunsInner {
+-    pub fn new(run_id: String, tags: std::collections::HashMap<String, String>) -> RunListResponseRunsInner {
++    pub fn new(run_id: String) -> RunListResponseRunsInner {
+         RunListResponseRunsInner {
+             run_id,
+             state: None,
+             start_time: None,
+             end_time: None,
+-            tags,
++            tags: None,
+         }
+     }
+ }
+--- a/models/run_log.rs
++++ b/models/run_log.rs
+@@ -28,8 +28,9 @@
+     #[serde(rename = "task_logs_url", skip_serializing_if = "Option::is_none")]
+     pub task_logs_url: Option<String>,
+     /// The logs, and other key info like timing and exit code, for each step in the workflow run. This field is deprecated and the `task_logs_url` should be used to retrieve a paginated list of steps from the workflow run. This field will be removed in the next major version of the  specification (2.0.0)
+-    #[serde(rename = "task_logs", default, with = "::serde_with::rust::double_option", skip_serializing_if = "Option::is_none")]
+-    pub task_logs: Option<Option<Vec<models::RunLogTaskLogsInner>>>,
++    /// `null` and a missing field both read as `None`.
++    #[serde(rename = "task_logs", skip_serializing_if = "Option::is_none")]
++    pub task_logs: Option<Vec<models::RunLogTaskLogsInner>>,
+     /// The outputs from the workflow run.
+     #[serde(rename = "outputs", skip_serializing_if = "Option::is_none")]
+     pub outputs: Option<serde_json::Value>,
+--- a/models/run_log_task_logs_inner.rs
++++ b/models/run_log_task_logs_inner.rs
+@@ -16,8 +16,9 @@
+ #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct RunLogTaskLogsInner {
+     /// The task or workflow name
+-    #[serde(rename = "name")]
+-    pub name: String,
++    /// Optional here: `Log` items, which the spec also allows, may omit it.
++    #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
++    pub name: Option<String>,
+     /// The command line that was executed
+     #[serde(rename = "cmd", skip_serializing_if = "Option::is_none")]
+     pub cmd: Option<Vec<String>>,
+@@ -40,17 +41,18 @@
+     #[serde(rename = "system_logs", skip_serializing_if = "Option::is_none")]
+     pub system_logs: Option<Vec<String>>,
+     /// A unique identifier which may be used to reference the task
+-    #[serde(rename = "id")]
+-    pub id: String,
++    /// Optional here: `Log` items, which the spec also allows, have no ID.
++    #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
++    pub id: Option<String>,
+     /// An optional URL pointing to an extended task definition defined by a [TES api](https://github.com/ga4gh/task-execution-schemas)
+     #[serde(rename = "tes_uri", skip_serializing_if = "Option::is_none")]
+     pub tes_uri: Option<String>,
+ }
+ 
+ impl RunLogTaskLogsInner {
+-    pub fn new(name: String, id: String) -> RunLogTaskLogsInner {
++    pub fn new() -> RunLogTaskLogsInner {
+         RunLogTaskLogsInner {
+-            name,
++            name: None,
+             cmd: None,
+             start_time: None,
+             end_time: None,
+@@ -58,7 +60,7 @@
+             stderr: None,
+             exit_code: None,
+             system_logs: None,
+-            id,
++            id: None,
+             tes_uri: None,
+         }
+     }
