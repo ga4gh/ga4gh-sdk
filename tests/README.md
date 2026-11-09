@@ -15,7 +15,8 @@ bash run-integration-tests.sh
 
 The script starts Funnel if it does not find a running `funnel server run`
 process, waits for `/healthz`, then runs the `integration_tests` feature suite.
-It does not stop a Funnel process that it starts.
+It waits up to 60 seconds by default; set `FUNNEL_STARTUP_TIMEOUT_SECONDS`
+to change the limit. It does not stop a Funnel process that it starts.
 
 ## Starter Kit WES
 

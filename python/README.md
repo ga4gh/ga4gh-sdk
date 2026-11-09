@@ -6,7 +6,7 @@ from `python/` with the virtual environment active.
 
 ## Prerequisites
 
-- Python 3.12
+- Python 3.12 or newer
 - [Maturin](https://github.com/PyO3/maturin)
 - [PyTest](https://docs.pytest.org/en/stable/)
 
@@ -16,9 +16,11 @@ from `python/` with the virtual environment active.
 
     ```bash
     cd python
-    python3.12 -m venv .venv
+    python3 -m venv .venv
     . .venv/bin/activate
     ```
+
+    Use a Python 3.12+ executable if `python3` points to an older version.
 
 2. **Install dependencies:**
 

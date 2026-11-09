@@ -14,7 +14,8 @@ different directory is shown.
   hand. See [the generation guide](docs/autogenerate_OAI_models.md) and
   [#85](https://github.com/ga4gh/ga4gh-sdk/issues/85) before changing them;
   #85 tracks repeatable regeneration and preservation of existing adaptations.
-  Running the formatter over generated files is expected.
+  Run `cargo fmt --all` after regeneration so the generated files pass
+  `cargo fmt --all --check`.
 - When changing a public Rust, CLI, or Python API, consider the downstream
   extension use cases in [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78).
 
@@ -31,10 +32,9 @@ cargo test --workspace
 ```
 
 `cargo test --workspace` runs the default unit and documentation tests.
-Integration suites are opt-in. Stable rustfmt also formats the generated models;
-the `ignore` setting in `rustfmt.toml` requires nightly. Some default tests
-start mock HTTP servers on loopback, so the test environment must allow local
-sockets.
+Integration suites are opt-in. Stable rustfmt also formats the generated models.
+Some default tests start mock HTTP servers on loopback, so the test environment
+must allow local sockets.
 
 ## Opt-in integration suites
 
