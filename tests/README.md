@@ -13,8 +13,8 @@ and make sure `curl` is available. The suite uses `localhost:8000`.
 bash run-integration-tests.sh
 ```
 
-The script starts Funnel if it does not find a running `funnel server run`
-process, waits for `/healthz`, then runs the `integration_tests` feature suite.
+The script starts Funnel if its `/healthz` endpoint is not healthy, waits for
+that endpoint, then runs the `integration_tests` feature suite.
 It waits up to 60 seconds by default; set `FUNNEL_STARTUP_TIMEOUT_SECONDS`
 to change the limit. It does not stop a Funnel process that it starts.
 
@@ -34,8 +34,9 @@ the Docker socket. It waits up to 180 seconds for
 and temporary files. On failure it prints server logs. Increase
 `WES_STARTUP_TIMEOUT_SECONDS` or `WES_RUN_TIMEOUT_SECONDS` on slower hosts.
 The [CI workflow](../.github/workflows/ci.yml) runs this suite on an Ubuntu
-runner when relevant WES, shared library, dependency, or integration files
-change. It also runs on manual dispatch.
+runner when WES, shared library, dependency, or integration files change. It
+runs both integration suites on manual dispatch. The `CI passed` job checks
+their results alongside lint, unit tests, and builds.
 
 Starter Kit WES 0.2.0 only accepts a GitHub-shaped Nextflow project URL; its
 `workflow_attachment` argument is disabled. The script places the checked-in
