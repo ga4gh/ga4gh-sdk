@@ -21,12 +21,10 @@ pub struct DrsServiceType {
 
 impl DrsServiceType {
     pub fn new(artifact: Artifact) -> DrsServiceType {
-        DrsServiceType {
-            artifact,
-        }
+        DrsServiceType { artifact }
     }
 }
-/// 
+///
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Artifact {
     #[serde(rename = "drs")]
@@ -38,4 +36,3 @@ impl Default for Artifact {
         Self::Drs
     }
 }
-

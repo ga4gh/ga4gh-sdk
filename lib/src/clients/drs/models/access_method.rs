@@ -71,4 +71,3 @@ impl Default for Type {
         Self::S3
     }
 }
-

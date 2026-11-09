@@ -27,10 +27,6 @@ pub struct ServiceOrganization {
 impl ServiceOrganization {
     /// Organization providing the service
     pub fn new(name: String, url: String) -> ServiceOrganization {
-        ServiceOrganization {
-            name,
-            url,
-        }
+        ServiceOrganization { name, url }
     }
 }
-

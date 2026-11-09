@@ -25,10 +25,6 @@ pub struct AccessMethodAccessUrl {
 
 impl AccessMethodAccessUrl {
     pub fn new(url: String) -> AccessMethodAccessUrl {
-        AccessMethodAccessUrl {
-            url,
-            headers: None,
-        }
+        AccessMethodAccessUrl { url, headers: None }
     }
 }
-
