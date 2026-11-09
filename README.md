@@ -35,15 +35,74 @@ use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
 ## Installation
-TBA
+
+The SDK isn't published to crates.io or PyPI yet; install it from source.
+
+**Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) via
+`rustup` and Git. The repository pins its toolchain in
+[`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs that version
+on the first build.
+
+Install the command-line tool `ga4gh-cli` into `~/.cargo/bin`:
+
+```sh
+git clone https://github.com/ga4gh/ga4gh-sdk.git
+cd ga4gh-sdk
+cargo install --path cli --locked
+ga4gh-cli --help
+```
+
+To use the Rust library in your own project, add it as a Git dependency
+(package `ga4gh-lib`, crate `ga4gh_sdk`):
+
+```toml
+[dependencies]
+ga4gh-lib = { git = "https://github.com/ga4gh/ga4gh-sdk" }
+```
+
+For the Python bindings (built with [maturin](https://www.maturin.rs/)), see
+the [Python README](python/README.md).
+
+## Quick start
+
+Point the CLI at a TES service by writing `~/.ga4gh-cli/config.json`.
+`base_path` is the API root, including the service's path prefix:
+
+```sh
+mkdir -p ~/.ga4gh-cli
+cat > ~/.ga4gh-cli/config.json <<'JSON'
+{
+  "TES": {
+    "base_path": "https://example.org/ga4gh/tes/v1",
+    "basic_auth": null,
+    "oauth_access_token": null
+  }
+}
+JSON
+```
+
+Then submit the example task, follow it and list tasks:
+
+```sh
+ga4gh-cli tes create tests/sample.tes   # prints the task ID
+ga4gh-cli tes status <task-id>
+ga4gh-cli tes list
+```
+
+To try it locally, start [Funnel](https://ohsu-comp-bio.github.io/funnel/)
+with `funnel server run` and use `http://localhost:8000/ga4gh/tes/v1`.
+
+The [usage guide](docs/usage.md) covers the configuration file,
+authentication, all CLI commands, and TES, WES, DRS and service-info from the
+Rust library.
 
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).
 
 To build the project:
-```
-cargo build
+```sh
+cargo build --workspace --locked
 ```
 
 ## Testing
@@ -73,13 +132,13 @@ including breaking changes, may occur at any time without further notice.
 
 This project is a community effort and lives off your contributions, be it in
 the form of bug reports, feature requests, discussions, ideas, fixes, or other
-code changes. Please read [these guidelines][docs-contributing] if you want to
-contribute. And please mind the [code of conduct][docs-coc] for all
+code changes. Please read [these guidelines][contributing] if you want to
+contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
 
 ## License
 
-This project is covered by the [Apache License 2.0](badge-url-license) also
+This project is covered by the [Apache License 2.0][badge-license-url] also
 [shipped with this repository][license].
 
 ## Contact

@@ -52,12 +52,35 @@ After `maturin develop`, run the Python binding tests with:
 pytest
 ```
 
-## Current standalone build limitation
+## Usage
 
-`maturin develop` and `maturin build` currently fail because `ga4gh-lib` does
-not enable `serde`'s derive feature when built on its own. This is tracked in
-[#79](https://github.com/ga4gh/ga4gh-sdk/issues/79). A successful
-`cargo build --workspace` does not establish that a Python wheel builds.
+The module is called `GA4GH` and currently covers TES and service info.
+`Configuration` takes the API root, including the service's path prefix (see
+the [usage guide](../docs/usage.md#api-root-base_path)):
+
+```python
+from GA4GH import Configuration, ServiceInfo, ServiceType, TES
+
+config = Configuration("http://localhost:8000/ga4gh/tes/v1")
+# Or read the TES section of ~/.ga4gh-cli/config.json:
+# config.from_file(ServiceType.TES)
+
+print(ServiceInfo(config).get_service_info())
+
+tes = TES(config)
+task = tes.create("../tests/sample.tes")
+print(task.id, task.status())
+
+for t in tes.list(None).tasks:
+    print(t.id, t.status)
+
+print(tes.get("FULL", task.id).status)
+task.cancel()
+```
+
+`from_file` replaces the API root; without the file it falls back to
+`http://localhost`. `Task.status()` and `Task.cancel()` are methods; `id`
+and `status` on the tasks returned by `list()` and `get()` are attributes.
 
 ## Example 
 
