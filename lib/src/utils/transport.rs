@@ -60,12 +60,12 @@ pub fn urlencode<T: AsRef<str>>(value: T) -> String {
 
 /// An HTTP response whose status is not successful.
 #[derive(Debug)]
-pub struct HttpStatusError {
+pub struct HttpError {
     pub status: reqwest::StatusCode,
     pub body: String,
 }
 
-impl fmt::Display for HttpStatusError {
+impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         const MAX_BODY_CHARS: usize = 300;
         let end = self
@@ -86,7 +86,10 @@ impl fmt::Display for HttpStatusError {
     }
 }
 
-impl Error for HttpStatusError {}
+impl Error for HttpError {}
+
+/// Previous name for [`HttpError`], retained for SDK callers.
+pub use HttpError as HttpStatusError;
 
 async fn read_response_text(response: reqwest::Response) -> std::io::Result<String> {
     response.text().await.map_err(|error| {
@@ -273,10 +276,7 @@ impl Transport {
             }
         }
 
-        let resp = request_builder.send().await.map_err(|e| {
-            eprintln!("HTTP request failed: {}", e);
-            e
-        })?;
+        let resp = request_builder.send().await?;
 
         let status = resp.status();
         let content = read_response_text(resp).await?;
@@ -284,7 +284,7 @@ impl Transport {
         if status.is_success() {
             Ok(content)
         } else {
-            Err(Box::new(HttpStatusError {
+            Err(Box::new(HttpError {
                 status,
                 body: content,
             }))
@@ -346,7 +346,7 @@ impl Transport {
         if status.is_success() {
             Ok(body)
         } else {
-            Err(Box::new(HttpStatusError { status, body }))
+            Err(Box::new(HttpError { status, body }))
         }
     }
 

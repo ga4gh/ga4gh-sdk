@@ -6,10 +6,9 @@ use ga4gh_sdk::clients::tes::models::TesState;
 use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::{Task, TES};
 use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::transport::Transport;
-use log::{debug, error};
+use ga4gh_sdk::utils::transport::{HttpError, Transport};
+use log::debug;
 use std::path::Path;
-use std::process::ExitCode;
 
 /// Build the TES command and its subcommands.
 pub fn command() -> Command {
@@ -58,10 +57,8 @@ pub fn command() -> Command {
 
 /// Execute a parsed TES subcommand using the supplied configuration.
 ///
-/// Output is returned to the caller for writing or reformatting. Input and
-/// service setup errors are returned as `Err`; a missing task file returns a
-/// failure exit code. For compatibility, some TES request failures still return
-/// a successful exit code. Issue #83 will make those failures nonzero.
+/// Output is returned to the caller for writing or reformatting. Input errors
+/// are returned as `Err`; service failures return a failure `CommandOutput`.
 pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<CommandOutput> {
     if let Some(("create", sub)) = sub.subcommand() {
         let task_file = sub
@@ -69,33 +66,23 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             .ok_or_else(|| anyhow::anyhow!("TASK_FILE argument is required"))?;
         let path = Path::new(task_file);
         if !path.exists() {
-            error!("File does not exist: {:?}", path);
-            return Ok(CommandOutput {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: ExitCode::FAILURE,
-            });
+            return Ok(CommandOutput::failure(format!(
+                "File does not exist: {}",
+                path.display()
+            )));
         }
         let task_json = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read file: {e}"))?;
         let testask: TesTask = serde_json::from_str(&task_json)
             .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {e}"))?;
 
-        match TES::new(config).await {
-            Ok(tes) => match tes.create(testask).await {
-                Ok(task) => return Ok(CommandOutput::success(format!("{}\n", task.id))),
-                Err(e) => {
-                    return Ok(CommandOutput {
-                        stdout: String::new(),
-                        stderr: format!("Error creating task: {e}\n"),
-                        exit_code: ExitCode::SUCCESS,
-                    })
-                }
-            },
-            Err(e) => {
-                error!("Error creating TES instance: {:?}", e);
-                return Err(anyhow::anyhow!(e.to_string()));
-            }
+        let tes = match TES::new(config).await {
+            Ok(tes) => tes,
+            Err(error) => return Ok(service_failure(error.as_ref())),
+        };
+        match tes.create(testask).await {
+            Ok(task) => return Ok(CommandOutput::success(format!("{}\n", task.id))),
+            Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
 
@@ -103,12 +90,18 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         let name_prefix = sub.get_one::<String>("name_prefix").cloned();
         let state = sub
             .get_one::<String>("state")
-            .map(|s| serde_json::from_str(s).expect("Invalid state"));
+            .map(|s| parse_state(s))
+            .transpose()?;
         let _tag_key = sub.get_one::<String>("tag_key").cloned();
         let _tag_value = sub.get_one::<String>("tag_value").cloned();
         let page_size = sub
             .get_one::<String>("page_size")
-            .map(|s| s.parse().expect("Invalid page_size"));
+            .map(|value| {
+                value.parse::<i32>().map_err(|_| {
+                    anyhow::anyhow!("Invalid page_size '{value}': expected an integer")
+                })
+            })
+            .transpose()?;
         let page_token = sub.get_one::<String>("page_token").cloned();
         let view = sub.get_one::<String>("view").cloned();
 
@@ -123,78 +116,93 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         };
         debug!("parameters are: {:?}", parameters);
 
-        match TES::new(config).await {
-            Ok(tes) => match tes.list_tasks(Some(parameters)).await {
-                Ok(task_response) => {
-                    return Ok(CommandOutput::success(format!(
-                        "{}\n",
-                        format_tasks_response(&task_response)
-                    )));
-                }
-                Err(e) => {
-                    error!("Error listing tasks: {}", e);
-                    return Ok(CommandOutput {
-                        stdout: String::new(),
-                        stderr: format!("Error listing tasks: {e}\n"),
-                        exit_code: ExitCode::SUCCESS,
-                    });
-                }
-            },
-            Err(e) => {
-                error!("Error creating TES instance: {:?}", e);
-                return Err(anyhow::anyhow!(e.to_string()));
+        let tes = match TES::new(config).await {
+            Ok(tes) => tes,
+            Err(error) => return Ok(service_failure(error.as_ref())),
+        };
+        match tes.list_tasks(Some(parameters)).await {
+            Ok(task_response) => {
+                return Ok(CommandOutput::success(format!(
+                    "{}\n",
+                    format_tasks_response(&task_response)
+                )));
             }
+            Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
 
     if let Some(("get", sub)) = sub.subcommand() {
-        let id = sub.get_one::<String>("id").unwrap();
-        let view = sub.get_one::<String>("view").unwrap();
+        let id = sub
+            .get_one::<String>("id")
+            .ok_or_else(|| anyhow::anyhow!("id argument is required"))?;
+        let view = sub
+            .get_one::<String>("view")
+            .ok_or_else(|| anyhow::anyhow!("view argument is required"))?;
 
-        match TES::new(config).await {
-            Ok(tes) => {
-                let task = tes.get(view, id).await;
-                return Ok(CommandOutput::success(format!("{task:?}\n")));
-            }
-            Err(e) => {
-                error!("Error creating TES instance: {:?}", e);
-                return Err(anyhow::anyhow!(e.to_string()));
-            }
+        let tes = match TES::new(config).await {
+            Ok(tes) => tes,
+            Err(error) => return Ok(service_failure(error.as_ref())),
+        };
+        match tes.get_raw(view, id).await {
+            Ok(task) => return Ok(CommandOutput::success(task)),
+            Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
 
     if let Some(("status", sub)) = sub.subcommand() {
-        let id = sub.get_one::<String>("id").unwrap().to_string();
+        let id = sub
+            .get_one::<String>("id")
+            .ok_or_else(|| anyhow::anyhow!("id argument is required"))?
+            .to_string();
         let transport = Transport::new(config);
         let task = Task::new(id.clone(), transport);
         match task.status().await {
-            Ok(status) => {
-                return Ok(CommandOutput::success(format!(
-                    "TASKID: {id}\nSTATUS: {status:?}\n"
-                )));
-            }
-            Err(e) => {
-                error!("Error creating Task instance: {:?}", e);
-                return Err(anyhow::anyhow!(e.to_string()));
-            }
+            Ok(status) => return Ok(CommandOutput::success(format!("{status}\n"))),
+            Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
 
     if let Some(("cancel", sub)) = sub.subcommand() {
-        let id = sub.get_one::<String>("id").unwrap().to_string();
+        let id = sub
+            .get_one::<String>("id")
+            .ok_or_else(|| anyhow::anyhow!("id argument is required"))?
+            .to_string();
         let transport = Transport::new(config);
         let task = Task::new(id, transport);
         match task.cancel().await {
             Ok(output) => {
                 return Ok(CommandOutput::success(format!("STATUS: {output:?}\n")));
             }
-            Err(e) => {
-                error!("Error creating Task instance: {:?}", e);
-                return Err(anyhow::anyhow!(e.to_string()));
-            }
+            Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
     Ok(CommandOutput::success(String::new()))
+}
+
+fn service_failure(error: &(dyn std::error::Error + 'static)) -> CommandOutput {
+    let message = if error
+        .downcast_ref::<HttpError>()
+        .is_some_and(|http| http.status == 404)
+    {
+        format!("{error}. Check that base_path is the TES API root")
+    } else {
+        error.to_string()
+    };
+    CommandOutput::failure(message)
+}
+
+fn parse_state(value: &str) -> anyhow::Result<TesState> {
+    let trimmed = value.trim();
+    let unquoted = trimmed
+        .strip_prefix('"')
+        .and_then(|state| state.strip_suffix('"'))
+        .unwrap_or(trimmed);
+    let normalized = unquoted.to_ascii_uppercase().replace(' ', "_");
+    serde_json::from_value(serde_json::Value::String(normalized)).map_err(|_| {
+        anyhow::anyhow!(
+            "Invalid state '{value}': expected UNKNOWN, QUEUED, INITIALIZING, RUNNING, PAUSED, COMPLETE, EXECUTOR_ERROR, SYSTEM_ERROR, CANCELED, CANCELING, or PREEMPTED"
+        )
+    })
 }
 
 // Helper functions
@@ -232,4 +240,21 @@ fn format_tasks_response(response: &TesListTasksResponse) -> String {
         table.push_str(&format_task(task));
     }
     table
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_state, tes_state_to_str};
+    use ga4gh_sdk::clients::tes::models::TesState;
+
+    #[test]
+    fn displayed_error_states_can_be_used_as_list_filters() {
+        for state in [TesState::ExecutorError, TesState::SystemError] {
+            assert_eq!(parse_state(tes_state_to_str(&Some(state))).unwrap(), state);
+        }
+        assert!(parse_state("invalid")
+            .unwrap_err()
+            .to_string()
+            .contains("PREEMPTED"));
+    }
 }

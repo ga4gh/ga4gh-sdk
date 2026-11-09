@@ -73,9 +73,7 @@ mkdir -p ~/.ga4gh-cli
 cat > ~/.ga4gh-cli/config.json <<'JSON'
 {
   "TES": {
-    "base_path": "https://example.org/ga4gh/tes/v1",
-    "basic_auth": null,
-    "oauth_access_token": null
+    "base_path": "https://example.org/ga4gh/tes/v1"
   }
 }
 JSON
@@ -90,11 +88,11 @@ ga4gh-cli tes list
 ```
 
 To try it locally, start [Funnel](https://ohsu-comp-bio.github.io/funnel/)
-with `funnel server run` and use `http://localhost:8000/ga4gh/tes/v1`.
+with `funnel server run --Server.HTTPPort=8000` and use `http://localhost:8000/ga4gh/tes/v1`.
 
-The [usage guide](docs/usage.md) covers the configuration file,
-authentication, all CLI commands, and TES, WES, DRS and service-info from the
-Rust library.
+The [CLI README](cli/README.md) describes all CLI commands. The
+[usage guide](docs/usage.md) covers the configuration file, authentication,
+and service info, TES, WES and DRS from the Rust library.
 
 ## Building
 

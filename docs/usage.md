@@ -33,15 +33,19 @@ type, keyed by `TES`, `WES`, `DRS` or `TRS`:
 {
   "TES": {
     "base_path": "https://example.org/ga4gh/tes/v1",
-    "basic_auth": null,
-    "oauth_access_token": null
+    "basic_auth": {"username": "alice", "password": "change-me"},
+    "oauth_access_token": "my-token"
   }
 }
 ```
 
 - `base_path` (string, required): the API root described above.
-- `basic_auth` (object or `null`): `{"username": "…", "password": "…"}`.
-- `oauth_access_token` (string or `null`): an access token.
+- `basic_auth` (object, optional): `username` (string) and an optional
+  `password` (string).
+- `oauth_access_token` (string, optional): an access token.
+
+A missing file or section, or a field of the wrong type, is an error.
+`Configuration::from_path(path, "TES")` reads a section from another file.
 
 The SDK reads `basic_auth` and `oauth_access_token` but **doesn't send them
 yet**: requests carry no `Authorization` header (see
@@ -49,65 +53,16 @@ yet**: requests carry no `Authorization` header (see
 SDK and the CLI work only with services that allow anonymous access, or behind
 a proxy that adds credentials.
 
-Write all three keys in each service object and set the unused ones to
-`null`: the current loader stops with a panic (`no entry found for key`) if
-`basic_auth` or `oauth_access_token` is missing.
-
-If the file doesn't exist, the loader logs a warning and falls back to
-`http://localhost` as the API root.
-
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
 
 ## Command-line tool
 
-The CLI currently has TES commands only. It reads the `TES` section of the
-configuration file.
-
-```console
-$ ga4gh-cli --help
-CLI to manage tasks
-
-Usage: ga4gh-cli <COMMAND>
-
-Commands:
-  tes   TES subcommands
-  help  Print this message or the help of the given subcommand(s)
-
-$ ga4gh-cli tes --help
-Commands:
-  create  Create a task
-  list    list all tasks
-  get     get task data
-  status  get status of the task
-  cancel  cancel the task
-```
-
-Create a task from a TES task document (JSON) and print its ID:
-
-```sh
-ga4gh-cli tes create tests/sample.tes
-```
-
-List tasks, with optional filters and paging (`ga4gh-cli tes list --help`
-shows all options):
-
-```sh
-ga4gh-cli tes list
-ga4gh-cli tes list --name_prefix my- --page_size 10 --view MINIMAL
-```
-
-Show a task (`MINIMAL`, `BASIC` or `FULL` view), its state, or cancel it:
-
-```sh
-ga4gh-cli tes get <task-id> FULL
-ga4gh-cli tes status <task-id>
-ga4gh-cli tes cancel <task-id>
-```
-
-Set `RUST_LOG=debug` to see the requests the CLI makes. Some request failures
-(for example in `create` and `list`) currently print an error but still exit
-with status 0.
+The CLI currently has TES commands only (`create`, `list`, `get`, `status`,
+`cancel`) and reads the `TES` section of the configuration file. The
+[CLI README](../cli/README.md) describes each command, its output and exit
+codes. Set `RUST_LOG=debug` to see the requests the CLI makes. WES, DRS and
+service info are available from the Rust library below.
 
 ## Rust library
 
@@ -228,5 +183,5 @@ println!("{}", access.url);
 ### Errors
 
 Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
-as `ga4gh_sdk::utils::transport::HttpStatusError`, which carries the status
-code; downcast to it to tell, for example, a `404` from a network error.
+as `ga4gh_sdk::utils::transport::HttpError` (formerly `HttpStatusError`, still
+available under that name), which carries the status code and body; downcast to it to tell, for example, a `404` from a network error.

@@ -78,9 +78,12 @@ print(tes.get("FULL", task.id).status)
 task.cancel()
 ```
 
-`from_file` replaces the API root; without the file it falls back to
-`http://localhost`. `Task.status()` and `Task.cancel()` are methods; `id`
+`from_file` replaces the API root. `Task.status()` and `Task.cancel()` are methods; `id`
 and `status` on the tasks returned by `list()` and `get()` are attributes.
+
+`Configuration.from_file()` raises `FileNotFoundError` when the config file is
+missing and `ValueError` when its contents are malformed. Invalid URLs and JSON
+arguments also raise `ValueError`.
 
 ## Example 
 

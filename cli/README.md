@@ -1,10 +1,26 @@
 # GA4GH-CLI
 
-The `ga4gh-cli` is a command line tool that leverages `ga4gh-sdk` library to provide user-frienly interface to work with the GA4GH API services. Currently, it supports GA4GH ServiceInfo and TES APIs with HTTP Basic Authorization or Token-Based Authorization.
+The `ga4gh-cli` is a command line tool that leverages `ga4gh-sdk` library to provide user-frienly interface to work with the GA4GH API services. Currently, it has TES commands only; WES, DRS and service info are available
+from the Rust library (see the [usage guide](../docs/usage.md)).
+
+## Installation
+
+From the repository root:
+
+```sh
+cargo install --path cli --locked
+ga4gh-cli --help
+```
 
 ## Configuration
 
 The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file. 
+
+The file and its `TES` section must exist; the CLI reports an error instead of
+silently using `http://localhost` when either is missing. Only `base_path` is
+required. `basic_auth` may omit `password`, in which case no password is set.
+Present authentication fields must have the documented types; malformed values
+are errors rather than being ignored.
 
 ### Configuration Example
 
@@ -25,7 +41,18 @@ The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file.
 requests `service-info` and `tasks` below this path. Do not include a query
 string or fragment in `base_path`.
 Configs that previously contained only the host must add the deployed TES
-service prefix, such as `/ga4gh/tes/v1` in the example above.
+service prefix, such as `/ga4gh/tes/v1` in the example above. A service
+behind a gateway keeps its whole prefix, for example
+`https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+
+### Authentication
+
+The CLI reads `basic_auth` and `oauth_access_token`, but doesn't send them
+with requests yet (see
+[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). For now, use services
+that allow anonymous access, or a proxy that adds credentials. Keep the file
+private (`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold
+credentials.
 
 ## Usage 
 
@@ -38,17 +65,18 @@ In order to quickly setup a TES server locally, you can use Funnel. Dockerized F
 2. Run Funnel server with the port specifed:
 
 ```sh
-funnel server start --Server.HTTPPort=[available-port]
+funnel server run --Server.HTTPPort=8000
 ```
 
-3. Configure the CLI in `~/.ga4gh-cli/config.json` using example above. Only the `base_path` needed.
+3. Configure the CLI in `~/.ga4gh-cli/config.json` using the example above with `base_path` set to
+`http://localhost:8000/ga4gh/tes/v1`; only `base_path` is needed.
 
 ### CLI Examples
 
-1. To create a new task run the `tes create` command. You can provide task definition json data as text:
+1. To create a new task, save the task definition as JSON in a file:
 
-```sh
-ga4gh-cli tes create '{
+```json
+{
     "name": "Hello world",
     "inputs": [{
         "url": "s3://funnel-bucket/hello.txt",
@@ -63,16 +91,17 @@ ga4gh-cli tes create '{
         "command": ["cat", "/inputs/hello.txt"],
         "stdout": "/outputs/stdout"
     }]
-}'
+}
 ```
 
-Or as a file:
+Then pass the file to the CLI:
 
 ```sh
 ga4gh-cli tes create ./tests/sample.tes
 ```
 
-The command prints the ID of the new task. If the service doesn't accept the task, it prints the error to stderr, and the exit code stays 0.
+The command prints only the new task ID. If the service rejects it, the CLI
+prints the HTTP status and server message to stderr and exits with code 1.
 
 2. To retrieve the list of tasks run `tes list` command:
 
@@ -99,6 +128,8 @@ ga4gh-cli tes get [TASK-ID] [VIEW]
 ```
 
 Possible `VIEW` option values: `BASIC`, `FULL`.
+The command prints the server's JSON unchanged, including fields unknown to
+the current SDK models.
 
 4. To retrieve the task status run the `tes status` command:
 
@@ -106,11 +137,16 @@ Possible `VIEW` option values: `BASIC`, `FULL`.
 ga4gh-cli tes status [TASK-ID]      
 ```
 
+The command prints the TES state, such as `QUEUED`.
+
 5. To cancel the task run the `tes cancel` command:
 
 ```sh
 ga4gh-cli tes cancel [TASK-ID]      
 ```
+
+All five TES commands exit with code 0 on success and code 1 on request or
+server errors. Missing commands or arguments use Clap's exit code 2.
 
 ## Extending the CLI in Rust
 
