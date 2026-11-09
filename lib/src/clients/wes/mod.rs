@@ -16,13 +16,17 @@ use serde_json::json;
 
 /// URL-encodes a string.
 pub fn urlencode<T: AsRef<str>>(s: T) -> String {
-    s.as_ref().as_bytes().iter().map(|byte| {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            (*byte as char).to_string()
-        } else {
-            format!("%{byte:02X}")
-        }
-    }).collect()
+    s.as_ref()
+        .as_bytes()
+        .iter()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+                (*byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
 }
 
 // Configuration.base_path is the WES API root, with or without a trailing slash.
@@ -58,7 +62,10 @@ impl Run {
     /// Fetches the current status of the run.
     pub async fn status(&self) -> Result<WesState, Box<dyn std::error::Error>> {
         let run_id = &self.id;
-        let url = endpoint(&self.transport.config, &format!("runs/{}/status", urlencode(run_id)))?;
+        let url = endpoint(
+            &self.transport.config,
+            &format!("runs/{}/status", urlencode(run_id)),
+        )?;
         let response = self.transport.get(&url, None).await;
         match response {
             Ok(resp_str) => {
@@ -135,7 +142,8 @@ impl WES {
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             transport.get(&service_info_url, None),
-        ).await??;
+        )
+        .await??;
         let service: Service = from_str(&response)?;
 
         let instance = WES {
@@ -162,7 +170,8 @@ impl WES {
         &self,
         request: WesRunRequest,
     ) -> Result<Run, Box<dyn std::error::Error>> {
-        self.run_workflow_with_attachments(request, Vec::new()).await
+        self.run_workflow_with_attachments(request, Vec::new())
+            .await
     }
 
     /// Creates a workflow run with optional uploaded workflow files.
@@ -176,12 +185,20 @@ impl WES {
             e
         })?;
 
-        let workflow_type = request.workflow_type.filter(|s| !s.is_empty())
+        let workflow_type = request
+            .workflow_type
+            .filter(|s| !s.is_empty())
             .ok_or("workflow_type is required")?;
-        let workflow_type_version = request.workflow_type_version.filter(|s| !s.is_empty())
+        let workflow_type_version = request
+            .workflow_type_version
+            .filter(|s| !s.is_empty())
             .ok_or("workflow_type_version is required")?;
-        let workflow_params = request.workflow_params.ok_or("workflow_params is required")?;
-        let workflow_url = request.workflow_url.filter(|s| !s.is_empty())
+        let workflow_params = request
+            .workflow_params
+            .ok_or("workflow_params is required")?;
+        let workflow_url = request
+            .workflow_url
+            .filter(|s| !s.is_empty())
             .ok_or("workflow_url is required")?;
 
         let mut form = Form::new()
@@ -203,11 +220,24 @@ impl WES {
         }
         for attachment in attachments {
             if attachment.filename.is_empty()
-                || attachment.filename.split('/').any(|segment| segment == "..")
-                || attachment.filename.split('\\').any(|segment| segment == "..") {
-                return Err("workflow attachment filename must not be empty or contain '..' segments".into());
+                || attachment
+                    .filename
+                    .split('/')
+                    .any(|segment| segment == "..")
+                || attachment
+                    .filename
+                    .split('\\')
+                    .any(|segment| segment == "..")
+            {
+                return Err(
+                    "workflow attachment filename must not be empty or contain '..' segments"
+                        .into(),
+                );
             }
-            form = form.part("workflow_attachment", Part::bytes(attachment.content).file_name(attachment.filename));
+            form = form.part(
+                "workflow_attachment",
+                Part::bytes(attachment.content).file_name(attachment.filename),
+            );
         }
 
         let url = endpoint(&self.transport.config, "runs")?;
@@ -216,7 +246,9 @@ impl WES {
         match response {
             Ok(response_body) => {
                 let v: WesRunId = serde_json::from_str(&response_body)?;
-                let run_id = v.run_id.filter(|id| !id.is_empty())
+                let run_id = v
+                    .run_id
+                    .filter(|id| !id.is_empty())
                     .ok_or("WES response is missing run_id")?;
 
                 let run = Run {
@@ -295,8 +327,8 @@ impl WES {
 mod tests {
     use super::*;
     use crate::clients::serviceinfo::models::ServiceType;
-    use mockito::{mock, Matcher};
     use mockito::server_url;
+    use mockito::{mock, Matcher};
     use url::Url;
 
     #[test]
@@ -338,16 +370,22 @@ mod tests {
     async fn test_wes_uses_configured_api_prefix() {
         let _service_info = mock("GET", "/ga4gh/wes/v1/service-info")
             .with_status(200)
-            .with_body(serde_json::json!({
-                "id": "org.example.wes",
-                "name": "Example WES",
-                "type": { "group": "org.ga4gh", "artifact": "wes", "version": "1.1.0" },
-                "organization": { "name": "Example", "url": "https://example.org" },
-                "version": "1.0.0"
-            }).to_string())
+            .with_body(
+                serde_json::json!({
+                    "id": "org.example.wes",
+                    "name": "Example WES",
+                    "type": { "group": "org.ga4gh", "artifact": "wes", "version": "1.1.0" },
+                    "organization": { "name": "Example", "url": "https://example.org" },
+                    "version": "1.0.0"
+                })
+                .to_string(),
+            )
             .create();
         let _create = mock("POST", "/ga4gh/wes/v1/runs")
-            .match_header("content-type", Matcher::Regex("^multipart/form-data; boundary=".to_string()))
+            .match_header(
+                "content-type",
+                Matcher::Regex("^multipart/form-data; boundary=".to_string()),
+            )
             .with_status(200)
             .with_body(r#"{"run_id":"abc"}"#)
             .create();
@@ -365,7 +403,10 @@ mod tests {
     #[tokio::test]
     async fn test_wes_create() {
         let _m = mock("POST", "/runs")
-            .match_header("content-type", Matcher::Regex("^multipart/form-data; boundary=".to_string()))
+            .match_header(
+                "content-type",
+                Matcher::Regex("^multipart/form-data; boundary=".to_string()),
+            )
             .match_body(Matcher::AllOf(vec![
                 Matcher::Regex("name=\"workflow_type\"[\\s\\S]*CWL".to_string()),
                 Matcher::Regex("name=\"workflow_type_version\"[\\s\\S]*v1.2".to_string()),
@@ -399,12 +440,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_rejects_missing_run_id() {
-        let _m = mock("POST", "/runs").with_status(200).with_body("{}").create();
+        let _m = mock("POST", "/runs")
+            .with_status(200)
+            .with_body("{}")
+            .create();
         let config = Configuration::new(Url::parse(&server_url()).unwrap());
         let wes = WES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service { r#type: Box::new(ServiceType { artifact: "wes".to_string(), ..Default::default() }), ..Service::default() }),
+            service: Ok(Service {
+                r#type: Box::new(ServiceType {
+                    artifact: "wes".to_string(),
+                    ..Default::default()
+                }),
+                ..Service::default()
+            }),
         };
         assert!(wes.run_workflow(valid_request()).await.is_err());
     }
@@ -412,7 +462,10 @@ mod tests {
     #[tokio::test]
     async fn test_wes_uploads_workflow_attachment() {
         let _m = mock("POST", "/runs")
-            .match_body(Matcher::Regex("name=\"workflow_attachment\"; filename=\"workflow.cwl\"[\\s\\S]*cwlVersion".to_string()))
+            .match_body(Matcher::Regex(
+                "name=\"workflow_attachment\"; filename=\"workflow.cwl\"[\\s\\S]*cwlVersion"
+                    .to_string(),
+            ))
             .with_status(200)
             .with_body(r#"{"run_id":"uploaded"}"#)
             .create();
@@ -420,7 +473,13 @@ mod tests {
         let wes = WES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service { r#type: Box::new(ServiceType { artifact: "wes".to_string(), ..Default::default() }), ..Service::default() }),
+            service: Ok(Service {
+                r#type: Box::new(ServiceType {
+                    artifact: "wes".to_string(),
+                    ..Default::default()
+                }),
+                ..Service::default()
+            }),
         };
         let request = WesRunRequest {
             workflow_params: Some(json!({})),
@@ -429,8 +488,17 @@ mod tests {
             workflow_url: Some("workflow.cwl".to_string()),
             ..Default::default()
         };
-        let attachments = vec![WorkflowAttachment { filename: "workflow.cwl".to_string(), content: b"cwlVersion: v1.2".to_vec() }];
-        assert_eq!(wes.run_workflow_with_attachments(request, attachments).await.unwrap().id, "uploaded");
+        let attachments = vec![WorkflowAttachment {
+            filename: "workflow.cwl".to_string(),
+            content: b"cwlVersion: v1.2".to_vec(),
+        }];
+        assert_eq!(
+            wes.run_workflow_with_attachments(request, attachments)
+                .await
+                .unwrap()
+                .id,
+            "uploaded"
+        );
     }
 
     #[tokio::test]
@@ -464,10 +532,16 @@ mod tests {
             .with_body(r#"{"run_id":"a/b ?#"}"#)
             .create();
         let base = Url::parse(&format!("{}/ga4gh/wes/v1/", server_url())).unwrap();
-        let run = Run::new("a/b ?#".to_string(), Transport::new(&Configuration::new(base)));
+        let run = Run::new(
+            "a/b ?#".to_string(),
+            Transport::new(&Configuration::new(base)),
+        );
         assert_eq!(run.status().await.unwrap(), WesState::Complete);
         assert_eq!(run.log().await.unwrap().run_id.as_deref(), Some("a/b ?#"));
-        assert_eq!(run.cancel().await.unwrap().run_id.as_deref(), Some("a/b ?#"));
+        assert_eq!(
+            run.cancel().await.unwrap().run_id.as_deref(),
+            Some("a/b ?#")
+        );
     }
 
     #[tokio::test]
@@ -547,9 +621,17 @@ mod tests {
             .with_status(200)
             .with_body(r#"{"runs":[]}"#)
             .create();
-        let config = Configuration::new(Url::parse(&format!("{}/ga4gh/wes/v1/", server_url())).unwrap());
-        let wes = WES { transport: Transport::new(&config), config, service: Ok(Service::default()) };
-        assert!(wes.list_runs(Some("a+b&c".to_string()), Some(5)).await.is_ok());
+        let config =
+            Configuration::new(Url::parse(&format!("{}/ga4gh/wes/v1/", server_url())).unwrap());
+        let wes = WES {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service::default()),
+        };
+        assert!(wes
+            .list_runs(Some("a+b&c".to_string()), Some(5))
+            .await
+            .is_ok());
     }
 
     #[tokio::test]

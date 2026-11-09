@@ -51,7 +51,13 @@ pub struct Service {
 
 impl Service {
     /// GA4GH service
-    pub fn new(id: String, name: String, r#type: models::ServiceType, organization: models::ServiceOrganization, version: String) -> Service {
+    pub fn new(
+        id: String,
+        name: String,
+        r#type: models::ServiceType,
+        organization: models::ServiceOrganization,
+        version: String,
+    ) -> Service {
         Service {
             id,
             name,
@@ -67,4 +73,3 @@ impl Service {
         }
     }
 }
-

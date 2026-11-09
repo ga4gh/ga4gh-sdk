@@ -18,9 +18,15 @@ pub struct GetBulkAccessUrl200Response {
     #[serde(rename = "summary", skip_serializing_if = "Option::is_none")]
     pub summary: Option<Box<models::Summary>>,
     /// Error codes for each unresolved drs objects.
-    #[serde(rename = "unresolved_drs_objects", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "unresolved_drs_objects",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub unresolved_drs_objects: Option<Vec<models::UnresolvedInner>>,
-    #[serde(rename = "resolved_drs_object_access_urls", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "resolved_drs_object_access_urls",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub resolved_drs_object_access_urls: Option<Vec<models::BulkAccessUrl>>,
 }
 
@@ -33,4 +39,3 @@ impl GetBulkAccessUrl200Response {
         }
     }
 }
-

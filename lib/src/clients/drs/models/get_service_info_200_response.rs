@@ -52,7 +52,14 @@ pub struct GetServiceInfo200Response {
 }
 
 impl GetServiceInfo200Response {
-    pub fn new(id: String, name: String, r#type: models::DrsServiceType, organization: models::ServiceOrganization, version: String, max_bulk_request_length: i32) -> GetServiceInfo200Response {
+    pub fn new(
+        id: String,
+        name: String,
+        r#type: models::DrsServiceType,
+        organization: models::ServiceOrganization,
+        version: String,
+        max_bulk_request_length: i32,
+    ) -> GetServiceInfo200Response {
         GetServiceInfo200Response {
             id,
             name,
@@ -69,4 +76,3 @@ impl GetServiceInfo200Response {
         }
     }
 }
-

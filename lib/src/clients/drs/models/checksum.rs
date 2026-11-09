@@ -25,10 +25,6 @@ pub struct Checksum {
 
 impl Checksum {
     pub fn new(checksum: String, r#type: String) -> Checksum {
-        Checksum {
-            checksum,
-            r#type,
-        }
+        Checksum { checksum, r#type }
     }
 }
-

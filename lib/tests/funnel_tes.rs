@@ -1,12 +1,12 @@
 #[cfg(feature = "integration_tests")]
 #[cfg(test)]
 mod tests {
-    use ga4gh_sdk::utils::configuration::Configuration;
-    use ga4gh_sdk::clients::tes::models::TesTask;
     use ga4gh_sdk::clients::tes::models::ListTasksParams;
-    use ga4gh_sdk::clients::tes::Task;
     use ga4gh_sdk::clients::tes::models::TesState;
+    use ga4gh_sdk::clients::tes::models::TesTask;
+    use ga4gh_sdk::clients::tes::Task;
     use ga4gh_sdk::clients::tes::TES;
+    use ga4gh_sdk::utils::configuration::Configuration;
     use ga4gh_sdk::utils::test_utils::{ensure_funnel_running, setup};
 
     async fn create_task() -> Result<(Task, TES), Box<dyn std::error::Error>> {
@@ -26,8 +26,12 @@ mod tests {
         let task_json = match std::fs::read_to_string(&file_path) {
             Ok(content) => content,
             Err(e) => {
-                let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("unknown directory"));
-                panic!("Unable to read file in directory {:?}: {:?}", current_dir, e);
+                let current_dir = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("unknown directory"));
+                panic!(
+                    "Unable to read file in directory {:?}: {:?}",
+                    current_dir, e
+                );
             }
         };
         let task: TesTask = serde_json::from_str(&task_json).expect("JSON was not well-formatted");
@@ -54,7 +58,10 @@ mod tests {
         match status {
             Ok(state) => {
                 assert!(
-                    matches!(state, TesState::Initializing | TesState::Queued | TesState::Running),
+                    matches!(
+                        state,
+                        TesState::Initializing | TesState::Queued | TesState::Running
+                    ),
                     "Unexpected state: {:?}",
                     state
                 );
