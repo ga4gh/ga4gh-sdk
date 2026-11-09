@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
     let cmd = Command::new("ga4gh-cli")
-        .bin_name("cli")
+        .bin_name("ga4gh-cli")
         .version("0.1.0")
         .about("CLI to manage tasks")
         .subcommand_required(true)
