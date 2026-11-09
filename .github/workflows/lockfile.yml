@@ -1,0 +1,15 @@
+name: Lockfile
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  locked:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check dependency lockfile
+        run: cargo metadata --format-version 1 --locked > /dev/null

@@ -18,5 +18,5 @@ done
 echo "Funnel server is running."
 
 # Run the tests
-RUST_BACKTRACE=1 RUST_LOG=debug cargo test --features integration_tests
+RUST_BACKTRACE=1 RUST_LOG=debug cargo test --locked --features integration_tests
 
