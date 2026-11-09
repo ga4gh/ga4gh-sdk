@@ -87,20 +87,20 @@
 /// # }
 /// ```
 pub mod models;
-use crate::utils::configuration::Configuration;
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::ServiceInfo;
+use crate::clients::tes::models::ListTasksParams;
 use crate::clients::tes::models::TesListTasksResponse;
 use crate::clients::tes::models::TesState;
 use crate::clients::tes::models::TesTask;
+use crate::utils::configuration::Configuration;
 use crate::utils::transport::Transport;
-use crate::clients::tes::models::ListTasksParams;
+use log::{debug, error};
+use serde::Serialize;
 use serde_json;
 use serde_json::from_str;
 use serde_json::json;
-use serde::Serialize;
 use serde_json::Value;
-use log::{debug, error};
 
 /// Serializes any serializable item into a JSON `Value`.
 ///
@@ -166,7 +166,10 @@ impl Task {
             Err(e) => {
                 let err_msg = format!("HTTP request failed: {}", e);
                 eprintln!("{}", err_msg);
-                Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg)))
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err_msg,
+                )))
             }
         }
     }
@@ -182,15 +185,15 @@ impl Task {
         let url = format!("/tasks/{}:cancel", id);
         let response = self.transport.post(&url, None).await;
         match response {
-	    Ok(resp_str) => {
-	        let parsed_json = serde_json::from_str::<serde_json::Value>(&resp_str);
-	        match parsed_json {
-	            Ok(json) => Ok(json),
-	            Err(e) => Err(format!("Failed to parse JSON: {}", e).into()),
-	        }
-	    }
-	    Err(e) => Err(format!("HTTP request failed: {}", e).into()),
-	}
+            Ok(resp_str) => {
+                let parsed_json = serde_json::from_str::<serde_json::Value>(&resp_str);
+                match parsed_json {
+                    Ok(json) => Ok(json),
+                    Err(e) => Err(format!("Failed to parse JSON: {}", e).into()),
+                }
+            }
+            Err(e) => Err(format!("HTTP request failed: {}", e).into()),
+        }
     }
 }
 
@@ -328,7 +331,7 @@ impl TES {
         } else {
             self.transport.get("/tasks", None).await
         };
-        
+
         match response {
             Ok(resp_str) => {
                 let task: TesListTasksResponse = from_str(&resp_str)?;
@@ -375,9 +378,9 @@ mod tests {
             .create();
 
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
-        let config= Configuration::new(mock_url);
+        let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
-        
+
         let tes = TES {
             config,
             service: Ok(Service {
@@ -436,7 +439,7 @@ mod tests {
             .create();
 
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
-        let config= Configuration::new(mock_url);
+        let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let tes = TES {
             config,
@@ -457,7 +460,7 @@ mod tests {
             .create();
 
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
-        let config= Configuration::new(mock_url);
+        let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let tes = TES {
             config,

@@ -35,8 +35,8 @@
 /// ```
 use crate::utils::configuration::Configuration;
 use log::error;
-use reqwest::Client;
 use reqwest::multipart::Form;
+use reqwest::Client;
 use serde_json::Value;
 use std::error::Error;
 use std::fmt;
@@ -57,7 +57,6 @@ impl fmt::Debug for Transport {
 }
 
 impl Transport {
-
     /// Creates a new `Transport` instance with the given configuration.
     ///
     /// # Arguments
@@ -95,14 +94,21 @@ impl Transport {
     ) -> Result<String, Box<dyn Error>> {
         let base_url = &self.config.base_path;
         let url = base_url.join(endpoint).map_err(|e| {
-            error!("Invalid endpoint (shouldn't contain base url): {}. Error: {}", endpoint, e);
-            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid endpoint")) as Box<dyn std::error::Error>
+            error!(
+                "Invalid endpoint (shouldn't contain base url): {}. Error: {}",
+                endpoint, e
+            );
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Invalid endpoint",
+            )) as Box<dyn std::error::Error>
         })?;
 
         let mut request_builder = self.client.request(method, url);
 
         if let Some(ref user_agent) = self.config.user_agent {
-            request_builder = request_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+            request_builder =
+                request_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
         }
 
         if let Some(ref params_value) = params {
@@ -110,8 +116,14 @@ impl Transport {
             if params_value.is_object() {
                 request_builder = request_builder.query(params_value);
             } else {
-                error!("params_value is not an object and cannot be used as query parameters: {:?}", params_value);
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidInput, "params_value must be an object")));
+                error!(
+                    "params_value is not an object and cannot be used as query parameters: {:?}",
+                    params_value
+                );
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "params_value must be an object",
+                )));
             }
         }
 
@@ -124,13 +136,16 @@ impl Transport {
         }
 
         let resp = request_builder.send().await.map_err(|e| {
-	            eprintln!("HTTP request failed: {}", e);
-	            e
-	        })?;
+            eprintln!("HTTP request failed: {}", e);
+            e
+        })?;
 
         let status = resp.status();
         let content = resp.text().await.map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Failed to read response text: {}", e))
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to read response text: {}", e),
+            )
         })?;
 
         if status.is_success() {
@@ -138,7 +153,10 @@ impl Transport {
         } else {
             Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Request failed with status: {}. Response: {}", status, content),
+                format!(
+                    "Request failed with status: {}. Response: {}",
+                    status, content
+                ),
             )))
         }
     }
@@ -201,7 +219,7 @@ impl Transport {
             Err(format!("Request failed with status: {}. Response: {}", status, body).into())
         }
     }
-    
+
     /// Sends a PUT request to the specified endpoint with the given data.
     ///
     /// # Arguments
@@ -256,7 +274,7 @@ mod tests {
     async fn test_request() {
         let base_url_str = mockito::server_url();
         let base_url = Url::parse(&base_url_str).expect("Failed to parse mock server URL");
-        
+
         let _m = mock("GET", "/test")
             .with_status(200)
             .with_header("content-type", "application/json")

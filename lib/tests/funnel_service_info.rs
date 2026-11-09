@@ -1,8 +1,8 @@
 #[cfg(feature = "integration_tests")]
 #[cfg(test)]
 mod tests {
-    use ga4gh_sdk::utils::configuration::Configuration;
     use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
+    use ga4gh_sdk::utils::configuration::Configuration;
     use ga4gh_sdk::utils::test_utils::{ensure_funnel_running, setup};
 
     #[tokio::test]
@@ -20,7 +20,10 @@ mod tests {
                 println!("Service Info: {:?}", service);
             }
             Err(e) => {
-                log::error!("ServiceInfo error in 'lib/src/serviceinfo/mod.rs' during operation: {}", e);
+                log::error!(
+                    "ServiceInfo error in 'lib/src/serviceinfo/mod.rs' during operation: {}",
+                    e
+                );
             }
         }
     }

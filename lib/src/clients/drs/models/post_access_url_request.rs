@@ -22,9 +22,6 @@ pub struct PostAccessUrlRequest {
 
 impl PostAccessUrlRequest {
     pub fn new() -> PostAccessUrlRequest {
-        PostAccessUrlRequest {
-            passports: None,
-        }
+        PostAccessUrlRequest { passports: None }
     }
 }
-

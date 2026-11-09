@@ -1,4 +1,5 @@
 #![allow(non_snake_case)] // allow the Python module to be named as GA4GH instead of ga4gh; should be the first line.
+use ga4gh_sdk::clients::ServiceType;
 /// This module provides Python bindings for the GA4GH SDK using PyO3.
 /// It exposes several key structs and their methods to Python, allowing for interaction with GA4GH services.
 ///
@@ -46,16 +47,14 @@
 /// - The `Runtime::new().unwrap()` calls are used to create a Tokio runtime for asynchronous operations.
 /// - Error handling is done using `PyResult` and `pyo3::exceptions::PyRuntimeError`.
 /// - The `#[pymodule]` attribute is used to define the Python module initialization function.
-
 use pyo3::prelude::*;
-use ga4gh_sdk::clients::ServiceType;
 
 pub mod clients;
 pub mod utils;
 use crate::clients::serviceinfo::PyServiceInfo;
-use crate::clients::tes::{PyTask, PyTesTask, PyTES};
+use crate::clients::tes::{PyTES, PyTask, PyTesTask};
 use crate::utils::configuration::PyConfiguration;
-use crate::utils::transport::PyTransport; 
+use crate::utils::transport::PyTransport;
 
 #[pyclass(name = "ServiceType", module = "GA4GH", eq, eq_int)]
 #[derive(Clone, PartialEq, Eq)]

@@ -25,10 +25,6 @@ pub struct AccessUrl {
 
 impl AccessUrl {
     pub fn new(url: String) -> AccessUrl {
-        AccessUrl {
-            url,
-            headers: None,
-        }
+        AccessUrl { url, headers: None }
     }
 }
-
