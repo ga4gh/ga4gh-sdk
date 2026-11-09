@@ -20,6 +20,43 @@ To build the project:
 cargo build
 ```
 
+## TRS client
+
+The library includes a client for the
+[GA4GH Tool Registry Service (TRS) API 2.0.1][trs], for registries such as
+[WorkflowHub][workflowhub] or [Dockstore][dockstore]. Set
+`Configuration.base_path` to the TRS API root, including its path prefix,
+with or without a trailing slash, e.g. `https://workflowhub.eu/ga4gh/trs/v2`
+or `https://dockstore.org/api/ga4gh/trs/v2`.
+
+```rust
+use ga4gh_sdk::clients::trs::models::DescriptorTypeWithPlain;
+use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
+use ga4gh_sdk::utils::configuration::Configuration;
+
+let config = Configuration::new(url::Url::parse("https://workflowhub.eu/ga4gh/trs/v2")?);
+let trs = TRS::new(&config).await?; // fetches and checks service-info
+let filter = ToolFilter {
+    tool_class: Some("Workflow".into()),
+    limit: Some(10),
+    ..Default::default()
+};
+let tools = trs.list_tools(&filter).await?;
+let descriptor = trs
+    .get_descriptor("2", "1", DescriptorTypeWithPlain::PlainGalaxy)
+    .await?;
+```
+
+`TRS` covers `service-info`, `toolClasses`, `tools` with all filters, single
+tools, versions, descriptors (also by relative path), test files, file
+listings and container files. Tool IDs, version IDs and relative paths are
+percent-encoded as single path segments, so Dockstore IDs such as
+`#workflow/github.com/org/repo` work as they are. For `PLAIN_*` descriptor
+types, the bare file is returned as a `FileWrapper` with only `content` set.
+Not supported yet: the `format=zip` download of `files`, and the paging
+headers of `tools` (`next_page` and others); page with `offset` and `limit`
+instead. The CLI has no TRS commands yet.
+
 ## Testing
 Unit tests run by default. Integration suites are opt-in.
 
@@ -43,6 +80,15 @@ cargo nextest run
 For checking the unit coverage, you can run:
 ```
 cargo llvm-cov nextest
+```
+
+### TRS public registry smoke tests
+
+These tests call WorkflowHub and Dockstore, so they need network access and
+are ignored by default:
+
+```sh
+cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
 ```
 
 ### Starter Kit WES Docker integration
@@ -118,6 +164,7 @@ To get in touch with us, please use one of the following routes:
 [badge-license-url]: http://www.apache.org/licenses/LICENSE-2.0
 [code-of-conduct]: https://elixir-cloud-aai.github.io/about/code-of-conduct/
 [contributing]: https://elixir-cloud-aai.github.io/guides/guide-contributor/
+[dockstore]: https://dockstore.org/
 [elixir]: https://elixir-europe.org/
 [elixir-cloud-aai]: https://elixir-cloud.dcc.sib.swiss/
 [elixir-compute]: https://elixir-europe.org/platforms/compute
@@ -127,3 +174,5 @@ To get in touch with us, please use one of the following routes:
 [logo-elixir]: ./images/logo-elixir.svg
 [logo-elixir-cloud-aai]: ./images/logo-elixir-cloud-aai.svg
 [semver]: https://semver.org/
+[trs]: https://ga4gh.github.io/tool-registry-service-schemas/
+[workflowhub]: https://workflowhub.eu/
