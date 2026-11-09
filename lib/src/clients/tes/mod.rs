@@ -87,6 +87,7 @@
 /// # }
 /// ```
 pub mod models;
+mod list_tasks_params;
 use crate::utils::configuration::Configuration;
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::ServiceInfo;

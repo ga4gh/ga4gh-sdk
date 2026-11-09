@@ -32,6 +32,5 @@ pub mod tes_task;
 pub use self::tes_task::TesTask;
 pub mod tes_task_log;
 pub use self::tes_task_log::TesTaskLog;
-pub mod tes_list_tasks_params;
-pub use self::tes_list_tasks_params::ListTasksParams;
-
+// Hand-written, outside `models/`; re-exported for the existing import path.
+pub use crate::clients::tes::list_tasks_params::ListTasksParams;

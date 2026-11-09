@@ -1,0 +1,35 @@
+Hand edits of the TES 1.1.0 models, applied by utils/build_models.sh.
+
+- `TesTask.executors` stays optional, so that task views without executors
+  (for example `MINIMAL`) parse.
+- `ListTasksParams` is hand-written and lives in
+  `lib/src/clients/tes/list_tasks_params.rs`; `models` re-exports it.
+
+--- a/models/mod.rs
++++ b/models/mod.rs
+@@ -32,3 +32,5 @@
+ pub use self::tes_task::TesTask;
+ pub mod tes_task_log;
+ pub use self::tes_task_log::TesTaskLog;
++// Hand-written, outside `models/`; re-exported for the existing import path.
++pub use crate::clients::tes::list_tasks_params::ListTasksParams;
+--- a/models/tes_task.rs
++++ b/models/tes_task.rs
+@@ -37,7 +37,7 @@
+     pub resources: Option<Box<models::TesResources>>,
+     /// An array of executors to be run. Each of the executors will run one at a time sequentially. Each executor is a different command that will be run, and each can utilize a different docker image. But each of the executors will see the same mapped inputs and volumes that are declared in the parent CreateTask message.  Execution stops on the first error.
+     #[serde(rename = "executors")]
+-    pub executors: Vec<models::TesExecutor>,
++    pub executors: Option<Vec<models::TesExecutor>>,
+     /// Volumes are directories which may be used to share data between Executors. Volumes are initialized as empty directories by the system when the task starts and are mounted at the same path in each Executor.  For example, given a volume defined at `/vol/A`, executor 1 may write a file to `/vol/A/exec1.out.txt`, then executor 2 may read from that file.  (Essentially, this translates to a `docker run -v` flag where the container path is the same for each executor).
+     #[serde(rename = "volumes", skip_serializing_if = "Option::is_none")]
+     pub volumes: Option<Vec<String>>,
+@@ -63,7 +63,7 @@
+             inputs: None,
+             outputs: None,
+             resources: None,
+-            executors,
++            executors: None,
+             volumes: None,
+             tags: None,
+             logs: None,
