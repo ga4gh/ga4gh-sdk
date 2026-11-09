@@ -6,8 +6,9 @@ variants. These edits make the fields optional that only one variant has
 (`tags`; `name` and `id`), so that `RunStatus` and `Log` items parse. They
 also read the nullable `task_logs` as a plain `Option`, which needs no
 `serde_with` dependency, and read `RunLog.request` as `None` if the server
-echoes a request without its required fields, so that the run log stays
-readable.
+echoes a request that doesn't parse (for example, without its required
+fields), so that the run log stays readable; the request is dropped on
+purpose.
 
 --- a/models/run_list_response_runs_inner.rs
 +++ b/models/run_list_response_runs_inner.rs

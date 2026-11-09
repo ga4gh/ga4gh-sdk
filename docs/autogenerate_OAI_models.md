@@ -33,8 +33,9 @@ The WES models use the schema names of the spec (`RunLog`, `RunStatus`,
 `State`, `TaskLog`, ...). Two of them are generated for `anyOf` lists and
 cover both variants: `RunListResponseRunsInner` (`RunStatus` or `RunSummary`)
 and `RunLogTaskLogsInner` (`Log` or `TaskLog`). The fields that only one
-variant has are optional in them. `RunLog.request` reads as `None` if a server
-echoes a request without its required fields. The WES `ServiceInfo` model
+variant has are optional in them. `RunLog.request` reads as `None` if the echoed
+request doesn't parse, for example because a required field is missing; the
+rest of the run log stays readable. The WES `ServiceInfo` model
 follows 1.1.0 and requires its new fields, so it doesn't parse the service
 info of WES 1.0.1 servers; the client reads the generic Service Info model
 instead.

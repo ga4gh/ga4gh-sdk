@@ -126,7 +126,7 @@ impl Run {
         page_size: Option<i64>,
     ) -> Result<TaskListResponse, Box<dyn std::error::Error>> {
         let path = paged_path(
-            &format!("runs/{}/tasks", urlencode(&self.id)),
+            &format!("runs/{}/tasks", path_segment("run", &self.id)?),
             page_token,
             page_size,
         );
@@ -137,15 +137,24 @@ impl Run {
 
     /// Fetches one task of the run (WES 1.1 `GetTask`).
     pub async fn get_task(&self, task_id: &str) -> Result<TaskLog, Box<dyn std::error::Error>> {
-        // URL resolution would turn these segments into another endpoint.
-        if task_id.is_empty() || task_id == "." || task_id == ".." {
-            return Err(format!("invalid task ID: {:?}", task_id).into());
-        }
-        let path = format!("runs/{}/tasks/{}", urlencode(&self.id), urlencode(task_id));
+        let path = format!(
+            "runs/{}/tasks/{}",
+            path_segment("run", &self.id)?,
+            path_segment("task", task_id)?
+        );
         let url = endpoint(&self.transport.config, &path)?;
         let resp_str = self.transport.get(&url, None).await?;
         Ok(from_str(&resp_str)?)
     }
+}
+
+// Encodes an ID as one path segment. Empty, "." and ".." IDs are rejected:
+// URL resolution would turn them into another endpoint.
+fn path_segment(kind: &str, id: &str) -> Result<String, String> {
+    if id.is_empty() || id == "." || id == ".." {
+        return Err(format!("invalid {} ID: {:?}", kind, id));
+    }
+    Ok(urlencode(id))
 }
 
 // Appends the WES paging parameters to a path.
@@ -762,13 +771,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_get_task_rejects_dot_segments() {
+    async fn test_run_task_methods_reject_dot_segments() {
         let run = Run::new(
             "123".to_string(),
             Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
         );
         for task_id in ["", ".", ".."] {
-            assert!(run.get_task(task_id).await.is_err(), "{task_id:?}");
+            let err = run.get_task(task_id).await.unwrap_err();
+            assert_eq!(err.to_string(), format!("invalid task ID: {task_id:?}"));
+        }
+        for run_id in [".", ".."] {
+            let run = Run::new(run_id.to_string(), run.transport.clone());
+            let err = run.list_tasks(None, None).await.unwrap_err();
+            assert_eq!(err.to_string(), format!("invalid run ID: {run_id:?}"));
+            let err = run.get_task("t1").await.unwrap_err();
+            assert_eq!(err.to_string(), format!("invalid run ID: {run_id:?}"));
         }
     }
 

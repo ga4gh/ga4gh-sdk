@@ -142,7 +142,7 @@ if [ "$FORMAT" = true ]; then
     if command -v rustfmt >/dev/null 2>&1; then
         find "$MODELS_DIR" -name '*.rs' -exec rustfmt --edition 2021 {} +
     else
-        echo "Warning: rustfmt not found; run 'cargo fmt' on $DESTINATION_DIR/models" >&2
+        echo "Warning: rustfmt not found; run 'rustfmt --edition 2021 $DESTINATION_DIR/models/*.rs'" >&2
     fi
 fi
 
