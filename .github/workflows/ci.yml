@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run unit and documentation tests
+        run: cargo test --workspace --locked
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check dependency lockfile
+        run: cargo metadata --format-version 1 --locked > /dev/null
+      - name: Build library alone
+        run: cargo build --locked -p ga4gh-lib
+      - name: Build CLI alone
+        run: cargo build --locked -p ga4gh-cli
+      - name: Install Maturin
+        run: python -m pip install 'maturin==1.7.0'
+      - name: Build Python wheel
+        working-directory: python
+        run: maturin build --locked --interpreter python3.12
+
+  integration:
+    name: Integration (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [funnel, wes-starter-kit]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check whether this suite is affected
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SUITE: ${{ matrix.suite }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch || -z "$BASE_SHA" ]]; then
+            run_suite=true
+          else
+            common=(.github/workflows/ci.yml Cargo.toml Cargo.lock lib/Cargo.toml rust-toolchain.toml)
+            if [[ "$SUITE" == funnel ]]; then
+              paths=("${common[@]}" run-integration-tests.sh lib/src/clients/tes/
+                lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
+                lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs)
+            else
+              paths=("${common[@]}" tests/run-wes-docker-integration.sh
+                tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
+                lib/src/clients/mod.rs lib/src/lib.rs lib/tests/wes_starter_kit_docker.rs)
+            fi
+            if git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- "${paths[@]}"; then
+              run_suite=false
+            else
+              run_suite=true
+            fi
+          fi
+          echo "run=$run_suite" >> "$GITHUB_OUTPUT"
+          echo "$SUITE: run=$run_suite" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install Funnel
+        if: matrix.suite == 'funnel' && steps.changes.outputs.run == 'true'
+        shell: bash
+        run: |
+          archive=funnel-linux-amd64-v0.11.14.tar.gz
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/calypr/funnel/releases/download/v0.11.14/$archive"
+          echo "007e85ee808f131034854f6868efc9b11d3205f2fc1c778f339b484e9271996b  $RUNNER_TEMP/$archive" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" funnel
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Test against Funnel
+        if: matrix.suite == 'funnel' && steps.changes.outputs.run == 'true'
+        run: bash run-integration-tests.sh
+      - name: Test against Starter Kit WES
+        if: matrix.suite == 'wes-starter-kit' && steps.changes.outputs.run == 'true'
+        run: tests/run-wes-docker-integration.sh
+
+  passed:
+    name: CI passed
+    needs: [lint, test, build, integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          results = {name: job['result'] for name, job in json.loads(os.environ['NEEDS']).items()}
+          for name, result in results.items():
+              print(f'{name}: {result}')
+          if set(results) != {'lint', 'test', 'build', 'integration'} or any(
+              result != 'success' for result in results.values()
+          ):
+              sys.exit(1)
+          PY

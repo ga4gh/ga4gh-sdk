@@ -33,8 +33,9 @@ the Docker socket. It waits up to 180 seconds for
 `/ga4gh/wes/v1/service-info`, runs the SDK test, and cleans up the container
 and temporary files. On failure it prints server logs. Increase
 `WES_STARTUP_TIMEOUT_SECONDS` or `WES_RUN_TIMEOUT_SECONDS` on slower hosts.
-The [Starter Kit workflow](../.github/workflows/wes-starter-kit.yml) runs this
-suite on an Ubuntu runner for matching pull requests and manual dispatches.
+The [CI workflow](../.github/workflows/ci.yml) runs this suite on an Ubuntu
+runner when relevant WES, shared library, dependency, or integration files
+change. It also runs on manual dispatch.
 
 Starter Kit WES 0.2.0 only accepts a GitHub-shaped Nextflow project URL; its
 `workflow_attachment` argument is disabled. The script places the checked-in
