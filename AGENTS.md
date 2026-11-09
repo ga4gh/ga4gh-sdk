@@ -14,8 +14,8 @@ different directory is shown.
   hand. See [the generation guide](docs/autogenerate_OAI_models.md) and
   [#85](https://github.com/ga4gh/ga4gh-sdk/issues/85) before changing them;
   #85 tracks repeatable regeneration and preservation of existing adaptations.
-  Run `cargo fmt --all` after regeneration so the generated files pass
-  `cargo fmt --all --check`.
+  The generation script runs `cargo fmt --all` after copying models so the
+  generated files pass `cargo fmt --all --check`.
 - When changing a public Rust, CLI, or Python API, consider the downstream
   extension use cases in [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78).
 
