@@ -27,8 +27,7 @@ You will only need to use the script to build models when any of the GA4GH API's
 If you don't want to install the OpenAPI Generator CLI and Java Development Kit on your system, you can run the following command to generate the models using the Docker:
 
 ```sh
-# Go to the root directory of the repository
-cd ..
+# Run these commands from the root directory of the repository
 docker build -t ga4gh-sdk-autogen-models -f Dockerfile-autogen-models .
 docker run -it --rm -v "$(pwd):/app" -w /app ga4gh-sdk-autogen-models \
     bash ./utils/build_models.sh <OPENAPI_SPEC_PATH> <API_NAME> <DESTINATION_DIR>

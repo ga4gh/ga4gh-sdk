@@ -11,11 +11,11 @@ RUN apt update && \
 ENV NVM_DIR=/root/.nvm
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash && \
     . "$NVM_DIR/nvm.sh" && \
-    nvm install 22.11.0 && \
-    nvm alias default 22.11.0 && \
+    nvm install 22.23.4 && \
+    nvm alias default 22.23.4 && \
     nvm use default
 
-ENV PATH=$NVM_DIR/versions/node/v22.11.0/bin:$PATH
+ENV PATH=$NVM_DIR/versions/node/v22.23.4/bin:$PATH
 
 RUN npm install -g @openapitools/openapi-generator-cli
 
