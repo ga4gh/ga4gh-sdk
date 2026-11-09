@@ -27,5 +27,5 @@ env_logger = "0.11.5"
 mockito = "0.31"
 
 [[bin]]
-name = "cli"
+name = "ga4gh-cli"
 path = "src/main.rs"

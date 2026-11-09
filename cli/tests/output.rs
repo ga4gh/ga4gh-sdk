@@ -61,7 +61,7 @@ impl Home {
 
     /// Runs the CLI, and checks that its output holds no marker value.
     fn run(&self, args: &[&str], log_level: Option<&str>) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_cli"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
         command.args(args).env("HOME", self.path());
         for proxy in [
             "HTTP_PROXY",
