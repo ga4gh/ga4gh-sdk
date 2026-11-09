@@ -14,23 +14,23 @@
 ///
 /// // Make a GET request
 /// async {
-/// let response = transport.get("/users", None).await;
+/// let response = transport.get("users", None).await;
 /// };
 ///
 /// // Make a POST request
 /// async {
 ///     let data = serde_json::json!({"name": "John Doe", "age": 30});
-///     let response = transport.post("/users", Some(data)).await;
+///     let response = transport.post("users", Some(data)).await;
 /// };
 /// // Make a PUT request
 /// async {
 /// let data = serde_json::json!({"name": "John Doe", "age": 30});
-/// let response = transport.put("/users/1", data).await;
+/// let response = transport.put("users/1", data).await;
 /// };
 ///
 /// // Make a DELETE request
 /// async {
-/// let response = transport.delete("/users/1").await;
+/// let response = transport.delete("users/1").await;
 /// };
 /// ```
 use crate::utils::configuration::Configuration;
@@ -40,6 +40,33 @@ use reqwest::multipart::Form;
 use serde_json::Value;
 use std::error::Error;
 use std::fmt;
+use url::Url;
+
+/// Percent-encodes one URL path segment, including `/` and spaces.
+pub fn urlencode<T: AsRef<str>>(value: T) -> String {
+    value.as_ref().as_bytes().iter().map(|byte| {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            (*byte as char).to_string()
+        } else {
+            format!("%{byte:02X}")
+        }
+    }).collect()
+}
+
+/// An HTTP response whose status is not successful.
+#[derive(Debug)]
+pub struct HttpStatusError {
+    pub status: reqwest::StatusCode,
+    pub body: String,
+}
+
+impl fmt::Display for HttpStatusError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Request failed with status: {}. Response: {}", self.status, self.body)
+    }
+}
+
+impl Error for HttpStatusError {}
 
 // note: could implement custom certs handling, such as in-TEE generated ephemerial certs
 #[derive(Clone)]
@@ -74,6 +101,16 @@ impl Transport {
         }
     }
 
+    /// Resolves a path relative to the configured API root, whether or not it has a trailing slash.
+    /// A leading slash in `path` is treated as API-relative, too.
+    pub fn endpoint(&self, path: &str) -> Result<Url, url::ParseError> {
+        let mut base = self.config.base_path.clone();
+        if !base.path().ends_with('/') {
+            base.set_path(&format!("{}/", base.path()));
+        }
+        base.join(path.trim_start_matches('/'))
+    }
+
     /// Sends an HTTP request with the specified method, endpoint, data, and parameters.
     ///
     /// # Arguments
@@ -93,11 +130,7 @@ impl Transport {
         data: Option<Value>,
         params: Option<Value>,
     ) -> Result<String, Box<dyn Error>> {
-        let base_url = &self.config.base_path;
-        let url = base_url.join(endpoint).map_err(|e| {
-            error!("Invalid endpoint (shouldn't contain base url): {}. Error: {}", endpoint, e);
-            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid endpoint")) as Box<dyn std::error::Error>
-        })?;
+        let url = self.endpoint(endpoint)?;
 
         let mut request_builder = self.client.request(method, url);
 
@@ -136,10 +169,7 @@ impl Transport {
         if status.is_success() {
             Ok(content)
         } else {
-            Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Request failed with status: {}. Response: {}", status, content),
-            )))
+            Err(Box::new(HttpStatusError { status, body: content }))
         }
     }
 
@@ -187,7 +217,7 @@ impl Transport {
         endpoint: &str,
         form: Form,
     ) -> Result<String, Box<dyn Error>> {
-        let url = self.config.base_path.join(endpoint)?;
+        let url = self.endpoint(endpoint)?;
         let mut request = self.client.post(url).multipart(form);
         if let Some(user_agent) = &self.config.user_agent {
             request = request.header(reqwest::header::USER_AGENT, user_agent);
@@ -198,7 +228,7 @@ impl Transport {
         if status.is_success() {
             Ok(body)
         } else {
-            Err(format!("Request failed with status: {}. Response: {}", status, body).into())
+            Err(Box::new(HttpStatusError { status, body }))
         }
     }
     
@@ -237,7 +267,7 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use crate::utils::configuration::Configuration;
-    use crate::utils::transport::Transport;
+    use crate::utils::transport::{Transport, urlencode};
     use mockito::mock;
     use url::Url;
 
@@ -250,6 +280,21 @@ mod tests {
         let output = format!("{:?}", Transport::new(&config));
         assert_eq!(output, format!("Transport {{ config: {:?}, .. }}", config));
         assert!(!output.contains("SENTINEL"), "{output}");
+    }
+
+    #[test]
+    fn test_endpoint_uses_api_root_with_or_without_trailing_slash() {
+        for suffix in ["", "/"] {
+            let base = Url::parse(&format!("https://example.org/a%20b/tes/v1{suffix}")).unwrap();
+            let transport = Transport::new(&Configuration::new(base));
+            for path in ["tasks/a%2Fb", "/tasks/a%2Fb"] {
+                assert_eq!(
+                    transport.endpoint(path).unwrap().as_str(),
+                    "https://example.org/a%20b/tes/v1/tasks/a%2Fb"
+                );
+            }
+        }
+        assert_eq!(urlencode("a/b ?#"), "a%2Fb%20%3F%23");
     }
 
     #[tokio::test]

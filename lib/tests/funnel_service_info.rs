@@ -10,7 +10,7 @@ mod tests {
         setup();
         let mut config = Configuration::default();
         let funnel_url = ensure_funnel_running().await;
-        let funnel_url = url::Url::parse(&funnel_url).expect("Invalid URL");
+        let funnel_url = url::Url::parse(&format!("{funnel_url}/ga4gh/tes/v1")).expect("Invalid URL");
         config.set_base_path(funnel_url);
         let service_info = ServiceInfo::new(&config).unwrap();
 

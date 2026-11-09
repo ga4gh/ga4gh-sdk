@@ -11,7 +11,7 @@ The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file.
 ```json
 {
     "TES": {
-        "base_path": "http://localhost:8000",
+        "base_path": "http://localhost:8000/ga4gh/tes/v1",
         "basic_auth": {
             "username": "your_username",
             "password": "your_password"
@@ -20,6 +20,9 @@ The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file.
     }
 }
 ```
+
+`base_path` is the TES API root, with or without a trailing slash. The CLI
+requests `service-info` and `tasks` below this path.
 
 ## Usage 
 
