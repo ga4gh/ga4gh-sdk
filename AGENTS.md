@@ -30,22 +30,16 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-`cargo test --workspace` runs the default unit and documentation tests. The
-Funnel and Starter Kit integration suites are opt-in. Stable rustfmt also
-formats the generated models; the `ignore` setting in `rustfmt.toml` requires
-nightly. Some default tests start mock HTTP servers on loopback, so the test
-environment must allow local sockets.
+`cargo test --workspace` runs the default unit and documentation tests.
+Integration suites are opt-in. Stable rustfmt also formats the generated models;
+the `ignore` setting in `rustfmt.toml` requires nightly. Some default tests
+start mock HTTP servers on loopback, so the test environment must allow local
+sockets.
 
 ## Opt-in integration suites
 
-- **Funnel/TES:** Install the `funnel` executable and `curl`, then run
-  `bash run-integration-tests.sh` from the repository root. The script starts
-  Funnel on `localhost:8000` if it does not find a running process, waits for
-  `/healthz`, and runs `cargo test --features integration_tests`.
-- **Starter Kit WES:** Start a local Docker daemon, then run
-  `tests/run-wes-docker-integration.sh` from the repository root. The script
-  starts and cleans up a Starter Kit container and runs the WES integration
-  test. It needs a working Docker socket and `python3`.
+See [the integration test guide](tests/README.md) for the suite list,
+prerequisites, and commands. Add new suites there.
 
 ## Python bindings
 
