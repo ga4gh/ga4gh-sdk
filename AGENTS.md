@@ -43,21 +43,6 @@ prerequisites, and commands. Add new suites there.
 
 ## Python bindings
 
-For Python binding changes, use Python 3.12 and a virtual environment. Starting
-at the repository root, install `maturin` and `pytest`, build the extension in
-development mode, run its tests, and build a wheel:
-
-```sh
-cd python
-python3.12 -m venv .venv
-. .venv/bin/activate
-python -m pip install 'maturin>=1.7,<2' pytest
-maturin develop
-pytest
-maturin build
-```
-
-Standalone Python builds currently fail because the library does not enable
-`serde`'s derive feature. This is tracked in
-[#79](https://github.com/ga4gh/ga4gh-sdk/issues/79); a passing workspace build
-does not establish that the wheel builds.
+See [the Python bindings guide](python/README.md) for setup, build, and test
+commands and the current standalone-build limitation. Update that guide when
+the Python workflow changes.

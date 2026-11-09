@@ -1,6 +1,8 @@
 ## GA4GH-SDK Python Bindings
 
-This repository provides Python bindings for the GA4GH-SDK using [PyO3](https://docs.rs/pyo3/latest/pyo3).
+This directory provides Python bindings for the GA4GH SDK using [PyO3](https://docs.rs/pyo3/latest/pyo3).
+Start setup from the repository root; after `cd python`, run later commands
+from `python/` with the virtual environment active.
 
 ## Prerequisites
 
@@ -10,18 +12,18 @@ This repository provides Python bindings for the GA4GH-SDK using [PyO3](https://
 
 ## Installation
 
-1. **Create a virtual environment:**
+1. **Enter the Python package and create a virtual environment:**
 
     ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
+    cd python
+    python3.12 -m venv .venv
+    . .venv/bin/activate
     ```
 
 2. **Install dependencies:**
 
     ```bash
-    pip install maturin[patchelf]
-    pip install pytest 
+    python -m pip install 'maturin>=1.7,<2' pytest
     ```
 
 ## Development
@@ -42,11 +44,18 @@ maturin build
 
 ## Running Tests
 
-To run the lib tests, use:
+After `maturin develop`, run the Python binding tests with:
 
 ```bash
 pytest
 ```
+
+## Current standalone build limitation
+
+`maturin develop` and `maturin build` currently fail because `ga4gh-lib` does
+not enable `serde`'s derive feature when built on its own. This is tracked in
+[#79](https://github.com/ga4gh/ga4gh-sdk/issues/79). A successful
+`cargo build --workspace` does not establish that a Python wheel builds.
 
 ## Example 
 
