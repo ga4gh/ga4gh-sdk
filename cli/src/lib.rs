@@ -44,6 +44,14 @@ impl CommandOutput {
             exit_code: ExitCode::SUCCESS,
         }
     }
+
+    fn failure(message: impl std::fmt::Display) -> Self {
+        Self {
+            stdout: String::new(),
+            stderr: format!("{message}\n"),
+            exit_code: ExitCode::FAILURE,
+        }
+    }
 }
 
 /// Build the root command. Downstream CLIs can append their own subcommands.
@@ -60,8 +68,8 @@ pub fn command() -> Command {
 /// Run a built-in command using the usual TES config file.
 ///
 /// `None` leaves an added command to its caller without reading the config file.
-/// Errors include config, input, and service setup failures. Some TES request
-/// failures still return a successful exit code; issue #83 will change that.
+/// Config and input errors are returned as `Err`. TES request failures return
+/// a `CommandOutput` with an error message and a failure exit code.
 pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
     match matches.subcommand() {
         Some(("tes", _)) => {

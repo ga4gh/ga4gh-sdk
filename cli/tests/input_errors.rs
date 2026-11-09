@@ -120,3 +120,12 @@ fn missing_task_state_is_an_error() {
     assert_input_error(&run(&home, &["tes", "status", "t1"]), "missing 'state'");
     task.assert();
 }
+
+#[test]
+fn clap_usage_errors_exit_with_code_two() {
+    let home = TempDir::new().unwrap();
+    let output = run(&home, &["tes", "get", "t1"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("required"));
+}
