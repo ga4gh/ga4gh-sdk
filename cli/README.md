@@ -6,6 +6,12 @@ The `ga4gh-cli` is a command line tool that leverages `ga4gh-sdk` library to pro
 
 The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file. 
 
+The file and its `TES` section must exist; the CLI reports an error instead of
+silently using `http://localhost` when either is missing. Only `base_path` is
+required. `basic_auth` may omit `password`, in which case no password is set.
+Present authentication fields must have the documented types; malformed values
+are errors rather than being ignored.
+
 ### Configuration Example
 
 ```json

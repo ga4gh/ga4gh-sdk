@@ -30,6 +30,7 @@ features = ["json", "multipart"]
 [dev-dependencies]
 mockito = "0.31"
 mockall = "0.10.2"
+tempfile = "3.2"
 
 [lib]
 name = "ga4gh_sdk"

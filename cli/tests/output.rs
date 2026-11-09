@@ -153,6 +153,10 @@ fn test_output_on_success() {
             .with_status(200)
             .with_body(task.to_string())
             .create(),
+        mock("GET", "/ga4gh/tes/v1/tasks/t1?view=MINIMAL")
+            .with_status(200)
+            .with_body(task.to_string())
+            .create(),
         mock("POST", "/ga4gh/tes/v1/tasks/t1:cancel")
             .with_status(200)
             .with_body("{}")
