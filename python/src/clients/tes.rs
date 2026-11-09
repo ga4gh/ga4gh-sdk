@@ -1,11 +1,11 @@
-use pyo3::prelude::*;
-use ga4gh_sdk::clients::tes::models::TesTask;
-use ga4gh_sdk::clients::tes::models::ListTasksParams;
-use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
-use ga4gh_sdk::clients::tes::TES;
-use ga4gh_sdk::clients::tes::Task;
 use crate::PyConfiguration;
 use crate::PyTransport;
+use ga4gh_sdk::clients::tes::models::ListTasksParams;
+use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
+use ga4gh_sdk::clients::tes::models::TesTask;
+use ga4gh_sdk::clients::tes::Task;
+use ga4gh_sdk::clients::tes::TES;
+use pyo3::prelude::*;
 use tokio::runtime::Runtime;
 
 #[pyclass(name = "Task", module = "GA4GH")]
@@ -85,7 +85,13 @@ pub struct PyTesListTasksResponse {
 impl PyTesListTasksResponse {
     #[getter]
     pub fn tasks(&self) -> Vec<PyTesTask> {
-        self._inner.tasks.iter().map(|task| PyTesTask { inner: task.clone() }).collect()
+        self._inner
+            .tasks
+            .iter()
+            .map(|task| PyTesTask {
+                inner: task.clone(),
+            })
+            .collect()
     }
 }
 
@@ -116,10 +122,11 @@ impl PyTES {
             Err(e) => {
                 eprintln!("Failed to read file: {}", e);
                 task_file_path.to_string()
-            },
+            }
         };
-        let task: TesTask = serde_json::from_str(&task_json)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to parse JSON: {}", e)))?;
+        let task: TesTask = serde_json::from_str(&task_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to parse JSON: {}", e))
+        })?;
 
         match rt.block_on(self.inner.create(task.clone())) {
             Ok(task) => Ok(PyTask { inner: task }),

@@ -57,7 +57,13 @@ pub struct DrsObject {
 }
 
 impl DrsObject {
-    pub fn new(id: String, self_uri: String, size: i64, created_time: String, checksums: Vec<models::Checksum>) -> DrsObject {
+    pub fn new(
+        id: String,
+        self_uri: String,
+        size: i64,
+        created_time: String,
+        checksums: Vec<models::Checksum>,
+    ) -> DrsObject {
         DrsObject {
             id,
             name: None,
@@ -75,4 +81,3 @@ impl DrsObject {
         }
     }
 }
-
