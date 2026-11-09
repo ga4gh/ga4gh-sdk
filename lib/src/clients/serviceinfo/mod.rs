@@ -32,10 +32,10 @@ impl ServiceInfo {
     ///
     /// A `Result` containing the service information or an error.
     pub async fn get(&self) -> Result<models::Service, Box<dyn std::error::Error>> {
-        self.get_at("/service-info").await
+        self.get_at("service-info").await
     }
 
-    /// Retrieves service information from a service-specific endpoint.
+    /// Retrieves service information from a path relative to the configured API root.
     pub async fn get_at(
         &self,
         endpoint: &str,
@@ -130,5 +130,28 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_service_info_under_api_root() {
+        for suffix in ["", "/"] {
+            let _m = mock("GET", "/proxy/tes/v1/service-info")
+                .with_status(200)
+                .with_body(
+                    serde_json::json!({
+                        "id": "org.example.tes",
+                        "name": "Example TES",
+                        "type": { "group": "org.ga4gh", "artifact": "tes", "version": "1.1.0" },
+                        "organization": { "name": "Example", "url": "https://example.org" },
+                        "version": "1.0.0"
+                    })
+                    .to_string(),
+                )
+                .create();
+            let base =
+                Url::parse(&format!("{}/proxy/tes/v1{suffix}", mockito::server_url())).unwrap();
+            let client = ServiceInfo::new(&Configuration::new(base)).unwrap();
+            assert_eq!(client.get().await.unwrap().name, "Example TES");
+        }
     }
 }

@@ -38,7 +38,7 @@ docker run -it --rm -v $(pwd):/app -w /app ga4gh-sdk-autogen-models bash <OPENAP
 ### Option 1
 1. Clone the repository:
     ```sh
-    git clone https://github.com/elixir-cloud-aai/ga4gh-sdk.git
+    git clone https://github.com/ga4gh/ga4gh-sdk.git
     ```
 2. Update the specs of the APIs you want to change in `./utils/build-models.sh`:
     ```sh
