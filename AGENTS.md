@@ -33,7 +33,8 @@ cargo test --workspace
 `cargo test --workspace` runs the default unit and documentation tests. The
 Funnel and Starter Kit integration suites are opt-in. Stable rustfmt also
 formats the generated models; the `ignore` setting in `rustfmt.toml` requires
-nightly.
+nightly. Some default tests start mock HTTP servers on loopback, so the test
+environment must allow local sockets.
 
 ## Opt-in integration suites
 
@@ -48,16 +49,21 @@ nightly.
 
 ## Python bindings
 
-For Python binding changes, use Python 3.12 or newer and a virtual environment.
-From `python/`, install `maturin` and `pytest`, build the extension in development
-mode, run its tests, and build a wheel:
+For Python binding changes, use Python 3.12 and a virtual environment. Starting
+at the repository root, install `maturin` and `pytest`, build the extension in
+development mode, run its tests, and build a wheel:
 
 ```sh
 cd python
-python3 -m venv .venv
+python3.12 -m venv .venv
 . .venv/bin/activate
 python -m pip install 'maturin>=1.7,<2' pytest
 maturin develop
 pytest
 maturin build
 ```
+
+Standalone Python builds currently fail because the library does not enable
+`serde`'s derive feature. This is tracked in
+[#79](https://github.com/ga4gh/ga4gh-sdk/issues/79); a passing workspace build
+does not establish that the wheel builds.
