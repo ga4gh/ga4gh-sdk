@@ -1,3 +1,4 @@
+use crate::CommandOutput;
 use clap::{arg, ArgMatches, Command};
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
 use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
@@ -7,7 +8,6 @@ use ga4gh_sdk::clients::tes::{Task, TES};
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::Transport;
 use log::{debug, error};
-use std::error::Error;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -57,7 +57,12 @@ pub fn command() -> Command<'static> {
 }
 
 /// Execute a parsed TES subcommand using the supplied configuration.
-pub async fn run(sub: &ArgMatches, config: &Configuration) -> Result<ExitCode, Box<dyn Error>> {
+///
+/// Output is returned to the caller for writing or reformatting. Input and
+/// service setup errors are returned as `Err`; a missing task file returns a
+/// failure exit code. For compatibility, some TES request failures still return
+/// a successful exit code. Issue #83 will make those failures nonzero.
+pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<CommandOutput> {
     if let Some(("create", sub)) = sub.subcommand() {
         let task_file = sub
             .value_of("TASK_FILE")
@@ -65,28 +70,33 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> Result<ExitCode, B
         let path = Path::new(task_file);
         if !path.exists() {
             error!("File does not exist: {:?}", path);
-            return Ok(ExitCode::FAILURE);
+            return Ok(CommandOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: ExitCode::FAILURE,
+            });
         }
-        let task_json = match std::fs::read_to_string(path) {
-            Ok(contents) => contents,
-            Err(e) => {
-                error!("Failed to read file: {}", e);
-                task_file.to_string()
-            }
-        };
-        let testask: TesTask =
-            serde_json::from_str(&task_json).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let task_json = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read file: {e}"))?;
+        let testask: TesTask = serde_json::from_str(&task_json)
+            .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {e}"))?;
 
         match TES::new(config).await {
             Ok(tes) => match tes.create(testask).await {
-                Ok(task) => println!("{}", task.id),
-                Err(e) => eprintln!("Error creating task: {}", e),
+                Ok(task) => return Ok(CommandOutput::success(format!("{}\n", task.id))),
+                Err(e) => {
+                    return Ok(CommandOutput {
+                        stdout: String::new(),
+                        stderr: format!("Error creating task: {e}\n"),
+                        exit_code: ExitCode::SUCCESS,
+                    })
+                }
             },
             Err(e) => {
                 error!("Error creating TES instance: {:?}", e);
-                return Err(e);
+                return Err(anyhow::anyhow!(e.to_string()));
             }
-        };
+        }
     }
 
     if let Some(("list", sub)) = sub.subcommand() {
@@ -116,17 +126,25 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> Result<ExitCode, B
         match TES::new(config).await {
             Ok(tes) => match tes.list_tasks(Some(parameters)).await {
                 Ok(task_response) => {
-                    println!("{}", format_tasks_response(&task_response));
+                    return Ok(CommandOutput::success(format!(
+                        "{}\n",
+                        format_tasks_response(&task_response)
+                    )));
                 }
                 Err(e) => {
                     error!("Error listing tasks: {}", e);
+                    return Ok(CommandOutput {
+                        stdout: String::new(),
+                        stderr: format!("Error listing tasks: {e}\n"),
+                        exit_code: ExitCode::SUCCESS,
+                    });
                 }
             },
             Err(e) => {
                 error!("Error creating TES instance: {:?}", e);
-                return Err(e);
+                return Err(anyhow::anyhow!(e.to_string()));
             }
-        };
+        }
     }
 
     if let Some(("get", sub)) = sub.subcommand() {
@@ -136,13 +154,13 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> Result<ExitCode, B
         match TES::new(config).await {
             Ok(tes) => {
                 let task = tes.get(view, id).await;
-                println!("{:?}", task);
+                return Ok(CommandOutput::success(format!("{task:?}\n")));
             }
             Err(e) => {
                 error!("Error creating TES instance: {:?}", e);
-                return Err(e);
+                return Err(anyhow::anyhow!(e.to_string()));
             }
-        };
+        }
     }
 
     if let Some(("status", sub)) = sub.subcommand() {
@@ -151,14 +169,15 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> Result<ExitCode, B
         let task = Task::new(id.clone(), transport);
         match task.status().await {
             Ok(status) => {
-                println!("TASKID: {}", id.clone());
-                println!("STATUS: {:?}", status);
+                return Ok(CommandOutput::success(format!(
+                    "TASKID: {id}\nSTATUS: {status:?}\n"
+                )));
             }
             Err(e) => {
                 error!("Error creating Task instance: {:?}", e);
-                return Err(e);
+                return Err(anyhow::anyhow!(e.to_string()));
             }
-        };
+        }
     }
 
     if let Some(("cancel", sub)) = sub.subcommand() {
@@ -167,15 +186,15 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> Result<ExitCode, B
         let task = Task::new(id, transport);
         match task.cancel().await {
             Ok(output) => {
-                println!("STATUS: {:?}", output);
+                return Ok(CommandOutput::success(format!("STATUS: {output:?}\n")));
             }
             Err(e) => {
                 error!("Error creating Task instance: {:?}", e);
-                return Err(e);
+                return Err(anyhow::anyhow!(e.to_string()));
             }
-        };
+        }
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(CommandOutput::success(String::new()))
 }
 
 // Helper functions
