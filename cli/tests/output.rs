@@ -31,11 +31,11 @@ fn config_with_fields(base_path: &str) -> Value {
     }})
 }
 
-/// Config with marker values in the base path only.
+/// Config with marker values in the base path credentials only.
 fn config_with_url(base_path: &str) -> Value {
     let base_path = base_path.replacen("http://", "http://SENTINEL_USER:SENTINEL_PASSWORD@", 1);
     json!({"TES": {
-        "base_path": format!("{base_path}/?key=SENTINEL_QUERY#SENTINEL_FRAGMENT"),
+        "base_path": format!("{base_path}/"),
         "basic_auth": null,
         "oauth_access_token": null,
     }})
@@ -61,7 +61,7 @@ impl Home {
 
     /// Runs the CLI, and checks that its output holds no marker value.
     fn run(&self, args: &[&str], log_level: Option<&str>) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_cli"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
         command.args(args).env("HOME", self.path());
         for proxy in [
             "HTTP_PROXY",
@@ -110,7 +110,7 @@ impl Home {
     }
 }
 
-fn service_info_mock() -> Mock {
+fn service_info_mock(path: &str) -> Mock {
     let service_info = json!({
         "id": "org.example.tes",
         "name": "Mock",
@@ -118,7 +118,7 @@ fn service_info_mock() -> Mock {
         "organization": {"name": "Example", "url": "https://example.org"},
         "version": "1.0.0",
     });
-    mock("GET", "/service-info")
+    mock("GET", path)
         .with_status(200)
         .with_body(service_info.to_string())
         .create()
@@ -135,27 +135,31 @@ fn stderr(output: &Output) -> String {
 #[test]
 fn test_output_on_success() {
     let task = json!({"id": TASK_ID, "state": "COMPLETE", "executors": []});
+    let prefix = "/ga4gh/tes/v1";
     let _mocks = [
-        service_info_mock(),
+        service_info_mock("/ga4gh/tes/v1/service-info"),
         mock("POST", "/ga4gh/tes/v1/tasks")
             .with_status(200)
             .with_body(json!({"id": TASK_ID}).to_string())
             .create(),
-        mock("GET", Matcher::Regex(r"^/tasks(\?.*)?$".to_string()))
-            .with_status(200)
-            .with_body(json!({"tasks": [task]}).to_string())
-            .create(),
-        mock("GET", "/tasks/t1?view=FULL")
+        mock(
+            "GET",
+            Matcher::Regex(r"^/ga4gh/tes/v1/tasks(\?.*)?$".to_string()),
+        )
+        .with_status(200)
+        .with_body(json!({"tasks": [task]}).to_string())
+        .create(),
+        mock("GET", "/ga4gh/tes/v1/tasks/t1?view=FULL")
             .with_status(200)
             .with_body(task.to_string())
             .create(),
-        mock("POST", "/tasks/t1:cancel")
+        mock("POST", "/ga4gh/tes/v1/tasks/t1:cancel")
             .with_status(200)
             .with_body("{}")
             .create(),
     ];
 
-    let base_path = mockito::server_url();
+    let base_path = format!("{}{prefix}", mockito::server_url());
     for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
         for (args, output) in Home::new(&config).run_all() {
             assert!(output.status.success(), "{args:?}: {}", stderr(&output));
@@ -171,7 +175,7 @@ fn test_output_on_success() {
 #[test]
 fn test_output_on_error_response() {
     let _mocks = [
-        service_info_mock(),
+        service_info_mock("/service-info"),
         mock("POST", Matcher::Any)
             .with_status(500)
             .with_body("mock failure")
@@ -218,6 +222,8 @@ fn test_output_with_invalid_base_path() {
     let base_paths = [
         "http://SENTINEL_USER:SENTINEL_PASSWORD@127.0.0.1:invalid",
         "SENTINEL_USER:SENTINEL_PASSWORD@127.0.0.1/v1",
+        "http://SENTINEL_USER:SENTINEL_PASSWORD@127.0.0.1/v1/?key=SENTINEL_QUERY",
+        "http://SENTINEL_USER:SENTINEL_PASSWORD@127.0.0.1/v1/#SENTINEL_FRAGMENT",
     ];
     for base_path in base_paths {
         for (args, output) in Home::new(&config_with_fields(base_path)).run_all() {

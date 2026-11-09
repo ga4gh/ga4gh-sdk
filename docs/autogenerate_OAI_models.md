@@ -51,8 +51,8 @@ instead.
     7.9.0 as `openapi-generator-cli` on the `PATH`, with a Java runtime. The
     script checks the version.
 - `rustfmt` (from `rustup component add rustfmt`). Without it, the models are
-  left unformatted and the script prints a warning; format them afterwards
-  with `rustfmt --edition 2021 lib/src/clients/<api>/models/*.rs`.
+  left unformatted and the script prints a warning; run `cargo fmt --all`
+  afterwards.
   The committed models are formatted with the stable `rustfmt` defaults.
 
 With Docker installed, no other setup is needed: the script pulls the pinned

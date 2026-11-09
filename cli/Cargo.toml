@@ -3,7 +3,7 @@ name = "ga4gh-cli"
 description = """
 A cross-platform command-line tool leveraging the GA4GH SDK
 """
-repository = "https://github.com/elixir-cloud-aai/ga4gh-sdk/tree/main/cli"
+repository = "https://github.com/ga4gh/ga4gh-sdk/tree/main/cli"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -27,5 +27,5 @@ env_logger = "0.11.5"
 mockito = "0.31"
 
 [[bin]]
-name = "cli"
+name = "ga4gh-cli"
 path = "src/main.rs"

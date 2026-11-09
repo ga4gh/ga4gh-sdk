@@ -6,7 +6,42 @@
 A Generic SDK and CLI for GA4GH API services.
 
 ## Basic usage
-TBA
+
+Set `Configuration.base_path` to the API root, including the service's path
+prefix. For example, use `https://example.org/ga4gh/tes/v1` for TES,
+`https://example.org/ga4gh/drs/v1` for DRS, or
+`https://example.org/ga4gh/wes/v1` for WES. A trailing slash is optional.
+The SDK resolves `service-info`, `tasks`, `objects`, and `runs` below that root.
+The API root must not contain a query string or fragment.
+
+```rust
+use ga4gh_sdk::clients::tes::TES;
+use ga4gh_sdk::utils::configuration::Configuration;
+
+let config = Configuration::new(
+    url::Url::parse("https://example.org/ga4gh/tes/v1")?
+);
+let tes = TES::new(&config).await?;
+```
+
+### Migration notes
+
+Configs that previously used only the host must include the service path prefix
+shown above. `Transport::endpoint` now accepts only relative paths inside that
+root and returns `EndpointError` for invalid paths or roots; callers should not
+pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
+`wes::urlencode` now encode a path segment (so a space becomes `%20`, not `+`);
+use form encoding for query values. `Transport` now returns `HttpStatusError`
+for non-2xx HTTP responses rather than `std::io::Error`.
+
+The WES models follow WES 1.1.0 and use the schema names of the spec:
+`WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
+`State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
+required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
+now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
+items are `RunListResponseRunsInner` and deprecated task log items are
+`RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
+endpoints.
 
 ## Installation
 TBA
@@ -28,56 +63,14 @@ To run the unit tests, which are being tested with mock servers, you can simply 
 cargo test
 ```
 
-To test the integration tests:
-Before running the integration tests, you need to install Funnel, a task execution system that is compatible with the GA4GH TES API. Follow the instructions in the Funnel Developer's Guide to install Funnel: https://ohsu-comp-bio.github.io/funnel/docs/development/developers/. Note that the link may change over time, so refer to the official Funnel repository or website for the most up-to-date information.
+For opt-in integration suites, see the [integration test guide](tests/README.md)
+for prerequisites, commands, and service-specific behavior.
 
-Once you have installed Funnel, you can run the tests. This will automatically run Funnel as well:
-
-```
-bash ./run-tests.sh
-```
-or, you can run using:
-```
-cargo nextest run
-```
-For checking the unit coverage, you can run:
-```
-cargo llvm-cov nextest
-```
-
-### Starter Kit WES Docker integration
-
-With a running local Docker daemon, run this separate WES client test against a WES 1.0.1 server:
+Optional tools for running or measuring the default tests:
 
 ```sh
-tests/run-wes-docker-integration.sh
-```
-
-The script starts `ga4gh/ga4gh-starter-kit-wes:0.2.0-nextflow` with a temporary
-YAML configuration, initialized SQLite database, shared work directory, and
-Docker socket.
-It waits up to 180 seconds for `/ga4gh/wes/v1/service-info`, then runs the SDK
-test. On failure it prints the server logs. It always removes the container and
-temporary files. `WES_STARTUP_TIMEOUT_SECONDS` and `WES_RUN_TIMEOUT_SECONDS`
-can be raised on slower hosts. The dedicated GitHub Actions workflow runs this
-test on an Ubuntu runner with Docker; default `cargo test` and Funnel tests do
-not start WES.
-
-Starter Kit WES 0.2.0 only accepts a GitHub-shaped Nextflow project URL; its
-`workflow_attachment` argument is disabled. The script puts the checked-in
-`tests/fixtures/wes-nextflow/main.nf` into Nextflow's local Git project cache
-at a deterministic commit. WES sees the required URL shape, while Nextflow
-executes the local fixture without fetching a remote workflow. This server
-also returns a fixed run list instead of recently submitted runs, and its
-cancellation endpoint returns no result without stopping the run. The test
-checks the SDK's behavior against both limitations and does not claim that a
-run was canceled.
-
-To test the CI/CD workflow locally, install `act` and run the following command:
-```
-act -j build --container-architecture linux/amd64 -P ubuntu-latest=ubuntu:24.04 --reuse
-# Note: The specified Ubuntu version (24.04) may change in the future. 
-# Please check for the latest version when running this command.
+cargo nextest run
+cargo llvm-cov nextest
 ```
 
 ## Versioning

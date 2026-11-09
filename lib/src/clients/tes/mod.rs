@@ -1,3 +1,4 @@
+mod list_tasks_params;
 /// This module provides a client for interacting with the TES (Task Execution Service) API.
 ///
 /// The `TES` struct represents a TES client and provides methods for creating tasks, retrieving task status, canceling tasks, and listing tasks.
@@ -87,21 +88,22 @@
 /// # }
 /// ```
 pub mod models;
-mod list_tasks_params;
-use crate::utils::configuration::Configuration;
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::ServiceInfo;
+use crate::clients::tes::models::ListTasksParams;
 use crate::clients::tes::models::TesListTasksResponse;
 use crate::clients::tes::models::TesState;
 use crate::clients::tes::models::TesTask;
-use crate::utils::transport::Transport;
-use crate::clients::tes::models::ListTasksParams;
+use crate::utils::configuration::Configuration;
+/// Existing import path for the shared path-segment encoder.
+pub use crate::utils::transport::urlencode;
+use crate::utils::transport::{HttpStatusError, Transport};
+use log::{debug, error};
+use serde::Serialize;
 use serde_json;
 use serde_json::from_str;
 use serde_json::json;
-use serde::Serialize;
 use serde_json::Value;
-use log::{debug, error};
 
 /// Serializes any serializable item into a JSON `Value`.
 ///
@@ -115,17 +117,6 @@ use log::{debug, error};
 /// - If serialization fails, the function will panic.
 fn serialize_to_json<T: Serialize>(item: T) -> Value {
     serde_json::to_value(&item).unwrap()
-}
-
-/// URL-encodes a string.
-///
-/// # Arguments
-/// - `s`: A reference to a string to encode.
-///
-/// # Returns
-/// - A `String` containing the URL-encoded value.
-pub fn urlencode<T: AsRef<str>>(s: T) -> String {
-    ::url::form_urlencoded::byte_serialize(s.as_ref().as_bytes()).collect()
 }
 
 #[derive(Debug, Clone)]
@@ -155,10 +146,11 @@ impl Task {
     /// - On success, returns a `TesState` representing the task state.
     /// - On failure, returns an error.
     pub async fn status(&self) -> Result<TesState, Box<dyn std::error::Error>> {
-        let task_id = &self.id;
-        let view = "FULL";
-        let url = format!("/tasks/{}?view={}", task_id, view);
-        let response = self.transport.get(&url, None).await;
+        let url = format!("tasks/{}", urlencode(&self.id));
+        let response = self
+            .transport
+            .get(&url, Some(json!({"view": "FULL"})))
+            .await;
         match response {
             Ok(resp_str) => {
                 let task: TesTask = from_str(&resp_str)?;
@@ -167,7 +159,10 @@ impl Task {
             Err(e) => {
                 let err_msg = format!("HTTP request failed: {}", e);
                 eprintln!("{}", err_msg);
-                Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg)))
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err_msg,
+                )))
             }
         }
     }
@@ -178,20 +173,18 @@ impl Task {
     /// - On success, returns a `serde_json::Value` containing the server's response.
     /// - On failure, returns an error.
     pub async fn cancel(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-        let id = &self.id;
-        let id = &urlencode(id);
-        let url = format!("/tasks/{}:cancel", id);
+        let url = format!("tasks/{}:cancel", urlencode(&self.id));
         let response = self.transport.post(&url, None).await;
         match response {
-	    Ok(resp_str) => {
-	        let parsed_json = serde_json::from_str::<serde_json::Value>(&resp_str);
-	        match parsed_json {
-	            Ok(json) => Ok(json),
-	            Err(e) => Err(format!("Failed to parse JSON: {}", e).into()),
-	        }
-	    }
-	    Err(e) => Err(format!("HTTP request failed: {}", e).into()),
-	}
+            Ok(resp_str) => {
+                let parsed_json = serde_json::from_str::<serde_json::Value>(&resp_str);
+                match parsed_json {
+                    Ok(json) => Ok(json),
+                    Err(e) => Err(format!("Failed to parse JSON: {}", e).into()),
+                }
+            }
+            Err(e) => Err(format!("HTTP request failed: {}", e).into()),
+        }
     }
 }
 
@@ -238,7 +231,15 @@ impl TES {
         match resp.as_ref() {
             Ok(service) if service.r#type.artifact == "tes" => Ok(()),
             Ok(_) => Err("The endpoint is not an instance of TES".into()),
-            Err(_) => Err("Error accessing the service".into()),
+            Err(e) => {
+                let mut message = format!("Error accessing TES service: {e}");
+                if e.downcast_ref::<HttpStatusError>()
+                    .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
+                {
+                    message.push_str(". Check that base_path is the TES API root");
+                }
+                Err(message)
+            }
         }
     }
 
@@ -259,10 +260,7 @@ impl TES {
             log::error!("Service check failed: {}", e);
             e
         })?;
-        let response = self
-            .transport
-            .post("/ga4gh/tes/v1/tasks", Some(json!(task)))
-            .await;
+        let response = self.transport.post("tasks", Some(json!(task))).await;
         match response {
             Ok(response_body) => {
                 let v: serde_json::Value = serde_json::from_str(&response_body)?;
@@ -298,8 +296,8 @@ impl TES {
     /// - On success, returns a `TesTask` containing the task details.
     /// - On failure, returns an error.
     pub async fn get(&self, view: &str, id: &str) -> Result<TesTask, Box<dyn std::error::Error>> {
-        let url = format!("/tasks/{}?view={}", id, view);
-        let response = self.transport.get(&url, None).await;
+        let url = format!("tasks/{}", urlencode(id));
+        let response = self.transport.get(&url, Some(json!({"view": view}))).await;
 
         match response {
             Ok(resp_str) => {
@@ -325,11 +323,11 @@ impl TES {
         let params_value = params.map(serialize_to_json);
         // Make the request with or without parameters based on the presence of params
         let response = if let Some(params_value) = params_value {
-            self.transport.get("/tasks", Some(params_value)).await
+            self.transport.get("tasks", Some(params_value)).await
         } else {
-            self.transport.get("/tasks", None).await
+            self.transport.get("tasks", None).await
         };
-        
+
         match response {
             Ok(resp_str) => {
                 let task: TesListTasksResponse = from_str(&resp_str)?;
@@ -370,15 +368,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_tes_create() {
-        let _m = mock("POST", "/ga4gh/tes/v1/tasks")
+        let _m = mock("POST", "/tasks")
             .with_status(200)
             .with_body(r#"{"id": "123"}"#)
             .create();
 
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
-        let config= Configuration::new(mock_url);
+        let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
-        
+
         let tes = TES {
             config,
             service: Ok(Service {
@@ -437,7 +435,7 @@ mod tests {
             .create();
 
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
-        let config= Configuration::new(mock_url);
+        let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let tes = TES {
             config,
@@ -458,7 +456,7 @@ mod tests {
             .create();
 
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
-        let config= Configuration::new(mock_url);
+        let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let tes = TES {
             config,
@@ -469,5 +467,87 @@ mod tests {
         let result = tes.list_tasks(None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_all_tes_methods_under_api_root() {
+        let id = "a/b ?#";
+        let encoded_id = urlencode(id);
+        for suffix in ["", "/"] {
+            let prefix = "/proxy/ga4gh/tes/v1";
+            let _service = mock("GET", format!("{prefix}/service-info").as_str())
+                .with_status(200)
+                .with_body(
+                    serde_json::json!({
+                        "id": "org.example.tes",
+                        "name": "Example TES",
+                        "type": { "group": "org.ga4gh", "artifact": "tes", "version": "1.1.0" },
+                        "organization": { "name": "Example", "url": "https://example.org" },
+                        "version": "1.0.0"
+                    })
+                    .to_string(),
+                )
+                .create();
+            let _create = mock("POST", format!("{prefix}/tasks").as_str())
+                .with_status(200)
+                .with_body(serde_json::json!({ "id": id }).to_string())
+                .create();
+            let _get = mock(
+                "GET",
+                format!("{prefix}/tasks/{encoded_id}?view=BASIC").as_str(),
+            )
+            .with_status(200)
+            .with_body(
+                serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] }).to_string(),
+            )
+            .create();
+            let _status = mock(
+                "GET",
+                format!("{prefix}/tasks/{encoded_id}?view=FULL").as_str(),
+            )
+            .with_status(200)
+            .with_body(
+                serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] }).to_string(),
+            )
+            .create();
+            let _list = mock("GET", format!("{prefix}/tasks").as_str())
+                .with_status(200)
+                .with_body(r#"{"tasks":[]}"#)
+                .create();
+            let _cancel = mock(
+                "POST",
+                format!("{prefix}/tasks/{encoded_id}:cancel").as_str(),
+            )
+            .with_status(200)
+            .with_body(r#"{"status":"CANCELLED"}"#)
+            .create();
+
+            let base = url::Url::parse(&format!("{}{prefix}{suffix}", server_url())).unwrap();
+            let tes = TES::new(&Configuration::new(base)).await.unwrap();
+            let task = tes.create(TesTask::default()).await.unwrap();
+            assert_eq!(task.id, id);
+            assert_eq!(tes.get("BASIC", id).await.unwrap().id.as_deref(), Some(id));
+            assert_eq!(task.status().await.unwrap(), TesState::Complete);
+            assert!(tes.list_tasks(None).await.unwrap().tasks.is_empty());
+            assert_eq!(task.cancel().await.unwrap()["status"], "CANCELLED");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_service_info_error_keeps_status_and_404_hint() {
+        for (status, path) in [(404, "/missing/tes/v1"), (503, "/unavailable/tes/v1")] {
+            let _service = mock("GET", format!("{path}/service-info").as_str())
+                .with_status(status)
+                .with_body("service failure")
+                .create();
+            let base = url::Url::parse(&format!("{}{path}", server_url())).unwrap();
+            let error = TES::new(&Configuration::new(base))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&status.to_string()), "{error}");
+            assert!(error.contains("service failure"), "{error}");
+            assert_eq!(error.contains("base_path"), status == 404, "{error}");
+        }
     }
 }
