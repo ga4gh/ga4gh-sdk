@@ -8,7 +8,9 @@ use crate::clients::wes::models::WesRunRequest;
 use crate::clients::wes::models::WesRunStatus;
 use crate::clients::wes::models::WesState;
 use crate::utils::configuration::Configuration;
-use crate::utils::transport::{Transport, urlencode};
+use crate::utils::transport::Transport;
+/// Existing import path for the shared path-segment encoder.
+pub use crate::utils::transport::urlencode;
 use log::error;
 use reqwest::multipart::{Form, Part};
 use serde_json::from_str;

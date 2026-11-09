@@ -93,7 +93,9 @@ use crate::clients::serviceinfo::ServiceInfo;
 use crate::clients::tes::models::TesListTasksResponse;
 use crate::clients::tes::models::TesState;
 use crate::clients::tes::models::TesTask;
-use crate::utils::transport::{HttpStatusError, Transport, urlencode};
+use crate::utils::transport::{HttpStatusError, Transport};
+/// Existing import path for the shared path-segment encoder.
+pub use crate::utils::transport::urlencode;
 use crate::clients::tes::models::ListTasksParams;
 use serde_json;
 use serde_json::from_str;
