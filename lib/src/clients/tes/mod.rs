@@ -87,22 +87,22 @@
 /// # }
 /// ```
 pub mod models;
-use crate::utils::configuration::Configuration;
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::ServiceInfo;
+use crate::clients::tes::models::ListTasksParams;
 use crate::clients::tes::models::TesListTasksResponse;
 use crate::clients::tes::models::TesState;
 use crate::clients::tes::models::TesTask;
-use crate::utils::transport::{HttpStatusError, Transport};
+use crate::utils::configuration::Configuration;
 /// Existing import path for the shared path-segment encoder.
 pub use crate::utils::transport::urlencode;
-use crate::clients::tes::models::ListTasksParams;
+use crate::utils::transport::{HttpStatusError, Transport};
+use log::{debug, error};
+use serde::Serialize;
 use serde_json;
 use serde_json::from_str;
 use serde_json::json;
-use serde::Serialize;
 use serde_json::Value;
-use log::{debug, error};
 
 /// Serializes any serializable item into a JSON `Value`.
 ///
@@ -146,7 +146,10 @@ impl Task {
     /// - On failure, returns an error.
     pub async fn status(&self) -> Result<TesState, Box<dyn std::error::Error>> {
         let url = format!("tasks/{}", urlencode(&self.id));
-        let response = self.transport.get(&url, Some(json!({"view": "FULL"}))).await;
+        let response = self
+            .transport
+            .get(&url, Some(json!({"view": "FULL"})))
+            .await;
         match response {
             Ok(resp_str) => {
                 let task: TesTask = from_str(&resp_str)?;
@@ -155,7 +158,10 @@ impl Task {
             Err(e) => {
                 let err_msg = format!("HTTP request failed: {}", e);
                 eprintln!("{}", err_msg);
-                Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg)))
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err_msg,
+                )))
             }
         }
     }
@@ -169,15 +175,15 @@ impl Task {
         let url = format!("tasks/{}:cancel", urlencode(&self.id));
         let response = self.transport.post(&url, None).await;
         match response {
-	    Ok(resp_str) => {
-	        let parsed_json = serde_json::from_str::<serde_json::Value>(&resp_str);
-	        match parsed_json {
-	            Ok(json) => Ok(json),
-	            Err(e) => Err(format!("Failed to parse JSON: {}", e).into()),
-	        }
-	    }
-	    Err(e) => Err(format!("HTTP request failed: {}", e).into()),
-	}
+            Ok(resp_str) => {
+                let parsed_json = serde_json::from_str::<serde_json::Value>(&resp_str);
+                match parsed_json {
+                    Ok(json) => Ok(json),
+                    Err(e) => Err(format!("Failed to parse JSON: {}", e).into()),
+                }
+            }
+            Err(e) => Err(format!("HTTP request failed: {}", e).into()),
+        }
     }
 }
 
@@ -227,7 +233,8 @@ impl TES {
             Err(e) => {
                 let mut message = format!("Error accessing TES service: {e}");
                 if e.downcast_ref::<HttpStatusError>()
-                    .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND) {
+                    .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
+                {
                     message.push_str(". Check that base_path is the TES API root");
                 }
                 Err(message)
@@ -252,10 +259,7 @@ impl TES {
             log::error!("Service check failed: {}", e);
             e
         })?;
-        let response = self
-            .transport
-            .post("tasks", Some(json!(task)))
-            .await;
+        let response = self.transport.post("tasks", Some(json!(task))).await;
         match response {
             Ok(response_body) => {
                 let v: serde_json::Value = serde_json::from_str(&response_body)?;
@@ -322,7 +326,7 @@ impl TES {
         } else {
             self.transport.get("tasks", None).await
         };
-        
+
         match response {
             Ok(resp_str) => {
                 let task: TesListTasksResponse = from_str(&resp_str)?;
@@ -369,9 +373,9 @@ mod tests {
             .create();
 
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
-        let config= Configuration::new(mock_url);
+        let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
-        
+
         let tes = TES {
             config,
             service: Ok(Service {
@@ -430,7 +434,7 @@ mod tests {
             .create();
 
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
-        let config= Configuration::new(mock_url);
+        let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let tes = TES {
             config,
@@ -451,7 +455,7 @@ mod tests {
             .create();
 
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
-        let config= Configuration::new(mock_url);
+        let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let tes = TES {
             config,
@@ -472,34 +476,50 @@ mod tests {
             let prefix = "/proxy/ga4gh/tes/v1";
             let _service = mock("GET", format!("{prefix}/service-info").as_str())
                 .with_status(200)
-                .with_body(serde_json::json!({
-                    "id": "org.example.tes",
-                    "name": "Example TES",
-                    "type": { "group": "org.ga4gh", "artifact": "tes", "version": "1.1.0" },
-                    "organization": { "name": "Example", "url": "https://example.org" },
-                    "version": "1.0.0"
-                }).to_string())
+                .with_body(
+                    serde_json::json!({
+                        "id": "org.example.tes",
+                        "name": "Example TES",
+                        "type": { "group": "org.ga4gh", "artifact": "tes", "version": "1.1.0" },
+                        "organization": { "name": "Example", "url": "https://example.org" },
+                        "version": "1.0.0"
+                    })
+                    .to_string(),
+                )
                 .create();
             let _create = mock("POST", format!("{prefix}/tasks").as_str())
                 .with_status(200)
                 .with_body(serde_json::json!({ "id": id }).to_string())
                 .create();
-            let _get = mock("GET", format!("{prefix}/tasks/{encoded_id}?view=BASIC").as_str())
-                .with_status(200)
-                .with_body(serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] }).to_string())
-                .create();
-            let _status = mock("GET", format!("{prefix}/tasks/{encoded_id}?view=FULL").as_str())
-                .with_status(200)
-                .with_body(serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] }).to_string())
-                .create();
+            let _get = mock(
+                "GET",
+                format!("{prefix}/tasks/{encoded_id}?view=BASIC").as_str(),
+            )
+            .with_status(200)
+            .with_body(
+                serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] }).to_string(),
+            )
+            .create();
+            let _status = mock(
+                "GET",
+                format!("{prefix}/tasks/{encoded_id}?view=FULL").as_str(),
+            )
+            .with_status(200)
+            .with_body(
+                serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] }).to_string(),
+            )
+            .create();
             let _list = mock("GET", format!("{prefix}/tasks").as_str())
                 .with_status(200)
                 .with_body(r#"{"tasks":[]}"#)
                 .create();
-            let _cancel = mock("POST", format!("{prefix}/tasks/{encoded_id}:cancel").as_str())
-                .with_status(200)
-                .with_body(r#"{"status":"CANCELLED"}"#)
-                .create();
+            let _cancel = mock(
+                "POST",
+                format!("{prefix}/tasks/{encoded_id}:cancel").as_str(),
+            )
+            .with_status(200)
+            .with_body(r#"{"status":"CANCELLED"}"#)
+            .create();
 
             let base = url::Url::parse(&format!("{}{prefix}{suffix}", server_url())).unwrap();
             let tes = TES::new(&Configuration::new(base)).await.unwrap();
@@ -520,7 +540,10 @@ mod tests {
                 .with_body("service failure")
                 .create();
             let base = url::Url::parse(&format!("{}{path}", server_url())).unwrap();
-            let error = TES::new(&Configuration::new(base)).await.unwrap_err().to_string();
+            let error = TES::new(&Configuration::new(base))
+                .await
+                .unwrap_err()
+                .to_string();
             assert!(error.contains(&status.to_string()), "{error}");
             assert!(error.contains("service failure"), "{error}");
             assert_eq!(error.contains("base_path"), status == 404, "{error}");

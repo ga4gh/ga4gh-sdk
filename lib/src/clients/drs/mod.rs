@@ -1,13 +1,13 @@
 pub mod models;
 
-use crate::utils::configuration::Configuration;
+use crate::clients::drs::models::AccessUrl;
+use crate::clients::drs::models::DrsObject;
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::ServiceInfo;
-use crate::clients::drs::models::DrsObject;
-use crate::clients::drs::models::AccessUrl;
-use crate::utils::transport::{HttpStatusError, Transport, urlencode};
-use serde_json::from_str;
+use crate::utils::configuration::Configuration;
+use crate::utils::transport::{urlencode, HttpStatusError, Transport};
 use log::error;
+use serde_json::from_str;
 
 /// The main struct for interacting with a DRS service.
 #[derive(Debug)]
@@ -49,12 +49,17 @@ impl DRS {
     fn check(&self) -> Result<(), String> {
         let resp = &self.service;
         match resp.as_ref() {
-            Ok(service) if service.r#type.group == "org.ga4gh" && service.r#type.artifact == "drs" => Ok(()),
+            Ok(service)
+                if service.r#type.group == "org.ga4gh" && service.r#type.artifact == "drs" =>
+            {
+                Ok(())
+            }
             Ok(_) => Err("The endpoint is not an instance of DRS".into()),
             Err(e) => {
                 let mut message = format!("Error accessing DRS service: {e}");
                 if e.downcast_ref::<HttpStatusError>()
-                    .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND) {
+                    .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
+                {
                     message.push_str(". Check that base_path is the DRS API root");
                 }
                 Err(message)
@@ -70,7 +75,10 @@ impl DRS {
     /// # Returns
     /// - On success, returns a `DrsObject` containing the object details.
     /// - On failure, returns an error.
-    pub async fn get_object(&self, object_id: &str) -> Result<DrsObject, Box<dyn std::error::Error>> {
+    pub async fn get_object(
+        &self,
+        object_id: &str,
+    ) -> Result<DrsObject, Box<dyn std::error::Error>> {
         let object_id = urlencode(object_id);
         let url = format!("objects/{}", object_id);
         let response = self.transport.get(&url, None).await;
@@ -99,7 +107,11 @@ impl DRS {
     /// # Returns
     /// - On success, returns an `AccessUrl` containing the URL and headers.
     /// - On failure, returns an error.
-    pub async fn get_access_url(&self, object_id: &str, access_id: &str) -> Result<AccessUrl, Box<dyn std::error::Error>> {
+    pub async fn get_access_url(
+        &self,
+        object_id: &str,
+        access_id: &str,
+    ) -> Result<AccessUrl, Box<dyn std::error::Error>> {
         let object_id = urlencode(object_id);
         let access_id = urlencode(access_id);
         let url = format!("objects/{}/access/{}", object_id, access_id);
@@ -144,16 +156,20 @@ mod tests {
     async fn test_new_uses_drs_service_info_path() {
         let _m = mock("GET", "/ga4gh/drs/v1/service-info")
             .with_status(200)
-            .with_body(serde_json::json!({
-                "id": "org.example.drs",
-                "name": "Example DRS",
-                "type": { "group": "org.ga4gh", "artifact": "drs", "version": "1.4.0" },
-                "organization": { "name": "Example", "url": "https://example.org" },
-                "version": "1.0.0"
-            }).to_string())
+            .with_body(
+                serde_json::json!({
+                    "id": "org.example.drs",
+                    "name": "Example DRS",
+                    "type": { "group": "org.ga4gh", "artifact": "drs", "version": "1.4.0" },
+                    "organization": { "name": "Example", "url": "https://example.org" },
+                    "version": "1.0.0"
+                })
+                .to_string(),
+            )
             .create();
 
-        let config = Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
+        let config =
+            Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
         let drs = DRS::new(&config).await.unwrap();
         assert_eq!(drs.service.unwrap().r#type.artifact, "drs");
     }
@@ -174,7 +190,8 @@ mod tests {
             .with_body(response_body)
             .create();
 
-        let mock_url = url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).expect("Invalid URL");
+        let mock_url =
+            url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
@@ -211,7 +228,8 @@ mod tests {
             .with_body(response_body)
             .create();
 
-        let mock_url = url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).expect("Invalid URL");
+        let mock_url =
+            url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
@@ -231,7 +249,10 @@ mod tests {
         assert!(result.is_ok());
         let access_url = result.unwrap();
         assert_eq!(access_url.url, "http://example.com/data");
-        assert_eq!(access_url.headers.unwrap()[0], "Authorization: Basic Z2E0Z2g6ZHJz");
+        assert_eq!(
+            access_url.headers.unwrap()[0],
+            "Authorization: Basic Z2E0Z2g6ZHJz"
+        );
     }
 
     #[tokio::test]
@@ -240,28 +261,37 @@ mod tests {
         let access_id = "x/y ?#";
         let _object = mock("GET", "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23")
             .with_status(200)
-            .with_body(serde_json::json!({
-                "id": object_id,
-                "self_uri": "drs://example.org/a%2Fb%20%3F%23",
-                "size": 1,
-                "created_time": "2023-01-01T00:00:00Z",
-                "checksums": []
-            }).to_string())
+            .with_body(
+                serde_json::json!({
+                    "id": object_id,
+                    "self_uri": "drs://example.org/a%2Fb%20%3F%23",
+                    "size": 1,
+                    "created_time": "2023-01-01T00:00:00Z",
+                    "checksums": []
+                })
+                .to_string(),
+            )
             .create();
-        let _access = mock("GET", "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23/access/x%2Fy%20%3F%23")
-            .with_status(200)
-            .with_body(r#"{"url":"https://example.org/data"}"#)
-            .create();
+        let _access = mock(
+            "GET",
+            "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23/access/x%2Fy%20%3F%23",
+        )
+        .with_status(200)
+        .with_body(r#"{"url":"https://example.org/data"}"#)
+        .create();
 
-        let config = Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
+        let config =
+            Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
         let drs = DRS {
             transport: Transport::new(&config),
             config,
             service: Ok(Service::default()),
         };
         assert_eq!(drs.get_object(object_id).await.unwrap().id, object_id);
-        assert_eq!(drs.get_access_url(object_id, access_id).await.unwrap().url,
-                   "https://example.org/data");
+        assert_eq!(
+            drs.get_access_url(object_id, access_id).await.unwrap().url,
+            "https://example.org/data"
+        );
     }
 
     #[tokio::test]
@@ -272,34 +302,53 @@ mod tests {
             let prefix = "/proxy/ga4gh/drs/v1";
             let _service = mock("GET", format!("{prefix}/service-info").as_str())
                 .with_status(200)
-                .with_body(serde_json::json!({
-                    "id": "org.example.drs",
-                    "name": "Example DRS",
-                    "type": { "group": "org.ga4gh", "artifact": "drs", "version": "1.4.0" },
-                    "organization": { "name": "Example", "url": "https://example.org" },
-                    "version": "1.0.0"
-                }).to_string())
+                .with_body(
+                    serde_json::json!({
+                        "id": "org.example.drs",
+                        "name": "Example DRS",
+                        "type": { "group": "org.ga4gh", "artifact": "drs", "version": "1.4.0" },
+                        "organization": { "name": "Example", "url": "https://example.org" },
+                        "version": "1.0.0"
+                    })
+                    .to_string(),
+                )
                 .create();
-            let _object = mock("GET", format!("{prefix}/objects/{}", urlencode(object_id)).as_str())
-                .with_status(200)
-                .with_body(serde_json::json!({
+            let _object = mock(
+                "GET",
+                format!("{prefix}/objects/{}", urlencode(object_id)).as_str(),
+            )
+            .with_status(200)
+            .with_body(
+                serde_json::json!({
                     "id": object_id,
                     "self_uri": "drs://example.org/object",
                     "size": 1,
                     "created_time": "2023-01-01T00:00:00Z",
                     "checksums": []
-                }).to_string())
-                .create();
-            let _access = mock("GET", format!("{prefix}/objects/{}/access/{}", urlencode(object_id), urlencode(access_id)).as_str())
-                .with_status(200)
-                .with_body(r#"{"url":"https://example.org/data"}"#)
-                .create();
+                })
+                .to_string(),
+            )
+            .create();
+            let _access = mock(
+                "GET",
+                format!(
+                    "{prefix}/objects/{}/access/{}",
+                    urlencode(object_id),
+                    urlencode(access_id)
+                )
+                .as_str(),
+            )
+            .with_status(200)
+            .with_body(r#"{"url":"https://example.org/data"}"#)
+            .create();
 
             let base = url::Url::parse(&format!("{}{prefix}{suffix}", server_url())).unwrap();
             let drs = DRS::new(&Configuration::new(base)).await.unwrap();
             assert_eq!(drs.get_object(object_id).await.unwrap().id, object_id);
-            assert_eq!(drs.get_access_url(object_id, access_id).await.unwrap().url,
-                       "https://example.org/data");
+            assert_eq!(
+                drs.get_access_url(object_id, access_id).await.unwrap().url,
+                "https://example.org/data"
+            );
         }
     }
 
@@ -311,7 +360,10 @@ mod tests {
                 .with_body("service failure")
                 .create();
             let base = url::Url::parse(&format!("{}{path}", server_url())).unwrap();
-            let error = DRS::new(&Configuration::new(base)).await.unwrap_err().to_string();
+            let error = DRS::new(&Configuration::new(base))
+                .await
+                .unwrap_err()
+                .to_string();
             assert!(error.contains(&status.to_string()), "{error}");
             assert!(error.contains("service failure"), "{error}");
             assert_eq!(error.contains("base_path"), status == 404, "{error}");

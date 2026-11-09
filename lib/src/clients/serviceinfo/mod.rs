@@ -36,11 +36,15 @@ impl ServiceInfo {
     }
 
     /// Retrieves service information from a path relative to the configured API root.
-    pub async fn get_at(&self, endpoint: &str) -> Result<models::Service, Box<dyn std::error::Error>> {
+    pub async fn get_at(
+        &self,
+        endpoint: &str,
+    ) -> Result<models::Service, Box<dyn std::error::Error>> {
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            self.transport.get(endpoint, None)
-        ).await?;
+            self.transport.get(endpoint, None),
+        )
+        .await?;
         match response {
             Ok(response_body) => match serde_json::from_str::<models::Service>(&response_body) {
                 Ok(service) => Ok(service),
@@ -67,8 +71,13 @@ mod tests {
     #[tokio::test]
     async fn test_get_service_info_success() {
         // Arrange
-        let service_type= ServiceType::new("group".to_string(), "artifact".to_string(), "version".to_string());
-        let service_organization = models::ServiceOrganization::new("org_name".to_string(), "org_url".to_string());
+        let service_type = ServiceType::new(
+            "group".to_string(),
+            "artifact".to_string(),
+            "version".to_string(),
+        );
+        let service_organization =
+            models::ServiceOrganization::new("org_name".to_string(), "org_url".to_string());
 
         let _m = mock("GET", "/service-info")
             .with_status(200)
@@ -91,7 +100,7 @@ mod tests {
 
         // Act
         let result = service_info.get().await;
-        
+
         // Assert
         assert!(result.is_ok());
         let service = result.unwrap();
@@ -105,9 +114,11 @@ mod tests {
         let _m = mock("GET", "/service-info")
             .with_status(500)
             .with_header("content-type", "application/json")
-            .with_body(r#"{
+            .with_body(
+                r#"{
                 "error": "Internal Server Error"
-            }"#)
+            }"#,
+            )
             .create();
 
         let mock_url = Url::parse(&mockito::server_url()).unwrap();
@@ -126,15 +137,19 @@ mod tests {
         for suffix in ["", "/"] {
             let _m = mock("GET", "/proxy/tes/v1/service-info")
                 .with_status(200)
-                .with_body(serde_json::json!({
-                    "id": "org.example.tes",
-                    "name": "Example TES",
-                    "type": { "group": "org.ga4gh", "artifact": "tes", "version": "1.1.0" },
-                    "organization": { "name": "Example", "url": "https://example.org" },
-                    "version": "1.0.0"
-                }).to_string())
+                .with_body(
+                    serde_json::json!({
+                        "id": "org.example.tes",
+                        "name": "Example TES",
+                        "type": { "group": "org.ga4gh", "artifact": "tes", "version": "1.1.0" },
+                        "organization": { "name": "Example", "url": "https://example.org" },
+                        "version": "1.0.0"
+                    })
+                    .to_string(),
+                )
                 .create();
-            let base = Url::parse(&format!("{}/proxy/tes/v1{suffix}", mockito::server_url())).unwrap();
+            let base =
+                Url::parse(&format!("{}/proxy/tes/v1{suffix}", mockito::server_url())).unwrap();
             let client = ServiceInfo::new(&Configuration::new(base)).unwrap();
             assert_eq!(client.get().await.unwrap().name, "Example TES");
         }

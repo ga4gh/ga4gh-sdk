@@ -1,6 +1,6 @@
-use pyo3::prelude::*;
-use ga4gh_sdk::utils::configuration::Configuration;
 use crate::PyServiceType;
+use ga4gh_sdk::utils::configuration::Configuration;
+use pyo3::prelude::*;
 use url::Url;
 
 #[pyclass(name = "Configuration", module = "GA4GH")]
@@ -24,7 +24,7 @@ impl PyConfiguration {
     pub fn get_base_path(&mut self) -> String {
         self.inner.base_path.to_string()
     }
-    
+
     pub fn from_file(&mut self, service_type: PyServiceType) -> PyResult<()> {
         self.inner = Configuration::from_file(service_type.into())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyException, _>(format!("{}", e)))?;

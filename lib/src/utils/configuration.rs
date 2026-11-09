@@ -1,8 +1,8 @@
-use url::Url;
-use serde_json::Value;
 use crate::clients::ServiceType;
 use log::warn;
+use serde_json::Value;
 use std::fmt;
+use url::Url;
 
 /// Printed in `Debug` output in place of a value that is set but not meant to be shown.
 struct Redacted;
@@ -132,9 +132,7 @@ impl Configuration {
     /// # Returns
     ///
     /// A new instance of Configuration.
-    pub fn new(
-        base_path: Url,
-    ) -> Self {
+    pub fn new(base_path: Url) -> Self {
         Configuration {
             base_path,
             user_agent: Some("GA4GH SDK".to_owned()),
@@ -158,7 +156,7 @@ impl Configuration {
         self.base_path = base_path;
         self
     }
-    
+
     /// Sets the user agent for API requests.
     ///
     /// # Arguments
@@ -211,8 +209,10 @@ impl Configuration {
     ///
     /// This function will return an error if the configuration file is missing or malformed.
 
-    pub fn from_file(service_type: ServiceType)-> Result<Self, Box<dyn std::error::Error>> {
-        let config_file_path = dirs::home_dir().ok_or("Home directory not found")?.join(".ga4gh-cli/config.json");
+    pub fn from_file(service_type: ServiceType) -> Result<Self, Box<dyn std::error::Error>> {
+        let config_file_path = dirs::home_dir()
+            .ok_or("Home directory not found")?
+            .join(".ga4gh-cli/config.json");
         if config_file_path.exists() {
             let contents = std::fs::read_to_string(config_file_path)?;
             let config_json: Value = serde_json::from_str(&contents)?;
@@ -220,7 +220,10 @@ impl Configuration {
                 return Err("Configuration file must be a JSON object".into());
             }
             if !config_json[service_type.as_str()].is_object() {
-                return Err("Configuration file must contain the requested `{service_type}` configuration".into());
+                return Err(
+                    "Configuration file must contain the requested `{service_type}` configuration"
+                        .into(),
+                );
             }
             let config_json = config_json[service_type.as_str()].as_object().unwrap();
             if !config_json["base_path"].is_string() {
@@ -230,18 +233,32 @@ impl Configuration {
             let mut config = Configuration::new(base_path);
             if config_json["basic_auth"].is_object() {
                 let basic_auth = BasicAuth {
-                    username: config_json["basic_auth"]["username"].as_str().unwrap_or_default().to_string(),
-                    password: Some(config_json["basic_auth"]["password"].as_str().unwrap_or_default().to_string()),
+                    username: config_json["basic_auth"]["username"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                    password: Some(
+                        config_json["basic_auth"]["password"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                    ),
                 };
                 config = config.with_basic_auth(basic_auth);
             }
             if config_json["oauth_access_token"].is_string() {
-                let oauth_access_token = config_json["oauth_access_token"].as_str().unwrap_or_default().to_string();
+                let oauth_access_token = config_json["oauth_access_token"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 config = config.with_oauth_access_token(oauth_access_token);
             }
             return Ok(config);
         }
-        warn!("Configuration file not found at {:?}, using empy defualt configuration", config_file_path);
+        warn!(
+            "Configuration file not found at {:?}, using empy defualt configuration",
+            config_file_path
+        );
         Ok(Configuration::default())
     }
 }
@@ -373,15 +390,13 @@ mod tests {
 
     #[test]
     fn test_new_configuration() {
-        let config = Configuration::new(
-    Url::parse("https://api.example.com").unwrap(),
-        )
-        .with_user_agent("My User Agent".to_owned())
-        .with_basic_auth(BasicAuth {
-            username: "admin".to_owned(),
-            password: Some("password".to_owned()),
-        })
-        .with_oauth_access_token("my_oauth_token".to_owned());
+        let config = Configuration::new(Url::parse("https://api.example.com").unwrap())
+            .with_user_agent("My User Agent".to_owned())
+            .with_basic_auth(BasicAuth {
+                username: "admin".to_owned(),
+                password: Some("password".to_owned()),
+            })
+            .with_oauth_access_token("my_oauth_token".to_owned());
 
         assert_eq!(config.base_path.as_str(), "https://api.example.com/");
         assert_eq!(config.user_agent, Some("My User Agent".to_owned()));

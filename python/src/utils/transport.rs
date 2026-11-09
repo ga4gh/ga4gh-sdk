@@ -1,6 +1,6 @@
-use pyo3::prelude::*;
-use ga4gh_sdk::utils::transport::Transport;
 use crate::PyConfiguration;
+use ga4gh_sdk::utils::transport::Transport;
+use pyo3::prelude::*;
 
 #[pyclass(name = "Transport", module = "GA4GH")]
 pub struct PyTransport {

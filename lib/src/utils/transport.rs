@@ -35,8 +35,8 @@
 /// ```
 use crate::utils::configuration::Configuration;
 use log::error;
-use reqwest::Client;
 use reqwest::multipart::Form;
+use reqwest::Client;
 use serde_json::Value;
 use std::error::Error;
 use std::fmt;
@@ -44,13 +44,18 @@ use url::Url;
 
 /// Percent-encodes one URL path segment, including `/` and spaces.
 pub fn urlencode<T: AsRef<str>>(value: T) -> String {
-    value.as_ref().as_bytes().iter().map(|byte| {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            (*byte as char).to_string()
-        } else {
-            format!("%{byte:02X}")
-        }
-    }).collect()
+    value
+        .as_ref()
+        .as_bytes()
+        .iter()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+                (*byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
 }
 
 /// An HTTP response whose status is not successful.
@@ -63,9 +68,17 @@ pub struct HttpStatusError {
 impl fmt::Display for HttpStatusError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         const MAX_BODY_CHARS: usize = 300;
-        let end = self.body.char_indices().nth(MAX_BODY_CHARS)
+        let end = self
+            .body
+            .char_indices()
+            .nth(MAX_BODY_CHARS)
             .map_or(self.body.len(), |(index, _)| index);
-        write!(f, "Request failed with status: {}. Response: {}", self.status, &self.body[..end])?;
+        write!(
+            f,
+            "Request failed with status: {}. Response: {}",
+            self.status,
+            &self.body[..end]
+        )?;
         if end < self.body.len() {
             write!(f, "... [truncated]")?;
         }
@@ -97,10 +110,16 @@ impl fmt::Display for EndpointError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBase => {
-                write!(f, "base_path must be a hierarchical URL without a query or fragment")
+                write!(
+                    f,
+                    "base_path must be a hierarchical URL without a query or fragment"
+                )
             }
             Self::InvalidPath => {
-                write!(f, "endpoint must be a relative path without dot segments or backslashes")
+                write!(
+                    f,
+                    "endpoint must be a relative path without dot segments or backslashes"
+                )
             }
             Self::OutsideApiRoot => write!(f, "endpoint resolves outside base_path"),
             Self::Parse(error) => write!(f, "invalid endpoint URL: {error}"),
@@ -159,7 +178,6 @@ impl fmt::Debug for Transport {
 }
 
 impl Transport {
-
     /// Creates a new `Transport` instance with the given configuration.
     ///
     /// # Arguments
@@ -227,7 +245,8 @@ impl Transport {
         let mut request_builder = self.client.request(method, url);
 
         if let Some(ref user_agent) = self.config.user_agent {
-            request_builder = request_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+            request_builder =
+                request_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
         }
 
         if let Some(ref params_value) = params {
@@ -235,8 +254,14 @@ impl Transport {
             if params_value.is_object() {
                 request_builder = request_builder.query(params_value);
             } else {
-                error!("params_value is not an object and cannot be used as query parameters: {:?}", params_value);
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidInput, "params_value must be an object")));
+                error!(
+                    "params_value is not an object and cannot be used as query parameters: {:?}",
+                    params_value
+                );
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "params_value must be an object",
+                )));
             }
         }
 
@@ -249,9 +274,9 @@ impl Transport {
         }
 
         let resp = request_builder.send().await.map_err(|e| {
-	            eprintln!("HTTP request failed: {}", e);
-	            e
-	        })?;
+            eprintln!("HTTP request failed: {}", e);
+            e
+        })?;
 
         let status = resp.status();
         let content = read_response_text(resp).await?;
@@ -259,7 +284,10 @@ impl Transport {
         if status.is_success() {
             Ok(content)
         } else {
-            Err(Box::new(HttpStatusError { status, body: content }))
+            Err(Box::new(HttpStatusError {
+                status,
+                body: content,
+            }))
         }
     }
 
@@ -321,7 +349,7 @@ impl Transport {
             Err(Box::new(HttpStatusError { status, body }))
         }
     }
-    
+
     /// Sends a PUT request to the specified endpoint with the given data.
     ///
     /// # Arguments
@@ -357,7 +385,7 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use crate::utils::configuration::Configuration;
-    use crate::utils::transport::{EndpointError, HttpStatusError, Transport, urlencode};
+    use crate::utils::transport::{urlencode, EndpointError, HttpStatusError, Transport};
     use mockito::mock;
     use url::Url;
 
@@ -375,9 +403,14 @@ mod tests {
     #[test]
     fn test_http_status_error_truncates_display_but_keeps_body() {
         let body = "é".repeat(301);
-        let error = HttpStatusError { status: reqwest::StatusCode::BAD_GATEWAY, body: body.clone() };
+        let error = HttpStatusError {
+            status: reqwest::StatusCode::BAD_GATEWAY,
+            body: body.clone(),
+        };
         assert_eq!(error.body, body);
-        assert!(error.to_string().ends_with(&format!("{}... [truncated]", "é".repeat(300))));
+        assert!(error
+            .to_string()
+            .ends_with(&format!("{}... [truncated]", "é".repeat(300))));
 
         let short = HttpStatusError {
             status: reqwest::StatusCode::NOT_FOUND,
@@ -428,7 +461,10 @@ mod tests {
         for id in [".", ".."] {
             for prefix in ["objects", "tasks", "runs"] {
                 let path = format!("{prefix}/{}", urlencode(id));
-                assert!(matches!(transport.endpoint(&path), Err(EndpointError::InvalidPath)));
+                assert!(matches!(
+                    transport.endpoint(&path),
+                    Err(EndpointError::InvalidPath)
+                ));
             }
         }
         assert_eq!(
@@ -442,7 +478,10 @@ mod tests {
         for suffix in ["?key=secret", "#fragment"] {
             let base = Url::parse(&format!("https://example.org/ga4gh/tes/v1{suffix}")).unwrap();
             let transport = Transport::new(&Configuration::new(base));
-            assert!(matches!(transport.endpoint("tasks"), Err(EndpointError::InvalidBase)));
+            assert!(matches!(
+                transport.endpoint("tasks"),
+                Err(EndpointError::InvalidBase)
+            ));
         }
     }
 
@@ -450,7 +489,7 @@ mod tests {
     async fn test_request() {
         let base_url_str = mockito::server_url();
         let base_url = Url::parse(&base_url_str).expect("Failed to parse mock server URL");
-        
+
         let _m = mock("GET", "/test")
             .with_status(200)
             .with_header("content-type", "application/json")

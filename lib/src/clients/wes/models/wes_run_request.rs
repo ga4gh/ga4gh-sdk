@@ -37,7 +37,10 @@ pub struct WesRunRequest {
     pub workflow_engine_parameters: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "workflow_engine", skip_serializing_if = "Option::is_none")]
     pub workflow_engine: Option<String>,
-    #[serde(rename = "workflow_engine_version", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "workflow_engine_version",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub workflow_engine_version: Option<String>,
     /// REQUIRED The workflow CWL or WDL document. When `workflow_attachments` is used to attach files, the `workflow_url` may be a relative path to one of the attachments.
     #[serde(rename = "workflow_url", skip_serializing_if = "Option::is_none")]

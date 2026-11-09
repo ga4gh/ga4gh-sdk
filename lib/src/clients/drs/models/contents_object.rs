@@ -39,4 +39,3 @@ impl ContentsObject {
         }
     }
 }
-

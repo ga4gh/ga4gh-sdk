@@ -142,10 +142,13 @@ fn test_output_on_success() {
             .with_status(200)
             .with_body(json!({"id": TASK_ID}).to_string())
             .create(),
-        mock("GET", Matcher::Regex(r"^/ga4gh/tes/v1/tasks(\?.*)?$".to_string()))
-            .with_status(200)
-            .with_body(json!({"tasks": [task]}).to_string())
-            .create(),
+        mock(
+            "GET",
+            Matcher::Regex(r"^/ga4gh/tes/v1/tasks(\?.*)?$".to_string()),
+        )
+        .with_status(200)
+        .with_body(json!({"tasks": [task]}).to_string())
+        .create(),
         mock("GET", "/ga4gh/tes/v1/tasks/t1?view=FULL")
             .with_status(200)
             .with_body(task.to_string())
