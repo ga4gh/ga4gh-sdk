@@ -1,0 +1,235 @@
+use crate::CommandOutput;
+use clap::{arg, ArgMatches, Command};
+use ga4gh_sdk::clients::tes::models::ListTasksParams;
+use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
+use ga4gh_sdk::clients::tes::models::TesState;
+use ga4gh_sdk::clients::tes::models::TesTask;
+use ga4gh_sdk::clients::tes::{Task, TES};
+use ga4gh_sdk::utils::configuration::Configuration;
+use ga4gh_sdk::utils::transport::Transport;
+use log::{debug, error};
+use std::path::Path;
+use std::process::ExitCode;
+
+/// Build the TES command and its subcommands.
+pub fn command() -> Command {
+    Command::new("tes")
+        .about("TES subcommands")
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(
+            Command::new("create")
+                .about("Create a task")
+                .arg(arg!(<TASK_FILE> "The task file to create"))
+                // .arg(arg!(--url <URL> "The URL for the task"))
+                .arg_required_else_help(true),
+        )
+        .subcommand(
+            Command::new("list")
+                .about("list all tasks")
+                .arg(arg!(-n --name_prefix [NAME_PREFIX] "The name prefix to filter tasks"))
+                .arg(arg!(-s --state [STATE] "The state to filter tasks"))
+                .arg(arg!(-k --tag_key [TAG_KEY] "The tag key to filter tasks"))
+                .arg(arg!(-v --tag_value [TAG_VALUE] "The tag value to filter tasks"))
+                .arg(arg!(-p --page_size [PAGE_SIZE] "The page size for pagination"))
+                .arg(arg!(-t --page_token [PAGE_TOKEN] "The page token for pagination"))
+                .arg(arg!(-w --view [VIEW] "The view for the tasks")),
+        )
+        .subcommand(
+            Command::new("get")
+                .about("get task data")
+                .arg(arg!(<id> "The id of the task which should be returned"))
+                .arg(arg!(<view> "The view in which the task should be returned"))
+                .arg_required_else_help(true),
+        )
+        .subcommand(
+            Command::new("status")
+                .about("get status of the task")
+                .arg(arg!(<id> "The id of the task which should be returned"))
+                .arg_required_else_help(true),
+        )
+        .subcommand(
+            Command::new("cancel")
+                .about("cancel the task")
+                .arg(arg!(<id> "The id of the task which should be cancel"))
+                .arg_required_else_help(true),
+        )
+}
+
+/// Execute a parsed TES subcommand using the supplied configuration.
+///
+/// Output is returned to the caller for writing or reformatting. Input and
+/// service setup errors are returned as `Err`; a missing task file returns a
+/// failure exit code. For compatibility, some TES request failures still return
+/// a successful exit code. Issue #83 will make those failures nonzero.
+pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<CommandOutput> {
+    if let Some(("create", sub)) = sub.subcommand() {
+        let task_file = sub
+            .get_one::<String>("TASK_FILE")
+            .ok_or_else(|| anyhow::anyhow!("TASK_FILE argument is required"))?;
+        let path = Path::new(task_file);
+        if !path.exists() {
+            error!("File does not exist: {:?}", path);
+            return Ok(CommandOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: ExitCode::FAILURE,
+            });
+        }
+        let task_json = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read file: {e}"))?;
+        let testask: TesTask = serde_json::from_str(&task_json)
+            .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {e}"))?;
+
+        match TES::new(config).await {
+            Ok(tes) => match tes.create(testask).await {
+                Ok(task) => return Ok(CommandOutput::success(format!("{}\n", task.id))),
+                Err(e) => {
+                    return Ok(CommandOutput {
+                        stdout: String::new(),
+                        stderr: format!("Error creating task: {e}\n"),
+                        exit_code: ExitCode::SUCCESS,
+                    })
+                }
+            },
+            Err(e) => {
+                error!("Error creating TES instance: {:?}", e);
+                return Err(anyhow::anyhow!(e.to_string()));
+            }
+        }
+    }
+
+    if let Some(("list", sub)) = sub.subcommand() {
+        let name_prefix = sub.get_one::<String>("name_prefix").cloned();
+        let state = sub
+            .get_one::<String>("state")
+            .map(|s| serde_json::from_str(s).expect("Invalid state"));
+        let _tag_key = sub.get_one::<String>("tag_key").cloned();
+        let _tag_value = sub.get_one::<String>("tag_value").cloned();
+        let page_size = sub
+            .get_one::<String>("page_size")
+            .map(|s| s.parse().expect("Invalid page_size"));
+        let page_token = sub.get_one::<String>("page_token").cloned();
+        let view = sub.get_one::<String>("view").cloned();
+
+        let parameters = ListTasksParams {
+            name_prefix,
+            state,
+            tag_key: None,   // Example does not cover parsing Vec<String>
+            tag_value: None, // Example does not cover parsing Vec<String>
+            page_size,
+            page_token,
+            view,
+        };
+        debug!("parameters are: {:?}", parameters);
+
+        match TES::new(config).await {
+            Ok(tes) => match tes.list_tasks(Some(parameters)).await {
+                Ok(task_response) => {
+                    return Ok(CommandOutput::success(format!(
+                        "{}\n",
+                        format_tasks_response(&task_response)
+                    )));
+                }
+                Err(e) => {
+                    error!("Error listing tasks: {}", e);
+                    return Ok(CommandOutput {
+                        stdout: String::new(),
+                        stderr: format!("Error listing tasks: {e}\n"),
+                        exit_code: ExitCode::SUCCESS,
+                    });
+                }
+            },
+            Err(e) => {
+                error!("Error creating TES instance: {:?}", e);
+                return Err(anyhow::anyhow!(e.to_string()));
+            }
+        }
+    }
+
+    if let Some(("get", sub)) = sub.subcommand() {
+        let id = sub.get_one::<String>("id").unwrap();
+        let view = sub.get_one::<String>("view").unwrap();
+
+        match TES::new(config).await {
+            Ok(tes) => {
+                let task = tes.get(view, id).await;
+                return Ok(CommandOutput::success(format!("{task:?}\n")));
+            }
+            Err(e) => {
+                error!("Error creating TES instance: {:?}", e);
+                return Err(anyhow::anyhow!(e.to_string()));
+            }
+        }
+    }
+
+    if let Some(("status", sub)) = sub.subcommand() {
+        let id = sub.get_one::<String>("id").unwrap().to_string();
+        let transport = Transport::new(config);
+        let task = Task::new(id.clone(), transport);
+        match task.status().await {
+            Ok(status) => {
+                return Ok(CommandOutput::success(format!(
+                    "TASKID: {id}\nSTATUS: {status:?}\n"
+                )));
+            }
+            Err(e) => {
+                error!("Error creating Task instance: {:?}", e);
+                return Err(anyhow::anyhow!(e.to_string()));
+            }
+        }
+    }
+
+    if let Some(("cancel", sub)) = sub.subcommand() {
+        let id = sub.get_one::<String>("id").unwrap().to_string();
+        let transport = Transport::new(config);
+        let task = Task::new(id, transport);
+        match task.cancel().await {
+            Ok(output) => {
+                return Ok(CommandOutput::success(format!("STATUS: {output:?}\n")));
+            }
+            Err(e) => {
+                error!("Error creating Task instance: {:?}", e);
+                return Err(anyhow::anyhow!(e.to_string()));
+            }
+        }
+    }
+    Ok(CommandOutput::success(String::new()))
+}
+
+// Helper functions
+
+fn tes_state_to_str(state: &Option<TesState>) -> &str {
+    match state {
+        Some(TesState::Unknown) => "Unknown",
+        Some(TesState::Queued) => "Queued",
+        Some(TesState::Initializing) => "Initializing",
+        Some(TesState::Running) => "Running",
+        Some(TesState::Paused) => "Paused",
+        Some(TesState::Complete) => "Complete",
+        Some(TesState::ExecutorError) => "Executor Error",
+        Some(TesState::SystemError) => "System Error",
+        Some(TesState::Canceled) => "Canceled",
+        Some(TesState::Canceling) => "Canceling",
+        Some(TesState::Preempted) => "Preempted",
+        None => "None",
+    }
+}
+
+fn format_task(task: &TesTask) -> String {
+    format!(
+        "{:<25} {:<15}\n",
+        task.id.as_deref().unwrap_or("None"),
+        tes_state_to_str(&task.state)
+    )
+}
+
+fn format_tasks_response(response: &TesListTasksResponse) -> String {
+    let mut table = String::new();
+    let headers = format!("{:<25} {:<15}\n", "TASK ID", "State");
+    table.push_str(&headers);
+    for task in &response.tasks {
+        table.push_str(&format_task(task));
+    }
+    table
+}
