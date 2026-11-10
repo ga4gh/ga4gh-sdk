@@ -52,6 +52,44 @@ After `maturin develop`, run the Python binding tests with:
 pytest
 ```
 
+## Usage
+
+The module is called `GA4GH` and currently covers `TES` and `ServiceInfo`.
+`Configuration` takes the API root, including the service's path prefix (see
+the [usage guide](../docs/usage.md#api-root-base_path)).
+
+Run this example from `python/` after starting Funnel and Docker as described
+in the [quick start](../README.md#quick-start). The checked-in task is
+[`examples/tes-hello.json`](../examples/tes-hello.json) from the repository
+root, so its path from `python/` is `../examples/tes-hello.json`. It runs
+`echo` in an Alpine container without external storage.
+
+```python
+from GA4GH import Configuration, ServiceInfo, ServiceType, TES
+
+config = Configuration("http://localhost:8000/ga4gh/tes/v1")
+# Or read the TES section of ~/.ga4gh-cli/config.json:
+# config.from_file(ServiceType.TES)
+
+print(ServiceInfo(config).get_service_info())
+
+tes = TES(config)
+task = tes.create("../examples/tes-hello.json")
+print(task.id, task.status())
+
+for t in tes.list(None).tasks:
+    print(t.id, t.status)
+
+print(tes.get("FULL", task.id).status)
+```
+
+`TES.create()` accepts a path to a JSON task file or the JSON text itself.
+For a task that is still running, call `task.cancel()`.
+`from_file` replaces the API root. `Task.status()` and `Task.cancel()` are methods; `id`
+and `status` on the tasks returned by `list()` and `get()` are attributes.
+
+## Network behavior
+
 Synchronous network methods release the Python GIL while Rust waits for I/O.
 They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
 connections remain reusable between calls. Inputs are decoded before releasing
@@ -68,36 +106,25 @@ connection reuse, and error recovery. Each scenario runs in a subprocess with a
 missing and `ValueError` when its contents are malformed. Invalid URLs and JSON
 arguments also raise `ValueError`.
 
-## Example 
+## Runnable example
 
-You can try an example Python app that leverages the GA4GH-SDK Python library to create task, get its ID and status, as well as retrieveing the list of all tasks from the configured TES instance.
+After installing the bindings with `maturin develop`, run the checked-in
+[Python script](tests/example.py) from `python/` with Funnel and Docker running:
 
-```bash
-python3 ./tests/example.py
+```sh
+python tests/example.py
 ```
 
-The output should look like:
+It submits the same file-based hello task, prints its ID and current status,
+and lists tasks. For example:
 
-```bash
-Creating task...Task created successfully:
-TASK ID:  csg0d0ljt0vv1kstlqg0
-STATUS:   Queued
-Canceling task...
-Task canceled successfully
-
-Listing tasks...
-TASK ID                   STATUS         
-csg0d0ljt0vv1kstlqg0      COMPLETE       
-csfvvidjt0vv1kstlqfg      COMPLETE       
-csfvuhdjt0vv1kstlqf0      INITIALIZING   
-csfv61djt0vv1kstlqeg      CANCELED       
-csfv5ktjt0vv1kstlqe0      RUNNING        
-csfv5fdjt0vv1kstlqdg      RUNNING        
-csfv54ljt0vv1kstlqd0      CANCELED       
-csfv4m5jt0vv1kstlqcg      QUEUED         
-csfv455jt0vv1kstlqc0      QUEUED         
-csfv3o5jt0vv1kstlqbg      SYSTEM_ERROR   
+```text
+Created task <task-id>: Queued
+Tasks:
+<task-id>: QUEUED
 ```
+
+The ID, state, and number of listed tasks depend on the server and timing.
 
 ## Documentation
 
