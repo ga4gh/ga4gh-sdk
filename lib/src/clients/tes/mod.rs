@@ -88,6 +88,7 @@ mod list_tasks_params;
 /// # }
 /// ```
 pub mod models;
+mod view;
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::ServiceInfo;
 use crate::clients::tes::models::ListTasksParams;
@@ -103,6 +104,7 @@ use serde_json;
 use serde_json::from_str;
 use serde_json::json;
 use serde_json::Value;
+pub use view::{ParseTesViewError, TesView};
 
 /// Serializes any serializable item into a JSON `Value`.
 ///
@@ -148,7 +150,7 @@ impl Task {
         let url = format!("tasks/{}", urlencode(&self.id));
         let response = self
             .transport
-            .get(&url, Some(json!({"view": "MINIMAL"})))
+            .get(&url, Some(json!({"view": TesView::Minimal})))
             .await?;
         let task: TesTask = from_str(&response)?;
         task.state
@@ -172,7 +174,7 @@ impl Task {
 pub struct TES {
     #[allow(dead_code)]
     pub config: Configuration, // not used yet
-    pub service: Result<Service, Box<dyn std::error::Error>>,
+    pub service: Result<Service, Box<dyn std::error::Error + Send + Sync>>,
     pub transport: Transport,
 }
 
@@ -234,6 +236,14 @@ impl TES {
         &self,
         task: TesTask, /*, params: models::TesTask*/
     ) -> Result<Task, Box<dyn std::error::Error>> {
+        self.create_value(serde_json::to_value(task)?).await
+    }
+
+    /// Creates a task from a JSON value, preserving fields unknown to the
+    /// current TES models while applying the same submission and acknowledgement
+    /// checks as [`Self::create`].
+    pub async fn create_value(&self, task: Value) -> Result<Task, Box<dyn std::error::Error>> {
+        let _: TesTask = serde_json::from_value(task.clone())?;
         // First, check if the service is of TES class
         self.check().map_err(|e| {
             log::error!("Service check failed: {}", e);
@@ -264,13 +274,17 @@ impl TES {
     /// Retrieves the details of a specific TES task.
     ///
     /// # Arguments
-    /// - `view`: The level of detail to include in the response (e.g., `FULL`).
+    /// - `view`: The fields to include in the response, e.g. `TesView::Full`.
     /// - `id`: The task ID.
     ///
     /// # Returns
     /// - On success, returns a `TesTask` containing the task details.
     /// - On failure, returns an error.
-    pub async fn get(&self, view: &str, id: &str) -> Result<TesTask, Box<dyn std::error::Error>> {
+    pub async fn get(
+        &self,
+        view: TesView,
+        id: &str,
+    ) -> Result<TesTask, Box<dyn std::error::Error>> {
         let response = self.get_raw(view, id).await?;
         Ok(from_str(&response)?)
     }
@@ -279,7 +293,7 @@ impl TES {
     /// the current TES models. This is useful for CLI output and extensions.
     pub async fn get_raw(
         &self,
-        view: &str,
+        view: TesView,
         id: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let url = format!("tasks/{}", urlencode(id));
@@ -420,7 +434,7 @@ mod tests {
             transport,
         };
 
-        let result = tes.get("FULL", "123").await;
+        let result = tes.get(TesView::Full, "123").await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().id, Some(String::from("123")));
     }
@@ -475,6 +489,52 @@ mod tests {
             .unwrap();
         assert!(result.tasks.is_empty());
         assert_eq!(result.next_page_token.as_deref(), Some("page-2"));
+    }
+
+    #[tokio::test]
+    async fn test_each_view_sends_its_tes_value() {
+        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let tes = TES {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service::default()),
+        };
+        for (view, value) in [
+            (TesView::Minimal, "MINIMAL"),
+            (TesView::Basic, "BASIC"),
+            (TesView::Full, "FULL"),
+        ] {
+            let get = mock("GET", format!("/tasks/123?view={value}").as_str())
+                .with_status(200)
+                .with_body(r#"{"id": "123", "executors": []}"#)
+                .expect(2)
+                .create();
+            let list = mock("GET", "/tasks")
+                .match_query(mockito::Matcher::Exact(format!("view={value}")))
+                .with_status(200)
+                .with_body(r#"{"tasks": []}"#)
+                .expect(1)
+                .create();
+
+            assert_eq!(
+                tes.get(view, "123").await.unwrap().id.as_deref(),
+                Some("123")
+            );
+            assert!(tes.get_raw(view, "123").await.unwrap().contains("123"));
+            tes.list_tasks(Some(ListTasksParams {
+                name_prefix: None,
+                state: None,
+                tag_key: None,
+                tag_value: None,
+                page_size: None,
+                page_token: None,
+                view: Some(view),
+            }))
+            .await
+            .unwrap();
+            get.assert();
+            list.assert();
+        }
     }
 
     #[tokio::test]
@@ -534,7 +594,10 @@ mod tests {
             let tes = TES::new(&Configuration::new(base)).await.unwrap();
             let task = tes.create(TesTask::default()).await.unwrap();
             assert_eq!(task.id, id);
-            assert_eq!(tes.get("BASIC", id).await.unwrap().id.as_deref(), Some(id));
+            assert_eq!(
+                tes.get(TesView::Basic, id).await.unwrap().id.as_deref(),
+                Some(id)
+            );
             assert_eq!(task.status().await.unwrap(), TesState::Complete);
             assert!(tes.list_tasks(None).await.unwrap().tasks.is_empty());
             assert_eq!(task.cancel().await.unwrap()["status"], "CANCELLED");
@@ -597,7 +660,7 @@ mod tests {
         let errors = [
             tes.create(TesTask::default()).await.unwrap_err(),
             tes.list_tasks(None).await.unwrap_err(),
-            tes.get("FULL", "123").await.unwrap_err(),
+            tes.get(TesView::Full, "123").await.unwrap_err(),
             task.status().await.unwrap_err(),
             task.cancel().await.unwrap_err(),
         ];

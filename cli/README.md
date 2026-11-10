@@ -1,6 +1,19 @@
 # GA4GH-CLI
 
-The `ga4gh-cli` uses the GA4GH SDK to work with TES and DRS services.
+The `ga4gh-cli` uses the GA4GH SDK to work with GA4GH API services. It
+currently provides TES and DRS commands. The Rust library also provides `WES`,
+`TRS`, and `ServiceInfo` clients (see the [usage guide](../docs/usage.md)). Support
+for the separate GA4GH Service Registry is planned in
+[#89](https://github.com/ga4gh/ga4gh-sdk/issues/89).
+
+## Installation
+
+From the repository root:
+
+```sh
+cargo install --path cli --locked
+ga4gh-cli --help
+```
 
 ## Configuration
 
@@ -18,12 +31,7 @@ are errors rather than being ignored.
 ```json
 {
     "TES": {
-        "base_path": "http://localhost:8000/ga4gh/tes/v1",
-        "basic_auth": {
-            "username": "your_username",
-            "password": "your_password"
-        },
-        "oauth_access_token": "your_oauth_access_token"
+        "base_path": "http://localhost:8000/ga4gh/tes/v1"
     },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
@@ -35,58 +43,52 @@ Each `base_path` is the service's API root, with or without a trailing slash.
 The CLI requests `service-info` and other endpoints below it. Do not include
 a query string or fragment. Configs that previously contained only the host
 must add the deployed service prefix, such as `/ga4gh/tes/v1` or
-`/ga4gh/drs/v1` in the example above.
+`/ga4gh/drs/v1` in the example above. A service behind a gateway keeps its
+whole prefix, for example `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+
+### Authentication
+
+The CLI reads `basic_auth` and `oauth_access_token`, but doesn't send them
+with requests yet (see
+[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). For now, use services
+that allow anonymous access, or a proxy that adds credentials. Keep the file
+private (`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold
+credentials.
 
 ## Usage 
 
 ### Basic local setup
 
-In order to quickly setup a TES server locally, you can use Funnel. Dockerized Funnel version doesn't have ServiceInfo end-point on the expected path, which is requirement by the GA4GH-SDK.
+For a local TES server, install Funnel and Docker, then:
 
-1. Deploy Funnel locally following the [offical documentation](https://ohsu-comp-bio.github.io/funnel/download/).
+1. Install Funnel following the [official documentation](https://ohsu-comp-bio.github.io/funnel/download/).
 
-2. Run Funnel server with the port specifed:
+2. Run the Funnel server on port 8000:
 
 ```sh
-funnel server start --Server.HTTPPort=[available-port]
+funnel server run --Server.HTTPPort=8000
 ```
 
-3. Configure the CLI in `~/.ga4gh-cli/config.json` using example above. Only the `base_path` needed.
+3. Configure the CLI in `~/.ga4gh-cli/config.json` using the example above.
+Only `base_path` is needed. Docker must be running for Funnel to execute tasks.
 
 ### CLI Examples
 
-1. To create a new task, save the task definition as JSON in a file:
-
-```json
-{
-    "name": "Hello world",
-    "inputs": [{
-        "url": "s3://funnel-bucket/hello.txt",
-        "path": "/inputs/hello.txt"
-    }],
-    "outputs": [{
-        "url": "s3://funnel-bucket/output.txt",
-        "path": "/outputs/stdout"
-    }],
-    "executors": [{
-        "image": "alpine",
-        "command": ["cat", "/inputs/hello.txt"],
-        "stdout": "/outputs/stdout"
-    }]
-}
-```
-
-Then pass the file to the CLI:
+1. From the repository root, submit the checked-in
+[example task](../examples/tes-hello.json). It runs `echo` in an Alpine
+container and has no external inputs or outputs. Save the returned ID for later
+commands:
 
 ```sh
-ga4gh-cli tes create ./tests/sample.tes
+task_id=$(ga4gh-cli tes create examples/tes-hello.json)
+printf '%s\n' "$task_id"
 ```
 
-You can also pass the task JSON directly or read it from standard input:
+The CLI also accepts JSON text directly or from standard input:
 
 ```sh
-ga4gh-cli tes create '{"executors":[{"image":"alpine","command":["true"]}]}'
-cat task.json | ga4gh-cli tes create -
+ga4gh-cli tes create "$(cat examples/tes-hello.json)"
+cat examples/tes-hello.json | ga4gh-cli tes create -
 ```
 
 The command prints only the new task ID. If the service rejects it, the CLI
@@ -107,6 +109,16 @@ ga4gh-cli tes list -k project -v analysis -k owner -v alice
 ga4gh-cli tes list -t 'next page token'
 ```
 
+To fetch successive pages as one JSON object per line, use:
+
+```sh
+ga4gh-cli tes list --all --format jsonl
+```
+
+`--max-pages` and `--max-items` limit the export. If the limit stops listing
+before the final page, the command exits with code 1 and writes a resume
+checkpoint to stderr; already written JSONL stays on stdout.
+
 Example output:
 
 ```sh
@@ -119,28 +131,29 @@ csei52hrqek3h222k9df      Queued
 csei52hrqek3h222k9de      Queued 
 ```
 
-3. To get the infromation about the task run the `tes get` command:
+3. To get task details, run the `tes get` command:
 
 ```sh
-ga4gh-cli tes get [TASK-ID] [VIEW]
+ga4gh-cli tes get "$task_id" FULL
 ```
 
-Possible `VIEW` option values: `BASIC`, `FULL`.
+Possible `VIEW` values: `MINIMAL`, `BASIC` and `FULL`, in any case. `tes list`
+takes the same values with `-w`.
 The command prints the server's JSON unchanged, including fields unknown to
 the current SDK models.
 
 4. To retrieve the task status run the `tes status` command:
 
 ```sh
-ga4gh-cli tes status [TASK-ID]      
+ga4gh-cli tes status "$task_id"
 ```
 
 The command prints the TES state, such as `QUEUED`.
 
-5. To cancel the task run the `tes cancel` command:
+5. To cancel a task that is still running, use its ID with `tes cancel`:
 
 ```sh
-ga4gh-cli tes cancel [TASK-ID]      
+ga4gh-cli tes cancel 'running-task-id'
 ```
 
 All five TES commands exit with code 0 on success and code 1 on request or
