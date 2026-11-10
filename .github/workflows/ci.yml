@@ -72,6 +72,10 @@ jobs:
         working-directory: python
         run: python -m pytest
 
+  wheels:
+    name: Wheels
+    uses: ./.github/workflows/wheels.yml
+
   integration:
     name: Integration (${{ matrix.suite }})
     runs-on: ubuntu-latest
@@ -132,7 +136,7 @@ jobs:
 
   passed:
     name: CI passed
-    needs: [lint, test, build, python, integration]
+    needs: [lint, test, build, python, wheels, integration]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -149,7 +153,7 @@ jobs:
           results = {name: job['result'] for name, job in json.loads(os.environ['NEEDS']).items()}
           for name, result in results.items():
               print(f'{name}: {result}')
-          if set(results) != {'lint', 'test', 'build', 'python', 'integration'} or any(
+          if set(results) != {'lint', 'test', 'build', 'python', 'wheels', 'integration'} or any(
               result != 'success' for result in results.values()
           ):
               sys.exit(1)
