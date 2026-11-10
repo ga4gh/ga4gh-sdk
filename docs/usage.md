@@ -14,10 +14,10 @@ the [README](../README.md#installation).
 | DRS | Objects and access URLs | `drs get`, `access` | Not yet |
 | WES | Runs and attachments | Not yet ([#105](https://github.com/ga4gh/ga4gh-sdk/issues/105)) | Not yet |
 | TRS | Tools and descriptors | Not yet ([#115](https://github.com/ga4gh/ga4gh-sdk/issues/115)) | Not yet |
-| Service Registry | Not yet ([#89](https://github.com/ga4gh/ga4gh-sdk/issues/89)) | Not yet | Not yet |
+| Service Registry | `ServiceRegistry` | `registry list`, `get`, `types` | Not yet |
 
 `ServiceInfo` reads the discovery endpoint of one configured service. The
-separate GA4GH Service Registry would list services from a registry deployment.
+separate GA4GH Service Registry lists services from a registry deployment.
 The CLI reads one service section from the configuration file for each command.
 
 ## API root (`base_path`)
@@ -32,6 +32,7 @@ one service, including the service's path prefix. The SDK resolves
 | WES     | `https://example.org/ga4gh/wes/v1`   | `…/ga4gh/wes/v1/service-info`, `…/runs`  |
 | DRS     | `https://example.org/ga4gh/drs/v1`   | `…/ga4gh/drs/v1/service-info`, `…/objects` |
 | TRS     | `https://example.org/ga4gh/trs/v2`   | `…/ga4gh/trs/v2/service-info`, `…/tools` |
+| Registry | `https://example.org/ga4gh/registry/v1` | `…/ga4gh/registry/v1/service-info`, `…/services` |
 
 A service behind a gateway or reverse proxy keeps its full prefix, for example
 `https://gateway.example.org/my-tes/ga4gh/tes/v1`. A trailing slash is
@@ -41,9 +42,10 @@ host, which usually fails with `404 Not Found`.
 
 ## Configuration file
 
-The CLI, Rust `Configuration::from_file`, and Python
-`Configuration.from_file()` read `~/.ga4gh-cli/config.json`. It holds one object per service
-type, keyed by `TES`, `WES`, `DRS` or `TRS`:
+The CLI and Rust `Configuration::from_file` read
+`~/.ga4gh-cli/config.json`. Python `Configuration.from_file()` reads the same
+file for the service types exposed by the Python binding. The file holds one
+object per service type, keyed by `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY`:
 
 ```json
 {
@@ -74,11 +76,12 @@ The file can hold credentials, so keep it private, for example with
 
 ## Command-line tool
 
-The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`) and DRS
-commands (`get`, `access`). It reads the matching `TES` or `DRS` configuration
+The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`), DRS
+commands (`get`, `access`), and Service Registry commands (`list`, `get`,
+`types`). It reads the matching `TES`, `DRS`, or `REGISTRY` configuration
 section. The [CLI README](../cli/README.md) describes each command, its output
-and exit codes. `WES`, `TRS`, and `ServiceInfo` are available from the Rust library
-below.
+and exit codes. `WES`, `TRS`, and `ServiceInfo` are available from the Rust
+library below.
 
 ## Rust library
 
@@ -129,6 +132,26 @@ use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
 let info = ServiceInfo::new(&config)?.get().await?;
 println!("{} ({} {})", info.name, info.r#type.artifact, info.r#type.version);
 ```
+
+### Service Registry
+
+Use the registry's API root to discover service URLs. The registry client does
+not require a token for public reads; an individual deployment may require
+authentication.
+
+```rust
+use ga4gh_sdk::clients::registry::ServiceRegistry;
+use ga4gh_sdk::utils::configuration::Configuration;
+
+let root = url::Url::parse("https://registry.example.org/ga4gh/registry/v1")?;
+let registry = ServiceRegistry::new(&Configuration::new(root));
+for service in registry.list_services().await? {
+    println!("{} {}", service.id, service.url);
+}
+```
+
+`list_service_types()` and `get_service(id)` read the remaining registry
+endpoints. For the CLI equivalent, see [Service Registry commands](../cli/README.md#service-registry-commands).
 
 ### TES
 
