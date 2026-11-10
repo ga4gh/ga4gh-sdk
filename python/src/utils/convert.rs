@@ -1,18 +1,10 @@
 //! Conversions between Python objects, JSON values and query strings.
 
-use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 use pyo3::PyTypeInfo;
 use serde_json::Value;
-use std::future::Future;
-
-/// Runs a future to completion on a new Tokio runtime.
-pub fn block_on<F: Future>(future: F) -> PyResult<F::Output> {
-    let runtime = tokio::runtime::Runtime::new()
-        .map_err(|error| PyRuntimeError::new_err(format!("Cannot start async runtime: {error}")))?;
-    Ok(runtime.block_on(future))
-}
 
 /// Lets subclasses take further constructor arguments.
 ///

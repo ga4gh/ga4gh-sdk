@@ -1,16 +1,12 @@
-use crate::utils::convert::{block_on, check_extra_args, to_json, to_json_opt, with_query};
+use crate::utils::convert::{check_extra_args, to_json, to_json_opt, with_query};
+use crate::utils::runtime::io;
 use crate::PyConfiguration;
 use ga4gh_sdk::utils::transport::Transport;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 use reqwest::multipart::{Form, Part};
 use std::borrow::Cow;
-use std::error::Error;
-
-fn request_error(method: &str, error: Box<dyn Error>) -> PyErr {
-    PyRuntimeError::new_err(format!("{method} request failed: {error}"))
-}
 
 /// Sends requests below the configured API root.
 ///
@@ -45,49 +41,74 @@ impl PyTransport {
     }
 
     #[pyo3(signature = (endpoint, params=None))]
-    pub fn get(&self, endpoint: &str, params: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+    pub fn get(
+        &self,
+        py: Python<'_>,
+        endpoint: &str,
+        params: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
         let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
-        block_on(self.inner.get(&endpoint, None))?.map_err(|error| request_error("GET", error))
+        io(py, |rt| {
+            rt.block_on(self.inner.get(&endpoint, None))
+                .map_err(|error| format!("GET request failed: {error}"))
+        })
     }
 
     #[pyo3(signature = (endpoint, data=None, params=None))]
     pub fn post(
         &self,
+        py: Python<'_>,
         endpoint: &str,
         data: Option<&Bound<'_, PyAny>>,
         params: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<String> {
         let data = to_json_opt(data, "data")?;
         let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
-        block_on(self.inner.post(&endpoint, data))?.map_err(|error| request_error("POST", error))
+        io(py, |rt| {
+            rt.block_on(self.inner.post(&endpoint, data))
+                .map_err(|error| format!("POST request failed: {error}"))
+        })
     }
 
     #[pyo3(signature = (endpoint, data, params=None))]
     pub fn put(
         &self,
+        py: Python<'_>,
         endpoint: &str,
         data: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<String> {
         let data = to_json(data, "data")?;
         let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
-        block_on(self.inner.put(&endpoint, data))?.map_err(|error| request_error("PUT", error))
+        io(py, |rt| {
+            rt.block_on(self.inner.put(&endpoint, data))
+                .map_err(|error| format!("PUT request failed: {error}"))
+        })
     }
 
     #[pyo3(signature = (endpoint, params=None))]
-    pub fn delete(&self, endpoint: &str, params: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+    pub fn delete(
+        &self,
+        py: Python<'_>,
+        endpoint: &str,
+        params: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
         let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
-        block_on(self.inner.delete(&endpoint))?.map_err(|error| request_error("DELETE", error))
+        io(py, |rt| {
+            rt.block_on(self.inner.delete(&endpoint))
+                .map_err(|error| format!("DELETE request failed: {error}"))
+        })
     }
 
     /// Sends a `multipart/form-data` POST request.
     ///
     /// `fields` is a list of `(name, value)` text parts. `files` is a list of
-    /// `(name, filename, content)` or `(name, filename, content, content_type)` tuples, where
+    /// `(name, filename, content)` or `(name, filename, content_type)` tuples, where
     /// `content` is `bytes`. Names may repeat, as for WES `workflow_attachment`.
     #[pyo3(signature = (endpoint, fields=None, files=None, params=None))]
     pub fn post_multipart(
         &self,
+        py: Python<'_>,
         endpoint: &str,
         fields: Option<Vec<(String, String)>>,
         files: Option<Vec<Bound<'_, PyTuple>>>,
@@ -101,8 +122,10 @@ impl PyTransport {
             form = form.part(file_name(&file)?, file_part(&file)?);
         }
         let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
-        block_on(self.inner.post_multipart(&endpoint, form))?
-            .map_err(|error| request_error("POST", error))
+        io(py, |rt| {
+            rt.block_on(self.inner.post_multipart(&endpoint, form))
+                .map_err(|error| format!("POST request failed: {error}"))
+        })
     }
 }
 

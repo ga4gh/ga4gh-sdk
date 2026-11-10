@@ -31,7 +31,7 @@
 //!
 //! # Notes
 //!
-//! - Each call runs on a new Tokio runtime and blocks until the request is done.
+//! - Synchronous network calls release the GIL and share a persistent Tokio runtime.
 //! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`.
 
 use ga4gh_sdk::clients::ServiceType;

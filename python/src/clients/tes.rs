@@ -1,4 +1,5 @@
-use crate::utils::convert::{block_on, check_extra_args, to_python, with_query};
+use crate::utils::convert::{check_extra_args, to_python, with_query};
+use crate::utils::runtime::io;
 use crate::PyConfiguration;
 use crate::PyTransport;
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
@@ -59,24 +60,20 @@ impl PyTask {
         }
     }
 
-    pub fn status(&self) -> PyResult<String> {
-        match block_on(self.inner.status())? {
-            Ok(state) => Ok(format!("{:?}", state)),
-            Err(e) => Err(PyRuntimeError::new_err(format!(
-                "Failed to get task status: {}",
-                e
-            ))),
-        }
+    pub fn status(&self, py: Python<'_>) -> PyResult<String> {
+        io(py, |rt| {
+            rt.block_on(self.inner.status())
+                .map(|state| format!("{state:?}"))
+                .map_err(|e| format!("Failed to get task status: {e}"))
+        })
     }
 
-    pub fn cancel(&self) -> PyResult<String> {
-        match block_on(self.inner.cancel())? {
-            Ok(response) => Ok(response.to_string()),
-            Err(e) => Err(PyRuntimeError::new_err(format!(
-                "Failed to cancel task: {}",
-                e
-            ))),
-        }
+    pub fn cancel(&self, py: Python<'_>) -> PyResult<String> {
+        io(py, |rt| {
+            rt.block_on(self.inner.cancel())
+                .map(|response| response.to_string())
+                .map_err(|e| format!("Failed to cancel task: {e}"))
+        })
     }
 }
 
@@ -226,20 +223,26 @@ impl PyTesListTasksResponse {
 }
 
 /// A TES client. Subclass it to add endpoints, using `self.transport`.
-#[pyclass(unsendable, name = "TES", module = "GA4GH", subclass)]
+///
+/// The public `inner` preserves the Rust extension API and is safe to share
+/// between Python threads while synchronous requests release the GIL.
+#[pyclass(name = "TES", module = "GA4GH", subclass)]
 pub struct PyTES {
     pub inner: TES,
 }
 
 impl PyTES {
+    /// Build a TES client for Rust extension crates while releasing the GIL during discovery.
     pub fn new(config: &PyConfiguration) -> PyResult<Self> {
-        match block_on(TES::new(&config.inner))? {
-            Ok(instance) => Ok(PyTES { inner: instance }),
-            Err(e) => Err(PyRuntimeError::new_err(format!(
-                "Failed to create TES instance: {}",
-                e
-            ))),
-        }
+        Python::with_gil(|py| Self::new_with_gil(py, config))
+    }
+
+    fn new_with_gil(py: Python<'_>, config: &PyConfiguration) -> PyResult<Self> {
+        io(py, |rt| {
+            rt.block_on(TES::new(&config.inner))
+                .map(|inner| Self { inner })
+                .map_err(|error| format!("Failed to create TES instance: {error}"))
+        })
     }
 }
 
@@ -255,7 +258,7 @@ impl PyTES {
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         check_extra_args::<Self>(cls, args, kwargs)?;
-        Self::new(config)
+        Self::new_with_gil(cls.py(), config)
     }
 
     /// The client's configuration.
@@ -274,44 +277,45 @@ impl PyTES {
         }
     }
 
-    pub fn create(&self, task_file_path: String) -> PyResult<PyTask> {
-        let task_json = match std::fs::read_to_string(task_file_path.clone()) {
-            Ok(contents) => contents,
-            Err(e) => {
-                eprintln!("Failed to read file: {}", e);
-                task_file_path.to_string()
-            }
-        };
+    pub fn create(&self, py: Python<'_>, task_file_path: String) -> PyResult<PyTask> {
+        let task_json = std::fs::read_to_string(&task_file_path).unwrap_or(task_file_path);
         let task: TesTask = serde_json::from_str(&task_json)
-            .map_err(|e| PyValueError::new_err(format!("Failed to parse JSON: {}", e)))?;
-
-        match block_on(self.inner.create(task))? {
-            Ok(task) => Ok(PyTask { inner: task }),
-            Err(e) => Err(PyRuntimeError::new_err(format!(
-                "Failed to create task: {}",
-                e
-            ))),
-        }
+            .map_err(|error| PyValueError::new_err(format!("Failed to parse JSON: {error}")))?;
+        io(py, |rt| {
+            rt.block_on(self.inner.create(task))
+                .map(|task| PyTask { inner: task })
+                .map_err(|error| format!("Failed to create task: {error}"))
+        })
     }
 
     /// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
-    pub fn get(&self, view: &str, id: &str) -> PyResult<PyTesTask> {
-        let response = block_on(self.inner.get_raw(view, id))?
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get task: {}", e)))?;
+    pub fn get(&self, py: Python<'_>, view: &str, id: &str) -> PyResult<PyTesTask> {
+        let view = view.to_owned();
+        let id = id.to_owned();
+        let response = io(py, |rt| {
+            rt.block_on(self.inner.get_raw(&view, &id))
+                .map_err(|error| format!("Failed to get task: {error}"))
+        })?;
         PyTesTask::from_json(serde_json::from_str(&response).map_err(invalid_response)?)
     }
 
     #[pyo3(signature = (params=None))]
-    pub fn list(&self, params: Option<PyListTasksParams>) -> PyResult<PyTesListTasksResponse> {
-        // Not `TES::list_tasks`: it hands the params to reqwest's query encoder, which can't
-        // encode the `tag_key` and `tag_value` lists. `with_query` repeats them instead.
+    pub fn list(
+        &self,
+        py: Python<'_>,
+        params: Option<PyListTasksParams>,
+    ) -> PyResult<PyTesListTasksResponse> {
+        // Not `TES::list_tasks`: reqwest's query encoder cannot repeat tag lists.
         let params = params
             .map(|params| serde_json::to_value(params.inner))
             .transpose()
-            .map_err(|e| PyValueError::new_err(format!("Invalid params: {e}")))?;
+            .map_err(|error| PyValueError::new_err(format!("Invalid params: {error}")))?;
         let endpoint = with_query("tasks", params)?;
-        let response = block_on(self.inner.transport.get(&endpoint, None))?
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list tasks: {}", e)))?;
+        let transport = self.inner.transport.clone();
+        let response = io(py, move |rt| {
+            rt.block_on(transport.get(&endpoint, None))
+                .map_err(|error| format!("Failed to list tasks: {error}"))
+        })?;
         let raw: Value = serde_json::from_str(&response).map_err(invalid_response)?;
         let inner: TesListTasksResponse =
             serde_json::from_value(raw.clone()).map_err(invalid_response)?;
