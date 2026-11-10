@@ -270,6 +270,34 @@ An acknowledged unresolved ID remains in the ledger for operator cleanup. A
 second invocation cannot overwrite that ledger and start another job. Do not
 resolve uncertainty by deleting the ledger and blindly retrying.
 
+For future explicitly approved submission failures, the existing private ledger
+also retains a bounded `diagnostic` object. `HttpStatusError` body text is saved
+up to 4096 UTF-8 bytes, with original/saved byte counts and a truncation flag.
+A body-contained `requestId` or `request_id` (top-level or under `error`) is
+retained up to 256 bytes. The current transport error does not expose response
+headers, so a header-only request ID remains unavailable. Public JSON/JUnit
+continues to expose only the sanitized HTTP status for the failed submission.
+
+The ledger is created with POSIX mode `0600` before POST and updated through the
+same file handle, including a flush to disk. Existing-ledger refusal, one-POST
+behavior and disabled redirects remain unchanged. If the transport's own body
+limit or I/O wraps the response as ambiguous, only its bounded private reason is
+retained; missing typed status/body are not reconstructed from prose. This does
+not recover the first live attempt's discarded response or resolve its UNKNOWN
+intent. A further cloud attempt still requires separate explicit authorization
+and a separate new ledger; never delete the original intent to retry.
+
+Run the actual SDK diagnostic regressions entirely on loopback:
+
+```sh
+python3 tests/interop/native_diagnostics.py
+```
+
+This opt-in check requires Rust (or `SEQERA_PROFILE_SDK_BIN`). It verifies HTTP
+400 body/request-ID retention, UTF-8 byte limits, private permissions, one POST
+across a second invocation, and absence of synthetic private markers from public
+stdout/stderr/JSON/JUnit. It uses no real credentials or cloud services.
+
 The observed native service advertised WES `1.0`, descriptor `NFL` with an empty
 version list and Nextflow `20.01.0`. The profile exposes that discovery gap:
 a real launch needs an explicit operator-verified descriptor version. Read-only

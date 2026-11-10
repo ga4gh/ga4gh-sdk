@@ -8,7 +8,7 @@ import threading
 
 
 class Fixture:
-    def __init__(self, workflow, public_hello=False):
+    def __init__(self, workflow, public_hello=False, failure_body=None, failure_headers=None):
         self.workflow = workflow
         self.state = 'QUEUED'
         self.requests = []
@@ -21,12 +21,19 @@ class Fixture:
                 pass
 
             def reply(self, body, status=200):
-                data = json.dumps(body).encode()
+                self.reply_bytes(json.dumps(body).encode(), status)
+
+            def reply_bytes(self, data, status=200, headers=None):
                 self.send_response(status)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(data)))
+                for key, value in (headers or {}).items():
+                    self.send_header(key, value)
                 self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
             def authorized(self):
                 if self.headers.get('Authorization') != 'Bearer synthetic-profile-token':
@@ -90,8 +97,11 @@ class Fixture:
                         assert parts['workflow_url'] == 'seqera.nf'
                         assert attachment == fixture.workflow
                         assert json.loads(parts['workflow_params']) == {'delay': 30}
-                    fixture.accepted += 1
-                    self.reply({'run_id': 'synthetic-run'})
+                    if failure_body is not None:
+                        self.reply_bytes(failure_body, 400, failure_headers)
+                    else:
+                        fixture.accepted += 1
+                        self.reply({'run_id': 'synthetic-run'})
                 except (AssertionError, KeyError, ValueError) as exc:
                     fixture.error = str(exc)
                     self.reply({'msg': 'fixture assertion failed'}, 400)

@@ -5,7 +5,14 @@ use ga4gh_sdk::utils::{configuration::Configuration, transport::Transport};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
 use sha2::Digest;
-use std::{collections::HashMap, env, path::Path, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    fs::{File, OpenOptions},
+    io::{Seek, Write},
+    path::Path,
+    time::Duration,
+};
 
 type Error = Box<dyn std::error::Error>;
 fn required(key: &str) -> Result<String, Error> {
@@ -24,16 +31,69 @@ fn terminal(state: State) -> bool {
             | State::Preempted
     )
 }
-fn ledger(path: &Path, run: &Run, state: &str) -> Result<(), Error> {
-    // Never overwrite a previous unresolved submission ledger.
-    let value = json!({"schema_version":1,"run_id":run.id,"state":state});
-    std::fs::write(path, serde_json::to_vec(&value)?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+const PRIVATE_BODY_LIMIT: usize = 4096;
+const PRIVATE_REQUEST_ID_LIMIT: usize = 256;
+
+fn bounded_text(value: &str, limit: usize) -> String {
+    let mut end = value.len().min(limit);
+    while !value.is_char_boundary(end) {
+        end -= 1;
     }
+    value[..end].to_owned()
+}
+
+fn submission_diagnostic(error: &(dyn std::error::Error + 'static)) -> Value {
+    use ga4gh_sdk::utils::{operation::AmbiguousSubmissionError, transport::HttpStatusError};
+    if let Some(error) = error.downcast_ref::<HttpStatusError>() {
+        let body = bounded_text(&error.body, PRIVATE_BODY_LIMIT);
+        // Transport exposes status/body only. Do not invent a header request ID.
+        let parsed = serde_json::from_str::<Value>(&error.body).ok();
+        let request_id = parsed
+            .as_ref()
+            .and_then(|value| {
+                [
+                    "/requestId",
+                    "/request_id",
+                    "/error/requestId",
+                    "/error/request_id",
+                ]
+                .iter()
+                .find_map(|path| value.pointer(path).and_then(Value::as_str))
+            })
+            .map(|value| bounded_text(value, PRIVATE_REQUEST_ID_LIMIT));
+        return json!({
+            "kind":"http_status_error", "http_status":error.status.as_u16(),
+            "body_bytes_available":error.body.len(), "body_bytes_saved":body.len(),
+            "body_truncated":body.len() < error.body.len(), "body":body,
+            "request_id_source":request_id.as_ref().map(|_| "response_body"),
+            "request_id":request_id, "response_headers_available":false,
+        });
+    }
+    if let Some(error) = error.downcast_ref::<AmbiguousSubmissionError>() {
+        // send_once wraps body-limit/I/O errors as ambiguous. Preserve its
+        // bounded private reason; do not reconstruct status from prose.
+        return json!({"kind":"ambiguous_submission_error", "http_status":null,
+            "body":null, "reason":bounded_text(&error.reason, PRIVATE_BODY_LIMIT),
+            "request_id":null, "response_headers_available":false});
+    }
+    json!({"kind":"non_http_error", "http_status":null, "body":null,
+        "request_id":null, "response_headers_available":false})
+}
+
+fn write_private_ledger(file: &mut File, value: &Value) -> Result<(), Error> {
+    let bytes = serde_json::to_vec(value)?;
+    file.rewind()?;
+    file.write_all(&bytes)?;
+    file.set_len(bytes.len() as u64)?;
+    file.sync_all()?;
     Ok(())
+}
+
+fn ledger(file: &mut File, run: &Run, state: &str) -> Result<(), Error> {
+    write_private_ledger(
+        file,
+        &json!({"schema_version":1,"run_id":run.id,"state":state}),
+    )
 }
 async fn profile(checks: &mut Vec<Value>) -> Result<(), Error> {
     let config = Configuration::new(url::Url::parse(&required("SEQERA_PROFILE_API_ROOT")?)?);
@@ -154,21 +214,25 @@ async fn profile(checks: &mut Vec<Value>) -> Result<(), Error> {
     };
     let ledger_path = required("SEQERA_PROFILE_LEDGER")?;
     let ledger_path = Path::new(&ledger_path);
-    // create_new prevents an accidental second launch during recovery.
-    let intent = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(ledger_path)?;
-    drop(intent);
-    std::fs::write(
-        ledger_path,
-        b"{\"schema_version\":1,\"state\":\"SUBMISSION_OUTCOME_UNKNOWN\"}",
-    )?;
+    // Keep the original private file handle: no path reopen or replacement can
+    // redirect diagnostics. create_new still prevents a second submission.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut intent = options.open(ledger_path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(ledger_path, std::fs::Permissions::from_mode(0o600))?;
+        intent.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
+    write_private_ledger(
+        &mut intent,
+        &json!({"schema_version":1,"state":"SUBMISSION_OUTCOME_UNKNOWN"}),
+    )?;
 
     let run = match wes
         .run_workflow_with_attachments(request, attachments)
@@ -176,16 +240,22 @@ async fn profile(checks: &mut Vec<Value>) -> Result<(), Error> {
     {
         Ok(run) => run,
         Err(error) => {
-            let http_status = error
-                .downcast_ref::<ga4gh_sdk::utils::transport::HttpStatusError>()
-                .map(|error| error.status.as_u16());
+            let diagnostic = submission_diagnostic(error.as_ref());
+            // Only status leaves the private ledger. Bodies and request IDs can
+            // contain account context, signed URLs or other sensitive values.
+            let http_status = diagnostic["http_status"].clone();
             checks.push(json!({"id":"launch", "outcome":"observed_failure", "detail":"Submission not acknowledged; ledger remains SUBMISSION_OUTCOME_UNKNOWN; never retry automatically", "observed":{"http_status":http_status}}));
+            write_private_ledger(
+                &mut intent,
+                &json!({"schema_version":1,
+                "state":"SUBMISSION_OUTCOME_UNKNOWN", "diagnostic":diagnostic}),
+            )?;
             return Ok(());
         }
     };
     // Retain ownership even if the first ledger update fails: cancellation is
     // attempted with the acknowledged ID before returning the I/O error.
-    if let Err(error) = ledger(ledger_path, &run, "ACKNOWLEDGED") {
+    if let Err(error) = ledger(&mut intent, &run, "ACKNOWLEDGED") {
         let _ = run.cancel().await;
         return Err(error);
     }
@@ -257,7 +327,7 @@ async fn profile(checks: &mut Vec<Value>) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     ledger(
-        ledger_path,
+        &mut intent,
         &run,
         &final_state
             .map(|s| s.to_string())
