@@ -52,12 +52,21 @@ After `maturin develop`, run the Python binding tests with:
 pytest
 ```
 
-## Current standalone build limitation
+Synchronous network methods release the Python GIL while Rust waits for I/O.
+They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
+connections remain reusable between calls. Inputs are decoded before releasing
+the GIL and Python results/exceptions are constructed after reacquiring it.
+No asyncio API or Python callback runs on the runtime. Use multiprocessing's
+`spawn` mode rather than forking a process after starting threaded I/O.
 
-`maturin develop` and `maturin build` currently fail because `ga4gh-lib` does
-not enable `serde`'s derive feature when built on its own. This is tracked in
-[#79](https://github.com/ga4gh/ga4gh-sdk/issues/79). A successful
-`cargo build --workspace` does not establish that a Python wheel builds.
+`tests/test_io_runtime.py` exercises all synchronous network wrappers against a
+Python-thread HTTP server, including a heartbeat during delayed I/O, keep-alive
+connection reuse, and error recovery. Each scenario runs in a subprocess with a
+15-second timeout so a GIL regression cannot hang the test worker.
+
+`Configuration.from_file()` raises `FileNotFoundError` when the config file is
+missing and `ValueError` when its contents are malformed. Invalid URLs and JSON
+arguments also raise `ValueError`.
 
 ## Example 
 

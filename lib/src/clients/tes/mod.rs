@@ -1,3 +1,4 @@
+mod list_tasks_params;
 /// This module provides a client for interacting with the TES (Task Execution Service) API.
 ///
 /// The `TES` struct represents a TES client and provides methods for creating tasks, retrieving task status, canceling tasks, and listing tasks.
@@ -97,7 +98,6 @@ use crate::utils::configuration::Configuration;
 /// Existing import path for the shared path-segment encoder.
 pub use crate::utils::transport::urlencode;
 use crate::utils::transport::{HttpStatusError, Transport};
-use log::{debug, error};
 use serde::Serialize;
 use serde_json;
 use serde_json::from_str;
@@ -148,22 +148,11 @@ impl Task {
         let url = format!("tasks/{}", urlencode(&self.id));
         let response = self
             .transport
-            .get(&url, Some(json!({"view": "FULL"})))
-            .await;
-        match response {
-            Ok(resp_str) => {
-                let task: TesTask = from_str(&resp_str)?;
-                Ok(task.state.unwrap())
-            }
-            Err(e) => {
-                let err_msg = format!("HTTP request failed: {}", e);
-                eprintln!("{}", err_msg);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    err_msg,
-                )))
-            }
-        }
+            .get(&url, Some(json!({"view": "MINIMAL"})))
+            .await?;
+        let task: TesTask = from_str(&response)?;
+        task.state
+            .ok_or_else(|| "TES task response is missing 'state'".into())
     }
 
     /// Cancels the task.
@@ -173,17 +162,8 @@ impl Task {
     /// - On failure, returns an error.
     pub async fn cancel(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let url = format!("tasks/{}:cancel", urlencode(&self.id));
-        let response = self.transport.post(&url, None).await;
-        match response {
-            Ok(resp_str) => {
-                let parsed_json = serde_json::from_str::<serde_json::Value>(&resp_str);
-                match parsed_json {
-                    Ok(json) => Ok(json),
-                    Err(e) => Err(format!("Failed to parse JSON: {}", e).into()),
-                }
-            }
-            Err(e) => Err(format!("HTTP request failed: {}", e).into()),
-        }
+        let response = self.transport.post(&url, None).await?;
+        Ok(serde_json::from_str(&response)?)
     }
 }
 
@@ -208,12 +188,12 @@ impl TES {
         let transport = Transport::new(config);
         let service_info = ServiceInfo::new(config)?;
 
-        let resp = service_info.get().await;
+        let service = service_info.get().await?;
 
         let instance = TES {
             config: config.clone(),
             transport,
-            service: resp,
+            service: Ok(service),
         };
 
         instance.check()?; // Propagate the error if check() fails
@@ -259,30 +239,26 @@ impl TES {
             log::error!("Service check failed: {}", e);
             e
         })?;
-        let response = self.transport.post("tasks", Some(json!(task))).await;
-        match response {
-            Ok(response_body) => {
-                let v: serde_json::Value = serde_json::from_str(&response_body)?;
+        let operation = crate::utils::operation::Operation::new(std::time::Duration::from_secs(60));
+        let request = self
+            .transport
+            .request_builder(reqwest::Method::POST, "tasks")?
+            .json(&task);
+        let response_body = self
+            .transport
+            .send_once(request, &operation, Default::default())
+            .await?;
+        let task_id = crate::utils::acknowledgement::execution_id(
+            &response_body,
+            "id",
+            "TES creation",
+            None,
+        )?;
 
-                // Access the `id` field
-                let task_id = v
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .trim_matches('"')
-                    .to_string();
-
-                let task = Task {
-                    id: task_id,
-                    transport: self.transport.clone(),
-                };
-                Ok(task)
-            }
-            Err(e) => Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to post task: {}", e),
-            ))),
-        }
+        Ok(Task {
+            id: task_id,
+            transport: self.transport.clone(),
+        })
     }
 
     /// Retrieves the details of a specific TES task.
@@ -295,16 +271,19 @@ impl TES {
     /// - On success, returns a `TesTask` containing the task details.
     /// - On failure, returns an error.
     pub async fn get(&self, view: &str, id: &str) -> Result<TesTask, Box<dyn std::error::Error>> {
-        let url = format!("tasks/{}", urlencode(id));
-        let response = self.transport.get(&url, Some(json!({"view": view}))).await;
+        let response = self.get_raw(view, id).await?;
+        Ok(from_str(&response)?)
+    }
 
-        match response {
-            Ok(resp_str) => {
-                let task: TesTask = from_str(&resp_str)?;
-                Ok(task)
-            }
-            Err(e) => Err(e),
-        }
+    /// Retrieves the server's task JSON verbatim, including fields unknown to
+    /// the current TES models. This is useful for CLI output and extensions.
+    pub async fn get_raw(
+        &self,
+        view: &str,
+        id: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let url = format!("tasks/{}", urlencode(id));
+        self.transport.get(&url, Some(json!({"view": view}))).await
     }
 
     /// Lists TES tasks based on provided filtering parameters.
@@ -325,21 +304,8 @@ impl TES {
             self.transport.get("tasks", Some(params_value)).await
         } else {
             self.transport.get("tasks", None).await
-        };
-
-        match response {
-            Ok(resp_str) => {
-                let task: TesListTasksResponse = from_str(&resp_str)?;
-                Ok(task)
-            }
-            Err(e) => {
-                error!("HTTP request failed: {:?}", e);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("HTTP request failed: {:?}", e),
-                )))
-            }
-        }
+        }?;
+        Ok(from_str(&response)?)
     }
 }
 #[cfg(test)]
@@ -396,7 +362,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_status() {
-        let _m = mock("GET", "/tasks/123?view=FULL")
+        let _m = mock("GET", "/tasks/123?view=MINIMAL")
             .with_status(200)
             .with_body(r#"{"state": "COMPLETE", "executors": []}"#)
             .create();
@@ -407,6 +373,18 @@ mod tests {
         let result = task.status().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), TesState::Complete);
+    }
+
+    #[tokio::test]
+    async fn test_task_status_missing_state_is_an_error() {
+        let _m = mock("GET", "/tasks/123?view=MINIMAL")
+            .with_status(200)
+            .with_body(r#"{"executors": []}"#)
+            .create();
+        let url = url::Url::parse(&server_url()).unwrap();
+        let task = Task::new("123".to_owned(), Transport::new(&Configuration::new(url)));
+        let error = task.status().await.unwrap_err();
+        assert!(error.to_string().contains("missing 'state'"), "{error}");
     }
 
     #[tokio::test]
@@ -469,6 +447,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tes_list_tasks_with_repeated_tags() {
+        let _request = mock("GET", "/tasks")
+            .match_query(mockito::Matcher::Exact(
+                "tag_key=first&tag_key=second&tag_value=one&tag_value=two".to_owned(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"tasks":[],"next_page_token":"page-2"}"#)
+            .create();
+        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let tes = TES {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service::default()),
+        };
+        let result = tes
+            .list_tasks(Some(ListTasksParams {
+                name_prefix: None,
+                state: None,
+                tag_key: Some(vec!["first".into(), "second".into()]),
+                tag_value: Some(vec!["one".into(), "two".into()]),
+                page_size: None,
+                page_token: None,
+                view: None,
+            }))
+            .await
+            .unwrap();
+        assert!(result.tasks.is_empty());
+        assert_eq!(result.next_page_token.as_deref(), Some("page-2"));
+    }
+
+    #[tokio::test]
     async fn test_all_tes_methods_under_api_root() {
         let id = "a/b ?#";
         let encoded_id = urlencode(id);
@@ -502,7 +511,7 @@ mod tests {
             .create();
             let _status = mock(
                 "GET",
-                format!("{prefix}/tasks/{encoded_id}?view=FULL").as_str(),
+                format!("{prefix}/tasks/{encoded_id}?view=MINIMAL").as_str(),
             )
             .with_status(200)
             .with_body(
@@ -533,20 +542,71 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_service_info_error_keeps_status_and_404_hint() {
+    async fn test_service_info_error_keeps_http_error() {
         for (status, path) in [(404, "/missing/tes/v1"), (503, "/unavailable/tes/v1")] {
             let _service = mock("GET", format!("{path}/service-info").as_str())
                 .with_status(status)
                 .with_body("service failure")
                 .create();
             let base = url::Url::parse(&format!("{}{path}", server_url())).unwrap();
-            let error = TES::new(&Configuration::new(base))
-                .await
-                .unwrap_err()
-                .to_string();
-            assert!(error.contains(&status.to_string()), "{error}");
-            assert!(error.contains("service failure"), "{error}");
-            assert_eq!(error.contains("base_path"), status == 404, "{error}");
+            let error = TES::new(&Configuration::new(base)).await.unwrap_err();
+            let http = error.downcast_ref::<crate::utils::transport::HttpError>();
+            assert!(http.is_some(), "{error}");
+            let http = http.unwrap();
+            assert_eq!(usize::from(http.status.as_u16()), status);
+            assert_eq!(http.body, "service failure");
+        }
+    }
+
+    #[tokio::test]
+    async fn tes_methods_preserve_http_error_for_downcast() {
+        let _create = mock("POST", "/tasks")
+            .with_status(401)
+            .with_body("unauthorized")
+            .create();
+        let _list = mock("GET", "/tasks")
+            .with_status(401)
+            .with_body("unauthorized")
+            .create();
+        let _get = mock("GET", "/tasks/123?view=FULL")
+            .with_status(401)
+            .with_body("unauthorized")
+            .create();
+        let _status = mock("GET", "/tasks/123?view=MINIMAL")
+            .with_status(401)
+            .with_body("unauthorized")
+            .create();
+        let _cancel = mock("POST", "/tasks/123:cancel")
+            .with_status(401)
+            .with_body("unauthorized")
+            .create();
+        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let transport = Transport::new(&config);
+        let tes = TES {
+            config,
+            service: Ok(Service {
+                r#type: Box::new(ServiceType {
+                    artifact: "tes".to_string(),
+                    ..Default::default()
+                }),
+                ..Service::default()
+            }),
+            transport: transport.clone(),
+        };
+        let task = Task::new("123".to_owned(), transport);
+        let errors = [
+            tes.create(TesTask::default()).await.unwrap_err(),
+            tes.list_tasks(None).await.unwrap_err(),
+            tes.get("FULL", "123").await.unwrap_err(),
+            task.status().await.unwrap_err(),
+            task.cancel().await.unwrap_err(),
+        ];
+        for error in errors {
+            let http = error
+                .downcast_ref::<crate::utils::transport::HttpError>()
+                .expect("TES client must return the transport's HTTP error");
+            assert_eq!(http.status, reqwest::StatusCode::UNAUTHORIZED);
+            assert_eq!(http.body, "unauthorized");
         }
     }
 }
