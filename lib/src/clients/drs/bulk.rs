@@ -16,13 +16,22 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     error::Error,
+    fmt,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct BulkKey {
     pub object_id: String,
     pub access_id: Option<String>,
+}
+impl fmt::Debug for BulkKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BulkKey")
+            .field("object_id", &self.object_id)
+            .field("access_id", &self.access_id.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BulkPending {
@@ -31,12 +40,23 @@ pub struct BulkPending {
     pub retry_after_secs: u64,
 }
 /// Multiple returned values are retained rather than silently selecting a duplicate.
-#[derive(Debug)]
+/// Debug output shows counts because resolved access URLs and error text may
+/// contain credentials. Inspect the public fields only in an appropriate context.
 pub struct ObjectOutcome<T> {
     pub resolved: Vec<T>,
     pub failure_codes: Vec<u16>,
     pub pending: Option<BulkPending>,
     pub errors: Vec<String>,
+}
+impl<T> fmt::Debug for ObjectOutcome<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ObjectOutcome")
+            .field("resolved_count", &self.resolved.len())
+            .field("failure_codes", &self.failure_codes)
+            .field("pending", &self.pending)
+            .field("error_count", &self.errors.len())
+            .finish()
+    }
 }
 impl<T> Default for ObjectOutcome<T> {
     fn default() -> Self {
@@ -466,6 +486,8 @@ impl DRS {
         )
         .await
     }
+    /// Returned access URLs and headers may be credentials. The report's Debug
+    /// output omits them; logging a raw generated `BulkAccessUrl` does not.
     pub async fn get_bulk_access_urls(
         &self,
         keys: &[BulkKey],
