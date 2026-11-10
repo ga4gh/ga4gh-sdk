@@ -91,10 +91,11 @@ for t in tes.list(None).tasks:
 print(tes.get("FULL", task.id).status)
 ```
 
-`TES.create()` accepts a path to a JSON task file or the JSON text itself.
+`TES.create()` accepts a `dict`, a `TesTask`, or a path to a JSON task file.
+Use `TesTask.from_json(text)` when the task starts as JSON text.
 For a task that is still running, call `task.cancel()`.
-`from_file` replaces the API root. `Task.status()` and `Task.cancel()` are methods; `id`
-and `status` on the tasks returned by `list()` and `get()` are attributes.
+`from_file` replaces the API root. `Task.status()` and `Task.cancel()` are methods;
+`id` and `status` on tasks returned by `list()` and `get()` are attributes.
 
 ## Network behavior
 
@@ -114,6 +115,73 @@ connection reuse, and error recovery. Each scenario runs in a subprocess with a
 missing and `ValueError` when its contents are malformed. Invalid URLs and JSON
 arguments also raise `ValueError`.
 
+## Using TES
+
+`TES` is a client for a Task Execution Service. It takes tasks as `dict`s, so Python apps
+need neither task files on disk nor JSON parsing:
+
+```python
+from GA4GH import Configuration, ListTasksParams, TES, TesState, TesTask
+
+tes = TES(Configuration("http://localhost:8000/ga4gh/tes/v1"))
+
+task = tes.create({
+    "name": "hello",
+    "executors": [{"image": "alpine", "command": ["echo", "hello"]}],
+})
+print(task.id)
+
+if task.status() is TesState.QUEUED:
+    task.cancel()
+
+details = tes.get("FULL", task.id)
+print(details.state, details.executors, details.to_dict())
+
+page = tes.list(ListTasksParams(state=TesState.RUNNING, page_size=50))
+for listed in page.tasks:
+    print(listed.id, listed.state)
+```
+
+- `TES.create(task)` takes a `dict` (or other mapping), a `TesTask`, or the path of a JSON
+  file (`str` or `os.PathLike`). It sends the task's JSON as given, including fields that
+  the TES models don't know, and returns a `Task`. An invalid task raises `ValueError`; a
+  missing file raises `FileNotFoundError`.
+- `Task` addresses a task on the server by its `id`. `Task.status()` returns the current
+  state as a `TesState`; `Task.cancel()` cancels the task and returns `None`.
+- `TES.get(view, id)` returns a `TesTask`; `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
+- `TES.list(params=None)` returns a `ListTasksResponse` with `tasks` (a list of
+  `TesTask`) and `next_page_token`; see [Listing tasks](#listing-tasks).
+
+### Task objects
+
+`TesTask` holds a task: one to create, or one as returned by the server. Build one with
+`TesTask(task)` from a `dict` or JSON text, or with `TesTask.from_dict(d)`,
+`TesTask.from_json(text)` or `TesTask.from_file(path)`; all of them check the task
+against the TES models and raise `ValueError` if it doesn't fit.
+
+Its fields are properties: `id`, `state`, `name`, `description`, `creation_time`,
+`inputs`, `outputs`, `resources`, `executors`, `volumes`, `tags` and `logs`. Missing
+fields are `None`, except `state`, which is `TesState.UNKNOWN` then. Nested values, such
+as executors, come as `dict`s and `list`s. `status` is the same as `state`.
+
+`task.to_dict()` returns the whole task as a new `dict` and `task.json()` as JSON text,
+both including fields that the TES models don't know. `ListTasksResponse` has the same
+two methods for the whole page.
+
+### Task states
+
+`TesState` is a Python `enum.Enum` of the TES states (`UNKNOWN`, `QUEUED`,
+`INITIALIZING`, `RUNNING`, `PAUSED`, `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`,
+`CANCELED`, `PREEMPTED`, `CANCELING`). Its members are also strings:
+`TesState.RUNNING == "RUNNING"`, and `str()`, f-strings and `json.dumps()` give the
+state's name. `TesState("RUNNING")` looks a state up by name.
+
+### Type hints
+
+The package ships type stubs (`GA4GH.pyi`, with a `py.typed` marker), so editors and
+type checkers such as mypy see every class and method. `tests/test_stubs.py` checks that
+the stubs declare every class and member of the module.
+
 ## Runnable example
 
 After installing the bindings with `maturin develop`, run the checked-in
@@ -123,27 +191,25 @@ After installing the bindings with `maturin develop`, run the checked-in
 python tests/example.py
 ```
 
-It submits the same file-based hello task, prints its ID and current status,
-and lists tasks. For example:
+The output depends on server timing, for example:
 
 ```text
-Created task <task-id>: Queued
-Tasks:
-<task-id>: QUEUED
+TASK ID: <task-id>
+STATE:   COMPLETE
+TASK:    {'id': '<task-id>', 'state': 'COMPLETE', ...}
 ```
 
 The ID, state, and number of listed tasks depend on the server and timing.
-The script finds its task file relative to itself, so it also works when
-invoked from the repository root. Set `GA4GH_TES_URL` to use another TES API
-root. CI runs this exact script against a mock service and checks the submitted
-task body.
+The script creates a task from a Python `dict` and also works when invoked
+from the repository root. Set `GA4GH_TES_URL` to use another TES API root.
+CI runs this exact script against a mock service and checks the submitted task body.
 
 ## Extending the bindings
 
 The bindings are meant as a base for clients of services that add endpoints or
 fields to the GA4GH APIs. `Configuration`, `ServiceInfo`, `Transport`, `TES`,
 `Task`, `TesTask`, `ListTasksParams`, and `ListTasksResponse` can be subclassed.
-`ServiceType` is an enum and is not subclassable.
+`ServiceType` and `TesState` are enums and are not subclassable.
 
 The base classes initialize in `__new__`. A subclass that needs extra
 constructor arguments can define `__init__` and call `super().__init__()`
@@ -201,10 +267,10 @@ of the wrong type (for example a `dict` for `fields`) raise `TypeError`.
 
 ### Fields the models don't know
 
-`TES.get()` and the tasks of `TES.list()` are `TesTask` objects. Besides `id` and
-`status`, they keep the task's JSON as the server sent it, including fields that the TES
+`TES.get()` and the tasks of `TES.list()` are `TesTask` objects. Besides their typed
+fields, they keep the task's JSON as the server sent it, including fields that the TES
 models don't know: `task.json()` returns it as JSON text (object keys may come in another
-order), `task.to_dict()` as a `dict`.
+order), `task.to_dict()` as a `dict`. `TES.create()` sends such fields as given, too.
 `TesTask` was called `PyTesTask` before; the old name still works.
 
 ### Listing tasks
@@ -217,11 +283,12 @@ from GA4GH import ListTasksParams
 params = ListTasksParams(state="running", tag_key=["project"], tag_value=["demo"], page_size=50)
 page = tes.list(params)
 for task in page.tasks:
-    print(task.id, task.status)
+    print(task.id, task.state)
 next_page = tes.list(ListTasksParams(page_token=page.next_page_token))
 ```
 
-`state` accepts any TES state in any case and raises `ValueError` for others.
+`state` accepts a `TesState` or any TES state name in any case, and raises `ValueError`
+for others; the `state` property returns a `TesState`.
 
 ### Rust crates
 
@@ -231,7 +298,8 @@ example with `#[pyclass(extends = PyTES)]`; the `inner` field of each class
 holds the library type. The extension module gets its own copies of the base classes,
 which don't mix with those of the `GA4GH` module: a `GA4GH.Configuration` can't be passed
 to it. So register every base class that its users need (`m.add_class::<PyConfiguration>()`
-and so on) in the extension module, and import everything from there. The default
+and so on, and `m.add("TesState", tes_state_type(py)?)` for the state enum) in the
+extension module, and import everything from there. The default
 feature `extension-module` builds the Python module; a dependent crate can turn it off
 with `default-features = false` and enable it in its own features instead.
 
