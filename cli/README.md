@@ -74,30 +74,21 @@ Only `base_path` is needed. Docker must be running for Funnel to execute tasks.
 
 ### CLI Examples
 
-1. To create a task without external storage, save this JSON as `task.json`:
-
-```json
-{
-    "name": "Hello world",
-    "executors": [{
-        "image": "alpine",
-        "command": ["true"]
-    }]
-}
-```
-
-Then pass the file to the CLI and save the returned ID for later commands:
+1. From the repository root, submit the checked-in
+[example task](../examples/tes-hello.json). It runs `echo` in an Alpine
+container and has no external inputs or outputs. Save the returned ID for later
+commands:
 
 ```sh
-task_id=$(ga4gh-cli tes create task.json)
+task_id=$(ga4gh-cli tes create examples/tes-hello.json)
 printf '%s\n' "$task_id"
 ```
 
-You can also pass the task JSON directly or read it from standard input:
+The CLI also accepts JSON text directly or from standard input:
 
 ```sh
-ga4gh-cli tes create '{"executors":[{"image":"alpine","command":["true"]}]}'
-cat task.json | ga4gh-cli tes create -
+ga4gh-cli tes create "$(cat examples/tes-hello.json)"
+cat examples/tes-hello.json | ga4gh-cli tes create -
 ```
 
 The command prints only the new task ID. If the service rejects it, the CLI
@@ -158,10 +149,10 @@ ga4gh-cli tes status "$task_id"
 
 The command prints the TES state, such as `QUEUED`.
 
-5. To cancel the task run the `tes cancel` command:
+5. To cancel a task that is still running, use its ID with `tes cancel`:
 
 ```sh
-ga4gh-cli tes cancel "$task_id"
+ga4gh-cli tes cancel 'running-task-id'
 ```
 
 All five TES commands exit with code 0 on success and code 1 on request or

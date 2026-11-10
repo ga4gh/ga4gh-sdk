@@ -138,10 +138,9 @@ use ga4gh_sdk::clients::tes::TES;
 
 let tes = TES::new(&config).await?;
 
-// With a TES service running as described in the quick start:
-let task: TesTask = serde_json::from_str(
-    r#"{"executors":[{"image":"alpine","command":["true"]}]}"#
-)?;
+// From the repository root, with a TES service running as in the quick start:
+let task_json = std::fs::read_to_string("examples/tes-hello.json")?;
+let task: TesTask = serde_json::from_str(&task_json)?;
 let task = tes.create(task).await?;
 println!("created {}", task.id);
 println!("state {:?}", task.status().await?);
@@ -158,8 +157,9 @@ let params = ListTasksParams {
 let tasks = tes.list_tasks(Some(params)).await?;
 
 let details = tes.get("FULL", &task.id).await?;
-task.cancel().await?;
 ```
+
+To cancel a task that is still running, call `task.cancel().await?`.
 
 ### WES
 

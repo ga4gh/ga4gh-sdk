@@ -96,18 +96,22 @@ cat > ~/.ga4gh-cli/config.json <<'JSON'
 JSON
 ```
 
-Submit a task without external storage, check its status, and list tasks:
+Submit the checked-in [task file](examples/tes-hello.json), which runs a
+greeting in an Alpine container without external storage. Then check its status
+and list tasks:
 
 ```sh
-task_id=$(ga4gh-cli tes create '{"executors":[{"image":"alpine","command":["true"]}]}')
+task_id=$(ga4gh-cli tes create examples/tes-hello.json)
 ga4gh-cli tes status "$task_id"
 ga4gh-cli tes list
 ```
 
+Docker may download the Alpine image on the first run.
+
 The [CLI README](cli/README.md) describes all CLI commands. The
 [usage guide](docs/usage.md) covers configuration, authentication, and the
-Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, and `TRS` clients. Support for the
-separate GA4GH Service Registry is planned in
+Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, and `TRS` clients. Support
+for the separate GA4GH Service Registry is planned in
 [#89](https://github.com/ga4gh/ga4gh-sdk/issues/89).
 
 ## Advanced transport
