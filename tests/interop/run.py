@@ -165,6 +165,7 @@ def direct_sdk(profile, dest):
         return [item('implementation_version', 'version_mismatch', 'Advertised Funnel implementation differs from profile')]
     result = command(['cargo', 'test', '--locked', '-p', 'ga4gh-lib', '--test',
                       'provider_profiles', '--', '--ignored'], timeout=300)
+    (dest/'direct-output.private.log').write_text(result.stdout+result.stderr)
     return [item('direct_sdk_complete_failure_cancel',
                  'passed' if result.returncode == 0 else 'observed_failure' if 'running 1 test' in result.stdout else 'harness_error',
                  'SDK real TES discovery/create/status/full logs/failed exit/cancel',
