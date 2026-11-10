@@ -34,7 +34,21 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
+The WES models follow WES 1.1.0 and use the schema names of the spec:
+`WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
+`State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
+required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
+now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
+items are `RunListResponseRunsInner` and deprecated task log items are
+`RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
+endpoints.
+
+## Installation
+
+TBA
+
 ## Advanced transport
+
 Advanced transport callers can use `request_response` for status and headers
 before parsing, then consume `reqwest::Response::chunk()` incrementally or call
 `utils::transport::read_bounded` for lossless bytes. Dropping the response stops
@@ -111,15 +125,6 @@ validated before I/O, nested relative filenames stay intact, and one absolute
 operation budget covers preparation, upload and response. A consumed source
 is never replayed; cancellation or a lost response after transmission reports
 that submission may have been accepted. The existing bytes API remains usable.
-The WES models follow WES 1.1.0 and use the schema names of the spec:
-`WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
-`State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
-required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
-now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
-items are `RunListResponseRunsInner` and deprecated task log items are
-`RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
-endpoints.
-
 `clients::bundle::PreparedBundle::prepare` stages a CWL workflow and its declared
 TRS descriptors without submitting it. It validates paths/collisions and the
 static `run`, `$import` and `$include` dependency graph, verifies advertised
@@ -137,10 +142,6 @@ anonymous allowlist never reuses registry credentials or follows redirects.
 that were hashed, returning a run plus manifest/execution linkage. Workflow
 parameters, bearer tokens and signed descriptor URLs are excluded from provenance.
 See the [named Toil integration check](tests/README.md) for an actual CWL execution.
-
-## Installation
-
-TBA
 
 ## Building
 
