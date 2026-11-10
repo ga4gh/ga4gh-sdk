@@ -117,7 +117,7 @@ async fn wes_cancel_requires_the_exact_requested_id_without_replay() {
 
 #[tokio::test]
 async fn wes_creation_validates_once_and_preserves_opaque_ids() {
-    use ga4gh_sdk::clients::wes::{models::WesRunRequest, WES};
+    use ga4gh_sdk::clients::wes::{models::RunRequest, WES};
     let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
     let wes = WES {
         transport: Transport::new(&config),
@@ -130,10 +130,10 @@ async fn wes_creation_validates_once_and_preserves_opaque_ids() {
             ..Default::default()
         }),
     };
-    let request = WesRunRequest {
-        workflow_type: Some("CWL".into()),
-        workflow_type_version: Some("v1.2".into()),
-        workflow_url: Some("main.cwl".into()),
+    let request = RunRequest {
+        workflow_type: "CWL".into(),
+        workflow_type_version: "v1.2".into(),
+        workflow_url: "main.cwl".into(),
         workflow_params: Some(serde_json::json!({})),
         ..Default::default()
     };
