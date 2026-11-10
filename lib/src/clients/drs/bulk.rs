@@ -1,6 +1,11 @@
 //! DRS 1.4 bulk lookup, one explicit service/credential context per call.
 //! Duplicate inputs collapse. The MVP accepts one access ID per object per call;
 //! object-only grouped errors can then be attributed without fabricating an ID.
+//!
+//! Object lookups also read one documented non-standard reply shape: Gen3
+//! (indexd) names the resolved array `resolved_drs_objects` instead of
+//! `resolved_drs_object`. [`BulkReport::dialects`] records which shape each
+//! reply used. Requests are always standard, and no other dialect is inferred.
 use super::{
     models::{BulkAccessUrl, DrsObject},
     resolution::deferred_delay,
@@ -76,17 +81,40 @@ impl<T> ObjectOutcome<T> {
             && self.errors.is_empty()
     }
 }
+/// Reply shape of a bulk response body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum BulkDialect {
+    /// Field names of the published DRS 1.4 and 1.5 schemas.
+    Standard,
+    /// Gen3 (indexd) object lookup: resolved objects in `resolved_drs_objects`.
+    /// Its objects can also carry `created_time: null`, which the typed
+    /// [`DrsObject`] cannot represent; read them with
+    /// [`DRS::get_bulk_objects_raw`].
+    Gen3,
+}
 #[derive(Debug)]
 pub struct BulkReport<T> {
     pub outcomes: BTreeMap<BulkKey, ObjectOutcome<T>>,
     pub diagnostics: Vec<String>,
+    /// Reply shapes seen in this call's response bodies. Empty when no body
+    /// contained a resolved array, e.g. after HTTP failures only.
+    pub dialects: BTreeSet<BulkDialect>,
 }
 impl<T> Default for BulkReport<T> {
     fn default() -> Self {
         Self {
             outcomes: BTreeMap::new(),
             diagnostics: Vec::new(),
+            dialects: BTreeSet::new(),
         }
+    }
+}
+impl<T> BulkReport<T> {
+    fn merge(&mut self, other: Self) {
+        self.outcomes.extend(other.outcomes);
+        self.diagnostics.extend(other.diagnostics);
+        self.dialects.extend(other.dialects);
     }
 }
 #[derive(Clone, Debug)]
@@ -165,12 +193,28 @@ fn correlate<T: DeserializeOwned>(keys: &[BulkKey], body: Value, access: bool) -
         }
         return report;
     }
+    const GEN3_FIELD: &str = "resolved_drs_objects";
     let field = if access {
         "resolved_drs_object_access_urls"
     } else {
         "resolved_drs_object"
     };
-    if let Some(values) = body.get(field) {
+    let resolved = match (body.get(field), access) {
+        (Some(values), _) => {
+            if !access && body.get(GEN3_FIELD).is_some() {
+                report.diagnostics.push(format!(
+                    "response contains both {field} and {GEN3_FIELD}; {GEN3_FIELD} was ignored"
+                ));
+            }
+            report.dialects.insert(BulkDialect::Standard);
+            Some(values)
+        }
+        (None, false) => body.get(GEN3_FIELD).inspect(|_| {
+            report.dialects.insert(BulkDialect::Gen3);
+        }),
+        (None, true) => None,
+    };
+    if let Some(values) = resolved {
         if let Some(values) = values.as_array() {
             for value in values {
                 let object_id = value
@@ -202,9 +246,16 @@ fn correlate<T: DeserializeOwned>(keys: &[BulkKey], body: Value, access: bool) -
                             }
                             outcome.resolved.push(value);
                         }
-                        Err(error) => outcome
-                            .errors
-                            .push(format!("invalid resolved entry: {error}")),
+                        Err(error) => {
+                            let mut message = format!("invalid resolved entry: {error}");
+                            if !access && value.get("created_time").is_some_and(Value::is_null) {
+                                message.push_str(
+                                    "; created_time is null, but DRS requires a date-time \
+                                     string (get_bulk_objects_raw returns the entry unchanged)",
+                                );
+                            }
+                            outcome.errors.push(message)
+                        }
                     },
                     None => report
                         .diagnostics
@@ -277,6 +328,14 @@ fn correlate<T: DeserializeOwned>(keys: &[BulkKey], body: Value, access: bool) -
         }
     }
     report
+}
+fn object_keys(ids: &[String]) -> Vec<BulkKey> {
+    ids.iter()
+        .map(|id| BulkKey {
+            object_id: id.clone(),
+            access_id: None,
+        })
+        .collect()
 }
 enum ChunkReply {
     Body(Value),
@@ -396,9 +455,7 @@ impl DRS {
             }
             match reply {
                 ChunkReply::Body(body) => {
-                    let chunk = correlate(&keys, body, access);
-                    report.outcomes.extend(chunk.outcomes);
-                    report.diagnostics.extend(chunk.diagnostics);
+                    report.merge(correlate(&keys, body, access));
                 }
                 reply => {
                     for key in keys {
@@ -460,11 +517,15 @@ impl DRS {
         futures_util::pin_mut!(results);
         let mut report = BulkReport::default();
         while let Some(chunk) = results.next().await {
-            report.outcomes.extend(chunk.outcomes);
-            report.diagnostics.extend(chunk.diagnostics);
+            report.merge(chunk);
         }
         Ok(report)
     }
+    /// Looks up DRS objects in bounded `POST /objects` requests.
+    ///
+    /// Each resolved entry must match the DRS schema. An entry that does not,
+    /// such as a Gen3 object with `created_time: null`, becomes an error in its
+    /// outcome; use [`DRS::get_bulk_objects_raw`] to read it unchanged.
     pub async fn get_bulk_objects(
         &self,
         ids: &[String],
@@ -472,19 +533,21 @@ impl DRS {
         policy: &BulkPolicy,
         operation: &Operation,
     ) -> Result<BulkReport<DrsObject>, Box<dyn Error>> {
-        self.bulk(
-            ids.iter()
-                .map(|id| BulkKey {
-                    object_id: id.clone(),
-                    access_id: None,
-                })
-                .collect(),
-            passports,
-            false,
-            policy,
-            operation,
-        )
-        .await
+        self.bulk(object_keys(ids), passports, false, policy, operation)
+            .await
+    }
+    /// Like [`DRS::get_bulk_objects`], but returns each resolved entry as
+    /// JSON, correlated by its `id`, without schema validation. Fields the SDK
+    /// model omits or cannot represent, e.g. `created_time: null`, are kept.
+    pub async fn get_bulk_objects_raw(
+        &self,
+        ids: &[String],
+        passports: &[String],
+        policy: &BulkPolicy,
+        operation: &Operation,
+    ) -> Result<BulkReport<Value>, Box<dyn Error>> {
+        self.bulk(object_keys(ids), passports, false, policy, operation)
+            .await
     }
     /// Returned access URLs and headers may be credentials. The report's Debug
     /// output omits them; logging a raw generated `BulkAccessUrl` does not.
