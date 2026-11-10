@@ -1,6 +1,8 @@
 use ga4gh_sdk::{
     clients::{
-        bundle::{AnonymousFetcher, BundleRequest, PreparationOptions, PreparedBundle},
+        bundle::{
+            AnonymousFetcher, BundleRequest, DescriptorFetcher, PreparationOptions, PreparedBundle,
+        },
         serviceinfo::models::{Service, ServiceType},
         wait::{WaitOptions, WaitOutcome},
         wes::WES,
@@ -363,6 +365,25 @@ fn anonymous_fetch_allowlist_does_not_widen_paths_or_discard_credentials() {
         );
     }
     assert!(AnonymousFetcher::new(["https://example.org/".to_owned()]).is_ok());
+}
+
+#[tokio::test]
+async fn anonymous_fetch_errors_do_not_expose_signed_url_queries() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        drop(socket);
+    });
+    let fetcher = AnonymousFetcher::new([format!("http://{address}")]).unwrap();
+    let url = url::Url::parse(&format!(
+        "http://{address}/descriptor?signature=SIGNED_SECRET"
+    ))
+    .unwrap();
+    let error = fetcher.fetch(&url, &operation(), 1024).await.unwrap_err();
+    server.await.unwrap();
+    assert!(!format!("{error}").contains("SIGNED_SECRET"));
+    assert!(!format!("{error:?}").contains("SIGNED_SECRET"));
 }
 
 #[tokio::test]
