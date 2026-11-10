@@ -239,7 +239,15 @@ impl TES {
             log::error!("Service check failed: {}", e);
             e
         })?;
-        let response_body = self.transport.post("tasks", Some(json!(task))).await?;
+        let operation = crate::utils::operation::Operation::new(std::time::Duration::from_secs(60));
+        let request = self
+            .transport
+            .request_builder(reqwest::Method::POST, "tasks")?
+            .json(&task);
+        let response_body = self
+            .transport
+            .send_once(request, &operation, Default::default())
+            .await?;
         let task_id = crate::utils::acknowledgement::execution_id(
             &response_body,
             "id",

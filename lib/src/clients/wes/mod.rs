@@ -15,7 +15,6 @@ use crate::utils::configuration::Configuration;
 pub use crate::utils::transport::urlencode;
 use crate::utils::transport::{HttpStatusError, Transport};
 use log::error;
-use reqwest::multipart::{Form, Part};
 use serde_json::from_str;
 use serde_json::json;
 
@@ -208,87 +207,19 @@ impl WES {
         request: RunRequest,
         attachments: Vec<WorkflowAttachment>,
     ) -> Result<Run, Box<dyn std::error::Error>> {
-        self.check().map_err(|e| {
-            error!("Service check failed: {}", e);
-            e
-        })?;
-
-        let required = |value: String, name: &str| -> Result<String, String> {
-            if value.is_empty() {
-                Err(format!("{} is required", name))
-            } else {
-                Ok(value)
-            }
-        };
-        let workflow_type = required(request.workflow_type, "workflow_type")?;
-        let workflow_type_version =
-            required(request.workflow_type_version, "workflow_type_version")?;
-        let workflow_params = request
-            .workflow_params
-            .ok_or("workflow_params is required")?;
-        let workflow_url = required(request.workflow_url, "workflow_url")?;
-
-        let mut form = Form::new()
-            .text("workflow_type", workflow_type)
-            .text("workflow_type_version", workflow_type_version)
-            .text("workflow_params", serde_json::to_string(&workflow_params)?)
-            .text("workflow_url", workflow_url);
-        if let Some(value) = request.tags {
-            form = form.text("tags", serde_json::to_string(&value)?);
-        }
-        if let Some(value) = request.workflow_engine_parameters {
-            form = form.text("workflow_engine_parameters", serde_json::to_string(&value)?);
-        }
-        if let Some(value) = request.workflow_engine {
-            form = form.text("workflow_engine", value);
-        }
-        if let Some(value) = request.workflow_engine_version {
-            form = form.text("workflow_engine_version", value);
-        }
-        for attachment in attachments {
-            if attachment.filename.is_empty()
-                || attachment
-                    .filename
-                    .split('/')
-                    .any(|segment| segment == "..")
-                || attachment
-                    .filename
-                    .split('\\')
-                    .any(|segment| segment == "..")
-            {
-                return Err(
-                    "workflow attachment filename must not be empty or contain '..' segments"
-                        .into(),
-                );
-            }
-            form = form.part(
-                "workflow_attachment",
-                Part::bytes(attachment.content).file_name(attachment.filename),
-            );
-        }
-
-        let response = self.transport.post_multipart("runs", form).await;
-
-        match response {
-            Ok(response_body) => {
-                let run_id = crate::utils::acknowledgement::execution_id(
-                    &response_body,
-                    "run_id",
-                    "WES creation",
-                    None,
-                )?;
-
-                let run = Run {
-                    id: run_id,
-                    transport: self.transport.clone(),
-                };
-                Ok(run)
-            }
-            Err(e) => Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create run: {}", e),
-            ))),
-        }
+        let attachments = attachments
+            .into_iter()
+            .map(|file| attachments::StreamingAttachment {
+                filename: file.filename,
+                source: attachments::AttachmentSource::Bytes(file.content),
+            })
+            .collect();
+        self.run_workflow_streaming(
+            request,
+            attachments,
+            &crate::utils::operation::Operation::new(std::time::Duration::from_secs(60)),
+        )
+        .await
     }
 
     /// List runs.
