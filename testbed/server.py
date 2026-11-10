@@ -157,8 +157,8 @@ class Handler(BaseHTTPRequestHandler):
             data = part.get_payload(decode=True) or b''
             if name == 'workflow_attachment':
                 filename = part.get_filename() or 'unnamed'
-                if filename.startswith('/') or '..' in filename.split('/'):
-                    raise Problem(400, 'unsafe attachment path')
+                if filename != 'fixture.cwl':
+                    raise Problem(422, 'only the pack attachment filename is accepted')
                 files.append({'filename': filename, 'size': len(data), 'sha256': digest(data), 'bytes': base64.b64encode(data).decode()})
             elif name in fields:
                 raise Problem(400, 'duplicate multipart field')
@@ -170,16 +170,16 @@ class Handler(BaseHTTPRequestHandler):
         for k in ('workflow_params', 'workflow_engine_parameters', 'tags'):
             if k in fields:
                 fields[k] = json.loads(fields[k])
-        if fields['workflow_url'] != 'fixture.cwl' or fields['workflow_type'] != 'CWL' or fields['workflow_params'] != {'message': 'synthetic'}:
+        if fields['workflow_url'] != 'fixture.cwl' or fields['workflow_type'] != 'CWL' or fields['workflow_type_version'] != 'v1.2' or fields['workflow_params'] != {'message': 'synthetic'}:
             raise Problem(422, 'only the pack synthetic workflow is accepted')
         fixture = (ROOT / 'pack/fixture.cwl').read_bytes()
-        if any(base64.b64decode(f['bytes']) != fixture for f in files):
+        if len(files)>1 or any(base64.b64decode(f['bytes']) != fixture for f in files):
             raise Problem(422, 'only the pack fixture attachment is accepted')
         # Never persist caller-provided metadata or credentials in replay artifacts.
         return {k: fields[k] for k in required} | {'attachments': files}
 
     def service_info(self, kind):
-        result = {'id': 'org.ga4gh.synthetic.' + kind, 'name': 'Synthetic scenario ' + kind, 'type': {'group': 'org.ga4gh', 'artifact': kind, 'version': '1.1.0'}, 'organization': {'name': 'GA4GH scenario prototype', 'url': 'https://github.com/ga4gh/ga4gh-sdk'}, 'version': VERSION, 'environment': 'test'}
+        result = {'id': 'org.ga4gh.synthetic.' + kind, 'name': 'Synthetic scenario ' + kind, 'type': {'group': 'org.ga4gh', 'artifact': kind, 'version': {'tes':'1.1.0','wes':'1.1.0','drs':'1.4.0','trs':'2.0.1'}.get(kind,'1.0.0')}, 'organization': {'name': 'GA4GH scenario prototype', 'url': 'https://github.com/ga4gh/ga4gh-sdk'}, 'version': VERSION, 'environment': 'test'}
         if kind == 'wes':
             result.update(workflow_type_versions={'CWL': {'workflow_type_version': ['v1.2']}}, supported_wes_versions=['1.1.0'], supported_filesystem_protocols=['https'], workflow_engine_versions={'synthetic': {'workflow_engine_version': ['0.1.0']}}, default_workflow_engine_parameters=[], system_state_counts={}, auth_instructions_url='https://github.com/ga4gh/ga4gh-sdk', tags={})
         return result
@@ -339,7 +339,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif route[1:] == ['fixture', 'access', 'fixture-access']:
                     if s.tick >= s.artifact_expires:
                         raise Problem(403, 'artifact access expired')
-                    self.respond(200, {'url': '/sessions/' + parts[1] + '/drs/v1/artifacts/fixture.bin'})
+                    self.respond(200, {'url': 'http://' + self.headers['Host'] + '/sessions/' + parts[1] + '/drs/v1/artifacts/fixture.bin', 'headers': ['Authorization: Bearer ' + s.token]})
                 else:
                     raise Problem(404, 'unknown fixture')
                 return
@@ -349,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, binary=BINARY)
                 return
             if service == 'trs' and route == ['tools', 'fixture', 'versions', '1', 'CWL', 'descriptor']:
-                self.respond(200, {'descriptor': (ROOT / 'pack/fixture.cwl').read_text(), 'url': 'fixture.cwl'})
+                self.respond(200, {'content': (ROOT / 'pack/fixture.cwl').read_text(), 'checksum': [{'type':'sha-256','checksum':digest((ROOT / 'pack/fixture.cwl').read_bytes())}]})
                 return
             raise Problem(404, 'unknown GA4GH fixture route')
 

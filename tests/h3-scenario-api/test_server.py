@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('scenario_server', ROOT / 'testbed/server.py')
@@ -62,14 +63,15 @@ class ScenarioAPI(unittest.TestCase):
         task = {'executors': [{'image': 'synthetic', 'command': ['fixture']}]}
         return self.call(s['base_path'] + '/tes/v1/tasks', task, s['token'])
 
-    def multipart(self, s):
+    def multipart(self, s, version="v1.2", filename="fixture.cwl"):
         boundary = 'real-client-boundary'
         fields = json.loads((ROOT / 'testbed/pack/scenarios.json').read_text())['wes_request']
+        fields['workflow_type_version']=version
         body = b''
         for name, value in fields.items():
             value = json.dumps(value) if isinstance(value, dict) else value
             body += f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
-        body += f'--{boundary}\r\nContent-Disposition: form-data; name="workflow_attachment"; filename="fixture.cwl"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode()
+        body += f'--{boundary}\r\nContent-Disposition: form-data; name="workflow_attachment"; filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode()
         body += (ROOT / 'testbed/pack/fixture.cwl').read_bytes() + f'\r\n--{boundary}--\r\n'.encode()
         return self.call(s['base_path'] + '/wes/v1/runs', body, s['token'], headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
 
@@ -92,11 +94,15 @@ class ScenarioAPI(unittest.TestCase):
         self.assertEqual(self.call(root + '/tes/v1/tasks/' + ids[0], token=s['token'])[1]['state'], 'COMPLETE')
         obj = self.call(root + '/drs/v1/objects/fixture', token=s['token'])[1]
         access = self.call(root + '/drs/v1/objects/fixture/access/fixture-access', token=s['token'])[1]
-        data = self.call(access['url'], token=s['token'])[1]
+        absolute = urlsplit(access['url'])
+        self.assertEqual(absolute.scheme, 'http')
+        self.assertEqual(absolute.netloc, urlsplit(self.base).netloc)
+        artifact_headers = dict(h.split(': ',1) for h in access['headers'])
+        data = self.call(absolute.path, headers=artifact_headers)[1]
         self.assertEqual(data, api.BINARY)
         self.assertEqual(api.digest(data), obj['checksums'][0]['checksum'])
         self.control(s, {'action': 'advance', 'ticks': 8})
-        self.assertEqual(self.call(access['url'], token=s['token'])[0], 403)
+        self.assertEqual(self.call(absolute.path, headers=artifact_headers)[0], 403)
 
     def test_wes_real_multipart_and_cancellation_race(self):
         s = self.session()
@@ -111,6 +117,37 @@ class ScenarioAPI(unittest.TestCase):
         record = self.journal(s, True)['inputs'][0]['request']
         self.assertEqual(record['attachments'][0]['sha256'], api.digest((ROOT / 'testbed/pack/fixture.cwl').read_bytes()))
         self.assertEqual(self.call(s['base_path'] + '/wes/v1/runs', {'workflow_url':'not-multipart'}, s['token'])[0], 400)
+
+    def test_trs_wrapper_content_and_version(self):
+        s = self.session()
+        root = s['base_path'] + '/trs/v2'
+        info = self.call(root + '/service-info', token=s['token'])[1]
+        self.assertEqual(info['type']['version'], '2.0.1')
+        wrapper = self.call(root + '/tools/fixture/versions/1/CWL/descriptor', token=s['token'])[1]
+        self.assertEqual(wrapper['content'].encode(), (ROOT/'testbed/pack/fixture.cwl').read_bytes())
+        self.assertEqual(wrapper['checksum'][0]['checksum'],api.digest(wrapper['content'].encode()))
+        self.assertNotIn('url', wrapper)
+
+    def test_unsupported_versions_and_arbitrary_replay_text_rejected(self):
+        s=self.session()
+        self.assertEqual(self.multipart(s,version="unsupported-secret-text")[0],422)
+        self.assertEqual(self.multipart(s,filename="private-name-secret.cwl")[0],422)
+        replay=self.journal(s,True)
+        self.assertEqual(replay['accepted_runs'],0)
+        text=json.dumps(replay)
+        self.assertNotIn('unsupported-secret-text',text)
+        self.assertNotIn('private-name-secret',text)
+
+    def test_pinned_schema_dependencies_resolve_offline(self):
+        import re
+        pack=ROOT/'testbed/pack'
+        remotes=json.loads((pack/'reference-map.json').read_text())
+        for source in pack.rglob('*.yaml'):
+            for ref in re.findall(r"\$ref:\s*['\"]?([^'\"\s]+)",source.read_text()):
+                path=ref.split('#')[0]
+                if not path:continue
+                target=pack/remotes[path] if path.startswith('http') else source.parent/path
+                self.assertTrue(target.is_file(),str(target))
 
     def test_cancel_pending_then_terminal(self):
         s = self.session()
@@ -136,7 +173,7 @@ class ScenarioAPI(unittest.TestCase):
         encoded=json.dumps(bundles[0])
         self.assertNotIn(s['token'],encoded)
         self.assertNotIn(s['session_id'],encoded)
-        self.assertNotIn('Authorization',encoded)
+        self.assertNotIn('Bearer ' + s['token'],encoded)
 
     def test_concurrent_session_isolation_reset_and_expiry(self):
         a,b=self.session(),self.session()
