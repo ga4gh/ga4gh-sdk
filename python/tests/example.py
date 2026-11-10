@@ -1,5 +1,5 @@
 import traceback
-from GA4GH import Configuration, ServiceType, TES 
+from GA4GH import Configuration, ServiceType, TES
 
 try:
     config = Configuration("https://localhost") # legacy parameter, will be removed

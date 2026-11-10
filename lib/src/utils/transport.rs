@@ -165,7 +165,7 @@ fn is_dot_segment(segment: &str) -> bool {
     dots == 1 || dots == 2
 }
 
-// note: could implement custom certs handling, such as in-TEE generated ephemerial certs
+// note: could implement custom certs handling, such as in-TEE generated ephemeral certs
 #[derive(Clone)]
 pub struct Transport {
     pub config: Configuration,

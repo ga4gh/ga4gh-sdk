@@ -4,7 +4,7 @@ The `ga4gh-cli` is a command line tool that leverages `ga4gh-sdk` library to pro
 
 ## Configuration
 
-The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file. 
+The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file.
 
 The file and its `TES` section must exist; the CLI reports an error instead of
 silently using `http://localhost` when either is missing. Only `base_path` is
@@ -33,15 +33,15 @@ string or fragment in `base_path`.
 Configs that previously contained only the host must add the deployed TES
 service prefix, such as `/ga4gh/tes/v1` in the example above.
 
-## Usage 
+## Usage
 
 ### Basic local setup
 
 In order to quickly setup a TES server locally, you can use Funnel. Dockerized Funnel version doesn't have ServiceInfo end-point on the expected path, which is requirement by the GA4GH-SDK.
 
-1. Deploy Funnel locally following the [offical documentation](https://ohsu-comp-bio.github.io/funnel/download/).
+1. Deploy Funnel locally following the [official documentation](https://ohsu-comp-bio.github.io/funnel/download/).
 
-2. Run Funnel server with the port specifed:
+2. Run Funnel server with the port specified:
 
 ```sh
 funnel server start --Server.HTTPPort=[available-port]
@@ -90,16 +90,16 @@ ga4gh-cli tes list
 Example output:
 
 ```sh
-TASK ID                   State          
-csei52hrqek3h222k9f0      Complete   
-csei52hrqek3h222k9eg      Initializing   
-csei52hrqek3h222k9e0      Canceled       
-csei52hrqek3h222k9dg      Running 
-csei52hrqek3h222k9df      Queued 
-csei52hrqek3h222k9de      Queued 
+TASK ID                   State
+csei52hrqek3h222k9f0      Complete
+csei52hrqek3h222k9eg      Initializing
+csei52hrqek3h222k9e0      Canceled
+csei52hrqek3h222k9dg      Running
+csei52hrqek3h222k9df      Queued
+csei52hrqek3h222k9de      Queued
 ```
 
-3. To get the infromation about the task run the `tes get` command:
+3. To get the information about the task run the `tes get` command:
 
 ```sh
 ga4gh-cli tes get [TASK-ID] [VIEW]
@@ -112,7 +112,7 @@ the current SDK models.
 4. To retrieve the task status run the `tes status` command:
 
 ```sh
-ga4gh-cli tes status [TASK-ID]      
+ga4gh-cli tes status [TASK-ID]
 ```
 
 The command prints the TES state, such as `QUEUED`.
@@ -120,7 +120,7 @@ The command prints the TES state, such as `QUEUED`.
 5. To cancel the task run the `tes cancel` command:
 
 ```sh
-ga4gh-cli tes cancel [TASK-ID]      
+ga4gh-cli tes cancel [TASK-ID]
 ```
 
 All five TES commands exit with code 0 on success and code 1 on request or

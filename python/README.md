@@ -56,9 +56,9 @@ pytest
 missing and `ValueError` when its contents are malformed. Invalid URLs and JSON
 arguments also raise `ValueError`.
 
-## Example 
+## Example
 
-You can try an example Python app that leverages the GA4GH-SDK Python library to create task, get its ID and status, as well as retrieveing the list of all tasks from the configured TES instance.
+You can try an example Python app that leverages the GA4GH-SDK Python library to create task, get its ID and status, as well as retrieving the list of all tasks from the configured TES instance.
 
 ```bash
 python3 ./tests/example.py
@@ -74,17 +74,17 @@ Canceling task...
 Task canceled successfully
 
 Listing tasks...
-TASK ID                   STATUS         
-csg0d0ljt0vv1kstlqg0      COMPLETE       
-csfvvidjt0vv1kstlqfg      COMPLETE       
-csfvuhdjt0vv1kstlqf0      INITIALIZING   
-csfv61djt0vv1kstlqeg      CANCELED       
-csfv5ktjt0vv1kstlqe0      RUNNING        
-csfv5fdjt0vv1kstlqdg      RUNNING        
-csfv54ljt0vv1kstlqd0      CANCELED       
-csfv4m5jt0vv1kstlqcg      QUEUED         
-csfv455jt0vv1kstlqc0      QUEUED         
-csfv3o5jt0vv1kstlqbg      SYSTEM_ERROR   
+TASK ID                   STATUS
+csg0d0ljt0vv1kstlqg0      COMPLETE
+csfvvidjt0vv1kstlqfg      COMPLETE
+csfvuhdjt0vv1kstlqf0      INITIALIZING
+csfv61djt0vv1kstlqeg      CANCELED
+csfv5ktjt0vv1kstlqe0      RUNNING
+csfv5fdjt0vv1kstlqdg      RUNNING
+csfv54ljt0vv1kstlqd0      CANCELED
+csfv4m5jt0vv1kstlqcg      QUEUED
+csfv455jt0vv1kstlqc0      QUEUED
+csfv3o5jt0vv1kstlqbg      SYSTEM_ERROR
 ```
 
 ## Documentation

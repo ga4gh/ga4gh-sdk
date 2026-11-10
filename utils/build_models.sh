@@ -43,7 +43,7 @@ generate_openapi_models() {
     openapi-generator-cli generate -g rust \
         -i "$OPENAPI_SPEC_PATH" \
         -o "$TEMP_OUTPUT_DIR" \
-        --additional-properties=useSingleRequestParameter=true 
+        --additional-properties=useSingleRequestParameter=true
 
     # Check if the generation was successful
     if [ $? -ne 0 ]; then
@@ -53,7 +53,7 @@ generate_openapi_models() {
 
     # Remove the openapitools.json file
     rm -f "$TEMP_OUTPUT_DIR/openapitools.json"
-    
+
     echo "TEMP_OUTPUT_DIR is $TEMP_OUTPUT_DIR"
 
     # Modify the import statements in each generated file

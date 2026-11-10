@@ -24,7 +24,7 @@ BUILD_SCRIPT="./utils/build_models.sh"
 for API_NAME in "${!SPECS[@]}"; do
     SPEC_URL=$(echo ${SPECS[$API_NAME]} | awk '{print $1}')
     DESTINATION_DIR=$(echo ${SPECS[$API_NAME]} | awk '{print $2}')
-    
+
     echo "Generating models for $API_NAME from $SPEC_URL into $DESTINATION_DIR"
     $BUILD_SCRIPT "$SPEC_URL" "$API_NAME" "$DESTINATION_DIR"
 done
