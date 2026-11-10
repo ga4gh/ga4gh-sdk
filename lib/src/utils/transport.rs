@@ -34,7 +34,6 @@
 /// };
 /// ```
 use crate::utils::configuration::Configuration;
-use log::error;
 use reqwest::multipart::Form;
 use reqwest::Client;
 use serde_json::Value;
@@ -98,6 +97,36 @@ async fn read_response_text(response: reqwest::Response) -> std::io::Result<Stri
             format!("Failed to read response text: {error}"),
         )
     })
+}
+
+// reqwest's query serializer cannot encode a JSON array as repeated keys.
+fn query_pairs(params: &Value) -> std::io::Result<Vec<(String, String)>> {
+    let object = params.as_object().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "params must be an object")
+    })?;
+    let mut pairs = Vec::new();
+    for (key, value) in object {
+        let values: &[Value] = match value {
+            Value::Array(values) => values,
+            Value::Null => continue,
+            value => std::slice::from_ref(value),
+        };
+        for value in values {
+            let value = match value {
+                Value::String(value) => value.clone(),
+                Value::Number(value) => value.to_string(),
+                Value::Bool(value) => value.to_string(),
+                _ => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("query parameter '{key}' must contain scalar values"),
+                    ))
+                }
+            };
+            pairs.push((key.clone(), value));
+        }
+    }
+    Ok(pairs)
 }
 
 /// An endpoint or API root that cannot safely be used for a request.
@@ -253,18 +282,9 @@ impl Transport {
         }
 
         if let Some(ref params_value) = params {
-            // Validate or log params_value before setting it as query parameters
-            if params_value.is_object() {
-                request_builder = request_builder.query(params_value);
-            } else {
-                error!(
-                    "params_value is not an object and cannot be used as query parameters: {:?}",
-                    params_value
-                );
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "params_value must be an object",
-                )));
+            let pairs = query_pairs(params_value)?;
+            if !pairs.is_empty() {
+                request_builder = request_builder.query(&pairs);
             }
         }
 
@@ -386,7 +406,7 @@ impl Transport {
 mod tests {
     use crate::utils::configuration::Configuration;
     use crate::utils::transport::{urlencode, EndpointError, HttpStatusError, Transport};
-    use mockito::mock;
+    use mockito::{mock, Matcher};
     use url::Url;
 
     // effectively no sense in testing various responses, as it's reqwest's responsibility
@@ -503,5 +523,27 @@ mod tests {
         assert!(response.is_ok());
         let body = response.unwrap();
         assert_eq!(body, r#"{"message": "success"}"#);
+    }
+
+    #[tokio::test]
+    async fn test_repeated_query_parameters() {
+        let _request = mock("GET", "/tasks")
+            .match_query(Matcher::Exact(
+                "page_size=10&tag_key=team+a&tag_key=other&tag_value=x%2Fy&tag_value=z".to_owned(),
+            ))
+            .with_status(200)
+            .with_body("ok")
+            .create();
+        let config = Configuration::new(Url::parse(&mockito::server_url()).unwrap());
+        let params = serde_json::json!({
+            "tag_key": ["team a", "other"],
+            "tag_value": ["x/y", "z"],
+            "page_size": 10,
+        });
+        let response = Transport::new(&config)
+            .get("tasks", Some(params))
+            .await
+            .unwrap();
+        assert_eq!(response, "ok");
     }
 }
