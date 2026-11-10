@@ -362,13 +362,23 @@ pub async fn export_all(
             return Ok(std::process::ExitCode::FAILURE);
         }
     };
-    let mut pager = ga4gh_sdk::clients::pagination::Pager::new(
+    let pager = ga4gh_sdk::clients::pagination::Pager::new(
         &tes.transport,
         ServiceKind::Tes,
         query.into(),
         options,
     )
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    write_jsonl(pager, stdout, stderr).await
+}
+
+/// Write each page's records as JSONL; report limits and failures with a
+/// resume checkpoint on stderr.
+pub(crate) async fn write_jsonl(
+    mut pager: ga4gh_sdk::clients::pagination::Pager,
+    stdout: &mut dyn std::io::Write,
+    stderr: &mut dyn std::io::Write,
+) -> anyhow::Result<std::process::ExitCode> {
     loop {
         match pager.next_page().await {
             Ok(Some(page)) => {

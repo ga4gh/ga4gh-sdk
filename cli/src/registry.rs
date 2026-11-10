@@ -98,7 +98,7 @@ fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
 /// Escapes control and bidirectional formatting characters in a value from
 /// the registry, so that it can't add lines, terminal sequences or reordered
 /// text to the output.
-fn printable(value: &str) -> String {
+pub(crate) fn printable(value: &str) -> String {
     value
         .chars()
         .map(|c| {

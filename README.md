@@ -111,7 +111,8 @@ Docker may download the Alpine image on the first run.
 The [CLI README](cli/README.md) describes all CLI commands. The
 [usage guide](docs/usage.md) covers configuration, authentication, and the
 Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, `TRS`, and `ServiceRegistry`
-clients. The CLI also has [Service Registry commands](cli/README.md#service-registry-commands).
+clients. The CLI also has [WES commands](cli/README.md#wes-examples) and
+[Service Registry commands](cli/README.md#service-registry-commands).
 
 ## Advanced transport
 
@@ -200,10 +201,11 @@ At a partially consumed or truncated page, a checkpoint replays that page.
 Mutable listings provide neither snapshot isolation nor exactly-once processing;
 callers reconcile replays. Credentials are supplied separately when resuming.
 
-The CLI streams `tes list --all --format jsonl` through caller-owned writers,
-with one JSON object per stdout line. `--max-pages` and `--max-items` bound work;
-limits or later failures preserve emitted records, report a resume checkpoint on
-stderr and return a nonzero exit code. Reusable CLIs use `dispatch_to` or
+The CLI streams `tes list --all --format jsonl` and `wes list --all --format
+jsonl` through caller-owned writers, with one JSON object per stdout line.
+`--max-pages` and `--max-items` bound work; limits or later failures preserve
+emitted records, report a resume checkpoint on stderr and return a nonzero exit
+code. Reusable CLIs use `dispatch_to` or
 `dispatch_with_config_to`; existing buffered dispatch remains available for
 ordinary commands.
 
