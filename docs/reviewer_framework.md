@@ -7,18 +7,24 @@ some suggestions were nonblocking. [`AGENTS.md`](../AGENTS.md) requires the
 pre-PR review below. The remaining review questions are risk-based guidance,
 not an automated GitHub rule or a substitute for human approval.
 
-## How the guide reaches an agent
+## How repository agents use this guide
 
-- Codex reads the repository's root `AGENTS.md` as project guidance. That file
-  contains the short pre-PR rule and points here for the detailed procedure;
-  this guide does not need to be loaded for unrelated edits. See the
+This workflow applies to coding agents that load this repository's instructions,
+including Codex and Claude Code. `AGENTS.md` is the shared entry point: it
+contains the short pre-PR rule and links here for the detailed procedure. An
+agent only needs to load this guide when reviewing changes or preparing a PR.
+
+- Codex reads the root `AGENTS.md` as project guidance; see the
   [OpenAI Docs guidance on repository instructions](https://developers.openai.com/cookbook/examples/codex/iterating-development-workflows-with-codex).
-- This repository's `CLAUDE.md` imports `AGENTS.md` with `@AGENTS.md`, so Claude
-  Code sees the same rule. [Claude Code's documentation](https://code.claude.com/docs/en/memory)
+- This repository's `CLAUDE.md` imports `AGENTS.md` with `@AGENTS.md` for Claude
+  Code. [Claude Code's documentation](https://code.claude.com/docs/en/memory)
   describes that import and notes that instruction files are context, not
   enforced configuration.
-- The guide and `AGENTS.md` must be present in the working copy. Branches and
-  clones receive this workflow only after they include the commit that adds it.
+- Other agents can use the same workflow by loading `AGENTS.md` and following
+  its link to this guide.
+
+The guide and `AGENTS.md` must be present in the working copy. Branches and
+clones receive this workflow only after they include the commit that adds it.
 
 ## What the earlier reviews taught us
 
@@ -79,9 +85,9 @@ Nonblocking follow-ups: ...
 Unverified areas: ...
 ```
 
-The reviewer framework cannot guarantee that another tool or a human will
-obey this gate. Repository instructions guide Codex and Claude Code; they are
-not a hard block in `git` or GitHub. A mechanical hook can enforce a command or
+The reviewer framework cannot guarantee that every agent or human will obey
+this gate. Repository instructions guide agents that load them; they are not a
+hard block in `git` or GitHub. A mechanical hook can enforce a command or
 artifact, but it cannot decide whether a design finding has been resolved.
 
 ## Review workflow
