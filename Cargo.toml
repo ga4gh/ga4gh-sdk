@@ -13,3 +13,9 @@ edition = "2021"
 readme = "./README.md"
 license-file = "LICENSE"
 repository = "https://github.com/ga4gh/ga4gh-sdk"
+
+# Lints for all members (`[lints] workspace = true`); see docs/development.md.
+# `missing_docs` only warns for now, so that it does not fail CI: about 350
+# items lack documentation, 250 of them in the generated models.
+[workspace.lints.rust]
+missing_docs = "warn"

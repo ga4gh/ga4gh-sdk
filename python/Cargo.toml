@@ -26,3 +26,6 @@ pyo3-build-config = "0.22.5"
 [package.metadata.maturin]
 name = "GA4GH"
 bindings = "pyo3"
+
+[lints]
+workspace = true

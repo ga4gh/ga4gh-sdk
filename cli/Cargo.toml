@@ -28,3 +28,6 @@ mockito = "0.31"
 [[bin]]
 name = "ga4gh-cli"
 path = "src/main.rs"
+
+[lints]
+workspace = true
