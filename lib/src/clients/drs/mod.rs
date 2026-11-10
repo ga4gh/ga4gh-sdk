@@ -10,12 +10,24 @@ use crate::clients::serviceinfo::ServiceInfo;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::{urlencode, HttpStatusError, Transport};
 
+// Describes a failed service-info request, with a hint if the API root seems wrong.
+fn access_error(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = format!("Error accessing DRS service: {error}");
+    if error
+        .downcast_ref::<HttpStatusError>()
+        .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
+    {
+        message.push_str(". Check that base_path is the DRS API root");
+    }
+    message
+}
+
 /// The main struct for interacting with a DRS service.
 #[derive(Debug)]
 pub struct DRS {
     #[allow(dead_code)]
     pub config: Configuration,
-    pub service: Result<Service, Box<dyn std::error::Error>>,
+    pub service: Result<Service, Box<dyn std::error::Error + Send + Sync>>,
     pub transport: Transport,
 }
 
@@ -30,12 +42,15 @@ impl DRS {
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
         let transport = Transport::new(config);
         let service_info = ServiceInfo::new(config)?;
-        let resp = service_info.get().await;
+        let service = service_info
+            .get()
+            .await
+            .map_err(|error| access_error(error.as_ref()))?;
 
         let instance = DRS {
             config: config.clone(),
             transport,
-            service: resp,
+            service: Ok(service),
         };
 
         instance.check()?;
@@ -56,15 +71,8 @@ impl DRS {
                 Ok(())
             }
             Ok(_) => Err("The endpoint is not an instance of DRS".into()),
-            Err(e) => {
-                let mut message = format!("Error accessing DRS service: {e}");
-                if e.downcast_ref::<HttpStatusError>()
-                    .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
-                {
-                    message.push_str(". Check that base_path is the DRS API root");
-                }
-                Err(message)
-            }
+            // `DRS::new` stores only `Ok`; an `Err` comes from a client built by hand.
+            Err(error) => Err(access_error(error.as_ref())),
         }
     }
 
@@ -141,6 +149,13 @@ mod tests {
     use super::*;
     use crate::clients::serviceinfo::models::ServiceType;
     use mockito::{mock, server_url};
+
+    #[test]
+    fn test_clients_can_move_between_threads() {
+        fn send_sync<T: Send + Sync>() {}
+        send_sync::<DRS>();
+        send_sync::<uri::DrsResolver>();
+    }
 
     #[test]
     fn test_debug_output() {

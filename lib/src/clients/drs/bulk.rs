@@ -486,6 +486,30 @@ impl DRS {
         )
         .await
     }
+    /// Like [`DRS::get_bulk_objects`], but keeps each resolved object's JSON, including
+    /// fields that the SDK models don't know. Resolved entries are not checked against
+    /// the `DrsObject` model.
+    pub async fn get_bulk_objects_raw(
+        &self,
+        ids: &[String],
+        passports: &[String],
+        policy: &BulkPolicy,
+        operation: &Operation,
+    ) -> Result<BulkReport<Value>, Box<dyn Error>> {
+        self.bulk(
+            ids.iter()
+                .map(|id| BulkKey {
+                    object_id: id.clone(),
+                    access_id: None,
+                })
+                .collect(),
+            passports,
+            false,
+            policy,
+            operation,
+        )
+        .await
+    }
     /// Returned access URLs and headers may be credentials. The report's Debug
     /// output omits them; logging a raw generated `BulkAccessUrl` does not.
     pub async fn get_bulk_access_urls(
@@ -495,6 +519,22 @@ impl DRS {
         policy: &BulkPolicy,
         operation: &Operation,
     ) -> Result<BulkReport<BulkAccessUrl>, Box<dyn Error>> {
+        if keys.iter().any(|k| k.access_id.is_none()) {
+            return Err("bulk access lookup requires an access ID for each object".into());
+        }
+        self.bulk(keys.to_vec(), passports, true, policy, operation)
+            .await
+    }
+    /// Like [`DRS::get_bulk_access_urls`], but keeps each resolved entry's JSON, including
+    /// fields that the SDK models don't know. Resolved entries are not checked against
+    /// the `BulkAccessUrl` model; they may hold credentials, as there.
+    pub async fn get_bulk_access_urls_raw(
+        &self,
+        keys: &[BulkKey],
+        passports: &[String],
+        policy: &BulkPolicy,
+        operation: &Operation,
+    ) -> Result<BulkReport<Value>, Box<dyn Error>> {
         if keys.iter().any(|k| k.access_id.is_none()) {
             return Err("bulk access lookup requires an access ID for each object".into());
         }
