@@ -517,3 +517,27 @@ fn unordered_numeric_objects_ignore_json_number_representation() {
         Outcome::EquivalentUnderPolicy
     );
 }
+
+#[test]
+fn typed_result_retains_root_context_for_referenced_annotations() {
+    let mut s = schema();
+    s["$defs"]["html-report"] = json!({"type":"string","format":"uri","contentMediaType":"text/html","x-ga4gh-ui-widget":"html-viewer","x-ga4gh-ontology":"http://edamontology.org/format_2331"});
+    s["properties"]["outputs"]["properties"]["report"] = json!({"$ref":"#/$defs/html-report"});
+    let p = profile(s.clone());
+    let record = p
+        .project_results(
+            "one",
+            "COMPLETE",
+            &json!({"count":1,"report":"drs://example.org/report"}),
+        )
+        .unwrap();
+    assert_eq!(
+        record.outputs["report"].contract_status,
+        ContractStatus::Conformant
+    );
+    assert_eq!(record.contract_document, s);
+    assert_eq!(
+        record.outputs["report"].annotations["$ref"],
+        "#/$defs/html-report"
+    );
+}
