@@ -436,9 +436,11 @@ dependencies = [
  "async-trait",
  "dirs",
  "env_logger",
+ "futures-util",
  "httpdate",
  "log",
  "once_cell",
+ "percent-encoding",
  "reqwest",
  "serde",
  "serde_derive",
@@ -448,6 +450,7 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -756,6 +759,12 @@ checksum = "61ff90caf6077a803a240f62fdbe88645a890bbca49ef8174c3cb0404362171d"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
 
 [[package]]
 name = "linux-raw-sys"
@@ -1921,6 +1930,19 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "yaml_serde"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "libyaml-rs",
+ "ryu",
+ "serde",
+]
 
 [[package]]
 name = "yoke"
