@@ -58,16 +58,28 @@ cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
 
 ## Public Service Registry
 
-This read-only smoke test needs network access and a Registry API root that
-permits anonymous reads. Set `GA4GH_REGISTRY_URL` to that root. It reads
-`service-info`, `services/types` and `services`, and gets each listed service
-by its ID. No public default is pinned because deployment availability and
-authentication policies can change.
+The first ignored smoke test reads all four Service Registry 1.0 endpoints
+from the [official GA4GH Registry](https://ga4gh.github.io/ga4gh-registry/).
+It looks up the registry itself by ID. It needs network access and anonymous
+reads.
+
+```sh
+cargo test -p ga4gh-lib --test registry_public official_registry_reads_without_a_token -- --ignored
+```
+
+For a stricter check, set `GA4GH_REGISTRY_URL` to a compatible registry root
+that permits anonymous reads. This second test gets **every** listed service
+by its ID and confirms its type is in `/services/types`:
 
 ```sh
 GA4GH_REGISTRY_URL='https://your-registry.example.org/ga4gh/registry/v1' \
-  cargo test -p ga4gh-lib --test registry_public -- --ignored
+  cargo test -p ga4gh-lib --test registry_public configured_registry_supports_all_read_endpoints -- --ignored
 ```
+
+As checked on 2026-11-10, the official GA4GH deployment returns HTTP 400
+when looking up a listed service whose ID contains `/`; the SDK encodes that
+slash as `%2F` to keep the ID in one URL path segment. The strict check is
+therefore unsuitable for that deployment until its lookup accepts such IDs.
 
 ## Test fixtures
 
