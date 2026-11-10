@@ -15,6 +15,8 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
 const MAIN: &str = include_str!("../../tests/fixtures/trs-cwl/main.cwl");
 const TOOL: &str = include_str!("../../tests/fixtures/trs-cwl/tools/echo.cwl");
+const INLINE_STEPS: &str =
+    "steps:\n  echo:\n    run: tools/echo.cwl\n    in:\n      message: message\n    out: [out]";
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -349,6 +351,97 @@ async fn import_include_graph_and_explicit_url_fetch_policy() {
     help.assert();
     label.assert();
     download.assert();
+}
+
+#[tokio::test]
+async fn imported_workflow_steps_cannot_hide_external_run_dependencies() {
+    let main = MAIN.replace(INLINE_STEPS, "steps:\n  - $import: steps/echo.yml");
+    assert_ne!(main, MAIN);
+    let listing = json!([
+        {"path":"main.cwl","file_type":"PRIMARY_DESCRIPTOR"},
+        {"path":"steps/echo.yml","file_type":"OTHER"}
+    ]);
+    let (registry, _mocks) = source("/imported-step", &main, TOOL, Some(listing), None);
+    let step = mock(
+        "GET",
+        "/imported-step/tools/workflow/versions/1/CWL/descriptor/steps%2Fecho.yml",
+    )
+    .with_body(json!({"content":"id: echo\nrun: https://foreign.example/tool.cwl\nin:\n  message: message\nout: [out]\n"}).to_string())
+    .create();
+    assert!(PreparedBundle::prepare(
+        &registry,
+        request(),
+        &PreparationOptions::default(),
+        &operation(),
+        None,
+    )
+    .await
+    .is_err());
+    step.assert();
+}
+
+#[tokio::test]
+async fn imported_workflow_step_stages_its_local_run() {
+    let main = MAIN.replace(INLINE_STEPS, "steps:\n  - $import: steps/echo.yml");
+    assert_ne!(main, MAIN);
+    let listing = json!([
+        {"path":"main.cwl","file_type":"PRIMARY_DESCRIPTOR"},
+        {"path":"steps/echo.yml","file_type":"SECONDARY_DESCRIPTOR"},
+        {"path":"tools/echo.cwl","file_type":"OTHER"}
+    ]);
+    let (registry, _mocks) = source("/local-step", &main, TOOL, Some(listing), None);
+    let step = mock(
+        "GET",
+        "/local-step/tools/workflow/versions/1/CWL/descriptor/steps%2Fecho.yml",
+    )
+    .with_body(json!({"content":"id: echo\nrun: ../tools/echo.cwl\nin:\n  message: message\nout: [out]\n"}).to_string())
+    .create();
+    let prepared = PreparedBundle::prepare(
+        &registry,
+        request(),
+        &PreparationOptions::default(),
+        &operation(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(prepared.staged_files().count(), 3);
+    assert_eq!(
+        prepared
+            .staged_files()
+            .find(|(path, _)| *path == "tools/echo.cwl")
+            .unwrap()
+            .1,
+        TOOL.as_bytes()
+    );
+    step.assert();
+}
+
+#[tokio::test]
+async fn imported_steps_collection_cannot_hide_external_runs() {
+    let main = MAIN.replace(INLINE_STEPS, "steps:\n  $import: steps/all.yml");
+    assert_ne!(main, MAIN);
+    let listing = json!([
+        {"path":"main.cwl","file_type":"PRIMARY_DESCRIPTOR"},
+        {"path":"steps/all.yml","file_type":"OTHER"}
+    ]);
+    let (registry, _mocks) = source("/step-list", &main, TOOL, Some(listing), None);
+    let steps = mock(
+        "GET",
+        "/step-list/tools/workflow/versions/1/CWL/descriptor/steps%2Fall.yml",
+    )
+    .with_body(json!({"content":"echo:\n  run: https://foreign.example/tool.cwl\n  in:\n    message: message\n  out: [out]\n"}).to_string())
+    .create();
+    assert!(PreparedBundle::prepare(
+        &registry,
+        request(),
+        &PreparationOptions::default(),
+        &operation(),
+        None,
+    )
+    .await
+    .is_err());
+    steps.assert();
 }
 
 #[test]
