@@ -34,7 +34,21 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
+The WES models follow WES 1.1.0 and use the schema names of the spec:
+`WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
+`State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
+required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
+now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
+items are `RunListResponseRunsInner` and deprecated task log items are
+`RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
+endpoints.
+
 ## Installation
+
+TBA
+
+## Advanced transport
+
 Advanced transport callers can use `request_response` for status and headers
 before parsing, then consume `reqwest::Response::chunk()` incrementally or call
 `utils::transport::read_bounded` for lossless bytes. Dropping the response stops
@@ -93,8 +107,47 @@ resume through the same bulk API with caller-supplied credentials/Passports.
 There is no singular or anonymous fallback. Compatibility is verified against
 protocol fixtures, without a claim of broad real-service interoperability.
 
-TBA
+## Service composition
 
+`TES::discover` and `WES::discover` return a `Discovered<T>` wrapper with a
+cached `CapabilitySnapshot`. One service-info request supplies both the client
+and the snapshot; typed/raw accessors make no requests and `refresh()` is
+explicit. Raw extensions are preserved. Preflight diagnostics distinguish
+supported, unsupported and unknown/stale metadata. `create_validated` and
+`run_validated` accept an explicit strict flag; ordinary submission stays
+advisory. TES backend keys are case insensitive and storage is nonexhaustive.
+
+`Task::wait` and `Run::wait` accept `WaitOptions` with an operation budget, local
+cancellation and polling/retry settings. The result distinguishes successful
+completion, executor/system failures, preemption, cancellation, polling failure
+and observation interruption, retaining the last state and a credential-free
+`RemoteHandle`. Rebuild observation with caller-supplied configuration. Dropping
+or canceling observation never cancels remote work; `cancel_and_wait` is an
+explicit separate action. Optional failure logs are fetched once.
+
+TES/WES `pages` return a lazy `Pager` with `next_page` and `next_item` methods.
+It preserves filters/view and opaque tokens, continues past empty intermediate
+pages, detects token cycles, and bounds requests/items. Memory holds one page
+plus fixed-size token digests bounded by `max_requests` (default 1000). Checkpoints bind
+service, API root and query; a failed request retains the valid continuation.
+At a partially consumed or truncated page, a checkpoint replays that page.
+Mutable listings provide neither snapshot isolation nor exactly-once processing;
+callers reconcile replays. Credentials are supplied separately when resuming.
+
+The CLI streams `tes list --all --format jsonl` through caller-owned writers,
+with one JSON object per stdout line. `--max-pages` and `--max-items` bound work;
+limits or later failures preserve emitted records, report a resume checkpoint on
+stderr and return a nonzero exit code. Reusable CLIs use `dispatch_to` or
+`dispatch_with_config_to`; existing buffered dispatch remains available for
+ordinary commands.
+
+`WES::run_workflow_streaming` accepts `StreamingAttachment` sources as bytes,
+files or owned async readers, with optional known lengths. Multipart content
+follows backpressure and shares the normal transport header policy. Paths are
+validated before I/O, nested relative filenames stay intact, and one absolute
+operation budget covers preparation, upload and response. A consumed source
+is never replayed; cancellation or a lost response after transmission reports
+that submission may have been accepted. The existing bytes API remains usable.
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).
