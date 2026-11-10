@@ -173,8 +173,9 @@ pickled and copied, including the attributes of subclass instances.
 
 Its fields are properties: `id`, `state`, `name`, `description`, `creation_time`,
 `inputs`, `outputs`, `resources`, `executors`, `volumes`, `tags` and `logs`. Missing
-fields are `None`, except `state`, which is `TesState.UNKNOWN` then. Nested values, such
-as executors, come as `dict`s and `list`s. The `status` property is the same as `state` and
+fields are `None`, except `state`, which is `TesState.UNKNOWN` then. A state that TES
+1.1 doesn't define is also `TesState.UNKNOWN`; `to_dict()` keeps the server's value.
+Nested values, such as executors, come as `dict`s and `list`s. The `status` property is the same as `state` and
 is kept for compatibility. Data objects such as `TesTask` have properties; `Task`, which
 asks the server, has methods (`Task.status()`).
 

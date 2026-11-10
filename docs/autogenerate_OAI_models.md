@@ -21,14 +21,39 @@ hand-written types go next to `models/`, for example
 | `registry` | [Service Registry 1.0.0](https://github.com/ga4gh-discovery/ga4gh-service-registry/tree/1.0.0) | – |
 | `tes` | [TES 1.1](https://github.com/ga4gh/task-execution-schemas/tree/v1.1) | `utils/patches/tes.patch` |
 | `drs` | [DRS 1.4.0](https://github.com/ga4gh/data-repository-service-schemas/tree/drs-1.4.0) | `utils/patches/drs.patch` |
-| `trs` | [TRS 2.0.1](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.1) | – |
+| `trs` | [TRS 2.0.1](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.1) | `utils/patches/trs.patch` |
 | `wes` | [WES 1.1.0](https://github.com/ga4gh/workflow-execution-service-schemas/tree/1.1.0) | `utils/patches/wes.patch` |
 
 The models are generated with OpenAPI Generator 7.9.0 and formatted with
 `rustfmt`. Running the wrapper on a clean checkout must not change any file in
 `lib/src/clients`. If it does, a spec, the generator or a patch has changed.
 No CI job checks this yet; run the wrapper and `git status lib/src/clients`
-after changing a spec or a patch.
+after changing a spec, the template or a patch.
+
+## Model template
+
+The generator uses `utils/templates/rust/model.mustache`, a copy of the
+`model.mustache` of the Rust generator of OpenAPI Generator 7.9.0 with these
+edits, so that the models keep what their spec doesn't define:
+
+- Every struct gets a field `extra: serde_json::Map<String, serde_json::Value>`
+  with `#[serde(flatten)]`, which takes the fields that the spec doesn't
+  define; `new` sets it to an empty map.
+- Every string enum gets a last variant `Unrecognized(String)` with
+  `#[serde(untagged)]`, which takes the values that the spec doesn't define.
+  The enums are no longer `Copy`.
+
+Patches adapt single models: `TesState` and the WES `State` read unknown states
+as `Unknown` instead, which both specs define as the safe default, and stay
+`Copy`; the TRS `FileWrapperImageType` reads known values of its two enums
+before unknown ones (see the patches for details). Integer enums and enums
+with a discriminator are unchanged; none of the pinned specs has them.
+
+When you change the generator version, compare the template with the
+`model.mustache` of the new version (`openapi-generator-cli author template -g
+rust`) and carry the edits over. The first commit that added the template has
+the unchanged 7.9.0 file, so `git log -p utils/templates/rust/model.mustache`
+shows the edits.
 
 The WES models use the schema names of the spec (`RunLog`, `RunStatus`,
 `State`, `TaskLog`, ...). Two of them are generated for `anyOf` lists and
@@ -114,7 +139,12 @@ it no longer applies (see below), and adapt the client in
 - `GENERATOR_ARGS`: extra arguments for `openapi-generator-cli generate`,
   for example `--skip-validate-spec` (needed for DRS 1.4.0).
 - `OPENAPI_GENERATOR_VERSION` (environment): generator version, default
-  `7.9.0`.
+  `7.9.0`. The [model template](#model-template) is a copy of the 7.9.0
+  template; check it before you use another version.
+
+The script always uses the model template, also for other crates, so their
+models keep unknown fields and values too. Their crate needs `serde_json` and
+`serde` 1.0.181 or later.
 
 ## Hand edits
 

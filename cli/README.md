@@ -228,8 +228,8 @@ ga4gh-cli registry types
 The specification has no server-side filter, so `--type` fetches all services
 and filters them in the CLI.
 
-The commands print only the fields of the Service Registry specification;
-fields that a registry adds are ignored. Control and bidirectional formatting
+`list` and `types` print only fields of the Service Registry specification;
+`get` also prints the fields that a registry adds. Control and bidirectional formatting
 characters from the registry, in values and in error messages, are printed
 escaped, such as `\n` or `\u{1b}`; `get` uses JSON escapes such as `\u001b`,
 so its output stays valid JSON. The commands exit with code 0 on

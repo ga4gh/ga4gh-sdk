@@ -43,6 +43,21 @@ items are `RunListResponseRunsInner` and deprecated task log items are
 `RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
 endpoints.
 
+All models now keep what their spec doesn't define (see
+[Models](docs/usage.md#models)). This breaks some code:
+
+- Model structs have a new public field, `extra`. Struct literals of models
+  must set it or end with `..Default::default()`; prefer the models' `new`
+  functions.
+- Enums have a new variant, `Unrecognized(String)`, and are no longer `Copy`.
+  `match` statements need an arm for it, and code that copies an enum value
+  must `.clone()` it. `TesState` and the WES `State` are not affected: they
+  stay `Copy` and read unknown states as `Unknown`, which is now their last
+  variant (this changes their `Ord` order).
+- Unknown fields are no longer dropped: serializing a model, or
+  `ga4gh-cli registry get`, now includes the fields that the server added.
+- `TesTask::new(executors)` now sets `executors`; it used to ignore them.
+
 ## Installation
 
 These instructions install the SDK from this source repository.

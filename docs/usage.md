@@ -242,6 +242,40 @@ for tool in tools {
 }
 ```
 
+### Models
+
+The request and response models (`clients::<api>::models`) are generated from
+the specs. Servers often send more than the spec defines; the models keep it:
+
+- Every model struct has a field `extra` (a `serde_json::Map`) with the
+  fields that its spec doesn't define, at every level. Writing a model back,
+  for example a task that was read, sends them again. To add a field of your
+  own, insert it into `extra`. Don't use names of fields that the model
+  defines.
+- Enums keep values that the spec doesn't define in their `Unrecognized`
+  variant, for example `DescriptorType::Unrecognized("JUPYTER")`, and write
+  them back unchanged. `Display` gives the value as received.
+- TES and WES task and run states are the exception: a state that the spec
+  doesn't define reads as `TesState::Unknown` or `State::Unknown`, which both
+  specs define as the safe default. The TES CLI and the Python bindings still
+  reject unknown state names as list filters.
+
+```rust
+use ga4gh_sdk::clients::tes::models::{TesExecutor, TesTask};
+
+let mut task = TesTask::new(vec![TesExecutor::new(
+    "alpine".to_owned(),
+    vec!["echo".to_owned(), "hello".to_owned()],
+)]);
+task.extra.insert("x-queue".to_owned(), serde_json::json!("long"));
+```
+
+Build models with their `new` function or with `..Default::default()`, so that
+fields added later, such as `extra`, don't break your code. For WES,
+`RunRequest.extra` fields are sent as further parts of the `multipart/form-data`
+request: strings as they are, other values as JSON. Names of parts that the
+request already has are an error.
+
 ### Errors
 
 Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
