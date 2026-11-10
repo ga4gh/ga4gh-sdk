@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import subprocess
 import sys
 import urllib.request
@@ -11,6 +12,7 @@ import pytest
 
 import GA4GH
 from GA4GH import Configuration, ListTasksParams, TES, TesTask, Transport
+from examples.tes_extension import ProvenanceTES
 
 from .mock_server import TASK
 
@@ -51,13 +53,6 @@ def config(server):
     return Configuration(server.base)
 
 
-class ProvenanceTES(TES):
-    """A downstream client that adds an endpoint to TES."""
-
-    def provenance(self, task_id):
-        return json.loads(self.transport.get(f"tasks/{task_id}/provenance"))
-
-
 class PluginTransport(Transport):
     """A downstream transport with helpers for extra endpoints."""
 
@@ -87,6 +82,43 @@ def test_tes_subclass_calls_extra_endpoint(server, config):
     tes = ProvenanceTES(config)
     assert isinstance(tes, TES)
     assert tes.provenance("task-1") == {"events": ["created"]}
+    assert server.last()["path"] == "/api/tasks/task-1/provenance"
+    with pytest.raises(RuntimeError, match="404"):
+        tes.provenance("task/other")
+    assert server.last()["path"] == "/api/tasks/task%2Fother/provenance"
+
+
+def test_checked_in_examples_run_against_mock(server):
+    python_dir = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "GA4GH_TES_URL": server.base}
+    task_example = subprocess.run(
+        [sys.executable, "tests/example.py"],
+        cwd=python_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert task_example.returncode == 0, task_example.stderr
+    assert "Created task task-1: Complete" in task_example.stdout
+    with urllib.request.urlopen(f"{server.root}/__requests__", timeout=10) as response:
+        requests = json.load(response)
+    submitted = [
+        request for request in requests
+        if request["method"] == "POST" and request["path"] == "/api/tasks"
+    ][-1]
+    task_file = python_dir.parent / "examples" / "tes-hello.json"
+    assert json.loads(base64.b64decode(submitted["body"])) == json.loads(task_file.read_text())
+
+    extension_example = subprocess.run(
+        [sys.executable, "examples/tes_extension.py", server.base, "task-1"],
+        cwd=python_dir,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert extension_example.returncode == 0, extension_example.stderr
+    assert json.loads(extension_example.stdout) == {"events": ["created"]}
     assert server.last()["path"] == "/api/tasks/task-1/provenance"
 
 

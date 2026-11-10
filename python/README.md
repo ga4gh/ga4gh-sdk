@@ -1,60 +1,68 @@
 ## GA4GH-SDK Python Bindings
 
 This directory provides Python bindings for the GA4GH SDK using [PyO3](https://docs.rs/pyo3/latest/pyo3).
-Start setup from the repository root; after `cd python`, run later commands
-from `python/` with the virtual environment active.
+These instructions build the bindings from this repository. Start at the
+repository root; after `cd python`, run later commands from `python/` with the
+virtual environment active.
 
 ## Prerequisites
 
 - Python 3.12 or newer
-- [Maturin](https://github.com/PyO3/maturin)
-- [PyTest](https://docs.pytest.org/en/stable/)
+- The [Rust toolchain](../README.md#installation)
 
 ## Installation
 
-1. **Enter the Python package and create a virtual environment:**
+From the repository root, create an environment, build the bindings, and check
+the import:
 
-    ```bash
-    cd python
-    python3 -m venv .venv
-    . .venv/bin/activate
-    ```
-
-    Use a Python 3.12+ executable if `python3` points to an older version.
-
-2. **Install dependencies:**
-
-    ```bash
-    python -m pip install 'maturin>=1.7,<2' pytest
-    ```
-
-## Development
-
-To start development, use the following command to build and install the package in development mode:
-
-```bash
-maturin develop
+```sh
+cd python
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install 'maturin>=1.7,<2'
+maturin develop --locked
+python -c 'from GA4GH import TES; print(TES.__name__)'
 ```
 
-## Build
+Use another Python 3.12+ executable if `python3.12` is unavailable. The
+distribution is named `GA4GH-SDK`; the import name is `GA4GH`.
+
+## Build a wheel
 
 Build the Python library wheel:
 
 ```bash
-maturin build
+maturin build --locked
 ```
 
 ## Running Tests
 
-After `maturin develop`, run the Python binding tests with:
+After `maturin develop`, install pytest and run the Python binding tests with:
 
 ```bash
+python -m pip install pytest
 pytest
 ```
 
+## Supported surface
+
+| Python API | Current behavior |
+| --- | --- |
+| `Configuration` | Set one service API root or read it from `~/.ga4gh-cli/config.json`. |
+| `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
+| `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
+| `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
+| DRS, WES, TRS | Available in the Rust SDK, not yet as Python client classes. |
+
+The Python API is maintained by hand; a new Rust SDK method or model does not
+appear in Python automatically. For each SDK change, decide whether to expose
+it here, then update the wrapper, this table, and the mock-backed tests and
+examples. CI checks the documented Python behavior, but it cannot infer that
+a new Rust API needs a Python counterpart. The SDK currently stores configured
+credentials without sending them in requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)); use an anonymous service or an authenticating proxy.
+
 ## Usage
 
-The module is called `GA4GH` and currently covers `TES` and `ServiceInfo`.
 `Configuration` takes the API root, including the service's path prefix (see
 the [usage guide](../docs/usage.md#api-root-base_path)).
 
@@ -125,21 +133,32 @@ Tasks:
 ```
 
 The ID, state, and number of listed tasks depend on the server and timing.
+The script finds its task file relative to itself, so it also works when
+invoked from the repository root. Set `GA4GH_TES_URL` to use another TES API
+root. CI runs this exact script against a mock service and checks the submitted
+task body.
 
 ## Extending the bindings
 
-The bindings are meant as a base for clients of services that add endpoints or fields to
-the GA4GH APIs. All classes can be subclassed.
+The bindings are meant as a base for clients of services that add endpoints or
+fields to the GA4GH APIs. `Configuration`, `ServiceInfo`, `Transport`, `TES`,
+`Task`, `TesTask`, `ListTasksParams`, and `ListTasksResponse` can be subclassed.
+`ServiceType` is an enum and is not subclassable.
 
 The classes are set up in `__new__`, from the constructor's leading arguments. A subclass
 may take further arguments after them; its `__init__` then calls `super().__init__()`
-without arguments:
+without arguments. The base `TES` constructor connects to service info before
+the subclass's `__init__` runs, so extra arguments cannot customize that first
+request:
 
 ```python
-class TokenTES(TES):
-    def __init__(self, config, token):
+from GA4GH import TES
+
+
+class LabeledTES(TES):
+    def __init__(self, config, label):
         super().__init__()  # TES.__new__ has already connected with `config`
-        self.token = token
+        self.label = label
 ```
 
 Without its own `__init__`, a subclass takes the same arguments as its base class, and
@@ -147,29 +166,19 @@ any others raise `TypeError`.
 
 ### Further endpoints
 
-`Transport` sends requests below the configured API root and returns the response body
-as text. `TES` and `Task` give theirs as `.transport`, so a subclass reuses the client's
-configuration:
+`Transport` sends requests below the configured API root and returns the
+response body as text. `TES` and `Task` expose their `.transport`, so a
+subclass reuses the client's configuration. The checked-in
+[extension example](examples/tes_extension.py) adds a service-specific
+`provenance` endpoint, encodes the task ID as one URL path segment, and parses
+the response as JSON. Run it from `python/` against a TES service that provides
+that extra endpoint:
 
-```python
-import json
-
-from GA4GH import Configuration, TES, Transport
-
-
-class MyTES(TES):
-    def provenance(self, task_id):
-        return json.loads(self.transport.get(f"tasks/{task_id}/provenance"))
-
-
-class MyTransport(Transport):
-    def enable_plugin(self, plugin_id):
-        return self.put(f"plugins/{plugin_id}", {"enabled": True}, params={"force": True})
-
-
-config = Configuration("http://localhost:8000/ga4gh/tes/v1")
-print(MyTES(config).provenance("task-id"))
+```sh
+python examples/tes_extension.py https://your-server.example/ga4gh/tes/v1 task-id
 ```
+
+The Python test suite runs this same file against a mock service.
 
 The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=None)`,
 `put(endpoint, data, params=None)`, `delete(endpoint, params=None)` and
@@ -184,13 +193,19 @@ The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=
   (`{"tag_key": ["a", "b"]}` gives `tag_key=a&tag_key=b`), and `None` leaves it out.
 - `fields` is a list of `(name, value)` text parts; `files` is a list of
   `(name, filename, content)` or `(name, filename, content, content_type)` tuples, with
-  `content` as `bytes`. Names may repeat, as for WES `workflow_attachment`:
+  `content` as `bytes`. Names may repeat, as for WES `workflow_attachment`.
+  This illustrates the multipart API; a real WES run also needs a complete
+  workflow request and an existing `main.cwl` file:
 
 ```python
+from pathlib import Path
+from GA4GH import Configuration, Transport
+
+transport = Transport(Configuration("https://your-wes.example/ga4gh/wes/v1"))
 transport.post_multipart(
     "runs",
     fields=[("workflow_type", "CWL"), ("workflow_type_version", "v1.2")],
-    files=[("workflow_attachment", "main.cwl", open("main.cwl", "rb").read())],
+    files=[("workflow_attachment", "main.cwl", Path("main.cwl").read_bytes())],
 )
 ```
 

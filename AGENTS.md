@@ -64,6 +64,7 @@ prerequisites, and commands. Add new suites there.
 
 ## Python bindings
 
-See [the Python bindings guide](python/README.md) for setup, build, and test
-commands and the current standalone-build limitation. Update that guide when
-the Python workflow changes.
+For changes under `python/`, and for SDK client or model changes that may affect
+Python users, read [the Python agent guide](python/AGENTS.md). It routes to the
+[Python bindings guide](python/README.md) for setup, supported API, build, and
+test commands. Update those guides when the Python workflow or API changes.

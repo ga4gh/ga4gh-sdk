@@ -1,8 +1,8 @@
-"""A recording HTTP mock of a TES-like service, run as a separate process.
+"""A recording TES-like HTTP mock in a separate process.
 
-The bindings hold the GIL while a request runs, so the server can't run in a thread of the
-test process. It prints its port on the first line of stdout. `GET /__requests__` returns
-the requests received so far.
+It prints its port on the first line of stdout. ``GET /__requests__`` returns
+the requests received so far. The process keeps tests isolated from Python
+runtime and GIL changes in the bindings.
 """
 
 import base64
@@ -33,6 +33,7 @@ ROUTES = {
     ("GET", "/api/tasks"): (200, {"tasks": [TASK], "next_page_token": "next"}),
     ("GET", "/api/tasks/task-1/provenance"): (200, {"events": ["created"]}),
     ("GET", "/api/tasks/bad"): (200, {"id": "bad", "state": "NOT_A_STATE"}),
+    ("POST", "/api/tasks"): (200, {"id": "task-1"}),
     ("POST", "/api/runs"): (200, {"run_id": "run-1"}),
     ("POST", "/api/tasks/task-1:cancel"): (200, {}),
     ("PUT", "/api/plugins/p1"): (200, {"updated": True}),
