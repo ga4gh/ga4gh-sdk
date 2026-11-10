@@ -17,42 +17,6 @@ from examples.tes_extension import ProvenanceTES
 from .mock_server import TASK
 
 
-class MockServer:
-    """Runs `mock_server.py` in a subprocess and reads back what it received."""
-
-    def __init__(self):
-        script = Path(__file__).with_name("mock_server.py")
-        self.process = subprocess.Popen(
-            [sys.executable, str(script)], stdout=subprocess.PIPE, text=True
-        )
-        port = int(self.process.stdout.readline())
-        self.root = f"http://127.0.0.1:{port}"
-        self.base = f"{self.root}/api"
-
-    def last(self):
-        with urllib.request.urlopen(f"{self.root}/__requests__", timeout=10) as response:
-            request = json.load(response)[-1]
-        request["body"] = base64.b64decode(request["body"])
-        return request
-
-    def close(self):
-        self.process.terminate()
-        self.process.wait(timeout=10)
-        self.process.stdout.close()
-
-
-@pytest.fixture(scope="module")
-def server():
-    mock = MockServer()
-    yield mock
-    mock.close()
-
-
-@pytest.fixture
-def config(server):
-    return Configuration(server.base)
-
-
 class PluginTransport(Transport):
     """A downstream transport with helpers for extra endpoints."""
 
@@ -148,8 +112,8 @@ def test_listed_tasks_keep_full_json(server, config):
 
 def test_task_cancel_and_status_still_work(server, config):
     task = GA4GH.Task("task-1", Transport(config))
-    assert task.status() == "Complete"
-    task.cancel()
+    assert task.status() is GA4GH.TesState.COMPLETE
+    assert task.cancel() is None
     assert server.last()["path"] == "/api/tasks/task-1:cancel"
 
 
@@ -242,10 +206,12 @@ def base_args(cls, server, config):
         return (server.base,)
     if cls is GA4GH.Task:
         return ("task-1", Transport(config))
+    if cls is TesTask:
+        return (TASK,)
     return (config,)
 
 
-CONSTRUCTED_CLASSES = [Configuration, GA4GH.ServiceInfo, Transport, TES, GA4GH.Task]
+CONSTRUCTED_CLASSES = [Configuration, GA4GH.ServiceInfo, Transport, TES, GA4GH.Task, TesTask]
 
 
 @pytest.mark.parametrize("cls", CONSTRUCTED_CLASSES)

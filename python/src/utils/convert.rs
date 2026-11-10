@@ -1,10 +1,11 @@
 //! Conversions between Python objects, JSON values and query strings.
 
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyOSError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 use pyo3::PyTypeInfo;
 use serde_json::Value;
+use std::path::Path;
 
 /// Lets subclasses take further constructor arguments.
 ///
@@ -29,6 +30,19 @@ pub fn check_extra_args<T: PyTypeInfo>(
         )));
     }
     Ok(())
+}
+
+/// Reads a text file, raising the matching `OSError` subclass (such as `FileNotFoundError`)
+/// with the path on failure.
+pub fn read_file(path: &Path) -> PyResult<String> {
+    std::fs::read_to_string(path).map_err(|error| match error.raw_os_error() {
+        Some(errno) => PyOSError::new_err((
+            errno,
+            error.kind().to_string(),
+            path.to_string_lossy().into_owned(),
+        )),
+        None => PyErr::from(error),
+    })
 }
 
 /// Converts a Python argument to JSON.
