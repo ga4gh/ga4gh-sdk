@@ -16,11 +16,15 @@ request templates. The rules for changes and the standard checks are in
 
   ```sh
   rustup component add llvm-tools-preview
-  cargo install cargo-llvm-cov --locked
+  cargo install cargo-llvm-cov --locked --version 0.9.1
   ```
 
-- For the hooks: [pre-commit](https://pre-commit.com/) 4, for example with
-  `python3 -m pip install 'pre-commit>=4,<5'` or `pipx install pre-commit`.
+- For the hooks: [pre-commit](https://pre-commit.com/), for example with
+  `python3 -m pip install 'pre-commit==4.7.0'` or `pipx install pre-commit`.
+
+CI uses the versions above (cargo-llvm-cov 0.9.1, pre-commit 4.7.0). They
+are pinned in [`ci.yml`](../.github/workflows/ci.yml) and Dependabot does not
+bump them, so update this guide when you change them.
 
 ## Make targets
 
@@ -38,7 +42,7 @@ request templates. The rules for changes and the standard checks are in
 | `make coverage` | Coverage report in `coverage/` (see below) |
 | `make clean-coverage` | Removes coverage data and `coverage/` |
 | `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
-| `make models` | Runs `utils/build_models_wrapper.sh` |
+| `make models` | Runs `utils/build_models_wrapper.sh`; run `make fmt` afterwards |
 | `make pre-commit` | `pre-commit run --all-files` |
 
 `make models` regenerates the OpenAPI models as described in
@@ -65,10 +69,12 @@ against their schemas, lint the workflows with
 `cargo clippy --workspace --all-targets --locked`. When a hook changes
 files, the commit stops: review the changes, stage them, and commit again.
 
-The generated models in `lib/src/clients/*/models/` are excluded from the
-hooks, because their text comes from the upstream OpenAPI specifications. A
-commit that only changes models therefore doesn't run the Rust hooks; run
-`make lint` after regenerating models.
+The file-level hooks (hygiene, typos) skip the generated models in
+`lib/src/clients/*/models/`, because their text comes from the upstream
+OpenAPI specifications. The Rust hooks work on the whole workspace, so
+`cargo fmt --all` also formats the models, as the `lint` job requires. A
+commit that only changes models doesn't trigger the Rust hooks, though: run
+`make fmt`, then `make lint`, after regenerating models.
 
 Run all hooks on all files with `make pre-commit`, and skip single hooks with
 `SKIP`, for example `SKIP=cargo-clippy git commit`. Dependabot bumps the
@@ -76,26 +82,34 @@ pinned hook revisions.
 
 ## Coverage
 
-`make coverage` runs the default tests with
+`make coverage` runs the unit tests with
 [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and writes:
 
 - `coverage/lcov.info`: the LCOV report, for editors and coverage services
 - `coverage/summary.txt`: the summary table, which it also prints
 
-The report leaves out the generated models. The opt-in integration suites are not
-included. For an HTML report, run `cargo llvm-cov --workspace --html --open`.
+The report leaves out the generated models. Documentation tests (which
+cargo-llvm-cov only measures on nightly Rust) and the opt-in integration
+suites are not included. For an HTML report of the same data, run this after
+`make coverage`:
+
+```sh
+cargo llvm-cov report --html --open \
+  --ignore-filename-regex 'lib/src/clients/[^/]+/models/'
+```
 
 ## Lints
 
 All workspace members share the lints in the `[workspace.lints]` table of
 [`Cargo.toml`](../Cargo.toml) (`[lints] workspace = true` in each member):
 
-- `missing_docs`: public items need documentation comments. It only warns
-  for now, and CI does not fail on Clippy warnings: about 350 items lack
+- `missing_docs` (a rustc lint): public items need documentation comments.
+  It only warns for now (CI does not fail on warnings): about 350 items lack
   documentation, 250 of them in the generated models. Document the items you
   add or change.
 
-`cargo clippy --workspace --all-targets` shows the warnings.
+The warnings appear in the output of `cargo build`, `cargo test` and
+`cargo clippy`.
 
 ## CI
 

@@ -113,7 +113,7 @@ jobs:
         if: matrix.suite == 'wes-starter-kit' && steps.changes.outputs.run == 'true'
         run: tests/run-wes-docker-integration.sh
 
-  # Coverage of the default tests, without the generated models; the report
+  # Coverage of the unit tests, without the generated models; the report
   # goes to the job summary and the `coverage` artifact (LCOV)
   coverage:
     name: Coverage
@@ -137,7 +137,7 @@ jobs:
           {
             echo '## Coverage'
             echo
-            echo 'Default tests; generated models are not included.'
+            echo 'Unit tests, without documentation tests and generated models.'
             echo
             echo '```text'
             cat coverage/summary.txt

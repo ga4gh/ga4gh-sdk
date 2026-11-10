@@ -8,7 +8,9 @@ body:
       value: >-
         Thanks for taking the time to report a bug! Please search the open
         issues first, to see whether it has been reported already. Never
-        report vulnerabilities here: follow the security policy instead.
+        report vulnerabilities here: follow the [security
+        policy](https://github.com/elixir-cloud-aai/.github/blob/main/SECURITY.md)
+        instead.
   - type: textarea
     id: description
     attributes:
