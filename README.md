@@ -118,9 +118,10 @@ types, the bare file is returned as a `FileWrapper` with only `content` set;
 the registry sends a JSON array of them). Dockstore sends the
 service-info timestamps `createdAt` and `updatedAt` as numbers; the client
 drops such non-string values instead of failing.
-Not supported yet: the `format=zip` download of `files`, and the paging
-headers of `tools` (`next_page` and others); page with `offset` and `limit`
-instead. Authentication isn't supported yet: the SDK's transport doesn't send
+The basic `list_tools` method returns a page without headers. Use
+`clients::trs::responses` with the client's transport for server-provided paging
+URLs and opaque `format=zip` downloads (see the advanced transport API above).
+Authentication isn't supported yet: the SDK's transport doesn't send
 the configured tokens, so only public registries and tools work. The CLI has
 no TRS commands yet.
 
