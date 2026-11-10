@@ -15,10 +15,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 ga4gh-lib = { path = "../lib" }
 pyo3 = { version = "0.22.5", features = ["experimental-async"]  }
+pyo3-async-runtimes = { version = "0.22.0", features = ["tokio-runtime"] }
 reqwest = { version = "0.11", default-features = false, features = ["multipart"] }
 serde = "1.0.213"
 serde_json = "1.0.132"
-tokio = "1.41.0"
+tokio = { version = "1.41.0", features = ["macros", "rt", "sync"] }
 url = "2.5.2"
 
 [features]

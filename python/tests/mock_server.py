@@ -2,11 +2,18 @@
 
 It prints its port on the first line of stdout. ``GET /__requests__`` returns
 the requests received so far. The process keeps tests isolated from Python
-runtime and GIL changes in the bindings.
+runtime and GIL changes in the bindings. ``GET /api/tasks/slow-<seconds>``
+answers with a running task of that ID after the given delay, for tests of
+concurrent and cancelled calls, as does ``GET /slow-<seconds>/service-info``
+with the service info; if the client closes the connection before,
+``GET /__disconnects__`` lists the request's path.
 """
 
 import base64
 import json
+import select
+import socket
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -29,6 +36,8 @@ TASK = {
 
 ROUTES = {
     ("GET", "/api/service-info"): (200, SERVICE_INFO),
+    # A TES whose other endpoints all fail.
+    ("GET", "/broken/service-info"): (200, SERVICE_INFO),
     ("GET", "/api/tasks/task-1"): (200, TASK),
     ("GET", "/api/tasks"): (200, {"tasks": [TASK], "next_page_token": "next"}),
     ("GET", "/api/tasks/task-1/provenance"): (200, {"events": ["created"]}),
@@ -41,6 +50,7 @@ ROUTES = {
 }
 
 REQUESTS = []
+DISCONNECTS = []
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -59,6 +69,9 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/__requests__":
             self._reply(200, REQUESTS)
             return
+        if url.path == "/__disconnects__":
+            self._reply(200, DISCONNECTS)
+            return
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
         REQUESTS.append(
@@ -70,7 +83,34 @@ class Handler(BaseHTTPRequestHandler):
                 "body": base64.b64encode(body).decode(),
             }
         )
+        if self.command == "GET" and url.path.startswith("/api/tasks/slow-"):
+            task_id = url.path.rsplit("/", 1)[1]
+            if self._client_left_within(float(task_id.removeprefix("slow-"))):
+                DISCONNECTS.append(url.path)
+                return
+            self._reply(200, {**TASK, "id": task_id, "state": "RUNNING"})
+            return
+        if url.path.startswith("/slow-") and url.path.endswith("/service-info"):
+            if self._client_left_within(float(url.path.split("/")[1].removeprefix("slow-"))):
+                DISCONNECTS.append(url.path)
+                return
+            self._reply(200, SERVICE_INFO)
+            return
         self._reply(*ROUTES.get((self.command, url.path), (404, {"msg": "not found"})))
+
+    def _client_left_within(self, seconds):
+        """Waits up to `seconds`; tells whether the client closed the connection meanwhile."""
+        deadline = time.monotonic() + seconds
+        while (remaining := deadline - time.monotonic()) > 0:
+            readable, _, _ = select.select([self.connection], [], [], min(remaining, 0.05))
+            if readable:
+                try:
+                    if not self.connection.recv(1, socket.MSG_PEEK):
+                        return True
+                except ConnectionResetError:
+                    return True
+                time.sleep(min(remaining, 0.05))  # Pipelined data, not a close.
+        return False
 
     do_GET = do_POST = do_PUT = do_DELETE = _handle
 
