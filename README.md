@@ -91,7 +91,7 @@ explicit separate action. Optional failure logs are fetched once.
 TES/WES `pages` return a lazy `Pager` with `next_page` and `next_item` methods.
 It preserves filters/view and opaque tokens, continues past empty intermediate
 pages, detects token cycles, and bounds requests/items. Memory holds one page
-plus token history bounded by `max_requests` (default 1000). Checkpoints bind
+plus fixed-size token digests bounded by `max_requests` (default 1000). Checkpoints bind
 service, API root and query; a failed request retains the valid continuation.
 At a partially consumed or truncated page, a checkpoint replays that page.
 Mutable listings provide neither snapshot isolation nor exactly-once processing;
