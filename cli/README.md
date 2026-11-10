@@ -1,8 +1,10 @@
 # GA4GH-CLI
 
-The `ga4gh-cli` uses the GA4GH SDK to work with TES and DRS services. WES,
-TRS, and service info are available from the Rust library (see the
-[usage guide](../docs/usage.md)).
+The `ga4gh-cli` uses the GA4GH SDK to work with GA4GH API services. It
+currently provides TES and DRS commands. The Rust library also provides `WES`,
+`TRS`, and `ServiceInfo` clients (see the [usage guide](../docs/usage.md)). Support
+for the separate GA4GH Service Registry is planned in
+[#89](https://github.com/ga4gh/ga4gh-sdk/issues/89).
 
 ## Installation
 

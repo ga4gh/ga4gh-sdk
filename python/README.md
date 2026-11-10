@@ -54,7 +54,7 @@ pytest
 
 ## Usage
 
-The module is called `GA4GH` and currently covers TES and service info.
+The module is called `GA4GH` and currently covers `TES` and `ServiceInfo`.
 `Configuration` takes the API root, including the service's path prefix (see
 the [usage guide](../docs/usage.md#api-root-base_path)):
 

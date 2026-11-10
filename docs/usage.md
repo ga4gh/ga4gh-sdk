@@ -7,15 +7,18 @@ the [README](../README.md#installation).
 
 ## Available interfaces
 
-| Service | Rust library | CLI | Python bindings |
+| API | Rust library | CLI | Python bindings |
 | --- | --- | --- | --- |
-| TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES and service info |
+| Service Info | `ServiceInfo` | No direct command | `ServiceInfo` |
+| TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES |
 | DRS | Objects and access URLs | `drs get`, `access` | Not yet |
 | WES | Runs and attachments | Not yet ([#105](https://github.com/ga4gh/ga4gh-sdk/issues/105)) | Not yet |
 | TRS | Tools and descriptors | Not yet ([#115](https://github.com/ga4gh/ga4gh-sdk/issues/115)) | Not yet |
+| Service Registry | Not yet ([#89](https://github.com/ga4gh/ga4gh-sdk/issues/89)) | Not yet | Not yet |
 
-The Rust library also exposes service info. The CLI reads one service section
-from the configuration file for each command.
+`ServiceInfo` reads the discovery endpoint of one configured service. The
+separate GA4GH Service Registry would list services from a registry deployment.
+The CLI reads one service section from the configuration file for each command.
 
 ## API root (`base_path`)
 
@@ -74,7 +77,7 @@ The file can hold credentials, so keep it private, for example with
 The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`) and DRS
 commands (`get`, `access`). It reads the matching `TES` or `DRS` configuration
 section. The [CLI README](../cli/README.md) describes each command, its output
-and exit codes. WES, TRS, and service info are available from the Rust library
+and exit codes. `WES`, `TRS`, and `ServiceInfo` are available from the Rust library
 below.
 
 ## Rust library
@@ -118,7 +121,7 @@ use ga4gh_sdk::clients::ServiceType;
 let config = Configuration::from_file(ServiceType::TES)?;
 ```
 
-### Service info
+### ServiceInfo
 
 ```rust
 use ga4gh_sdk::clients::serviceinfo::ServiceInfo;

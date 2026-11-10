@@ -105,8 +105,10 @@ ga4gh-cli tes list
 ```
 
 The [CLI README](cli/README.md) describes all CLI commands. The
-[usage guide](docs/usage.md) covers the configuration file, authentication,
-and service info, TES, WES, DRS, and TRS from the Rust library.
+[usage guide](docs/usage.md) covers configuration, authentication, and the
+Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, and `TRS` clients. Support for the
+separate GA4GH Service Registry is planned in
+[#89](https://github.com/ga4gh/ga4gh-sdk/issues/89).
 
 ## Advanced transport
 
