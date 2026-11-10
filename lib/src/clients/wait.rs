@@ -26,8 +26,9 @@ fn api_root(config: &Configuration) -> String {
     let _ = root.set_password(None);
     root.set_query(None);
     root.set_fragment(None);
-    let path = format!("{}/", root.path().trim_end_matches('/'));
-    root.set_path(&path);
+    if !root.path().ends_with('/') {
+        root.set_path(&format!("{}/", root.path()));
+    }
     root.into()
 }
 impl RemoteHandle {

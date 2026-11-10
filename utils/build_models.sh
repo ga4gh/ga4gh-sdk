@@ -86,7 +86,8 @@ if [ -n "$PATCH_FILE" ]; then
     PATCH_FILE="$(cd "$(dirname "$PATCH_FILE")" && pwd)/$(basename "$PATCH_FILE")"
 fi
 OPENAPI_GENERATOR_VERSION="${OPENAPI_GENERATOR_VERSION:-7.9.0}"
-SED_RULE="s/^use\s\+crate::models\s*;/#![allow(unused_imports)]\n#![allow(clippy::empty_docs)]\nuse $MODULE_PATH;/"
+IMPORT_PATTERN='^use[[:space:]]+crate::models[[:space:]]*;'
+SED_RULE="s/$IMPORT_PATTERN/#![allow(unused_imports)]\n#![allow(clippy::empty_docs)]\nuse $MODULE_PATH;/"
 
 TEMP_OUTPUT_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_OUTPUT_DIR"' EXIT
@@ -140,10 +141,18 @@ if [ ! -d "$MODELS_DIR" ]; then
 fi
 
 while IFS= read -r -d '' file; do
+    if ! grep -Eq "$IMPORT_PATTERN" "$file"; then
+        continue
+    fi
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "$SED_RULE" "$file"
+        sed -E -i '' "$SED_RULE" "$file"
     else
-        sed -i "$SED_RULE" "$file"
+        sed -E -i "$SED_RULE" "$file"
+    fi
+    if ! grep -Fq '#![allow(clippy::empty_docs)]' "$file" ||
+       ! grep -Fq "use $MODULE_PATH;" "$file"; then
+        echo "Error: failed to rewrite generated model import in $file" >&2
+        exit 1
     fi
 done < <(find "$MODELS_DIR" -name '*.rs' -print0)
 
