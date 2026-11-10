@@ -5,6 +5,18 @@ and the Rust library (`ga4gh-lib`, imported as `ga4gh_sdk`). For the Python
 bindings, see the [Python README](../python/README.md). For installation, see
 the [README](../README.md#installation).
 
+## Available interfaces
+
+| Service | Rust library | CLI | Python bindings |
+| --- | --- | --- | --- |
+| TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES and service info |
+| DRS | Objects and access URLs | `drs get`, `access` | Not yet |
+| WES | Runs and attachments | Not yet ([#105](https://github.com/ga4gh/ga4gh-sdk/issues/105)) | Not yet |
+| TRS | Tools and descriptors | Not yet ([#115](https://github.com/ga4gh/ga4gh-sdk/issues/115)) | Not yet |
+
+The Rust library also exposes service info. The CLI reads one service section
+from the configuration file for each command.
+
 ## API root (`base_path`)
 
 Every client takes a `Configuration` whose `base_path` is the **API root** of
@@ -16,6 +28,7 @@ one service, including the service's path prefix. The SDK resolves
 | TES     | `https://example.org/ga4gh/tes/v1`   | `…/ga4gh/tes/v1/service-info`, `…/tasks` |
 | WES     | `https://example.org/ga4gh/wes/v1`   | `…/ga4gh/wes/v1/service-info`, `…/runs`  |
 | DRS     | `https://example.org/ga4gh/drs/v1`   | `…/ga4gh/drs/v1/service-info`, `…/objects` |
+| TRS     | `https://example.org/ga4gh/trs/v2`   | `…/ga4gh/trs/v2/service-info`, `…/tools` |
 
 A service behind a gateway or reverse proxy keeps its full prefix, for example
 `https://gateway.example.org/my-tes/ga4gh/tes/v1`. A trailing slash is
@@ -25,8 +38,8 @@ host, which usually fails with `404 Not Found`.
 
 ## Configuration file
 
-The CLI, and `Configuration::from_file` in the library and the Python
-bindings, read `~/.ga4gh-cli/config.json`. It holds one object per service
+The CLI, Rust `Configuration::from_file`, and Python
+`Configuration.from_file()` read `~/.ga4gh-cli/config.json`. It holds one object per service
 type, keyed by `TES`, `WES`, `DRS` or `TRS`:
 
 ```json
@@ -58,16 +71,16 @@ The file can hold credentials, so keep it private, for example with
 
 ## Command-line tool
 
-The CLI currently has TES commands only (`create`, `list`, `get`, `status`,
-`cancel`) and reads the `TES` section of the configuration file. The
-[CLI README](../cli/README.md) describes each command, its output and exit
-codes. Set `RUST_LOG=debug` to see the requests the CLI makes. WES, DRS and
-service info are available from the Rust library below.
+The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`) and DRS
+commands (`get`, `access`). It reads the matching `TES` or `DRS` configuration
+section. The [CLI README](../cli/README.md) describes each command, its output
+and exit codes. WES, TRS, and service info are available from the Rust library
+below.
 
 ## Rust library
 
-Add the library as a Git dependency (it isn't published on crates.io yet).
-The package is `ga4gh-lib`; its crate name is `ga4gh_sdk`. The clients are
+Add this repository's library as a Git dependency. The package is `ga4gh-lib`;
+its crate name is `ga4gh_sdk`. The clients are
 `async`, so you also need an async runtime such as Tokio:
 
 ```toml
@@ -78,8 +91,8 @@ url = "2"
 serde_json = "1"
 ```
 
-Each client checks the service's `service-info` when it is created and returns
-an error if the endpoint isn't reachable or isn't of the expected type.
+TES, WES, DRS, and TRS clients check the service's `service-info` when created
+and return an error if the endpoint isn't reachable or has the wrong type.
 
 ### Configuration
 
@@ -122,7 +135,10 @@ use ga4gh_sdk::clients::tes::TES;
 
 let tes = TES::new(&config).await?;
 
-let task: TesTask = serde_json::from_str(&std::fs::read_to_string("tests/sample.tes")?)?;
+// With a TES service running as described in the quick start:
+let task: TesTask = serde_json::from_str(
+    r#"{"executors":[{"image":"alpine","command":["true"]}]}"#
+)?;
 let task = tes.create(task).await?;
 println!("created {}", task.id);
 println!("state {:?}", task.status().await?);
@@ -145,16 +161,18 @@ task.cancel().await?;
 ### WES
 
 ```rust
-use ga4gh_sdk::clients::wes::models::WesRunRequest;
+use ga4gh_sdk::clients::wes::models::RunRequest;
 use ga4gh_sdk::clients::wes::WES;
 
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/wes/v1")?);
 let wes = WES::new(&config).await?;
 
-let mut request = WesRunRequest::new();
-request.workflow_url = Some("https://github.com/nextflow-io/hello".to_owned());
-request.workflow_type = Some("NFL".to_owned());
-request.workflow_type_version = Some("DSL2".to_owned());
+let mut request = RunRequest::new(
+    "CWL".to_owned(),
+    "v1.2".to_owned(),
+    "https://example.org/workflows/hello.cwl".to_owned(),
+);
+request.workflow_params = Some(serde_json::json!({}));
 let run = wes.run_workflow(request).await?;
 
 println!("state {:?}", run.status().await?);
@@ -164,7 +182,8 @@ run.cancel().await?;
 ```
 
 `WES::run_workflow_with_attachments` uploads workflow files along with the
-request, for services that accept `workflow_attachment`.
+request, for services that accept `workflow_attachment`. Use a workflow URL and
+type/version supported by the target WES service.
 
 ### DRS
 
@@ -177,11 +196,29 @@ let drs = DRS::new(&config).await?;
 let object = drs.get_object("my-object-id").await?;
 println!("{} ({} bytes)", object.id, object.size);
 let access = drs.get_access_url("my-object-id", "my-access-id").await?;
-println!("{}", access.url);
+// Use access.url and any access headers to fetch the bytes; do not log signed URLs.
+```
+
+### TRS
+
+```rust
+use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
+
+let config = Configuration::new(Url::parse("https://workflowhub.eu/ga4gh/trs/v2")?);
+let trs = TRS::new(&config).await?;
+let tools = trs.list_tools(&ToolFilter {
+    tool_class: Some("Workflow".to_owned()),
+    limit: Some(10),
+    ..Default::default()
+}).await?;
+for tool in tools {
+    println!("{}", tool.id);
+}
 ```
 
 ### Errors
 
 Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
 as `ga4gh_sdk::utils::transport::HttpError` (formerly `HttpStatusError`, still
-available under that name), which carries the status code and body; downcast to it to tell, for example, a `404` from a network error.
+available under that name), which carries the status code and body. Downcast to
+it to distinguish, for example, a `404` from a network error.

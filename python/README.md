@@ -59,6 +59,7 @@ The module is called `GA4GH` and currently covers TES and service info.
 the [usage guide](../docs/usage.md#api-root-base_path)):
 
 ```python
+import json
 from GA4GH import Configuration, ServiceInfo, ServiceType, TES
 
 config = Configuration("http://localhost:8000/ga4gh/tes/v1")
@@ -68,7 +69,7 @@ config = Configuration("http://localhost:8000/ga4gh/tes/v1")
 print(ServiceInfo(config).get_service_info())
 
 tes = TES(config)
-task = tes.create("../tests/sample.tes")
+task = tes.create(json.dumps({"executors": [{"image": "alpine", "command": ["true"]}]}))
 print(task.id, task.status())
 
 for t in tes.list(None).tasks:
@@ -80,6 +81,20 @@ task.cancel()
 
 `from_file` replaces the API root. `Task.status()` and `Task.cancel()` are methods; `id`
 and `status` on the tasks returned by `list()` and `get()` are attributes.
+
+## Network behavior
+
+Synchronous network methods release the Python GIL while Rust waits for I/O.
+They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
+connections remain reusable between calls. Inputs are decoded before releasing
+the GIL and Python results/exceptions are constructed after reacquiring it.
+No asyncio API or Python callback runs on the runtime. Use multiprocessing's
+`spawn` mode rather than forking a process after starting threaded I/O.
+
+`tests/test_io_runtime.py` exercises all synchronous network wrappers against a
+Python-thread HTTP server, including a heartbeat during delayed I/O, keep-alive
+connection reuse, and error recovery. Each scenario runs in a subprocess with a
+15-second timeout so a GIL regression cannot hang the test worker.
 
 `Configuration.from_file()` raises `FileNotFoundError` when the config file is
 missing and `ValueError` when its contents are malformed. Invalid URLs and JSON
