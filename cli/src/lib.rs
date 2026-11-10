@@ -97,3 +97,46 @@ pub async fn dispatch_with_config(
         _ => Ok(None),
     }
 }
+
+/// Built-in streaming dispatcher. Writes incrementally to caller-owned sinks.
+/// Added downstream commands return None before reading configuration.
+pub async fn dispatch_to(
+    matches: &ArgMatches,
+    stdout: &mut dyn std::io::Write,
+    stderr: &mut dyn std::io::Write,
+) -> anyhow::Result<Option<ExitCode>> {
+    let service_type = match matches.subcommand() {
+        Some(("drs", _)) => ServiceType::DRS,
+        Some(("tes", _)) => ServiceType::TES,
+        _ => return Ok(None),
+    };
+    let config = Configuration::from_file(service_type)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    dispatch_with_config_to(matches, &config, stdout, stderr).await
+}
+
+/// Streaming counterpart of dispatch_with_config, including bounded JSONL export.
+pub async fn dispatch_with_config_to(
+    matches: &ArgMatches,
+    config: &Configuration,
+    stdout: &mut dyn std::io::Write,
+    stderr: &mut dyn std::io::Write,
+) -> anyhow::Result<Option<ExitCode>> {
+    if let Some(("tes", sub)) = matches.subcommand() {
+        if let Some(("list", list)) = sub.subcommand() {
+            if list.get_flag("all") {
+                return tes::export_all(list, config, stdout, stderr)
+                    .await
+                    .map(Some);
+            }
+        }
+    }
+    match dispatch_with_config(matches, config).await? {
+        Some(output) => {
+            stdout.write_all(output.stdout.as_bytes())?;
+            stderr.write_all(output.stderr.as_bytes())?;
+            Ok(Some(output.exit_code))
+        }
+        None => Ok(None),
+    }
+}
