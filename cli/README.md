@@ -1,10 +1,9 @@
 # GA4GH-CLI
 
 The `ga4gh-cli` uses the GA4GH SDK to work with GA4GH API services. It
-currently provides TES and DRS commands. The Rust library also provides `WES`,
-`TRS`, and `ServiceInfo` clients (see the [usage guide](../docs/usage.md)). Support
-for the separate GA4GH Service Registry is planned in
-[#89](https://github.com/ga4gh/ga4gh-sdk/issues/89).
+currently provides TES, DRS and Service Registry commands. The Rust library
+also provides `WES`, `TRS`, and `ServiceInfo` clients (see the
+[usage guide](../docs/usage.md)).
 
 ## Installation
 
@@ -19,7 +18,7 @@ ga4gh-cli --help
 
 The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file. 
 
-The file and the section for the selected service (`TES` or `DRS`) must exist;
+The file and the section for the selected service (`TES`, `DRS` or `REGISTRY`) must exist;
 the CLI reports an error instead of silently using `http://localhost` when
 either is missing. Only `base_path` is required. `basic_auth` may omit
 `password`, in which case no password is set.
@@ -35,6 +34,9 @@ are errors rather than being ignored.
     },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
+    },
+    "REGISTRY": {
+        "base_path": "https://registry.example.org/ga4gh/registry/v1"
     }
 }
 ```
@@ -173,6 +175,67 @@ ga4gh-cli drs access 'object-id' 'access-id'
 Both commands print the server's JSON unchanged. The `access` result may
 contain headers needed to fetch the bytes. Service failures print an error to
 stderr and exit with code 1; missing arguments use exit code 2.
+
+## Service Registry commands
+
+The `registry` commands read a [GA4GH Service Registry](https://github.com/ga4gh-discovery/ga4gh-service-registry),
+such as a [cloud-registry](https://github.com/elixir-cloud-aai/cloud-registry)
+deployment, to find the base URLs of TES, WES and other services. They use the
+`REGISTRY` section of `~/.ga4gh-cli/config.json`, which needs only `base_path`,
+the registry's API root:
+
+```json
+{
+    "REGISTRY": {
+        "base_path": "https://registry.example.org/ga4gh/registry/v1"
+    }
+}
+```
+
+Replace `registry.example.org` with your registry's host.
+The CLI requests `services`, `services/{id}` and `services/types` below this
+path. Public reads need no token; a deployment that requires authentication
+needs an authenticating proxy until [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)
+adds configured authentication.
+
+1. To list the services, optionally only those of one type artifact (case
+   ignored), run `registry list`:
+
+```sh
+ga4gh-cli registry list --type tes
+```
+
+Example output:
+
+```sh
+ID               TYPE                 URL
+org.example.tes  org.ga4gh:tes:1.1.0  https://example.org/ga4gh/tes/v1
+```
+
+2. To get one service as JSON, run `registry get` with its ID:
+
+```sh
+ga4gh-cli registry get org.example.tes
+```
+
+3. To list the service types in the registry, one `group:artifact:version` per
+   line, run `registry types`:
+
+```sh
+ga4gh-cli registry types
+```
+
+The specification has no server-side filter, so `--type` fetches all services
+and filters them in the CLI.
+
+The commands print only the fields of the Service Registry specification;
+fields that a registry adds are ignored. Control and bidirectional formatting
+characters from the registry, in values and in error messages, are printed
+escaped, such as `\n` or `\u{1b}`; `get` uses JSON escapes such as `\u001b`,
+so its output stays valid JSON. The commands exit with code 0 on
+success and code 1 on request or server errors. A 404 from `list` or `types`
+adds a hint to check `base_path`; from `get`, a 404 means that no service has
+that ID.
 
 ## Extending the CLI in Rust
 
