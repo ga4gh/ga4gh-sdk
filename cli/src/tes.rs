@@ -358,7 +358,7 @@ pub async fn export_all(
     let tes = match TES::new(config).await {
         Ok(tes) => tes,
         Err(error) => {
-            writeln!(stderr, "{error}")?;
+            writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
             return Ok(std::process::ExitCode::FAILURE);
         }
     };
@@ -395,7 +395,7 @@ pub(crate) async fn write_jsonl(
                     writeln!(
                         stderr,
                         "Listing stopped at configured limit; resume checkpoint: {}",
-                        serde_json::to_string(&checkpoint)?
+                        crate::registry::json_printable(&serde_json::to_string(&checkpoint)?)
                     )?;
                     return Ok(std::process::ExitCode::FAILURE);
                 }
@@ -406,7 +406,7 @@ pub(crate) async fn write_jsonl(
                 writeln!(
                     stderr,
                     "Resume checkpoint: {}",
-                    serde_json::to_string(&error.checkpoint)?
+                    crate::registry::json_printable(&serde_json::to_string(&error.checkpoint)?)
                 )?;
                 return Ok(std::process::ExitCode::FAILURE);
             }

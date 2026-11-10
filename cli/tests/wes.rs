@@ -515,13 +515,13 @@ fn list_all_escapes_server_text_in_records_and_errors() {
     let first = mock("GET", format!("{prefix}/runs").as_str())
         .match_query(Matcher::Missing)
         .with_body(
-            json!({"runs": [{"run_id": "a\u{202E}b\u{9b}c"}], "next_page_token": "next"})
+            json!({"runs": [{"run_id": "a\u{202E}b\u{9b}c"}], "next_page_token": "n\u{9b}x"})
                 .to_string(),
         )
         .expect(1)
         .create();
     let second = mock("GET", format!("{prefix}/runs").as_str())
-        .match_query(Matcher::UrlEncoded("page_token".into(), "next".into()))
+        .match_query(Matcher::UrlEncoded("page_token".into(), "n\u{9b}x".into()))
         .with_status(503)
         .with_body("down\u{1b}]0;title\u{7}")
         .expect(1)
@@ -541,7 +541,11 @@ fn list_all_escapes_server_text_in_records_and_errors() {
         diagnostics.contains(r"down\u{1b}]0;title\u{7}"),
         "{diagnostics}"
     );
-    assert!(!diagnostics.contains('\u{1b}'), "{diagnostics}");
+    assert!(
+        !diagnostics.contains('\u{1b}') && !diagnostics.contains('\u{9b}'),
+        "{diagnostics}"
+    );
+    assert!(diagnostics.contains(r"n\u009bx"), "{diagnostics}");
     first.assert();
     second.assert();
 }
