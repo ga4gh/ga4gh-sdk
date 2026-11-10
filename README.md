@@ -110,9 +110,8 @@ Docker may download the Alpine image on the first run.
 
 The [CLI README](cli/README.md) describes all CLI commands. The
 [usage guide](docs/usage.md) covers configuration, authentication, and the
-Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, and `TRS` clients. Support
-for the separate GA4GH Service Registry is planned in
-[#89](https://github.com/ga4gh/ga4gh-sdk/issues/89).
+Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, `TRS`, and `ServiceRegistry`
+clients. The CLI also has [Service Registry commands](cli/README.md#service-registry-commands).
 
 ## Advanced transport
 

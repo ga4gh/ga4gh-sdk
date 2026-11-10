@@ -55,7 +55,7 @@ pytest
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
-| DRS, WES, TRS | Available in the Rust SDK, not yet as Python client classes. |
+| DRS, WES, TRS, Service Registry | Available in the Rust SDK, not yet as Python client classes. |
 
 The Python API is maintained by hand; a new Rust SDK method or model does not
 appear in Python automatically. For each SDK change, decide whether to expose
