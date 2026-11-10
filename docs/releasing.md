@@ -98,7 +98,8 @@ publisher and `ga4gh-sdk` is kept for this repository:
    with the fork's owner and repository, workflow `release.yml` and
    environment `testpypi`.
 3. Set the workspace version to a version that is not yet on TestPyPI, for
-   example `0.1.0-dev.1`, commit both changes on the fork's `main`, tag that
+   example `0.1.0-dev.1`, and run `cargo update --workspace`. Commit the
+   version, `Cargo.lock` and the package name on the fork's `main`, tag that
    commit with `v0.1.0-dev.1` and push the tag to the fork.
 4. Check that the run publishes to TestPyPI (the environment link in the run
    still points to `ga4gh-sdk`), then install from there:

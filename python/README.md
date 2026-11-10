@@ -1,8 +1,7 @@
 ## GA4GH-SDK Python Bindings
 
 This directory provides Python bindings for the GA4GH SDK using [PyO3](https://docs.rs/pyo3/latest/pyo3).
-Released versions are published on [PyPI](https://pypi.org/project/ga4gh-sdk/).
-The other instructions build the bindings from this repository. Start at the
+Releases are published on PyPI as `ga4gh-sdk`. The other instructions build the bindings from this repository. Start at the
 repository root; after `cd python`, run later commands from `python/` with the
 virtual environment active.
 
@@ -15,7 +14,8 @@ python -m pip install ga4gh-sdk
 python -c 'from GA4GH import TES; print(TES.__name__)'
 ```
 
-Wheels exist for Linux (x86-64 and aarch64, glibc 2.28 or newer), macOS (x86-64
+pip skips pre-releases such as `0.2.0rc1` unless you add `--pre` or name the
+version (`ga4gh-sdk==0.2.0rc1`). Wheels exist for Linux (x86-64 and aarch64, glibc 2.28 or newer), macOS (x86-64
 and arm64) and Windows (x86-64); they need no Rust toolchain. Elsewhere, for
 example on musl-based Linux such as Alpine or with an older glibc, pip builds
 the bindings from the sdist, which needs the prerequisites below. Releases are
