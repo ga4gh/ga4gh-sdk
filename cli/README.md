@@ -1,8 +1,8 @@
 # GA4GH-CLI
 
 The `ga4gh-cli` uses the GA4GH SDK to work with GA4GH API services. It
-currently provides TES and DRS commands. The Rust library also provides `WES`,
-`TRS`, and `ServiceInfo` clients (see the [usage guide](../docs/usage.md)). Support
+currently provides TES, DRS and TRS commands. The Rust library also provides
+`WES` and `ServiceInfo` clients (see the [usage guide](../docs/usage.md)). Support
 for the separate GA4GH Service Registry is planned in
 [#89](https://github.com/ga4gh/ga4gh-sdk/issues/89).
 
@@ -19,7 +19,7 @@ ga4gh-cli --help
 
 The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file. 
 
-The file and the section for the selected service (`TES` or `DRS`) must exist;
+The file and the section for the selected service (`TES`, `DRS` or `TRS`) must exist;
 the CLI reports an error instead of silently using `http://localhost` when
 either is missing. Only `base_path` is required. `basic_auth` may omit
 `password`, in which case no password is set.
@@ -35,6 +35,9 @@ are errors rather than being ignored.
     },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
+    },
+    "TRS": {
+        "base_path": "https://workflowhub.eu/ga4gh/trs/v2"
     }
 }
 ```
@@ -172,6 +175,75 @@ ga4gh-cli drs access 'object-id' 'access-id'
 Both commands print the server's JSON unchanged. The `access` result may
 contain headers needed to fetch the bytes. Service failures print an error to
 stderr and exit with code 1; missing arguments use exit code 2.
+
+### TRS examples
+
+The `trs` commands browse a GA4GH Tool Registry Service (TRS), such as
+WorkflowHub or Dockstore, and download workflow files from it. They only read
+from the registry; nothing is changed there.
+
+#### 1. Configure the registry
+
+The `trs` commands need to know which registry to talk to. They read it from
+the `TRS` section of the CLI's configuration file, `~/.ga4gh-cli/config.json`
+(see [Configuration](#configuration)). The CLI uses one registry at a time.
+
+**a. Choose a registry.** Its `base_path` is the registry's TRS API root.
+
+| Registry    | `base_path`                               | Tool IDs look like                  |
+|-------------|-------------------------------------------|-------------------------------------|
+| WorkflowHub | `https://workflowhub.eu/ga4gh/trs/v2`     | `26`                                |
+| Dockstore   | `https://dockstore.org/api/ga4gh/trs/v2`  | `#workflow/github.com/org/repo`     |
+
+
+
+**b. Write the `TRS` section into the configuration file.**
+
+```sh
+{
+    "TRS": {
+        "base_path": "https://workflowhub.eu/ga4gh/trs/v2"
+    }
+}
+JSON
+```
+
+**c. Test the cli for trs .** This lists one tool from the registry:
+
+```sh
+ga4gh-cli trs tools --limit 1
+```
+
+#### 2. Find a tool, pick a version, download its files
+
+A registry holds **tools**. Each tool has **versions**, and
+each version has one or more **descriptors**: the workflow files, written in a
+workflow language such as CWL or WDL. The provided commands:
+
+```sh
+# Find tools. All filters are optional.
+ga4gh-cli trs tools --tool-class Workflow --descriptor-type CWL --limit 5
+
+# Look at one tool and its versions.
+ga4gh-cli trs tool 'tool_id'
+ga4gh-cli trs versions 'tool_id'
+ga4gh-cli trs version 'tool_id' 'version_id'
+
+# See which files the version has, then download the main workflow file.
+ga4gh-cli trs files 'tool_id' master --type CWL
+ga4gh-cli trs descriptor 'tool_id' master --type CWL --plain > main.cwl
+```
+
+#### Commands
+
+| Command | What it returns                                                                                                 |
+|---------|-----------------------------------------------------------------------------------------------------------------|
+| `trs tools [filters]` | A list of tools, optionally filtered                                                                            |
+| `trs tool <TOOL_ID>` | One tool: its name, description, organization, class and all its versions.                                      |
+| `trs versions <TOOL_ID>` | Only the versions of a tool, each with the descriptor types it has.                                             |
+| `trs version <TOOL_ID> <VERSION_ID>` | One version of a tool: its name, authors, descriptor types, images and URL.                                     |
+| `trs files <TOOL_ID> <VERSION_ID> --type <TYPE>` | The paths of all files of a version.                                                                            |
+| `trs descriptor <TOOL_ID> <VERSION_ID> --type <TYPE>` | The primary descriptor, the workflow's entry file. Add `--path <RELATIVE_PATH>` for another file from `trs files`. | |
 
 ## Extending the CLI in Rust
 
