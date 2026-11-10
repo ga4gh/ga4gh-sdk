@@ -35,8 +35,8 @@ Build the Python library wheel:
 maturin build --locked
 ```
 
-The bindings use Python's stable ABI (`abi3`), so the CPython wheel for a
-platform, tagged `cp311-abi3`, works on Python 3.11 and every later version.
+The bindings use Python's stable ABI (`abi3`), so the wheel for a platform,
+tagged `cp311-abi3`, works on CPython 3.11 and every later version.
 
 ## Running Tests
 
