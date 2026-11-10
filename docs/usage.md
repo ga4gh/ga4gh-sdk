@@ -134,7 +134,7 @@ println!("{} ({} {})", info.name, info.r#type.artifact, info.r#type.version);
 
 ```rust
 use ga4gh_sdk::clients::tes::models::{ListTasksParams, TesTask};
-use ga4gh_sdk::clients::tes::TES;
+use ga4gh_sdk::clients::tes::{TesView, TES};
 
 let tes = TES::new(&config).await?;
 
@@ -152,11 +152,11 @@ let params = ListTasksParams {
     tag_value: None,
     page_size: Some(10),
     page_token: None,
-    view: Some("MINIMAL".to_owned()),
+    view: Some(TesView::Minimal),
 };
 let tasks = tes.list_tasks(Some(params)).await?;
 
-let details = tes.get("FULL", &task.id).await?;
+let details = tes.get(TesView::Full, &task.id).await?;
 ```
 
 To cancel a task that is still running, call `task.cancel().await?`.

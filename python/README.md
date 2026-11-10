@@ -152,7 +152,8 @@ for listed in page.tasks:
   fields that the TES models don't know, and returns a `Task`.
 - `Task` addresses a task on the server by its `id`. `Task.status()` returns the current
   state as a `TesState`; `Task.cancel()` cancels the task and returns `None`.
-- `TES.get(view, id)` returns a `TesTask`; `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
+- `TES.get(view, id)` returns a `TesTask`; `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`
+  (case-insensitive). Invalid views raise `ValueError` before a request.
 - `TES.list(params=None)` returns a `ListTasksResponse` with `tasks` (a list of
   `TesTask`) and `next_page_token`; see [Listing tasks](#listing-tasks).
 - Errors: invalid tasks and arguments raise `ValueError`, a missing task file
@@ -302,6 +303,8 @@ next_page = tes.list(ListTasksParams(page_token=page.next_page_token))
 
 `state` accepts a `TesState` or any TES state name in any case, and raises `ValueError`
 for others; the `state` property returns a `TesState`.
+`view` accepts `"MINIMAL"`, `"BASIC"` or `"FULL"` in any case; the property and
+request use the uppercase TES spelling. Invalid views raise `ValueError` before a request.
 
 ### Rust crates
 

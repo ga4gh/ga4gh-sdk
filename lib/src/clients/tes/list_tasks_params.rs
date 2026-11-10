@@ -1,4 +1,5 @@
 use crate::clients::tes::models;
+use crate::clients::tes::TesView;
 
 /// struct for passing parameters to the method [`list_tasks`]
 #[derive(Serialize, Clone, Debug)]
@@ -23,5 +24,5 @@ pub struct ListTasksParams {
     pub page_token: Option<String>,
     /// OPTIONAL. Affects the fields included in the returned Task messages.  `MINIMAL`: Task message will include ONLY the fields: - `tesTask.Id` - `tesTask.State`  `BASIC`: Task message will include all fields EXCEPT: - `tesTask.ExecutorLog.stdout` - `tesTask.ExecutorLog.stderr` - `tesInput.content` - `tesTaskLog.system_logs`  `FULL`: Task message includes all fields.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub view: Option<String>,
+    pub view: Option<TesView>,
 }
