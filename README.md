@@ -34,7 +34,21 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
+The WES models follow WES 1.1.0 and use the schema names of the spec:
+`WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
+`State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
+required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
+now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
+items are `RunListResponseRunsInner` and deprecated task log items are
+`RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
+endpoints.
+
+## Installation
+
+TBA
+
 ## Advanced transport
+
 Advanced transport callers can use `request_response` for status and headers
 before parsing, then consume `reqwest::Response::chunk()` incrementally or call
 `utils::transport::read_bounded` for lossless bytes. Dropping the response stops
@@ -111,19 +125,6 @@ validated before I/O, nested relative filenames stay intact, and one absolute
 operation budget covers preparation, upload and response. A consumed source
 is never replayed; cancellation or a lost response after transmission reports
 that submission may have been accepted. The existing bytes API remains usable.
-The WES models follow WES 1.1.0 and use the schema names of the spec:
-`WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
-`State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
-required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
-now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
-items are `RunListResponseRunsInner` and deprecated task log items are
-`RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
-endpoints.
-
-## Installation
-
-TBA
-
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).

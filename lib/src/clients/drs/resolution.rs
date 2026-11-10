@@ -110,6 +110,9 @@ impl DRS {
         let _ = root.set_password(None);
         root.set_query(None);
         root.set_fragment(None);
+        if !root.path().ends_with('/') {
+            root.set_path(&format!("{}/", root.path()));
+        }
         ResolutionReference {
             api_root: root.to_string(),
             endpoint,
@@ -121,6 +124,17 @@ impl DRS {
         &self,
         reference: &ResolutionReference,
     ) -> Result<Resolution<T>, Box<dyn Error>> {
+        match self.resolve_reference_raw(reference).await? {
+            Resolution::Ready(body) => Ok(Resolution::Ready(serde_json::from_str(&body)?)),
+            Resolution::Pending(pending) => Ok(Resolution::Pending(pending)),
+        }
+    }
+
+    /// Preserve the server's JSON while applying the same pending-state rules.
+    pub(super) async fn resolve_reference_raw(
+        &self,
+        reference: &ResolutionReference,
+    ) -> Result<Resolution<String>, Box<dyn Error>> {
         if reference.api_root != self.resolution_reference(String::new()).api_root {
             return Err("DRS resolution reference belongs to another API root".into());
         }
@@ -147,7 +161,7 @@ impl DRS {
             }));
         }
         let body = response_text(response, BodyLimits::default()).await?;
-        Ok(Resolution::Ready(serde_json::from_str(&body)?))
+        Ok(Resolution::Ready(body))
     }
     pub async fn get_object_once(
         &self,
