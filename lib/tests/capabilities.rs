@@ -2,7 +2,7 @@ use ga4gh_sdk::{
     clients::{
         capabilities::{CapabilitySnapshot, Support},
         tes::{models::TesTask, TES},
-        wes::{models::WesRunRequest, WES},
+        wes::{models::RunRequest, WES},
     },
     utils::configuration::Configuration,
 };
@@ -54,10 +54,10 @@ async fn strict_wes_contradiction_prevents_submission_but_unknown_is_advisory() 
     let client = WES::discover(&config, Duration::from_secs(60))
         .await
         .unwrap();
-    let request = WesRunRequest {
-        workflow_type: Some("WDL".into()),
-        workflow_type_version: Some("1.0".into()),
-        workflow_url: Some("workflow.wdl".into()),
+    let request = RunRequest {
+        workflow_type: "WDL".into(),
+        workflow_type_version: "1.0".into(),
+        workflow_url: "workflow.wdl".into(),
         workflow_params: Some(json!({})),
         ..Default::default()
     };

@@ -79,6 +79,10 @@ fn invalid_list_arguments_are_errors() {
     for (args, expected) in cases {
         assert_input_error(&run(&home, args), expected);
     }
+    assert_input_error(
+        &run(&home, &["tes", "list", "-v", "orphan"]),
+        "Each tag_value needs a corresponding tag_key",
+    );
 }
 
 #[test]

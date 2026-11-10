@@ -3,7 +3,7 @@ use ga4gh_sdk::{
         serviceinfo::models::{Service, ServiceType},
         wes::{
             attachments::{AttachmentSource, StreamingAttachment},
-            models::WesRunRequest,
+            models::RunRequest,
             WES,
         },
     },
@@ -34,11 +34,11 @@ fn wes(base: &str) -> WES {
         }),
     }
 }
-fn request() -> WesRunRequest {
-    WesRunRequest {
-        workflow_type: Some("CWL".into()),
-        workflow_type_version: Some("v1.2".into()),
-        workflow_url: Some("main.cwl".into()),
+fn request() -> RunRequest {
+    RunRequest {
+        workflow_type: "CWL".into(),
+        workflow_type_version: "v1.2".into(),
+        workflow_url: "main.cwl".into(),
         workflow_params: Some(serde_json::json!({})),
         ..Default::default()
     }
@@ -227,5 +227,29 @@ async fn reader_failure_and_invalid_paths_are_actionable_without_replay() {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("safe relative path"));
+    }
+}
+
+#[tokio::test]
+async fn streamed_submission_validates_acknowledgement_once() {
+    use ga4gh_sdk::utils::acknowledgement::AcknowledgementError;
+    let wes = wes(&server_url());
+    for body in [
+        "{}",
+        r#"{"run_id":null}"#,
+        r#"{"run_id":4}"#,
+        r#"{"run_id":""}"#,
+    ] {
+        let post = mock("POST", "/runs").with_body(body).expect(1).create();
+        let error = wes
+            .run_workflow_streaming(
+                request(),
+                Vec::new(),
+                &Operation::new(Duration::from_secs(2)),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<AcknowledgementError>().is_some());
+        post.assert();
     }
 }

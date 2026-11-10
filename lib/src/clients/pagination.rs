@@ -150,7 +150,7 @@ impl Pager {
     pub fn checkpoint(&self) -> PageCheckpoint {
         self.partial_page
             .as_ref()
-            .or_else(|| {
+            .or({
                 if self.buffer.is_empty() {
                     None
                 } else {
@@ -219,10 +219,15 @@ impl Pager {
         let mut items = if self.checkpoint.service == ServiceKind::Wes && body.is_array() {
             body.as_array().unwrap().clone()
         } else {
-            body.get(path)
-                .and_then(Value::as_array)
-                .ok_or_else(|| self.failure("page is missing its items array"))?
-                .clone()
+            match body.get(path) {
+                Some(Value::Array(items)) => items.clone(),
+                None | Some(Value::Null)
+                    if self.checkpoint.service == ServiceKind::Wes && body.is_object() =>
+                {
+                    Vec::new()
+                }
+                _ => return Err(self.failure("page is missing its items array")),
+            }
         };
         let token = match body.get("next_page_token") {
             None | Some(Value::Null) => None,

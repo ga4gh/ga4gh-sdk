@@ -179,3 +179,35 @@ async fn resume_checks_identity_and_limits_retain_a_replay_point() {
     assert_eq!(pager.next_page().await.unwrap().unwrap().items.len(), 2);
     resumed.assert();
 }
+
+#[tokio::test]
+async fn wes_optional_empty_pages_and_legacy_arrays_remain_lazy() {
+    let first = mock("GET", "/wes/runs")
+        .with_body(r#"{"next_page_token":"a+b&c"}"#)
+        .expect(1)
+        .create();
+    let second = mock("GET", "/wes/runs")
+        .match_query(Matcher::UrlEncoded("page_token".into(), "a+b&c".into()))
+        .with_body(r#"{"runs":[{"run_id":"run-1","state":"RUNNING"}],"next_page_token":""}"#)
+        .expect(1)
+        .create();
+    let mut pager = Pager::new(&transport("/wes"), ServiceKind::Wes, json!({}), options()).unwrap();
+    assert_eq!(pager.next_item().await.unwrap().unwrap()["run_id"], "run-1");
+    assert!(pager.next_item().await.unwrap().is_none());
+    first.assert();
+    second.assert();
+    let legacy = mock("GET", "/legacy/runs")
+        .with_body(r#"[{"run_id":"run-2"}]"#)
+        .expect(1)
+        .create();
+    let mut pager = Pager::new(
+        &transport("/legacy"),
+        ServiceKind::Wes,
+        json!({}),
+        options(),
+    )
+    .unwrap();
+    assert_eq!(pager.next_item().await.unwrap().unwrap()["run_id"], "run-2");
+    assert!(pager.next_item().await.unwrap().is_none());
+    legacy.assert();
+}

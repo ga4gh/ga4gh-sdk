@@ -1,5 +1,5 @@
 use crate::CommandOutput;
-use clap::{arg, ArgMatches, Command};
+use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
 use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
 use ga4gh_sdk::clients::tes::models::TesState;
@@ -9,6 +9,7 @@ use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use log::debug;
 use std::path::Path;
+use tokio::io::AsyncReadExt;
 
 /// Build the TES command and its subcommands.
 pub fn command() -> Command {
@@ -19,7 +20,7 @@ pub fn command() -> Command {
         .subcommand(
             Command::new("create")
                 .about("Create a task")
-                .arg(arg!(<TASK_FILE> "The task file to create"))
+                .arg(arg!(<TASK_FILE> "Task file, inline JSON, or - for stdin"))
                 // .arg(arg!(--url <URL> "The URL for the task"))
                 .arg_required_else_help(true),
         )
@@ -28,8 +29,16 @@ pub fn command() -> Command {
                 .about("list all tasks")
                 .arg(arg!(-n --name_prefix [NAME_PREFIX] "The name prefix to filter tasks"))
                 .arg(arg!(-s --state [STATE] "The state to filter tasks"))
-                .arg(arg!(-k --tag_key [TAG_KEY] "The tag key to filter tasks"))
-                .arg(arg!(-v --tag_value [TAG_VALUE] "The tag value to filter tasks"))
+                .arg(
+                    arg!(-k --tag_key [TAG_KEY] "The tag key to filter tasks")
+                        .action(ArgAction::Append)
+                        .num_args(1),
+                )
+                .arg(
+                    arg!(-v --tag_value [TAG_VALUE] "The tag value to filter tasks")
+                        .action(ArgAction::Append)
+                        .num_args(1),
+                )
                 .arg(arg!(-p --page_size [PAGE_SIZE] "The page size for pagination"))
                 .arg(arg!(-t --page_token [PAGE_TOKEN] "The page token for pagination"))
                 .arg(arg!(-w --view [VIEW] "The view for the tasks"))
@@ -85,15 +94,20 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         let task_file = sub
             .get_one::<String>("TASK_FILE")
             .ok_or_else(|| anyhow::anyhow!("TASK_FILE argument is required"))?;
-        let path = Path::new(task_file);
-        if !path.exists() {
+        let task_json = if task_file == "-" {
+            let mut input = String::new();
+            tokio::io::stdin().read_to_string(&mut input).await?;
+            input
+        } else if Path::new(task_file).exists() {
+            std::fs::read_to_string(task_file)
+                .map_err(|error| anyhow::anyhow!("Failed to read file: {error}"))?
+        } else if task_file.trim_start().starts_with('{') {
+            task_file.clone()
+        } else {
             return Ok(CommandOutput::failure(format!(
-                "File does not exist: {}",
-                path.display()
+                "File does not exist: {task_file}"
             )));
-        }
-        let task_json = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read file: {e}"))?;
+        };
         let testask: TesTask = serde_json::from_str(&task_json)
             .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {e}"))?;
 
@@ -119,8 +133,18 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             .get_one::<String>("state")
             .map(|s| parse_state(s))
             .transpose()?;
-        let _tag_key = sub.get_one::<String>("tag_key").cloned();
-        let _tag_value = sub.get_one::<String>("tag_value").cloned();
+        let tag_key = sub
+            .get_many::<String>("tag_key")
+            .map(|values| values.cloned().collect::<Vec<_>>());
+        let tag_value = sub
+            .get_many::<String>("tag_value")
+            .map(|values| values.cloned().collect::<Vec<_>>());
+        if tag_value
+            .as_ref()
+            .is_some_and(|values| values.len() > tag_key.as_ref().map_or(0, Vec::len))
+        {
+            anyhow::bail!("Each tag_value needs a corresponding tag_key");
+        }
         let page_size = sub
             .get_one::<String>("page_size")
             .map(|value| {
@@ -135,8 +159,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         let parameters = ListTasksParams {
             name_prefix,
             state,
-            tag_key: None,   // Example does not cover parsing Vec<String>
-            tag_value: None, // Example does not cover parsing Vec<String>
+            tag_key,
+            tag_value,
             page_size,
             page_token,
             view,
@@ -265,6 +289,13 @@ fn format_tasks_response(response: &TesListTasksResponse) -> String {
     table.push_str(&headers);
     for task in &response.tasks {
         table.push_str(&format_task(task));
+    }
+    if let Some(token) = response
+        .next_page_token
+        .as_deref()
+        .filter(|token| !token.is_empty())
+    {
+        table.push_str(&format!("Next page token: {token}\n"));
     }
     table
 }

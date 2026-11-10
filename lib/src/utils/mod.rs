@@ -1,3 +1,4 @@
+pub mod acknowledgement;
 pub mod configuration;
 pub mod operation;
 pub mod test_utils;
