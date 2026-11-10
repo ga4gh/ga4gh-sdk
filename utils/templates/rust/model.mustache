@@ -203,6 +203,19 @@ pub enum {{{enumName}}} {
     Unrecognized(String),
 }
 
+impl std::fmt::Display for {{{enumName}}} {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            {{#allowableValues}}
+            {{#enumVars}}
+            Self::{{{name}}} => write!(f, "{{{value}}}"),
+            {{/enumVars}}
+            {{/allowableValues}}
+            Self::Unrecognized(value) => write!(f, "{}", value),
+        }
+    }
+}
+
 impl Default for {{{enumName}}} {
     fn default() -> {{{enumName}}} {
         {{#allowableValues}}

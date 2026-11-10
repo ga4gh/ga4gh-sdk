@@ -74,6 +74,22 @@ pub enum Type {
     Unrecognized(String),
 }
 
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::S3 => write!(f, "s3"),
+            Self::Gs => write!(f, "gs"),
+            Self::Ftp => write!(f, "ftp"),
+            Self::Gsiftp => write!(f, "gsiftp"),
+            Self::Globus => write!(f, "globus"),
+            Self::Htsget => write!(f, "htsget"),
+            Self::Https => write!(f, "https"),
+            Self::File => write!(f, "file"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
+        }
+    }
+}
+
 impl Default for Type {
     fn default() -> Type {
         Self::S3

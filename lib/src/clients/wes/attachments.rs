@@ -85,7 +85,7 @@ fn workflow_form(mut request: RunRequest) -> Result<Form, Box<dyn Error>> {
     // Fields that the spec doesn't define go as further parts: strings as
     // they are, other values as JSON, like `tags`.
     for (field, value) in extra {
-        if is_reserved_part(&field) {
+        if RESERVED_PARTS.contains(&field.as_str()) {
             return Err(
                 format!("extra field {field} would replace a RunWorkflow form part").into(),
             );
@@ -99,20 +99,20 @@ fn workflow_form(mut request: RunRequest) -> Result<Form, Box<dyn Error>> {
     Ok(form)
 }
 
-fn is_reserved_part(field: &str) -> bool {
-    matches!(
-        field,
-        "workflow_params"
-            | "workflow_type"
-            | "workflow_type_version"
-            | "tags"
-            | "workflow_engine_parameters"
-            | "workflow_engine"
-            | "workflow_engine_version"
-            | "workflow_url"
-            | "workflow_attachment"
-    )
-}
+/// The parts of a RunWorkflow request that `RunRequest.extra` must not
+/// replace: the `RunRequest` fields and the attachments. Keep in step with
+/// `workflow_form` and the attachment parts.
+pub(super) const RESERVED_PARTS: [&str; 9] = [
+    "workflow_params",
+    "workflow_type",
+    "workflow_type_version",
+    "tags",
+    "workflow_engine_parameters",
+    "workflow_engine",
+    "workflow_engine_version",
+    "workflow_url",
+    "workflow_attachment",
+];
 
 impl WES {
     /// Validate all paths before I/O; stream with reqwest backpressure. File handles

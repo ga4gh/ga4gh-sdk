@@ -56,6 +56,19 @@ pub enum FileType {
     Unrecognized(String),
 }
 
+impl std::fmt::Display for FileType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::TestFile => write!(f, "TEST_FILE"),
+            Self::PrimaryDescriptor => write!(f, "PRIMARY_DESCRIPTOR"),
+            Self::SecondaryDescriptor => write!(f, "SECONDARY_DESCRIPTOR"),
+            Self::Containerfile => write!(f, "CONTAINERFILE"),
+            Self::Other => write!(f, "OTHER"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
+        }
+    }
+}
+
 impl Default for FileType {
     fn default() -> FileType {
         Self::TestFile

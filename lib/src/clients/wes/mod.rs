@@ -685,7 +685,7 @@ mod tests {
         assert_eq!(wes.run_workflow(request).await.unwrap().id, "extra");
 
         // An extra field must not replace a part of the request.
-        for field in ["workflow_url", "workflow_attachment"] {
+        for field in super::attachments::RESERVED_PARTS {
             let mut request = valid_request();
             request.extra.insert(field.to_string(), json!("other"));
             let error = wes.run_workflow(request).await.unwrap_err();

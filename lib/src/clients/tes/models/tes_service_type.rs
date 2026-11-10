@@ -49,6 +49,15 @@ pub enum Artifact {
     Unrecognized(String),
 }
 
+impl std::fmt::Display for Artifact {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Tes => write!(f, "tes"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
+        }
+    }
+}
+
 impl Default for Artifact {
     fn default() -> Artifact {
         Self::Tes

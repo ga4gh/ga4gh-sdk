@@ -422,5 +422,9 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("PREEMPTED"));
+        // `TesState` reads unknown names as `Unknown`; only `UNKNOWN` itself is a
+        // valid filter.
+        assert_eq!(parse_state("unknown").unwrap(), TesState::Unknown);
+        assert!(parse_state("SUSPENDED").is_err());
     }
 }

@@ -65,6 +65,18 @@ pub enum SupportedTypes {
     Unrecognized(String),
 }
 
+impl std::fmt::Display for SupportedTypes {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::BasicAuth => write!(f, "BasicAuth"),
+            Self::BearerAuth => write!(f, "BearerAuth"),
+            Self::PassportAuth => write!(f, "PassportAuth"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
+        }
+    }
+}
+
 impl Default for SupportedTypes {
     fn default() -> SupportedTypes {
         Self::None

@@ -89,10 +89,16 @@ pub async fn files_zip(
     {
         return Err("TRS tool/version IDs must be nonempty opaque segments".into());
     }
+    // `Unrecognized` descriptor types hold any string; send them as one segment.
+    let descriptor = descriptor.to_string();
+    if descriptor.is_empty() || descriptor == "." || descriptor == ".." {
+        return Err("TRS descriptor type must not be empty, '.' or '..'".into());
+    }
     let path = format!(
-        "tools/{}/versions/{}/{descriptor}/files",
+        "tools/{}/versions/{}/{}/files",
         urlencode(tool),
-        urlencode(version)
+        urlencode(version),
+        urlencode(&descriptor)
     );
     let response = transport
         .request_response(

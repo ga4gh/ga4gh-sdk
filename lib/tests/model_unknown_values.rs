@@ -65,10 +65,8 @@ fn tes_unknown_states_read_as_unknown() {
     let task: tes::models::TesTask =
         serde_json::from_value(json!({ "id": "task-1", "state": "SUSPENDED" })).unwrap();
     assert_eq!(task.state, Some(tes::models::TesState::Unknown));
-    assert_eq!(
-        serde_json::to_value(tes::models::TesState::Unknown).unwrap(),
-        "UNKNOWN"
-    );
+    // Unlike other enums, the state doesn't keep the server's value.
+    assert_eq!(serde_json::to_value(&task).unwrap()["state"], "UNKNOWN");
     let list: tes::models::TesListTasksResponse = serde_json::from_value(json!({
         "tasks": [{ "id": "a", "state": "RUNNING" }, { "id": "b", "state": "SUSPENDED" }]
     }))
@@ -210,12 +208,18 @@ fn trs_file_wrapper_reads_known_values_of_both_image_type_enums() {
             "Podman",
             FileWrapperImageType::ImageType(ImageType::Unrecognized("Podman".into())),
         ),
+        // Unknown to both enums, even if it looks like a descriptor type.
+        (
+            "PLAIN_JUPYTER",
+            FileWrapperImageType::ImageType(ImageType::Unrecognized("PLAIN_JUPYTER".into())),
+        ),
     ] {
         let file: FileWrapper =
             round_trip(json!({ "content": "x", "image_type": value, "x-size": 1 }));
         assert_eq!(*file.image_type.unwrap(), expected, "{value}");
         assert_eq!(file.extra["x-size"], 1);
     }
+    assert!(serde_json::from_value::<FileWrapper>(json!({ "image_type": 1 })).is_err());
 }
 
 #[test]
@@ -253,4 +257,10 @@ fn unrecognized_enum_values_display_as_received() {
         "JUPYTER"
     );
     assert_eq!(trs::models::DescriptorType::Cwl.to_string(), "CWL");
+    // Enums of a single property have `Display` too.
+    assert_eq!(drs::models::access_method::Type::S3.to_string(), "s3");
+    assert_eq!(
+        drs::models::access_method::Type::Unrecognized("azure".into()).to_string(),
+        "azure"
+    );
 }
