@@ -4,7 +4,7 @@ use ga4gh_sdk::clients::tes::models::ListTasksParams;
 use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
 use ga4gh_sdk::clients::tes::models::TesState;
 use ga4gh_sdk::clients::tes::models::TesTask;
-use ga4gh_sdk::clients::tes::{Task, TES};
+use ga4gh_sdk::clients::tes::{Task, TesView, TES};
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use log::debug;
@@ -41,7 +41,7 @@ pub fn command() -> Command {
                 )
                 .arg(arg!(-p --page_size [PAGE_SIZE] "The page size for pagination"))
                 .arg(arg!(-t --page_token [PAGE_TOKEN] "The page token for pagination"))
-                .arg(arg!(-w --view [VIEW] "The view for the tasks"))
+                .arg(arg!(-w --view [VIEW] "The view for the tasks: MINIMAL, BASIC or FULL"))
                 .arg(
                     arg!(--all "Fetch pages lazily and stream JSONL")
                         .action(clap::ArgAction::SetTrue),
@@ -68,7 +68,7 @@ pub fn command() -> Command {
             Command::new("get")
                 .about("get task data")
                 .arg(arg!(<id> "The id of the task which should be returned"))
-                .arg(arg!(<view> "The view in which the task should be returned"))
+                .arg(arg!(<view> "The view in which the task should be returned: MINIMAL, BASIC or FULL"))
                 .arg_required_else_help(true),
         )
         .subcommand(
@@ -154,7 +154,10 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             })
             .transpose()?;
         let page_token = sub.get_one::<String>("page_token").cloned();
-        let view = sub.get_one::<String>("view").cloned();
+        let view = sub
+            .get_one::<String>("view")
+            .map(|view| view.parse::<TesView>())
+            .transpose()?;
 
         let parameters = ListTasksParams {
             name_prefix,
@@ -188,7 +191,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             .ok_or_else(|| anyhow::anyhow!("id argument is required"))?;
         let view = sub
             .get_one::<String>("view")
-            .ok_or_else(|| anyhow::anyhow!("view argument is required"))?;
+            .ok_or_else(|| anyhow::anyhow!("view argument is required"))?
+            .parse::<TesView>()?;
 
         let tes = match TES::new(config).await {
             Ok(tes) => tes,
@@ -312,10 +316,13 @@ pub async fn export_all(
         anyhow::bail!("--all requires --format jsonl");
     }
     let mut query = serde_json::Map::new();
-    for key in ["name_prefix", "page_token", "view"] {
+    for key in ["name_prefix", "page_token"] {
         if let Some(value) = sub.get_one::<String>(key) {
             query.insert(key.into(), serde_json::json!(value));
         }
+    }
+    if let Some(value) = sub.get_one::<String>("view") {
+        query.insert("view".into(), serde_json::json!(value.parse::<TesView>()?));
     }
     if let Some(value) = sub.get_one::<String>("state") {
         query.insert("state".into(), serde_json::to_value(parse_state(value)?)?);

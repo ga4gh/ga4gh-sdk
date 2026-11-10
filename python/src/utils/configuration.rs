@@ -1,22 +1,38 @@
+use crate::utils::convert::check_extra_args;
 use crate::PyServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
 use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple, PyType};
 use url::Url;
 
-#[pyclass(name = "Configuration", module = "GA4GH")]
+#[pyclass(name = "Configuration", module = "GA4GH", subclass)]
 pub struct PyConfiguration {
     pub inner: Configuration,
 }
 
-#[pymethods]
 impl PyConfiguration {
-    #[new]
     pub fn new(base_path: String) -> PyResult<Self> {
         let url = Url::parse(&base_path)
             .map_err(|error| PyValueError::new_err(format!("Invalid base_path: {error}")))?;
         let config = Configuration::new(url);
         Ok(PyConfiguration { inner: config })
+    }
+}
+
+#[pymethods]
+impl PyConfiguration {
+    #[new]
+    #[classmethod]
+    #[pyo3(signature = (base_path, *args, **kwargs))]
+    fn py_new(
+        cls: &Bound<'_, PyType>,
+        base_path: String,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        check_extra_args::<Self>(cls, args, kwargs)?;
+        Self::new(base_path)
     }
 
     pub fn set_base_path(&mut self, base_path: String) -> PyResult<()> {
