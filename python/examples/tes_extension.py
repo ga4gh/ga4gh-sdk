@@ -14,7 +14,7 @@ from GA4GH import Configuration, TES
 class ProvenanceTES(TES):
     """Add one endpoint while reusing the SDK's configuration and transport."""
 
-    def provenance(self, task_id):
+    def provenance(self, task_id: str) -> object:
         segment = quote(task_id, safe="")
         body = self.transport.get(f"tasks/{segment}/provenance")
         return json.loads(body)

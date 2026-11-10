@@ -64,15 +64,18 @@ def test_checked_in_examples_run_against_mock(server):
         timeout=10,
     )
     assert task_example.returncode == 0, task_example.stderr
-    assert "Created task task-1: Complete" in task_example.stdout
+    assert "TASK ID: task-1" in task_example.stdout
+    assert "STATE:   COMPLETE" in task_example.stdout
     with urllib.request.urlopen(f"{server.root}/__requests__", timeout=10) as response:
         requests = json.load(response)
     submitted = [
         request for request in requests
         if request["method"] == "POST" and request["path"] == "/api/tasks"
     ][-1]
-    task_file = python_dir.parent / "examples" / "tes-hello.json"
-    assert json.loads(base64.b64decode(submitted["body"])) == json.loads(task_file.read_text())
+    assert json.loads(base64.b64decode(submitted["body"])) == {
+        "name": "hello",
+        "executors": [{"image": "alpine", "command": ["echo", "hello"]}],
+    }
 
     extension_example = subprocess.run(
         [sys.executable, "examples/tes_extension.py", server.base, "task-1"],

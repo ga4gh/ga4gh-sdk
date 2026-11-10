@@ -563,20 +563,10 @@ impl PyTES {
         } else {
             PyTesTask::from_python(task)?
         };
-        // Not `TES::create`: it sends the parsed model, which drops unknown fields.
-        let response = io(py, |rt| {
-            rt.block_on(self.inner.transport.post("tasks", Some(task.raw)))
-                .map_err(|e| format!("Failed to create task: {e}"))
-        })?;
-        let response: Value = serde_json::from_str(&response).map_err(invalid_response)?;
-        // Same as `TES::create`: a missing ID gives an empty one.
-        let id = response
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        Ok(PyTask {
-            inner: Task::new(id, self.inner.transport.clone()),
+        io(py, |rt| {
+            rt.block_on(self.inner.create_value(task.raw))
+                .map(|inner| PyTask { inner })
+                .map_err(|error| format!("Failed to create task: {error}"))
         })
     }
 

@@ -20,7 +20,7 @@ def test_synchronous_io(scenario):
 
 
 def exercise(scenario):
-    from GA4GH import Configuration, ServiceInfo, TES, Task, Transport
+    from GA4GH import Configuration, ServiceInfo, TES, Task, TesState, Transport
     ports = []
     requests = []
     ticks = []
@@ -92,11 +92,11 @@ def exercise(scenario):
         elif scenario == 'clients':
             assert 'Test TES' in ServiceInfo(config).get_service_info()
             tes = TES(config)
-            task = tes.create('{"executors": []}')
+            task = tes.create({'executors': []})
             assert task.id == 'task-1'
-            assert task.status() == 'Complete'
-            assert json.loads(task.cancel())['status'] == 'CANCELED'
-            assert Task('task-1', transport).status() == 'Complete'
+            assert task.status() is TesState.COMPLETE
+            assert task.cancel() is None
+            assert Task('task-1', transport).status() is TesState.COMPLETE
             assert tes.get('FULL', 'task-1').id == 'task-1'
             assert tes.list().tasks == []
             # A client created on one Python thread remains usable on another.

@@ -154,7 +154,9 @@ for listed in page.tasks:
   `TesTask`) and `next_page_token`; see [Listing tasks](#listing-tasks).
 - Errors: invalid tasks and arguments raise `ValueError`, a missing task file
   `FileNotFoundError` (an `OSError`). Failed requests and responses that don't fit the TES
-  models raise `RuntimeError`.
+  models raise `RuntimeError`. If task creation fails after submission, the error may
+  mean the server created the task but its acknowledgement was lost or malformed;
+  do not retry automatically.
 
 ### Task objects
 
