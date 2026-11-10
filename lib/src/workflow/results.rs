@@ -60,6 +60,9 @@ pub struct ResultRecord {
     pub run_reference: String,
     pub execution_state: String,
     pub schema_digest: String,
+    /// Root scope for retained schema references and scientific/viewer annotations.
+    #[serde(default)]
+    pub contract_document: Value,
     pub contract_diagnostics: Vec<Diagnostic>,
     pub outputs: BTreeMap<String, TypedOutput>,
     pub artifacts: BTreeMap<String, ArtifactEvidence>,
@@ -107,6 +110,7 @@ impl Profile {
             run_reference: run_reference.into(),
             execution_state: execution_state.into(),
             schema_digest: self.schema_digest.clone(),
+            contract_document: self.document().clone(),
             contract_diagnostics: all,
             outputs: BTreeMap::new(),
             artifacts: BTreeMap::new(),
