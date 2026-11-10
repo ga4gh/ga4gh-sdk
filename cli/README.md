@@ -224,8 +224,9 @@ The specification has no server-side filter, so `--type` fetches all services
 and filters them in the CLI.
 
 The commands print only the fields of the Service Registry specification;
-fields that a registry adds are ignored. Control characters in values from the
-registry are printed escaped, such as `\n`. The commands exit with code 0 on
+fields that a registry adds are ignored. Control and bidirectional formatting
+characters from the registry, in values and in error messages, are printed
+escaped, such as `\n` or `\u{1b}`. The commands exit with code 0 on
 success and code 1 on request or server errors. A 404 from `list` or `types`
 adds a hint to check `base_path`; from `get`, a 404 means that no service has
 that ID.

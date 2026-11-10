@@ -209,10 +209,47 @@ fn invalid_responses_and_unreachable_registries_fail() {
 }
 
 #[test]
+fn server_text_is_escaped_in_get_and_errors() {
+    let mut body = service("org.example.tes", "tes");
+    body["name"] = json!("a\u{9b}2K\u{1b}b");
+    let _get = mock("GET", "/escape/services/ok")
+        .with_status(200)
+        .with_body(body.to_string())
+        .create();
+    let _error = mock("GET", "/escape/services")
+        .with_status(500)
+        .with_body("\u{1b}[2K\rOK: 3 services\nfake line")
+        .create();
+    let base_path = format!("{}/escape", mockito::server_url());
+
+    let output = run(&base_path, &["registry", "get", "ok"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(
+        !text.contains('\u{9b}') && !text.contains('\u{1b}'),
+        "{text}"
+    );
+    assert!(text.contains(r"a\u{9b}2K\u001bb"), "{text}");
+
+    let output = run(&base_path, &["registry", "list"]);
+    assert_eq!(output.status.code(), Some(1));
+    let message = stderr(&output);
+    assert!(
+        !message.contains('\u{1b}') && !message.contains('\r'),
+        "{message}"
+    );
+    assert!(
+        message.contains(r"\u{1b}[2K\rOK: 3 services\nfake line"),
+        "{message}"
+    );
+}
+
+#[test]
 fn empty_service_id_is_a_usage_error() {
     let output = run("http://127.0.0.1:9", &["registry", "get", ""]);
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
+    assert!(!output.stderr.is_empty());
 }
 
 #[test]

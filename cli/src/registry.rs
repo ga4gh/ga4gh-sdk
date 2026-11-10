@@ -59,10 +59,13 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                 .ok_or_else(|| anyhow::anyhow!("id argument is required"))?;
             match registry.get_service(id).await {
                 Ok(service) => {
-                    CommandOutput::success(format!("{}\n", serde_json::to_string_pretty(&service)?))
+                    let json = serde_json::to_string_pretty(&service)?;
+                    // JSON escapes C0 controls only; escape the rest line by line.
+                    let lines: Vec<_> = json.lines().map(printable).collect();
+                    CommandOutput::success(format!("{}\n", lines.join("\n")))
                 }
                 // A 404 means an unknown ID here, so no base_path hint.
-                Err(error) => CommandOutput::failure(error),
+                Err(error) => CommandOutput::failure(printable(&error.to_string())),
             }
         }
         Some(("types", _)) => match registry.list_service_types().await {
@@ -79,26 +82,31 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     Ok(output)
 }
 
+/// Error messages can hold the server's response body, so they are escaped too.
 fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
+    let message = printable(&error.to_string());
     if error
         .downcast_ref::<HttpError>()
         .is_some_and(|http| http.status == 404)
     {
         CommandOutput::failure(format!(
-            "{error}. Check that base_path is the Service Registry API root"
+            "{message}. Check that base_path is the Service Registry API root"
         ))
     } else {
-        CommandOutput::failure(error)
+        CommandOutput::failure(message)
     }
 }
 
-/// Escapes control characters in a value from the registry, so that it can't
-/// add lines or terminal sequences to the output.
+/// Escapes control and bidirectional formatting characters in a value from
+/// the registry, so that it can't add lines, terminal sequences or reordered
+/// text to the output.
 fn printable(value: &str) -> String {
     value
         .chars()
         .map(|c| {
-            if c.is_control() {
+            if c.is_control()
+                || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+            {
                 c.escape_default().collect()
             } else {
                 c.to_string()
@@ -189,6 +197,7 @@ mod tests {
         let mut forged = service("a\nfake  org.ga4gh:tes:1.1.0  https://evil.example", "tes");
         forged.url = "\u{1b}[2Khttps://example.org/tes\r".to_string();
         forged.r#type.version = "1\n".to_string();
+        forged.r#type.group = "org.\u{202E}ga4gh".to_string();
         let output = format_services(&[&forged]);
         assert_eq!(output.lines().count(), 2, "{output}");
         assert!(
@@ -197,6 +206,6 @@ mod tests {
         );
         assert!(output.contains(r"a\nfake"), "{output}");
         assert!(output.contains(r"\u{1b}[2K"), "{output}");
-        assert!(output.contains(r"org.ga4gh:tes:1\n"), "{output}");
+        assert!(output.contains(r"org.\u{202e}ga4gh:tes:1\n"), "{output}");
     }
 }
