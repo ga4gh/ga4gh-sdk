@@ -1,6 +1,7 @@
 pub mod capabilities;
 pub mod drs;
 pub mod pagination;
+pub mod registry;
 pub mod serviceinfo;
 pub mod tes;
 pub mod trs;
@@ -14,6 +15,7 @@ pub enum ServiceType {
     TRS,
     AAI,
     WES,
+    REGISTRY,
 }
 
 impl ServiceType {
@@ -24,6 +26,7 @@ impl ServiceType {
             ServiceType::TRS => "TRS",
             ServiceType::AAI => "AAI",
             ServiceType::WES => "WES",
+            ServiceType::REGISTRY => "REGISTRY",
         }
     }
 }
