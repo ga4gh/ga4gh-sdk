@@ -1,5 +1,7 @@
+pub mod bulk;
 pub mod models;
 pub mod resolution;
+pub mod uri;
 
 use crate::clients::drs::models::AccessUrl;
 use crate::clients::drs::models::DrsObject;
