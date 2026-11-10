@@ -145,24 +145,11 @@ fields to the GA4GH APIs. `Configuration`, `ServiceInfo`, `Transport`, `TES`,
 `Task`, `TesTask`, `ListTasksParams`, and `ListTasksResponse` can be subclassed.
 `ServiceType` is an enum and is not subclassable.
 
-The classes are set up in `__new__`, from the constructor's leading arguments. A subclass
-may take further arguments after them; its `__init__` then calls `super().__init__()`
-without arguments. The base `TES` constructor connects to service info before
-the subclass's `__init__` runs, so extra arguments cannot customize that first
-request:
-
-```python
-from GA4GH import TES
-
-
-class LabeledTES(TES):
-    def __init__(self, config, label):
-        super().__init__()  # TES.__new__ has already connected with `config`
-        self.label = label
-```
-
-Without its own `__init__`, a subclass takes the same arguments as its base class, and
-any others raise `TypeError`.
+The base classes initialize in `__new__`. A subclass that needs extra
+constructor arguments can define `__init__` and call `super().__init__()`
+without arguments. For `TES`, service-info discovery happens before the
+subclass's `__init__`, so those extra arguments cannot change its first
+request. A subclass without its own `__init__` accepts only the base arguments.
 
 ### Further endpoints
 
