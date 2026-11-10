@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/ga4gh-io-profile.schema.json",
+  "$id": "https://example.com/invalid-workflow-schema.json",
+  "title": "Invalid Workflow IO Schema",
+  "description": "This schema is invalid because it is missing the mandatory 'inputs' property at the root level.",
+  "type": "object",
+  "properties": {
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "output_vcf": {
+          "type": "string",
+          "description": "The resulting variant calls in VCF format."
+        }
+      }
+    }
+  }
+}

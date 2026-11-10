@@ -23,6 +23,7 @@
 //! ```
 
 pub mod tes;
+pub mod workflow;
 
 use clap::{ArgMatches, Command};
 use ga4gh_sdk::clients::ServiceType;
@@ -63,6 +64,7 @@ pub fn command() -> Command {
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(tes::command())
+        .subcommand(workflow::command())
 }
 
 /// Run a built-in command using the usual TES config file.
@@ -72,6 +74,7 @@ pub fn command() -> Command {
 /// a `CommandOutput` with an error message and a failure exit code.
 pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
     match matches.subcommand() {
+        Some(("workflow", sub)) => workflow::run(sub).await.map(Some),
         Some(("tes", _)) => {
             let config = Configuration::from_file(ServiceType::TES)
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -90,6 +93,7 @@ pub async fn dispatch_with_config(
     config: &Configuration,
 ) -> anyhow::Result<Option<CommandOutput>> {
     match matches.subcommand() {
+        Some(("workflow", sub)) => workflow::run(sub).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
         _ => Ok(None),
     }
@@ -103,6 +107,12 @@ pub async fn dispatch_to(
     stderr: &mut dyn std::io::Write,
 ) -> anyhow::Result<Option<ExitCode>> {
     match matches.subcommand() {
+        Some(("workflow", sub)) => {
+            let output = workflow::run(sub).await?;
+            stdout.write_all(output.stdout.as_bytes())?;
+            stderr.write_all(output.stderr.as_bytes())?;
+            Ok(Some(output.exit_code))
+        }
         Some(("tes", _)) => {
             let config = Configuration::from_file(ServiceType::TES)
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
