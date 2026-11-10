@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize('scenario', ['transport', 'clients', 'errors'])
+@pytest.mark.parametrize('scenario', ['transport', 'clients', 'errors', 'wes'])
 def test_synchronous_io(scenario):
     result = subprocess.run(
         [sys.executable, str(Path(__file__).resolve()), scenario],
@@ -19,8 +19,31 @@ def test_synchronous_io(scenario):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def wes_body(command, path):
+    """The answer of the mock WES below `/wes`; starting a run takes 0.2 s."""
+    if path == '/wes/service-info':
+        return {'id': 'test', 'name': 'Test WES', 'type': {
+            'group': 'org.ga4gh', 'artifact': 'wes', 'version': '1.1.0'},
+            'organization': {'name': 'Test', 'url': 'https://example.org'},
+            'version': '1.0'}
+    if path == '/wes/runs' and command == 'POST':
+        time.sleep(0.2)
+        return {'run_id': 'run-1'}
+    if path == '/wes/runs':
+        return {'runs': []}
+    if path.endswith('/cancel'):
+        return {'run_id': 'run-1'}
+    if path.endswith('/status'):
+        return {'run_id': 'run-1', 'state': 'COMPLETE'}
+    if path.endswith('/tasks'):
+        return {'task_logs': []}
+    if '/tasks/' in path:
+        return {'id': path.rsplit('/', 1)[1], 'name': 'task'}
+    return {'run_id': 'run-1', 'state': 'COMPLETE'}
+
+
 def exercise(scenario):
-    from GA4GH import Configuration, ServiceInfo, TES, Task, TesState, Transport
+    from GA4GH import Configuration, ServiceInfo, TES, Task, TesState, Transport, WES, WesState
     ports = []
     requests = []
     ticks = []
@@ -42,6 +65,8 @@ def exercise(scenario):
                 time.sleep(0.2)
             elif self.path == '/error':
                 status = 503
+            elif self.path.startswith('/wes/'):
+                body = wes_body(self.command, self.path)
             elif self.path == '/service-info':
                 body = {'id': 'test', 'name': 'Test TES', 'type': {
                     'group': 'org.ga4gh', 'artifact': 'tes', 'version': '1.1.0'},
@@ -116,6 +141,24 @@ def exercise(scenario):
             assert requests.count(('POST', '/tasks')) == 1
             # TES create/get/list and its Task share their live transport pool.
             assert len(set(ports[2:5] + ports[6:8])) == 1, ports
+        elif scenario == 'wes':
+            wes = WES(Configuration(f'http://127.0.0.1:{server.server_port}/wes'))
+            before = len(ticks)
+            run = wes.run({'workflow_type': 'CWL', 'workflow_type_version': 'v1.2',
+                           'workflow_url': 'main.cwl', 'workflow_params': {}},
+                          {'main.cwl': b'cwlVersion: v1.2'})
+            assert len(ticks) - before >= 10
+            assert run.id == 'run-1'
+            assert run.status() is WesState.COMPLETE
+            assert run.cancel() is None
+            assert run.log().run_id == 'run-1'
+            assert run.tasks().task_logs == []
+            assert run.task('t1').id == 't1'
+            assert wes.get('run-1').state is WesState.COMPLETE
+            assert wes.list().runs == []
+            assert requests.count(('POST', '/wes/runs')) == 1
+            # The client and its run share their live transport pool.
+            assert len(set(ports)) == 1, ports
         else:
             try:
                 transport.get('error')
