@@ -1,0 +1,32 @@
+{
+  "tes": {
+    "version": "1.1.0",
+    "repository": "ga4gh/task-execution-schemas",
+    "revision": "28a83a622e7d84fd4b8d438a6b2e99b0db2e5d5b",
+    "path": "openapi/task_execution_service.openapi.yaml",
+    "sha256": "21e1ea4cf1086ea175e3b54f5edb038a579e4d293d82aa95f4a1109c656df98f"
+  },
+  "wes": {
+    "version": "1.1.0",
+    "repository": "ga4gh/workflow-execution-service-schemas",
+    "revision": "c3fb9fb7294311c7c08ac9d3fb143ab07ec67250",
+    "path": "openapi/workflow_execution_service.openapi.yaml",
+    "sha256": "705a21f0bd6db39c72be1b0e805de798ae04c629bac31f2476ee89f42621598d"
+  },
+  "drs": {
+    "version": "1.4.0",
+    "fixture_scope": "minimal deferred resolution and binary access only",
+    "repository": "ga4gh/data-repository-service-schemas",
+    "revision": "36145d389e0a454428d1dac5c4a30870995fdd7c",
+    "path": "openapi/data_repository_service.openapi.yaml",
+    "sha256": "f2477ba7dffcb394da8dc6028f12967eaf22b35a48e509d878d524b1f298160b"
+  },
+  "trs": {
+    "version": "2.0.1",
+    "fixture_scope": "one CWL descriptor only",
+    "repository": "ga4gh/tool-registry-service-schemas",
+    "revision": "a07e7bd30cfd6125d7e6367e8cc58554380a1feb",
+    "path": "openapi/openapi.yaml",
+    "sha256": "f046d092f33498b9facdd75a32e10b361ad5868a0f9a693836f8c3a25e25cb0d"
+  }
+}
