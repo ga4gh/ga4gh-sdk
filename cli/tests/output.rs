@@ -417,11 +417,15 @@ fn all_jsonl_streams_records_and_reports_a_failed_later_page_on_stderr() {
 fn all_jsonl_exports_complete_pages_without_table_or_diagnostics() {
     let _service = service_info_mock("/export/service-info");
     let first = mock("GET", "/export/tasks")
+        .match_query(Matcher::UrlEncoded("view".into(), "BASIC".into()))
         .with_body(r#"{"tasks":[{"id":"one"}],"next_page_token":"next"}"#)
         .expect(1)
         .create();
     let second = mock("GET", "/export/tasks")
-        .match_query(Matcher::UrlEncoded("page_token".into(), "next".into()))
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("view".into(), "BASIC".into()),
+            Matcher::UrlEncoded("page_token".into(), "next".into()),
+        ]))
         .with_body(r#"{"tasks":[{"id":"two"}]}"#)
         .expect(1)
         .create();
@@ -429,7 +433,10 @@ fn all_jsonl_exports_complete_pages_without_table_or_diagnostics() {
         "{}/export",
         mockito::server_url()
     )));
-    let output = home.run(&["tes", "list", "--all", "--format", "jsonl"], None);
+    let output = home.run(
+        &["tes", "list", "--all", "--format", "jsonl", "-w", "basic"],
+        None,
+    );
     assert!(
         output.status.success(),
         "{}",
