@@ -90,11 +90,25 @@ pub struct AnonymousFetcher {
     client: reqwest::Client,
 }
 impl AnonymousFetcher {
+    /// Accept only bare HTTP(S) origins; a path or query would otherwise be
+    /// silently widened to the whole host when forming the allowlist.
     pub fn new(origins: impl IntoIterator<Item = String>) -> Result<Self, Box<dyn Error>> {
         let origins = origins
             .into_iter()
-            .map(|s| Url::parse(&s).map(|u| u.origin().ascii_serialization()))
-            .collect::<Result<_, _>>()?;
+            .map(|s| {
+                let url = Url::parse(&s)?;
+                if !matches!(url.scheme(), "http" | "https")
+                    || url.path() != "/"
+                    || url.query().is_some()
+                    || url.fragment().is_some()
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                {
+                    return Err("descriptor allowlist entries must be bare HTTP(S) origins".into());
+                }
+                Ok(url.origin().ascii_serialization())
+            })
+            .collect::<Result<_, Box<dyn Error>>>()?;
         Ok(Self {
             origins,
             client: reqwest::Client::builder()
