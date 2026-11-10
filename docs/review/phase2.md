@@ -25,8 +25,11 @@ needed for the supplied synthetic examples.
 
 Status and dependency ancestry checked on 2026-11-10 UTC.
 At handoff, upstream `main` is `c24cc01b37b1be4bc809addaa3a37a04a3f8ef0f`.
-All three PRs target `main`, are drafts and report `MERGEABLE`; review is required.
-These are status observations, not promises about a future merge.
+All three PRs target `main` and are **ready for review**. They reported
+`MERGEABLE` at the status check; this is not a promise about a future merge.
+The manifest preserves the initial draft/CI observations as historical evidence;
+current review readiness is recorded on the live PRs. Outstanding integration or
+deployment gates do not prevent review.
 
 1. Review #150 and #151 independently against main. They do not depend on #149
    or on each other. Approval of an RFC records agreement with a proposal, not
