@@ -34,7 +34,21 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
+The WES models follow WES 1.1.0 and use the schema names of the spec:
+`WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
+`State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
+required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
+now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
+items are `RunListResponseRunsInner` and deprecated task log items are
+`RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
+endpoints.
+
+## Installation
+
+TBA
+
 ## Advanced transport
+
 Advanced transport callers can use `request_response` for status and headers
 before parsing, then consume `reqwest::Response::chunk()` incrementally or call
 `utils::transport::read_bounded` for lossless bytes. Dropping the response stops
@@ -69,6 +83,29 @@ absolute `Operation` budget, cancellation and an attempt bound; failures retain
 the reference and last pending state. Zero delay becomes one second; missing,
 malformed, overflow or greater-than-one-hour delays are protocol errors.
 Authentication and malformed 200 responses remain errors, without pending retries.
+
+`clients::drs::uri::DrsResolver` accepts hostname-based `drs://host/encoded-id`
+references, decodes IDs once, and returns an explicit access plan (URL and
+object-store headers). Configure an authority-to-`Transport` mapping for gateways
+and per-service credentials; unmapped authorities get a fresh anonymous HTTPS
+transport. Protocol/region preferences and an explicit method index control
+selection. Direct URLs and access-ID negotiation share deferred resolution;
+pending, unsupported/unavailable methods and local interruption stay distinct.
+Compact identifier forms are explicitly unsupported in this MVP. It never
+downloads object bytes or copies DRS credentials into an object-store request.
+
+DRS `get_bulk_objects` and `get_bulk_access_urls` accept optional Passports and
+one service/credential context per call. `BulkPolicy` bounds chunk size,
+concurrency, total HTTP attempts and 413 split depth; an advertised
+`maxBulkRequestLength` can lower the caller-selected chunk size. Missing metadata
+stays unknown. Replies are correlated by object/access identity rather than
+position, with successful siblings, grouped failures, duplicate/omitted identity
+diagnostics and pending outcomes retained. Duplicate inputs collapse. The MVP
+requires one access ID per object per call, so object-only grouped errors never
+receive fabricated per-access attribution. A 202 retains pending keys and delay;
+resume through the same bulk API with caller-supplied credentials/Passports.
+There is no singular or anonymous fallback. Compatibility is verified against
+protocol fixtures, without a claim of broad real-service interoperability.
 
 ## Service composition
 
@@ -111,15 +148,6 @@ validated before I/O, nested relative filenames stay intact, and one absolute
 operation budget covers preparation, upload and response. A consumed source
 is never replayed; cancellation or a lost response after transmission reports
 that submission may have been accepted. The existing bytes API remains usable.
-The WES models follow WES 1.1.0 and use the schema names of the spec:
-`WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
-`State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
-required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
-now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
-items are `RunListResponseRunsInner` and deprecated task log items are
-`RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
-endpoints.
-
 `clients::bundle::PreparedBundle::prepare` stages a CWL workflow and its declared
 TRS descriptors without submitting it. It validates paths/collisions and the
 static `run`, `$import` and `$include` dependency graph, verifies advertised
@@ -145,33 +173,6 @@ WES invocation plans, typed results with selected artifact evidence, and explici
 scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
 `results`, `verify` and `compare`. See the [workflow guide](docs/workflow-contracts.md)
 for the public sequence-QC example, offline commands and evidence boundaries.
-
-`clients::drs::uri::DrsResolver` accepts hostname-based `drs://host/encoded-id`
-references, decodes IDs once, and returns an explicit access plan (URL and
-object-store headers). Configure an authority-to-`Transport` mapping for gateways
-and per-service credentials; unmapped authorities get a fresh anonymous HTTPS
-transport. Protocol/region preferences and an explicit method index control
-selection. Direct URLs and access-ID negotiation share deferred resolution;
-pending, unsupported/unavailable methods and local interruption stay distinct.
-Compact identifier forms are explicitly unsupported in this MVP. It never
-downloads object bytes or copies DRS credentials into an object-store request.
-
-DRS `get_bulk_objects` and `get_bulk_access_urls` accept optional Passports and
-one service/credential context per call. `BulkPolicy` bounds chunk size,
-concurrency, total HTTP attempts and 413 split depth; an advertised
-`maxBulkRequestLength` can lower the caller-selected chunk size. Missing metadata
-stays unknown. Replies are correlated by object/access identity rather than
-position, with successful siblings, grouped failures, duplicate/omitted identity
-diagnostics and pending outcomes retained. Duplicate inputs collapse. The MVP
-requires one access ID per object per call, so object-only grouped errors never
-receive fabricated per-access attribution. A 202 retains pending keys and delay;
-resume through the same bulk API with caller-supplied credentials/Passports.
-There is no singular or anonymous fallback. Compatibility is verified against
-protocol fixtures, without a claim of broad real-service interoperability.
-
-## Installation
-
-TBA
 
 ## Building
 
