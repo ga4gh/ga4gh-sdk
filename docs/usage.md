@@ -251,14 +251,18 @@ the specs. Servers often send more than the spec defines; the models keep it:
   fields that its spec doesn't define, at every level. Writing a model back,
   for example a task that was read, sends them again. To add a field of your
   own, insert it into `extra`. Don't use names of fields that the model
-  defines.
+  defines: the JSON would then have the key twice.
 - Enums keep values that the spec doesn't define in their `Unrecognized`
   variant, for example `DescriptorType::Unrecognized("JUPYTER")`, and write
-  them back unchanged. `Display` gives the value as received.
+  them back unchanged. `Display` gives the value as received. TRS clients
+  send an unrecognized descriptor type as one encoded path segment and reject
+  empty values, `.` and `..`.
 - TES and WES task and run states are the exception: a state that the spec
   doesn't define reads as `TesState::Unknown` or `State::Unknown`, which both
-  specs define as the safe default. The TES CLI and the Python bindings still
-  reject unknown state names as list filters.
+  specs define as the safe default, and is written back as `UNKNOWN`. The
+  server's value is lost; the Python `TesTask.to_dict()` still has it. The TES
+  CLI and the Python bindings still reject unknown state names as list
+  filters.
 
 ```rust
 use ga4gh_sdk::clients::tes::models::{TesExecutor, TesTask};

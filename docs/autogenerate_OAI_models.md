@@ -41,7 +41,8 @@ edits, so that the models keep what their spec doesn't define:
   define; `new` sets it to an empty map.
 - Every string enum gets a last variant `Unrecognized(String)` with
   `#[serde(untagged)]`, which takes the values that the spec doesn't define.
-  The enums are no longer `Copy`.
+  The enums are no longer `Copy`. Enums of a single property (for example
+  the DRS `access_method::Type`) also get `Display`, like the other enums.
 
 Patches adapt single models: `TesState` and the WES `State` read unknown states
 as `Unknown` instead, which both specs define as the safe default, and stay
@@ -51,9 +52,7 @@ with a discriminator are unchanged; none of the pinned specs has them.
 
 When you change the generator version, compare the template with the
 `model.mustache` of the new version (`openapi-generator-cli author template -g
-rust`) and carry the edits over. The first commit that added the template has
-the unchanged 7.9.0 file, so `git log -p utils/templates/rust/model.mustache`
-shows the edits.
+rust`) and carry over the edits listed above.
 
 The WES models use the schema names of the spec (`RunLog`, `RunStatus`,
 `State`, `TaskLog`, ...). Two of them are generated for `anyOf` lists and
