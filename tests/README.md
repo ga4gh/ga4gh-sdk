@@ -30,12 +30,16 @@ tests/run-wes-docker-integration.sh
 The script starts `ga4gh/ga4gh-starter-kit-wes:0.2.0-nextflow` with temporary
 configuration, an initialized SQLite database, a shared work directory, and
 the Docker socket. It waits up to 180 seconds for
-`/ga4gh/wes/v1/service-info`, runs the SDK test, and cleans up the container
-and temporary files. On failure it prints server logs. Increase
-`WES_STARTUP_TIMEOUT_SECONDS` or `WES_RUN_TIMEOUT_SECONDS` on slower hosts.
+`/ga4gh/wes/v1/service-info`, runs the SDK test and then a CLI test that
+submits a run with `ga4gh-cli wes run` and tracks it to completion with
+`wes status` and `wes get`, and cleans up the container and temporary files.
+On failure it prints server logs. Increase `WES_STARTUP_TIMEOUT_SECONDS` or
+`WES_RUN_TIMEOUT_SECONDS` on slower hosts. Because of the server limitations
+below, `wes cancel`, `wes run --attachment` and the paging of `wes list` are
+checked only against a mock server, in the default CLI tests.
 The [CI workflow](../.github/workflows/ci.yml) runs this suite on an Ubuntu
-runner when WES, shared library, dependency, or integration files change. It
-runs both integration suites on manual dispatch. The `CI passed` job checks
+runner when WES, CLI, shared library, dependency, or integration files change.
+It runs both integration suites on manual dispatch. The `CI passed` job checks
 their results alongside lint, unit tests, and builds.
 
 Starter Kit WES 0.2.0 only accepts a GitHub-shaped Nextflow project URL; its
