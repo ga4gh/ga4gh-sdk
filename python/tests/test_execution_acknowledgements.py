@@ -49,13 +49,13 @@ from GA4GH import Configuration, TES
 client = TES(Configuration(sys.argv[1]))
 for _ in range(5):
     try:
-        client.create('{"executors":[]}')
+        client.create({'executors': []})
         raise AssertionError('accepted malformed acknowledgement')
     except RuntimeError as error:
         assert 'may have succeeded' in str(error), str(error)
-task = client.create('{"executors":[]}')
+task = client.create({'executors': []})
 assert task.id == '"opaque / % id"', task.id
-assert task.status() == 'Complete'
+assert task.status() == 'COMPLETE'
 '''
     try:
         result = subprocess.run([sys.executable, '-c', code, f'http://127.0.0.1:{server.server_port}'],
