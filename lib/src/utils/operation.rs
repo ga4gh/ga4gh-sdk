@@ -45,7 +45,10 @@ impl Operation {
         }
     }
     pub async fn sleep(&self, delay: Duration) -> Result<(), OperationError> {
-        self.run(tokio::time::sleep(delay)).await
+        // Retry-After is untrusted and may overflow a platform Instant. Never
+        // construct a sleep beyond the absolute remaining budget.
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        self.run(tokio::time::sleep(delay.min(remaining))).await
     }
 }
 

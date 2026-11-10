@@ -214,3 +214,12 @@ async fn read_only_post_can_retry_but_nonreplayable_get_cannot() {
         .is_err());
     request.assert();
 }
+
+#[tokio::test(start_paused = true)]
+async fn untrusted_huge_delay_is_bounded_by_the_operation() {
+    let operation = Operation::new(Duration::from_secs(2));
+    assert_eq!(
+        operation.sleep(Duration::from_secs(u64::MAX)).await,
+        Err(OperationError::Deadline)
+    );
+}
