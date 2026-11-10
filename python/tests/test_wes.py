@@ -231,6 +231,11 @@ def test_run_with_missing_attachment_file_raises_os_error(server, wes_config, tm
         wes.run(RUN_REQUEST, {"main.cwl": tmp_path / "missing.cwl"})
     with pytest.raises(ValueError, match="not a file"):
         wes.run(RUN_REQUEST, {"main.cwl": tmp_path})
+    if hasattr(os, "mkfifo"):
+        # Opening a FIFO without a writer would block; it must be rejected first.
+        os.mkfifo(tmp_path / "pipe")
+        with pytest.raises(ValueError, match="not a file"):
+            wes.run(RUN_REQUEST, {"main.cwl": tmp_path / "pipe"})
     assert server.last() == before
 
 

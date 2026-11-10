@@ -806,17 +806,25 @@ fn attachment_source(
     }
     if !content.is_instance_of::<PyString>() && content.hasattr("__fspath__")? {
         // Opened here, so that errors are `OSError`s with the path, and the file that was
-        // checked is the one that is sent.
+        // checked is the one that is sent. Only regular files are opened: opening a FIFO or
+        // a device could block while holding the GIL.
         let path: PathBuf = content.extract()?;
+        let not_a_file = || {
+            PyValueError::new_err(format!(
+                "Invalid attachment {filename}: {} is not a file",
+                path.display()
+            ))
+        };
+        let metadata = std::fs::metadata(&path).map_err(|error| os_error(py, error, &path))?;
+        if !metadata.is_file() {
+            return Err(not_a_file());
+        }
         let file = std::fs::File::open(&path).map_err(|error| os_error(py, error, &path))?;
         let metadata = file
             .metadata()
             .map_err(|error| os_error(py, error, &path))?;
         if !metadata.is_file() {
-            return Err(PyValueError::new_err(format!(
-                "Invalid attachment {filename}: {} is not a file",
-                path.display()
-            )));
+            return Err(not_a_file());
         }
         // `tokio::fs` is enabled by `ga4gh-lib`, which depends on Tokio with all features.
         return Ok(AttachmentSource::Reader {
