@@ -53,3 +53,11 @@ accounts for both limitations and does not claim that a run was canceled.
 - [`grape.tes`](grape.tes) is an alternative TES task document. It is not used
   by the current tests and contains nonstandard placeholders such as
   `${AWS_ACCESS_KEY_ID}` that would need substitution before submission.
+
+## Downstream proTES consumer
+
+`examples/protes-companion` is a standalone crate using main SDK transport/auth.
+Run `cargo test --manifest-path examples/protes-companion/Cargo.toml` for provenance
+retention, ordered attempts, rerun sanitization and 403/404 semantics. Its README
+provides actual offline CLI examples and describes the outstanding live pipeline
+acceptance. Fixture tests do not demonstrate remote gateway execution.
