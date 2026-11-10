@@ -12,7 +12,6 @@ import os
 import pathlib
 import shutil
 import subprocess
-import sys
 import uuid
 import threading
 import urllib.parse
@@ -106,7 +105,7 @@ def main():
                 shutil.copyfile(HERE / "reference.fa", args.workspace / "inputs/reference.fa")
                 env = os.environ.copy()
                 env.pop("DOCKER_HOST", None)
-                context = env.get("GA4GH_REUSE_DOCKER_CONTEXT", "colima-ga4gh-phase2" if sys.platform == "darwin" else "default")
+                context = env.get("GA4GH_REUSE_DOCKER_CONTEXT", "default")
                 container_name = f"ga4gh-result-reuse-{uuid.uuid4().hex}"
                 invocation = ["docker", "--context", context, "run", "--name", container_name, "--pull=never", "--rm", "--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=64", "--cpus=1", "--memory=128m", "--mount", f"type=bind,src={args.workspace},dst=/workspace", "--workdir", "/workspace", "--env", "LC_ALL=C", "--env", "PYTHONHASHSEED=0", IMAGE] + COMMAND
                 state["container_launch_attempts"] += 1

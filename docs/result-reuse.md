@@ -125,12 +125,12 @@ python3 examples/result-reuse/run.py
 ```
 
 Docker must already have the pinned Python image. The adapter uses `--pull=never`
-and never downloads or deletes unrelated images. On this project's Mac it uses
-`colima-ga4gh-phase2`; elsewhere it defaults to the `default` Docker context.
-Override with `GA4GH_REUSE_DOCKER_CONTEXT`. Mac workspaces default below the
-ignored repository `target/result-reuse` directory because Colima mounts the
-home directory but may not mount host `/private/tmp`. Use `--work` to choose an
-explicit bind-mounted workspace. For a clean Linux CI runner:
+and never downloads or deletes unrelated images. The adapter uses Docker context
+`default` on every platform. Set `GA4GH_REUSE_DOCKER_CONTEXT` to an existing context
+when needed; it does not change the global Docker context. Mac workspaces default
+below the ignored repository `target/result-reuse` directory so the workspace can
+use a home-directory mount. Use `--work` to choose a workspace that the selected
+Docker daemon can bind mount. For a clean Linux CI runner:
 
 ```sh
 docker pull python@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91
