@@ -1,6 +1,6 @@
 //! Opt-in real-provider smoke check used by tests/interop/run.py.
 //! This small test exercises SDK calls; the broader proTES suite stays upstream.
-use ga4gh_sdk::clients::tes::{models::TesState, models::TesTask, Task, TES};
+use ga4gh_sdk::clients::tes::{models::TesState, models::TesTask, Task, TesView, TES};
 use ga4gh_sdk::utils::configuration::Configuration;
 use serde_json::json;
 use std::time::Duration;
@@ -41,7 +41,7 @@ async fn real_direct_tes_complete_failure_cancel() {
     )
     .await;
     state(&completed, TesState::Complete).await;
-    let log = tes.get_raw("FULL", &completed.id).await.unwrap();
+    let log = tes.get_raw(TesView::Full, &completed.id).await.unwrap();
     let log: serde_json::Value = serde_json::from_str(&log).unwrap();
     assert_eq!(log["logs"][0]["logs"][0]["exit_code"], 0);
     assert!(log["logs"][0]["logs"][0]["stdout"]
