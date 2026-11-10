@@ -137,7 +137,8 @@ csei52hrqek3h222k9de      Queued
 ga4gh-cli tes get "$task_id" FULL
 ```
 
-Possible `VIEW` option values: `BASIC`, `FULL`.
+Possible `VIEW` values: `MINIMAL`, `BASIC` and `FULL`, in any case. `tes list`
+takes the same values with `-w`.
 The command prints the server's JSON unchanged, including fields unknown to
 the current SDK models.
 

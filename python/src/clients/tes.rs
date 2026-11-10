@@ -7,6 +7,7 @@ use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
 use ga4gh_sdk::clients::tes::models::TesState;
 use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::Task;
+use ga4gh_sdk::clients::tes::TesView;
 use ga4gh_sdk::clients::tes::TES;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -570,12 +571,16 @@ impl PyTES {
         })
     }
 
-    /// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
+    /// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case.
     pub fn get(&self, py: Python<'_>, view: &str, id: &str) -> PyResult<PyTesTask> {
-        let view = view.to_owned();
+        let view: TesView = view
+            .parse()
+            .map_err(|error: ga4gh_sdk::clients::tes::ParseTesViewError| {
+                PyValueError::new_err(error.to_string())
+            })?;
         let id = id.to_owned();
         let response = io(py, |rt| {
-            rt.block_on(self.inner.get_raw(&view, &id))
+            rt.block_on(self.inner.get_raw(view, &id))
                 .map_err(|error| format!("Failed to get task: {error}"))
         })?;
         PyTesTask::from_json(serde_json::from_str(&response).map_err(invalid_response)?)

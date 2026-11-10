@@ -68,8 +68,16 @@ fn incomplete_configuration_is_an_error() {
 #[test]
 fn invalid_list_arguments_are_errors() {
     let home = home_with_config(json!({"TES": {"base_path": mockito::server_url()}}));
-    let cases: [(&[&str], &str); 3] = [
+    let cases: [(&[&str], &str); 5] = [
         (&["tes", "list", "-s", "NOT_A_STATE"], "Invalid state"),
+        (
+            &["tes", "list", "-w", "EVERYTHING"],
+            "Invalid view 'EVERYTHING'",
+        ),
+        (
+            &["tes", "get", "t1", "EVERYTHING"],
+            "MINIMAL, BASIC, or FULL",
+        ),
         (&["tes", "list", "-p", "abc"], "Invalid page_size"),
         (
             &["tes", "list", "-p", "99999999999999999999"],
