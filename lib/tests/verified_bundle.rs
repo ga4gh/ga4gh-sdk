@@ -349,6 +349,22 @@ async fn import_include_graph_and_explicit_url_fetch_policy() {
     download.assert();
 }
 
+#[test]
+fn anonymous_fetch_allowlist_does_not_widen_paths_or_discard_credentials() {
+    for input in [
+        "https://example.org/restricted",
+        "https://example.org/?token=secret",
+        "https://user:pass@example.org",
+        "file:///tmp/descriptor.cwl",
+    ] {
+        assert!(
+            AnonymousFetcher::new([input.to_owned()]).is_err(),
+            "{input}"
+        );
+    }
+    assert!(AnonymousFetcher::new(["https://example.org/".to_owned()]).is_ok());
+}
+
 #[tokio::test]
 #[ignore = "requires a named running Toil WES deployment via GA4GH_TOIL_WES_URL"]
 async fn real_toil_executes_verified_nested_cwl_bundle() {
