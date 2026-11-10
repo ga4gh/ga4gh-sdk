@@ -96,6 +96,18 @@ ROUTES.update(
         ("GET", "/drs/objects/no-retry"): (202, {}),
         ("GET", "/drs/objects/bad"): (200, {"id": "bad"}),
         ("GET", "/drs/objects/obj-1/access/bad"): (200, ["not", "an", "object"]),
+        ("GET", "/drs/objects/secret-access"): (
+            200,
+            {
+                **DRS_OBJECT,
+                "id": "secret-access",
+                "access_methods": [{"type": "https", "access_id": "wrong-type"}],
+            },
+        ),
+        ("GET", "/drs/objects/secret-access/access/wrong-type"): (
+            200,
+            {"url": "https://store.example/x", "headers": "Authorization: Bearer SECRET"},
+        ),
         ("GET", "/drs/objects/obj-1/access/wrong-type"): (
             200,
             {"url": "https://store.example/x", "headers": "Authorization: Bearer SECRET"},

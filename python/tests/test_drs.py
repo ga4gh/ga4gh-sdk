@@ -121,6 +121,14 @@ def test_model_errors_quote_no_response_values(drs):
     assert "wrong type" in str(error.value)
 
 
+def test_resolver_errors_quote_no_response_values(drs_config):
+    resolver = DrsResolver().with_service("drs.example", Transport(drs_config))
+    for call in (resolver.access_plan_once, resolver.access_plan):
+        with pytest.raises(RuntimeError, match="Invalid DRS response: a field has the wrong") as error:
+            call("drs://drs.example/secret-access")
+        assert "SECRET" not in str(error.value)
+
+
 def test_pending_answers(server, drs):
     with pytest.raises(RuntimeError, match="pending; retry after 1 seconds"):
         drs.get_object("pending")
@@ -375,7 +383,13 @@ def test_access_plan_pending_and_failures(server, resolver):
     assert resolver.access_plan_once("drs://drs.example/obj-1").method == "s3"
 
 
-def test_with_service_while_the_resolver_is_in_use(drs_config, resolver):
+def recorded_requests(server, path):
+    """The requests to `path` that the mock server has received."""
+    with urllib.request.urlopen(f"{server.root}/__requests__", timeout=10) as response:
+        return [r for r in json.load(response) if r["path"] == path]
+
+
+def test_with_service_while_the_resolver_is_in_use(server, drs_config, resolver):
     errors = []
 
     def plan():
@@ -385,9 +399,15 @@ def test_with_service_while_the_resolver_is_in_use(drs_config, resolver):
         except RuntimeError as error:
             errors.append(error)
 
+    asked = len(recorded_requests(server, "/drs/objects/pending"))
     thread = threading.Thread(target=plan)
     thread.start()
-    time.sleep(0.3)
+    # Once the server has the first request, the planning call holds the resolver until
+    # it gives up, after the 1-second Retry-After.
+    deadline = time.monotonic() + 10
+    while len(recorded_requests(server, "/drs/objects/pending")) == asked:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
     with pytest.raises(RuntimeError, match="in use by another thread"):
         resolver.with_service("other.example", Transport(drs_config))
     thread.join(timeout=10)

@@ -17,7 +17,7 @@ use ga4gh_sdk::clients::drs::bulk::{BulkKey, BulkPolicy, BulkReport, ObjectOutco
 use ga4gh_sdk::clients::drs::models::access_method::Type;
 use ga4gh_sdk::clients::drs::models::{AccessUrl, BulkAccessUrl, DrsObject};
 use ga4gh_sdk::clients::drs::resolution::{
-    resolve_until, PendingResolution, Resolution, ResolutionReference,
+    resolve_until, PendingResolution, Resolution, ResolutionReference, ResolveCause, ResolveError,
 };
 use ga4gh_sdk::clients::drs::uri::{
     AccessPlan, AccessPreferences, AccessResolution, DrsResolver, DrsUri,
@@ -62,6 +62,9 @@ fn parse_model<T: DeserializeOwned>(raw: &Value) -> Result<T, String> {
 
 /// Describes a model mismatch without quoting the server's values, which may be
 /// credentials such as a signed URL or a bearer token in an access URL.
+///
+/// serde_json has no structured access to the field of an error, so this relies on its
+/// message text; `test_invalid_responses_raise_runtime_error` pins it.
 fn model_error(error: &serde_json::Error) -> String {
     let message = error.to_string();
     if message.starts_with("missing field") {
@@ -69,6 +72,26 @@ fn model_error(error: &serde_json::Error) -> String {
     } else {
         "a field has the wrong type or value".to_owned()
     }
+}
+
+/// Describes an error of the library's typed DRS calls, as used by `DrsResolver`,
+/// without the response values that their model errors quote.
+fn plan_error(error: &(dyn std::error::Error + 'static)) -> String {
+    let invalid =
+        |error: &serde_json::Error| format!("Invalid DRS response: {}", model_error(error));
+    if let Some(error) = error.downcast_ref::<serde_json::Error>() {
+        return invalid(error);
+    }
+    if let Some(ResolveError {
+        cause: ResolveCause::Request(cause),
+        ..
+    }) = error.downcast_ref::<ResolveError>()
+    {
+        if let Some(cause) = cause.downcast_ref::<serde_json::Error>() {
+            return format!("DRS resolution request failed: {}", invalid(cause));
+        }
+    }
+    error.to_string()
 }
 
 /// Converts a Python `int` to a count; negative values raise `ValueError`, not the
@@ -1254,7 +1277,9 @@ impl PyDrsResolver {
         let operation = budget(timeout)?;
         let answer = io(py, |rt| {
             rt.block_on(self.inner.access_plan_once(uri, &preferences, &operation))
-                .map_err(|error| format!("Failed to plan DRS access: {error}"))
+                .map_err(|error| {
+                    format!("Failed to plan DRS access: {}", plan_error(error.as_ref()))
+                })
         })?;
         Ok(match answer {
             AccessResolution::Ready(inner) => PyAccessPlan { inner }.into_py(py),
@@ -1289,7 +1314,7 @@ impl PyDrsResolver {
                     .access_plan(uri, &preferences, &operation, max_attempts),
             )
             .map(|inner| PyAccessPlan { inner })
-            .map_err(|error| format!("Failed to plan DRS access: {error}"))
+            .map_err(|error| format!("Failed to plan DRS access: {}", plan_error(error.as_ref())))
         })
     }
 }
