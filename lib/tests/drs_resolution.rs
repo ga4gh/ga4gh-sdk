@@ -184,6 +184,42 @@ async fn immediate_200_and_resume_validation() {
 }
 
 #[tokio::test]
+async fn resume_accepts_equivalent_api_root_with_trailing_slash() {
+    let root = format!("{}/ga4gh/drs/v1", server_url());
+    let first_config = Configuration::new(url::Url::parse(&root).unwrap());
+    let first = DRS {
+        transport: Transport::new(&first_config),
+        config: first_config,
+        service: Ok(Service::default()),
+    };
+    let reference = first.resolution_reference("objects/id".into());
+    let second_config = Configuration::new(url::Url::parse(&format!("{root}/")).unwrap());
+    let second = DRS {
+        transport: Transport::new(&second_config),
+        config: second_config,
+        service: Ok(Service::default()),
+    };
+    let request = mock("GET", "/ga4gh/drs/v1/objects/id")
+        .with_body(r#"{"id":"id"}"#)
+        .create();
+    let result: Resolution<serde_json::Value> = second.resolve_reference(&reference).await.unwrap();
+    assert!(matches!(result, Resolution::Ready(value) if value["id"] == "id"));
+    request.assert();
+
+    let encoded_config =
+        Configuration::new(url::Url::parse("https://user:pass@example.org/a%20b/drs/v1").unwrap());
+    let encoded = DRS {
+        transport: Transport::new(&encoded_config),
+        config: encoded_config,
+        service: Ok(Service::default()),
+    };
+    assert_eq!(
+        encoded.resolution_reference("objects/id".into()).api_root,
+        "https://example.org/a%20b/drs/v1/"
+    );
+}
+
+#[tokio::test]
 async fn metadata_and_access_resolve_202_to_200_without_an_early_retry() {
     let client = drs();
     for (path, body) in [
