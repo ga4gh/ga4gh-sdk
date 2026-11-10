@@ -32,10 +32,12 @@ maturin develop
 cd ..
 ```
 
-The binding guide describes the existing workspace/standalone build limitation.
 Use this checkout's binding, rather than assuming the separately published Python
 package has these synchronous I/O methods. Never fork a process after starting
 its threaded native runtime; this example starts fresh worker subprocesses.
+
+The dispatch adapter passes a task mapping to `TES.create()`. In the current
+bindings a string is a file path, so serialized JSON text is not a task argument.
 
 Install the [official Temporal CLI](https://docs.temporal.io/cli), then start the
 native development service in one terminal with SQLite persistence:
@@ -170,12 +172,16 @@ unavailable outcome; this example does not retry metrics forever.
 
 ## Reproducible interruption evidence
 
-The fast contracts run without native services; adapter contracts run when the
+The fast contracts need no Temporal service; adapter contracts run when the
 optional Temporal package is installed:
 
 ```sh
 python tests/run-h3-campaign.py
 ```
+
+When the native GA4GH binding is also installed, the adapter checks include one
+actual dispatch and cancellation through the local CPU/TES provider. This guards
+the task argument contract against changes to the Python API.
 
 The opt-in demonstration starts the official native Temporal development service,
 real CPU provider processes, and fresh controller worker processes. On first use

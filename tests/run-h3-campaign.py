@@ -81,6 +81,29 @@ class AdapterContracts(unittest.TestCase):
             self.assertEqual(Activities().dispatch(self.trial())["kind"], "NOT_DISPATCHED_DEADLINE")
             client.assert_not_called()
 
+    @unittest.skipUnless(importlib.util.find_spec("GA4GH"), "optional native TES binding not installed")
+    def test_dispatch_through_current_native_tes_creates_one_owned_task(self):
+        from activities import Activities, read_json
+        from datetime import datetime, timedelta, timezone
+        from integration import load_provider
+        import tempfile
+
+        provider_module = load_provider(ROOT / "examples" / "portable-execution" / "provider.py")
+        with tempfile.TemporaryDirectory(prefix="h3-native-dispatch-") as directory:
+            with provider_module.Cluster(Path(directory)) as cluster:
+                provider = cluster.providers[0]
+                trial = self.trial()
+                trial["provider"] = dict(name=provider.name, url=provider.url)
+                trial["deadline"] = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()
+                result = Activities().dispatch(trial)
+                self.assertEqual(result["kind"], "ACKNOWLEDGED", result)
+                tasks = read_json(provider.url + "/v1/tasks?view=FULL")["tasks"]
+                self.assertEqual(len(tasks), 1)
+                self.assertEqual(tasks[0]["id"], result["remote_id"])
+                self.assertEqual(tasks[0]["tags"]["h3.intent"], trial["intent_id"])
+                self.assertEqual(Activities().cancel({**trial, "remote_id": result["remote_id"]})["request"],
+                                 "ACKNOWLEDGED")
+
     def test_adoption_requires_provider_binding_to_entire_request(self):
         from activities import Activities
         from model import digest, task_request

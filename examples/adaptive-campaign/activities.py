@@ -37,7 +37,7 @@ class Activities:
             client = tes_client(trial["provider"])
             if datetime.now(timezone.utc) >= deadline:
                 return {"kind": "NOT_DISPATCHED_DEADLINE"}
-            task = client.create(json.dumps(task_request(trial)))
+            task = client.create(task_request(trial))
             remote_id = task.id
             if not remote_id:
                 return {"kind": "UNKNOWN", "reason": "empty acknowledgement"}
