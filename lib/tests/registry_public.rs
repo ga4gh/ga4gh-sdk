@@ -1,20 +1,18 @@
 //! Read-only smoke test against a public Service Registry.
 //!
 //! Ignored by default because it needs network access. Run it with
-//! `cargo test -p ga4gh-lib --test registry_public -- --ignored`, and set
-//! `GA4GH_REGISTRY_URL` to test another registry than the default.
+//! `cargo test -p ga4gh-lib --test registry_public -- --ignored` after setting
+//! `GA4GH_REGISTRY_URL` to a Registry API root that permits anonymous reads.
 
 use ga4gh_sdk::clients::registry::ServiceRegistry;
 use ga4gh_sdk::utils::configuration::Configuration;
 use url::Url;
 
-const DEFAULT_REGISTRY: &str = "https://elixir-on.cloud/ga4gh/registry/v1";
-
 #[tokio::test]
 #[ignore = "needs network access to a public registry"]
 async fn public_registry_reads_without_a_token() {
-    let base_path =
-        std::env::var("GA4GH_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY.to_string());
+    let base_path = std::env::var("GA4GH_REGISTRY_URL")
+        .expect("set GA4GH_REGISTRY_URL to a Registry API root that permits anonymous reads");
     let registry = ServiceRegistry::new(&Configuration::new(Url::parse(&base_path).unwrap()));
 
     let info = registry.service_info().await.unwrap();

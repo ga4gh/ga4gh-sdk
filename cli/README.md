@@ -34,6 +34,9 @@ are errors rather than being ignored.
     },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
+    },
+    "REGISTRY": {
+        "base_path": "https://registry.example.org/ga4gh/registry/v1"
     }
 }
 ```
@@ -184,13 +187,16 @@ the registry's API root:
 ```json
 {
     "REGISTRY": {
-        "base_path": "https://elixir-on.cloud/ga4gh/registry/v1"
+        "base_path": "https://registry.example.org/ga4gh/registry/v1"
     }
 }
 ```
 
+Replace `registry.example.org` with your registry's host.
 The CLI requests `services`, `services/{id}` and `services/types` below this
-path. Reads need no token.
+path. Public reads need no token; a deployment that requires authentication
+needs an authenticating proxy until [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)
+adds configured authentication.
 
 1. To list the services, optionally only those of one type artifact (case
    ignored), run `registry list`:

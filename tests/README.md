@@ -58,15 +58,15 @@ cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
 
 ## Public Service Registry
 
-This read-only smoke test needs network access. It reads `service-info`,
-`services/types` and `services` from a public registry without a token, and
-gets each listed service by its ID. It uses the cloud-registry deployment at
-`https://elixir-on.cloud/ga4gh/registry/v1` unless `GA4GH_REGISTRY_URL` names
-another registry API root. Its contents can change, so a failure can come from
-the deployment rather than the client.
+This read-only smoke test needs network access and a Registry API root that
+permits anonymous reads. Set `GA4GH_REGISTRY_URL` to that root. It reads
+`service-info`, `services/types` and `services`, and gets each listed service
+by its ID. No public default is pinned because deployment availability and
+authentication policies can change.
 
 ```sh
-cargo test -p ga4gh-lib --test registry_public -- --ignored
+GA4GH_REGISTRY_URL='https://your-registry.example.org/ga4gh/registry/v1' \
+  cargo test -p ga4gh-lib --test registry_public -- --ignored
 ```
 
 ## Test fixtures
