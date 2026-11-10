@@ -32,6 +32,7 @@ ROUTES = {
     ("GET", "/api/tasks/task-1"): (200, TASK),
     ("GET", "/api/tasks"): (200, {"tasks": [TASK], "next_page_token": "next"}),
     ("GET", "/api/tasks/task-1/provenance"): (200, {"events": ["created"]}),
+    ("GET", "/api/tasks/bad"): (200, {"id": "bad", "state": "NOT_A_STATE"}),
     ("POST", "/api/runs"): (200, {"run_id": "run-1"}),
     ("POST", "/api/tasks/task-1:cancel"): (200, {}),
     ("PUT", "/api/plugins/p1"): (200, {"updated": True}),

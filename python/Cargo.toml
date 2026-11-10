@@ -14,12 +14,18 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 ga4gh-lib = { path = "../lib" }
-pyo3 = { version = "0.22.5", features = ["extension-module", "experimental-async"]  }
+pyo3 = { version = "0.22.5", features = ["experimental-async"]  }
 reqwest = { version = "0.11", default-features = false, features = ["multipart"] }
 serde = "1.0.213"
 serde_json = "1.0.132"
 tokio = "1.41.0"
 url = "2.5.2"
+
+[features]
+default = ["extension-module"]
+# Builds the Python module. Rust crates that depend on this one can turn it off with
+# `default-features = false`, for example to link their tests against libpython.
+extension-module = ["pyo3/extension-module"]
 
 [build-dependencies]
 pyo3-build-config = "0.22.5"

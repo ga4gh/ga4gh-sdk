@@ -92,6 +92,17 @@ csfv3o5jt0vv1kstlqbg      SYSTEM_ERROR
 The bindings are meant as a base for clients of services that add endpoints or fields to
 the GA4GH APIs. All classes can be subclassed.
 
+The classes are set up in `__new__`, from the constructor's leading arguments. A subclass
+may take further arguments after them; its `__init__` then calls `super().__init__()`
+without arguments:
+
+```python
+class TokenTES(TES):
+    def __init__(self, config, token):
+        super().__init__()  # TES.__new__ has already connected with `config`
+        self.token = token
+```
+
 ### Further endpoints
 
 `Transport` sends requests below the configured API root and returns the response body
@@ -124,7 +135,8 @@ The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=
 
 - `endpoint` is relative to the API root, for example `tasks/123`. Encode IDs that you
   put into it yourself, for example with `urllib.parse.quote(task_id, safe="")`.
-- `data` is a JSON string or any object that `json.dumps` accepts.
+- `data` is any object that `json.dumps` accepts. A `str` is taken as JSON text, so
+  pass `json.dumps(text)` to send a JSON string.
 - `params` holds query parameters, as a `dict` or a JSON object string. Values are
   strings, numbers, booleans or lists of these; a list repeats the parameter
   (`{"tag_key": ["a", "b"]}` gives `tag_key=a&tag_key=b`), and `None` leaves it out.
@@ -140,13 +152,15 @@ transport.post_multipart(
 )
 ```
 
-A failed request raises `RuntimeError`; invalid arguments raise `ValueError`.
+A failed request raises `RuntimeError`; invalid values raise `ValueError`, and arguments
+of the wrong type (for example a `dict` for `fields`) raise `TypeError`.
 
 ### Fields the models don't know
 
 `TES.get()` and the tasks of `TES.list()` are `TesTask` objects. Besides `id` and
-`status`, they keep the task as the server sent it, including fields that the TES models
-don't know: `task.json()` returns it as JSON text, `task.to_dict()` as a `dict`.
+`status`, they keep the task's JSON as the server sent it, including fields that the TES
+models don't know: `task.json()` returns it as JSON text (object keys may come in another
+order), `task.to_dict()` as a `dict`.
 `TesTask` was called `PyTesTask` before; the old name still works.
 
 ### Listing tasks
@@ -173,7 +187,9 @@ example with `#[pyclass(extends = PyTES, unsendable)]`; the `inner` field of eac
 holds the library type. The extension module gets its own copies of the base classes,
 which don't mix with those of the `GA4GH` module: a `GA4GH.Configuration` can't be passed
 to it. So register every base class that its users need (`m.add_class::<PyConfiguration>()`
-and so on) in the extension module, and import everything from there.
+and so on) in the extension module, and import everything from there. The default
+feature `extension-module` builds the Python module; a dependent crate can turn it off
+with `default-features = false` and enable it in its own features instead.
 
 Further bindings in this crate, such as WES, DRS and TRS, follow the same pattern.
 

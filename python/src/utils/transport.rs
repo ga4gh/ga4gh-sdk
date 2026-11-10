@@ -1,9 +1,9 @@
-use crate::utils::convert::{block_on, to_json, to_json_opt, with_query};
+use crate::utils::convert::{block_on, check_extra_args, to_json, to_json_opt, with_query};
 use crate::PyConfiguration;
 use ga4gh_sdk::utils::transport::Transport;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyDict, PyTuple, PyType};
 use reqwest::multipart::{Form, Part};
 use std::borrow::Cow;
 use std::error::Error;
@@ -22,12 +22,26 @@ pub struct PyTransport {
     pub inner: Transport,
 }
 
-#[pymethods]
 impl PyTransport {
-    #[new]
     pub fn new(py_config: &PyConfiguration) -> PyResult<Self> {
         let transport = Transport::new(&py_config.inner);
         Ok(PyTransport { inner: transport })
+    }
+}
+
+#[pymethods]
+impl PyTransport {
+    #[new]
+    #[classmethod]
+    #[pyo3(signature = (py_config, *args, **kwargs))]
+    fn py_new(
+        cls: &Bound<'_, PyType>,
+        py_config: &PyConfiguration,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        check_extra_args::<Self>(cls, args, kwargs)?;
+        Self::new(py_config)
     }
 
     #[pyo3(signature = (endpoint, params=None))]

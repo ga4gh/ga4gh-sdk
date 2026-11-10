@@ -1,4 +1,4 @@
-use crate::utils::convert::{block_on, to_python, with_query};
+use crate::utils::convert::{block_on, check_extra_args, to_python, with_query};
 use crate::PyConfiguration;
 use crate::PyTransport;
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
@@ -9,6 +9,7 @@ use ga4gh_sdk::clients::tes::Task;
 use ga4gh_sdk::clients::tes::TES;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple, PyType};
 use serde_json::Value;
 
 fn invalid_response(error: serde_json::Error) -> PyErr {
@@ -21,13 +22,28 @@ pub struct PyTask {
     pub inner: Task,
 }
 
-#[pymethods]
 impl PyTask {
-    #[new]
     pub fn new(id: String, transport: &PyTransport) -> PyResult<Self> {
         Ok(PyTask {
             inner: Task::new(id, transport.inner.clone()),
         })
+    }
+}
+
+#[pymethods]
+impl PyTask {
+    #[new]
+    #[classmethod]
+    #[pyo3(signature = (id, transport, *args, **kwargs))]
+    fn py_new(
+        cls: &Bound<'_, PyType>,
+        id: String,
+        transport: &PyTransport,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        check_extra_args::<Self>(cls, args, kwargs)?;
+        Self::new(id, transport)
     }
 
     #[getter]
@@ -66,17 +82,19 @@ impl PyTask {
 
 /// A TES task as returned by the server.
 ///
-/// `json()` and `to_dict()` return the task exactly as received, including fields that the
-/// TES models don't know.
+/// `json()` and `to_dict()` return the task's JSON as received, including fields that the
+/// TES models don't know (object keys may come back in another order).
 #[pyclass(name = "TesTask", module = "GA4GH", subclass)]
 #[derive(Clone)]
 pub struct PyTesTask {
+    /// The task parsed into the TES model; derived from `raw`.
     pub inner: TesTask,
+    /// The task's JSON as received. Build both fields with `from_json` to keep them in step.
     pub raw: Value,
 }
 
 impl PyTesTask {
-    /// Builds a task from a server's JSON, keeping the JSON as received.
+    /// Builds a task from a server's JSON, keeping the JSON.
     pub fn from_json(raw: Value) -> PyResult<Self> {
         let inner = serde_json::from_value(raw.clone()).map_err(invalid_response)?;
         Ok(PyTesTask { inner, raw })
@@ -213,9 +231,7 @@ pub struct PyTES {
     pub inner: TES,
 }
 
-#[pymethods]
 impl PyTES {
-    #[new]
     pub fn new(config: &PyConfiguration) -> PyResult<Self> {
         match block_on(TES::new(&config.inner))? {
             Ok(instance) => Ok(PyTES { inner: instance }),
@@ -224,6 +240,22 @@ impl PyTES {
                 e
             ))),
         }
+    }
+}
+
+#[pymethods]
+impl PyTES {
+    #[new]
+    #[classmethod]
+    #[pyo3(signature = (config, *args, **kwargs))]
+    fn py_new(
+        cls: &Bound<'_, PyType>,
+        config: &PyConfiguration,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        check_extra_args::<Self>(cls, args, kwargs)?;
+        Self::new(config)
     }
 
     /// The client's configuration.
@@ -271,6 +303,8 @@ impl PyTES {
 
     #[pyo3(signature = (params=None))]
     pub fn list(&self, params: Option<PyListTasksParams>) -> PyResult<PyTesListTasksResponse> {
+        // Not `TES::list_tasks`: it hands the params to reqwest's query encoder, which can't
+        // encode the `tag_key` and `tag_value` lists. `with_query` repeats them instead.
         let params = params
             .map(|params| serde_json::to_value(params.inner))
             .transpose()

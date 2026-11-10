@@ -186,9 +186,87 @@ def test_multipart(server, config):
     assert b"Content-Type: application/octet-stream\r\n\r\n\x00\x01" in body
 
 
-def test_multipart_rejects_malformed_files(config):
+@pytest.mark.parametrize(
+    "files",
+    [
+        [("only-name",)],
+        [("name", "file.txt", "text, not bytes")],
+        [("name", "file.txt", b"x", "not a content type")],
+    ],
+)
+def test_multipart_rejects_malformed_files(config, files):
     with pytest.raises(ValueError, match="files"):
-        Transport(config).post_multipart("runs", files=[("only-name",)])
+        Transport(config).post_multipart("runs", files=files)
+
+
+def test_multipart_wrong_argument_types_raise_type_error(config):
+    with pytest.raises(TypeError):
+        Transport(config).post_multipart("runs", fields={"workflow_type": "CWL"})
+
+
+class TokenTransport(Transport):
+    def __init__(self, config, token, *, label="x"):
+        super().__init__()  # __new__ has set up the base class
+        self.token = token
+        self.label = label
+
+
+class NamedTES(TES):
+    def __init__(self, config, name):
+        super().__init__()
+        self.name = name
+
+
+class NamedConfiguration(Configuration):
+    def __init__(self, base_path, name):
+        super().__init__()
+        self.name = name
+
+
+def test_subclasses_can_take_further_constructor_arguments(server, config):
+    transport = TokenTransport(config, "t", label="y")
+    assert (transport.token, transport.label) == ("t", "y")
+    assert NamedTES(config, "mine").name == "mine"
+    named = NamedConfiguration(server.base, "cfg")
+    assert (named.name, named.get_base_path()) == ("cfg", server.base)
+    task = type("MyTask", (GA4GH.Task,), {"__init__": lambda self, i, t, x: None})
+    assert task("task-1", transport, "extra").id == "task-1"
+
+
+def test_base_classes_reject_unexpected_arguments(config):
+    with pytest.raises(TypeError, match="unexpected"):
+        Transport(config, "extra")
+    with pytest.raises(TypeError, match="unexpected"):
+        Configuration("https://example.org", name="extra")
+
+
+def test_client_getters(server, config):
+    tes = TES(config)
+    assert tes.config.get_base_path() == server.base
+    task = GA4GH.Task("task-1", tes.transport)
+    assert json.loads(task.transport.get("tasks/task-1/provenance")) == {"events": ["created"]}
+
+
+def test_http_errors_raise_runtime_error(config):
+    with pytest.raises(RuntimeError, match="404"):
+        Transport(config).get("missing")
+
+
+def test_invalid_task_raises_runtime_error(config):
+    with pytest.raises(RuntimeError, match="Invalid TES response"):
+        TES(config).get("FULL", "bad")
+
+
+def test_data_must_be_json_serialisable(config):
+    with pytest.raises(ValueError, match="not JSON-serialisable"):
+        Transport(config).post("runs", object())
+    with pytest.raises(ValueError, match="Invalid data JSON"):
+        Transport(config).post("runs", "plain text is parsed as JSON")
+
+
+def test_query_appended_after_trailing_ampersand(server, config):
+    Transport(config).get("tasks/task-1?view=BASIC&", {"name": "n"})
+    assert server.last()["query"] == {"view": ["BASIC"], "name": ["n"]}
 
 
 def test_list_tasks_params(server, config):
@@ -201,8 +279,9 @@ def test_list_tasks_params(server, config):
         page_token="tok",
         view="BASIC",
     )
-    assert params.state == "COMPLETE"
-    assert params.page_size == 10
+    assert (params.name_prefix, params.state, params.page_size) == ("hel", "COMPLETE", 10)
+    assert (params.tag_key, params.tag_value) == (["foo1", "foo2"], ["bar1", ""])
+    assert (params.page_token, params.view) == ("tok", "BASIC")
     TES(config).list(params)
     assert server.last()["query"] == {
         "name_prefix": ["hel"],

@@ -1,8 +1,9 @@
 //! Conversions between Python objects, JSON values and query strings.
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyString;
+use pyo3::types::{PyDict, PyString, PyTuple, PyType};
+use pyo3::PyTypeInfo;
 use serde_json::Value;
 use std::future::Future;
 
@@ -11,6 +12,26 @@ pub fn block_on<F: Future>(future: F) -> PyResult<F::Output> {
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| PyRuntimeError::new_err(format!("Cannot start async runtime: {error}")))?;
     Ok(runtime.block_on(future))
+}
+
+/// Lets subclasses take further constructor arguments.
+///
+/// Python passes all constructor arguments to `__new__` as well as `__init__`. So `__new__`
+/// accepts and ignores arguments beyond its own when `cls` is a subclass, which may then
+/// define `__init__(self, <base arguments>, extra, ...)`. For `T` itself they are an error.
+pub fn check_extra_args<T: PyTypeInfo>(
+    cls: &Bound<'_, PyType>,
+    args: &Bound<'_, PyTuple>,
+    kwargs: Option<&Bound<'_, PyDict>>,
+) -> PyResult<()> {
+    let has_extra = !args.is_empty() || kwargs.is_some_and(|kwargs| !kwargs.is_empty());
+    if has_extra && cls.is(&T::type_object_bound(cls.py())) {
+        return Err(PyTypeError::new_err(format!(
+            "{}() got unexpected arguments",
+            T::NAME
+        )));
+    }
+    Ok(())
 }
 
 /// Converts a Python argument to JSON.
