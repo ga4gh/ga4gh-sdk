@@ -204,40 +204,48 @@ def test_multipart_wrong_argument_types_raise_type_error(config):
         Transport(config).post_multipart("runs", fields={"workflow_type": "CWL"})
 
 
-class TokenTransport(Transport):
-    def __init__(self, config, token, *, label="x"):
-        super().__init__()  # __new__ has set up the base class
-        self.token = token
-        self.label = label
+def base_args(cls, server, config):
+    """The arguments that each class's constructor requires."""
+    if cls is Configuration:
+        return (server.base,)
+    if cls is GA4GH.Task:
+        return ("task-1", Transport(config))
+    return (config,)
 
 
-class NamedTES(TES):
-    def __init__(self, config, name):
-        super().__init__()
-        self.name = name
+CONSTRUCTED_CLASSES = [Configuration, GA4GH.ServiceInfo, Transport, TES, GA4GH.Task]
 
 
-class NamedConfiguration(Configuration):
-    def __init__(self, base_path, name):
-        super().__init__()
-        self.name = name
+@pytest.mark.parametrize("cls", CONSTRUCTED_CLASSES)
+def test_subclass_init_can_take_further_arguments(server, config, cls):
+    class Extended(cls):
+        def __init__(self, *args, token, **kwargs):
+            super().__init__()  # __new__ has already set up the base class
+            self.token = token
+
+    instance = Extended(*base_args(cls, server, config), "extra", token="t")
+    assert isinstance(instance, cls)
+    assert instance.token == "t"
 
 
-def test_subclasses_can_take_further_constructor_arguments(server, config):
-    transport = TokenTransport(config, "t", label="y")
-    assert (transport.token, transport.label) == ("t", "y")
-    assert NamedTES(config, "mine").name == "mine"
+@pytest.mark.parametrize("cls", CONSTRUCTED_CLASSES)
+def test_unexpected_arguments_raise_type_error(server, config, cls):
+    plain_subclass = type(f"Plain{cls.__name__}", (cls,), {})
+    for target in (cls, plain_subclass):
+        with pytest.raises(TypeError, match="unexpected"):
+            target(*base_args(cls, server, config), "extra")
+        with pytest.raises(TypeError, match="unexpected"):
+            target(*base_args(cls, server, config), extra=1)
+
+
+def test_subclass_keeps_base_state(server):
+    class NamedConfiguration(Configuration):
+        def __init__(self, base_path, name):
+            super().__init__()
+            self.name = name
+
     named = NamedConfiguration(server.base, "cfg")
     assert (named.name, named.get_base_path()) == ("cfg", server.base)
-    task = type("MyTask", (GA4GH.Task,), {"__init__": lambda self, i, t, x: None})
-    assert task("task-1", transport, "extra").id == "task-1"
-
-
-def test_base_classes_reject_unexpected_arguments(config):
-    with pytest.raises(TypeError, match="unexpected"):
-        Transport(config, "extra")
-    with pytest.raises(TypeError, match="unexpected"):
-        Configuration("https://example.org", name="extra")
 
 
 def test_client_getters(server, config):
@@ -257,9 +265,12 @@ def test_invalid_task_raises_runtime_error(config):
         TES(config).get("FULL", "bad")
 
 
-def test_data_must_be_json_serialisable(config):
+def test_data_not_serialisable_raises_value_error(config):
     with pytest.raises(ValueError, match="not JSON-serialisable"):
         Transport(config).post("runs", object())
+
+
+def test_data_str_is_parsed_as_json(config):
     with pytest.raises(ValueError, match="Invalid data JSON"):
         Transport(config).post("runs", "plain text is parsed as JSON")
 

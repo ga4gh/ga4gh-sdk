@@ -17,15 +17,20 @@ pub fn block_on<F: Future>(future: F) -> PyResult<F::Output> {
 /// Lets subclasses take further constructor arguments.
 ///
 /// Python passes all constructor arguments to `__new__` as well as `__init__`. So `__new__`
-/// accepts and ignores arguments beyond its own when `cls` is a subclass, which may then
-/// define `__init__(self, <base arguments>, extra, ...)`. For `T` itself they are an error.
+/// accepts and ignores arguments beyond its own when `cls` is a subclass that defines
+/// `__init__(self, <base arguments>, extra, ...)` to take them. Otherwise, as for `T` itself,
+/// they are an error.
 pub fn check_extra_args<T: PyTypeInfo>(
     cls: &Bound<'_, PyType>,
     args: &Bound<'_, PyTuple>,
     kwargs: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
     let has_extra = !args.is_empty() || kwargs.is_some_and(|kwargs| !kwargs.is_empty());
-    if has_extra && cls.is(&T::type_object_bound(cls.py())) {
+    if !has_extra {
+        return Ok(());
+    }
+    let object_init = cls.py().get_type_bound::<PyAny>().getattr("__init__")?;
+    if cls.is(&T::type_object_bound(cls.py())) || cls.getattr("__init__")?.is(&object_init) {
         return Err(PyTypeError::new_err(format!(
             "{}() got unexpected arguments",
             T::NAME

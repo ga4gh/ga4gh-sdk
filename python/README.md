@@ -103,6 +103,9 @@ class TokenTES(TES):
         self.token = token
 ```
 
+Without its own `__init__`, a subclass takes the same arguments as its base class, and
+any others raise `TypeError`.
+
 ### Further endpoints
 
 `Transport` sends requests below the configured API root and returns the response body
