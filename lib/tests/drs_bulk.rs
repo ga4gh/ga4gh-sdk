@@ -1,7 +1,8 @@
 use ga4gh_sdk::{
     clients::{
         drs::{
-            bulk::{BulkKey, BulkPolicy},
+            bulk::{BulkKey, BulkPolicy, BulkReport, ObjectOutcome},
+            models::BulkAccessUrl,
             DRS,
         },
         serviceinfo::models::Service,
@@ -30,6 +31,28 @@ fn key(id: &str) -> BulkKey {
 }
 fn object(id: &str) -> Value {
     json!({"id":id,"self_uri":format!("drs://example.org/{id}"),"size":1,"created_time":"2026-01-01T00:00:00Z","checksums":[]})
+}
+#[test]
+fn debug_output_does_not_disclose_access_credentials() {
+    let key = BulkKey {
+        object_id: "object".into(),
+        access_id: Some("SENTINEL_ACCESS_ID".into()),
+    };
+    let mut access = BulkAccessUrl::new("https://store.example/data?signature=SENTINEL_URL".into());
+    access.headers = Some(vec!["Authorization: Bearer SENTINEL_HEADER".into()]);
+    let mut report = BulkReport::default();
+    report.outcomes.insert(
+        key.clone(),
+        ObjectOutcome {
+            resolved: vec![access],
+            errors: vec!["malformed access response: SENTINEL_ERROR".into()],
+            ..Default::default()
+        },
+    );
+    let debug = format!("{report:?} {key:?}");
+    assert!(!debug.contains("SENTINEL"), "{debug}");
+    assert!(debug.contains("resolved_count: 1"), "{debug}");
+    assert!(debug.contains("error_count: 1"), "{debug}");
 }
 #[tokio::test]
 async fn mixed_reordered_outcomes_and_duplicate_input_are_correlated_by_identity() {
