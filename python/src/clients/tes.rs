@@ -1,12 +1,14 @@
+use crate::utils::runtime::io;
 use crate::PyConfiguration;
 use crate::PyTransport;
+use ga4gh_sdk::clients::serviceinfo::models::Service;
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
 use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
 use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::Task;
 use ga4gh_sdk::clients::tes::TES;
+use ga4gh_sdk::utils::{configuration::Configuration, transport::Transport};
 use pyo3::prelude::*;
-use tokio::runtime::Runtime;
 
 #[pyclass(name = "Task", module = "GA4GH")]
 pub struct PyTask {
@@ -27,26 +29,20 @@ impl PyTask {
         Ok(self.inner.id.clone())
     }
 
-    pub fn status(&self) -> PyResult<String> {
-        let rt = Runtime::new().unwrap();
-        match rt.block_on(self.inner.status()) {
-            Ok(state) => Ok(format!("{:?}", state)),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Failed to get task status: {}",
-                e
-            ))),
-        }
+    pub fn status(&self, py: Python<'_>) -> PyResult<String> {
+        io(py, |rt| {
+            rt.block_on(self.inner.status())
+                .map(|state| format!("{state:?}"))
+                .map_err(|e| format!("Failed to get task status: {e}"))
+        })
     }
 
-    pub fn cancel(&self) -> PyResult<String> {
-        let rt = Runtime::new().unwrap();
-        match rt.block_on(self.inner.cancel()) {
-            Ok(response) => Ok(response.to_string()),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Failed to cancel task: {}",
-                e
-            ))),
-        }
+    pub fn cancel(&self, py: Python<'_>) -> PyResult<String> {
+        io(py, |rt| {
+            rt.block_on(self.inner.cancel())
+                .map(|response| response.to_string())
+                .map_err(|e| format!("Failed to cancel task: {e}"))
+        })
     }
 }
 
@@ -95,69 +91,77 @@ impl PyTesListTasksResponse {
     }
 }
 
-#[pyclass(unsendable, name = "TES", module = "GA4GH")]
+// Keep the successful discovery snapshot, rather than the SDK's non-Send
+// Result<Service, Box<dyn Error>>. Reconstruct the lightweight facade inside
+// the released-GIL closure, preserving both the service and HTTP connection pool.
+#[pyclass(name = "TES", module = "GA4GH")]
 pub struct PyTES {
-    inner: TES,
+    config: Configuration,
+    service: Service,
+    transport: Transport,
+}
+
+impl PyTES {
+    fn client(&self) -> TES {
+        TES {
+            config: self.config.clone(),
+            service: Ok(self.service.clone()),
+            transport: self.transport.clone(),
+        }
+    }
 }
 
 #[pymethods]
 impl PyTES {
     #[new]
-    pub fn new(config: &PyConfiguration) -> PyResult<Self> {
-        let rt = Runtime::new().unwrap();
-        match rt.block_on(TES::new(&config.inner)) {
-            Ok(instance) => Ok(PyTES { inner: instance }),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Failed to create TES instance: {}",
-                e
-            ))),
-        }
+    pub fn new(py: Python<'_>, config: &PyConfiguration) -> PyResult<Self> {
+        let config = config.inner.clone();
+        io(py, |rt| {
+            let client = rt
+                .block_on(TES::new(&config))
+                .map_err(|e| format!("Failed to create TES instance: {e}"))?;
+            let service = client.service.map_err(|e| e.to_string())?;
+            Ok(Self {
+                config,
+                service,
+                transport: client.transport,
+            })
+        })
     }
 
-    pub fn create(&self, task_file_path: String) -> PyResult<PyTask> {
-        let rt = Runtime::new().unwrap();
-
-        let task_json = match std::fs::read_to_string(task_file_path.clone()) {
-            Ok(contents) => contents,
-            Err(e) => {
-                eprintln!("Failed to read file: {}", e);
-                task_file_path.to_string()
-            }
-        };
+    pub fn create(&self, py: Python<'_>, task_file_path: String) -> PyResult<PyTask> {
+        let task_json = std::fs::read_to_string(&task_file_path).unwrap_or(task_file_path);
         let task: TesTask = serde_json::from_str(&task_json).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Failed to parse JSON: {}", e))
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to parse JSON: {e}"))
         })?;
-
-        match rt.block_on(self.inner.create(task.clone())) {
-            Ok(task) => Ok(PyTask { inner: task }),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Failed to create task: {}",
-                e
-            ))),
-        }
+        io(py, |rt| {
+            rt.block_on(self.client().create(task))
+                .map(|task| PyTask { inner: task })
+                .map_err(|e| format!("Failed to create task: {e}"))
+        })
     }
 
-    pub fn get(&self, view: &str, id: &str) -> PyResult<PyTesTask> {
-        let rt = Runtime::new().unwrap();
-        match rt.block_on(self.inner.get(view, id)) {
-            Ok(task) => Ok(PyTesTask { inner: task }),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Failed to get task: {}",
-                e
-            ))),
-        }
+    pub fn get(&self, py: Python<'_>, view: &str, id: &str) -> PyResult<PyTesTask> {
+        let view = view.to_owned();
+        let id = id.to_owned();
+        io(py, |rt| {
+            rt.block_on(self.client().get(&view, &id))
+                .map(|task| PyTesTask { inner: task })
+                .map_err(|e| format!("Failed to get task: {e}"))
+        })
     }
 
     #[pyo3(signature = (params=None))]
-    pub fn list(&self, params: Option<PyListTasksParams>) -> PyResult<PyTesListTasksResponse> {
-        let rt = Runtime::new().unwrap();
+    pub fn list(
+        &self,
+        py: Python<'_>,
+        params: Option<PyListTasksParams>,
+    ) -> PyResult<PyTesListTasksResponse> {
         let params = params.map(|p| p._inner);
-        match rt.block_on(self.inner.list_tasks(params)) {
-            Ok(response) => Ok(PyTesListTasksResponse { _inner: response }),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Failed to list tasks: {}",
-                e
-            ))),
-        }
+        io(py, |rt| {
+            rt.block_on(self.client().list_tasks(params))
+                .map(|response| PyTesListTasksResponse { _inner: response })
+                .map_err(|e| format!("Failed to list tasks: {e}"))
+        })
     }
 }

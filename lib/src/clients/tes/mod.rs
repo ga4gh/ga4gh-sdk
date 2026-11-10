@@ -442,6 +442,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tes_list_tasks_with_repeated_tags() {
+        let _request = mock("GET", "/tasks")
+            .match_query(mockito::Matcher::Exact(
+                "tag_key=first&tag_key=second&tag_value=one&tag_value=two".to_owned(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"tasks":[],"next_page_token":"page-2"}"#)
+            .create();
+        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let tes = TES {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service::default()),
+        };
+        let result = tes
+            .list_tasks(Some(ListTasksParams {
+                name_prefix: None,
+                state: None,
+                tag_key: Some(vec!["first".into(), "second".into()]),
+                tag_value: Some(vec!["one".into(), "two".into()]),
+                page_size: None,
+                page_token: None,
+                view: None,
+            }))
+            .await
+            .unwrap();
+        assert!(result.tasks.is_empty());
+        assert_eq!(result.next_page_token.as_deref(), Some("page-2"));
+    }
+
+    #[tokio::test]
     async fn test_all_tes_methods_under_api_root() {
         let id = "a/b ?#";
         let encoded_id = urlencode(id);
