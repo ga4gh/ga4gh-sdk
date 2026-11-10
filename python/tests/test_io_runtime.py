@@ -20,7 +20,7 @@ def test_synchronous_io(scenario):
 
 
 def exercise(scenario):
-    from GA4GH import Configuration, ServiceInfo, TES, Task, Transport
+    from GA4GH import Configuration, ServiceInfo, TES, Task, TesState, Transport
     ports = []
     requests = []
     ticks = []
@@ -92,13 +92,27 @@ def exercise(scenario):
         elif scenario == 'clients':
             assert 'Test TES' in ServiceInfo(config).get_service_info()
             tes = TES(config)
-            task = tes.create('{"executors": []}')
+            task = tes.create({'executors': []})
             assert task.id == 'task-1'
-            assert task.status() == 'Complete'
-            assert json.loads(task.cancel())['status'] == 'CANCELED'
-            assert Task('task-1', transport).status() == 'Complete'
+            assert task.status() is TesState.COMPLETE
+            assert task.cancel() is None
+            assert Task('task-1', transport).status() is TesState.COMPLETE
             assert tes.get('FULL', 'task-1').id == 'task-1'
             assert tes.list().tasks == []
+            # A client created on one Python thread remains usable on another.
+            cross_thread = []
+
+            def list_from_other_thread():
+                try:
+                    cross_thread.append(tes.list().tasks)
+                except BaseException as error:
+                    cross_thread.append(error)
+
+            worker = threading.Thread(target=list_from_other_thread)
+            worker.start()
+            worker.join(timeout=2)
+            assert not worker.is_alive()
+            assert cross_thread == [[]], cross_thread
             assert requests.count(('POST', '/tasks')) == 1
             # TES create/get/list and its Task share their live transport pool.
             assert len(set(ports[2:5] + ports[6:8])) == 1, ports
