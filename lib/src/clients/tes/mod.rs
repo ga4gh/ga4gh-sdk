@@ -1,3 +1,4 @@
+mod list_tasks_params;
 /// This module provides a client for interacting with the TES (Task Execution Service) API.
 ///
 /// The `TES` struct represents a TES client and provides methods for creating tasks, retrieving task status, canceling tasks, and listing tasks.
@@ -239,15 +240,12 @@ impl TES {
             e
         })?;
         let response_body = self.transport.post("tasks", Some(json!(task))).await?;
-        let v: serde_json::Value = serde_json::from_str(&response_body)?;
-
-        // Access the `id` field
-        let task_id = v
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .trim_matches('"')
-            .to_string();
+        let task_id = crate::utils::acknowledgement::execution_id(
+            &response_body,
+            "id",
+            "TES creation",
+            None,
+        )?;
 
         Ok(Task {
             id: task_id,

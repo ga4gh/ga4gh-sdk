@@ -11,11 +11,10 @@ different directory is shown.
   `docs: add contributor checks` or `fix(cli): handle missing config`.
 - Never put secrets or private details in commits, issues, or pull requests.
 - Treat `lib/src/clients/*/models/` as generated code. Do not edit models by
-  hand. See [the generation guide](docs/autogenerate_OAI_models.md) and
-  [#85](https://github.com/ga4gh/ga4gh-sdk/issues/85) before changing them;
-  #85 tracks repeatable regeneration and preservation of existing adaptations.
-  The generation script runs `cargo fmt --all` after copying models so the
-  generated files pass `cargo fmt --all --check`.
+  hand. Regenerate them with `utils/build_models_wrapper.sh` and put hand
+  edits into `utils/patches/<api>.patch`; see
+  [the generation guide](docs/autogenerate_OAI_models.md). A clean run of the
+  wrapper must not change `lib/src/clients`.
 - When changing a public Rust, CLI, or Python API, consider the downstream
   extension use cases in [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78).
 
