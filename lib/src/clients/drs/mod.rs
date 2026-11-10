@@ -1,4 +1,5 @@
 pub mod models;
+pub mod resolution;
 
 use crate::clients::drs::models::AccessUrl;
 use crate::clients::drs::models::DrsObject;
@@ -6,8 +7,6 @@ use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::ServiceInfo;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::{urlencode, HttpStatusError, Transport};
-use log::error;
-use serde_json::from_str;
 
 /// The main struct for interacting with a DRS service.
 #[derive(Debug)]
@@ -79,22 +78,9 @@ impl DRS {
         &self,
         object_id: &str,
     ) -> Result<DrsObject, Box<dyn std::error::Error>> {
-        let object_id = urlencode(object_id);
-        let url = format!("objects/{}", object_id);
-        let response = self.transport.get(&url, None).await;
-
-        match response {
-            Ok(resp_str) => {
-                let object: DrsObject = from_str(&resp_str)?;
-                Ok(object)
-            }
-            Err(e) => {
-                error!("HTTP request failed: {:?}", e);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("HTTP request failed: {:?}", e),
-                )))
-            }
+        match self.get_object_once(object_id).await? {
+            resolution::Resolution::Ready(value) => Ok(value),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
         }
     }
 
@@ -112,23 +98,9 @@ impl DRS {
         object_id: &str,
         access_id: &str,
     ) -> Result<AccessUrl, Box<dyn std::error::Error>> {
-        let object_id = urlencode(object_id);
-        let access_id = urlencode(access_id);
-        let url = format!("objects/{}/access/{}", object_id, access_id);
-        let response = self.transport.get(&url, None).await;
-
-        match response {
-            Ok(resp_str) => {
-                let access_url: AccessUrl = from_str(&resp_str)?;
-                Ok(access_url)
-            }
-            Err(e) => {
-                error!("HTTP request failed: {:?}", e);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("HTTP request failed: {:?}", e),
-                )))
-            }
+        match self.get_access_url_once(object_id, access_id).await? {
+            resolution::Resolution::Ready(value) => Ok(value),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
         }
     }
 }

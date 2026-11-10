@@ -35,6 +35,41 @@ use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
 ## Installation
+Advanced transport callers can use `request_response` for status and headers
+before parsing, then consume `reqwest::Response::chunk()` incrementally or call
+`utils::transport::read_bounded` for lossless bytes. Dropping the response stops
+consumption. The existing text helpers remain available and now bound success
+bodies to 8 MiB and error bodies to 16 KiB while reading, including chunked bodies.
+Use `request_text` with explicit `BodyLimits` for different bounds. A
+`BodyLimitError` retains HTTP status even for an oversized error response.
+`Transport::with_client` and `request_builder` support custom client budgets and
+headers; HTTP types are re-exported as `ga4gh_sdk::reqwest`.
+
+`clients::trs::responses` offers tools pages with all pagination headers, follows
+the server's `next_page` URL within the same tools API root, and returns an
+opaque `files_zip` response without extraction or text conversion. These helpers
+compose with a configured `Transport` independently of the basic TRS client.
+
+The default client uses a 10-second connection budget and 60-second request
+budget. Use `with_timeouts` or inject a client to change them. For a multi-attempt
+operation, `RequestOptions` holds one absolute deadline, a local cancellation
+token, body bounds and an explicit replay classification. Retries are opt-in,
+capped at 32 attempts, and use exponential backoff with jitter; 429/503 honor
+delta/date `Retry-After` within that same deadline. Mark only protocol-defined
+reads as `ReadOnly` (including appropriate lookup POSTs). A non-replayable
+operation gets one attempt and reports lost-response ambiguity for reconciliation.
+`send_once` also covers multipart headers/body and permits an explicit larger
+upload budget. Dropping a future or canceling its token stops local I/O.
+
+DRS `get_object_once` and `get_access_url_once` return `Resolution::Ready` or
+`Pending` with a credential-free resume reference. The immediate convenience
+methods return a downcastable `PendingResolution` error on 202. Opt-in
+`resolve_object`/`resolve_access_url` honor integral-second `Retry-After`, one
+absolute `Operation` budget, cancellation and an attempt bound; failures retain
+the reference and last pending state. Zero delay becomes one second; missing,
+malformed, overflow or greater-than-one-hour delays are protocol errors.
+Authentication and malformed 200 responses remain errors, without pending retries.
+
 TBA
 
 ## Building

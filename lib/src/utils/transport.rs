@@ -42,6 +42,119 @@ use std::error::Error;
 use std::fmt;
 use url::Url;
 
+/// Default bounds for convenience text/JSON helpers. Advanced callers can choose
+/// their own limits or consume the raw response incrementally.
+#[derive(Clone, Copy, Debug)]
+pub struct BodyLimits {
+    pub success: usize,
+    pub error: usize,
+}
+
+/// Explicit absolute deadline, replay classification and bounded retry policy.
+#[derive(Clone, Debug)]
+pub struct RequestOptions {
+    pub operation: crate::utils::operation::Operation,
+    pub retry: crate::utils::operation::RetryPolicy,
+    pub safety: crate::utils::operation::ReplaySafety,
+    pub limits: BodyLimits,
+}
+
+impl RequestOptions {
+    /// Defaults to one non-replayable attempt.
+    pub fn new(budget: std::time::Duration) -> Self {
+        Self {
+            operation: crate::utils::operation::Operation::new(budget),
+            retry: Default::default(),
+            safety: crate::utils::operation::ReplaySafety::NonReplayable,
+            limits: Default::default(),
+        }
+    }
+}
+
+impl Default for BodyLimits {
+    fn default() -> Self {
+        Self {
+            success: 8 * 1024 * 1024,
+            error: 16 * 1024,
+        }
+    }
+}
+
+/// An oversized body. HTTP status remains available even on error responses.
+#[derive(Debug)]
+pub struct BodyLimitError {
+    pub status: reqwest::StatusCode,
+    pub limit: usize,
+}
+impl fmt::Display for BodyLimitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "HTTP {} response exceeds body limit of {} bytes",
+            self.status, self.limit
+        )
+    }
+}
+impl Error for BodyLimitError {}
+
+/// Lossless buffered response, including successful and unsuccessful HTTP status.
+#[derive(Debug)]
+pub struct BufferedResponse {
+    pub status: reqwest::StatusCode,
+    pub headers: reqwest::header::HeaderMap,
+    pub body: Vec<u8>,
+}
+
+/// Read incrementally with a hard bound, including bodies without Content-Length.
+/// Dropping this future also drops the response and stops consumption.
+pub async fn read_bounded(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<BufferedResponse, Box<dyn Error>> {
+    let status = response.status();
+    let headers = response.headers().clone();
+    if response
+        .content_length()
+        .is_some_and(|len| len > limit as u64)
+    {
+        return Err(Box::new(BodyLimitError { status, limit }));
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if chunk.len() > limit.saturating_sub(body.len()) {
+            return Err(Box::new(BodyLimitError { status, limit }));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(BufferedResponse {
+        status,
+        headers,
+        body,
+    })
+}
+
+/// Compatibility text decoding, bounded before decoding for both success/errors.
+pub async fn response_text(
+    response: reqwest::Response,
+    limits: BodyLimits,
+) -> Result<String, Box<dyn Error>> {
+    let limit = if response.status().is_success() {
+        limits.success
+    } else {
+        limits.error
+    };
+    let response = read_bounded(response, limit).await?;
+    let body = String::from_utf8_lossy(&response.body).into_owned();
+    if response.status.is_success() {
+        Ok(body)
+    } else {
+        Err(Box::new(HttpError {
+            status: response.status,
+            body,
+        }))
+    }
+}
+
 /// Percent-encodes one URL path segment, including `/` and spaces.
 pub fn urlencode<T: AsRef<str>>(value: T) -> String {
     value
@@ -90,15 +203,6 @@ impl Error for HttpError {}
 
 /// Previous name for [`HttpError`], retained for SDK callers.
 pub use HttpError as HttpStatusError;
-
-async fn read_response_text(response: reqwest::Response) -> std::io::Result<String> {
-    response.text().await.map_err(|error| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("Failed to read response text: {error}"),
-        )
-    })
-}
 
 /// An endpoint or API root that cannot safely be used for a request.
 #[derive(Debug)]
@@ -193,8 +297,164 @@ impl Transport {
     pub fn new(config: &Configuration) -> Self {
         Transport {
             config: config.clone(),
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("default HTTP client initialization failed"),
         }
+    }
+
+    /// Inject a configured client, for connection budgets, TLS and downstream use.
+    pub fn with_client(config: &Configuration, client: Client) -> Self {
+        Self {
+            config: config.clone(),
+            client,
+        }
+    }
+
+    pub fn with_timeouts(
+        config: &Configuration,
+        connect: std::time::Duration,
+        request: std::time::Duration,
+    ) -> reqwest::Result<Self> {
+        Client::builder()
+            .connect_timeout(connect)
+            .timeout(request)
+            .build()
+            .map(|client| Self::with_client(config, client))
+    }
+
+    /// Sends exactly once under an absolute operation budget, including body I/O.
+    /// Intended for streamed/non-replayable submissions with a deliberate budget.
+    pub async fn send_once(
+        &self,
+        request: reqwest::RequestBuilder,
+        operation: &crate::utils::operation::Operation,
+        limits: BodyLimits,
+    ) -> Result<String, Box<dyn Error>> {
+        use crate::utils::operation::AmbiguousSubmissionError;
+        let request = request.timeout(
+            operation
+                .deadline
+                .saturating_duration_since(tokio::time::Instant::now()),
+        );
+        let result = operation
+            .run(async { response_text(request.send().await?, limits).await })
+            .await;
+        match result {
+            Ok(Ok(body)) => Ok(body),
+            Ok(Err(error)) if error.downcast_ref::<HttpError>().is_some() => Err(error),
+            Ok(Err(error)) => Err(Box::new(AmbiguousSubmissionError {
+                reason: error.to_string(),
+            })),
+            Err(error) => Err(Box::new(AmbiguousSubmissionError {
+                reason: error.to_string(),
+            })),
+        }
+    }
+
+    /// Replay policy is opt-in and operation-specific. Never classify task/run
+    /// creation as ReadOnly. A lookup POST may be ReadOnly if the protocol says so.
+    pub async fn request_with_policy(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+        data: Option<Value>,
+        params: Option<Value>,
+        options: &RequestOptions,
+    ) -> Result<String, Box<dyn Error>> {
+        use crate::utils::operation::{retry_after, AmbiguousSubmissionError, ReplaySafety};
+        options.retry.validate()?;
+        let attempts = if options.safety == ReplaySafety::ReadOnly {
+            options.retry.max_attempts
+        } else {
+            1
+        };
+        for attempt in 1..=attempts {
+            let result = options
+                .operation
+                .run(self.request_response(method.clone(), endpoint, data.clone(), params.clone()))
+                .await;
+            let response = match result {
+                Ok(Ok(response)) => response,
+                Err(error) if options.safety == ReplaySafety::NonReplayable => {
+                    return Err(Box::new(AmbiguousSubmissionError {
+                        reason: error.to_string(),
+                    }))
+                }
+                Err(error) => return Err(Box::new(error)),
+                Ok(Err(error))
+                    if attempt < attempts && error.downcast_ref::<reqwest::Error>().is_some() =>
+                {
+                    options
+                        .operation
+                        .sleep(options.retry.delay(attempt))
+                        .await?;
+                    continue;
+                }
+                Ok(Err(error))
+                    if options.safety == ReplaySafety::NonReplayable
+                        && error.downcast_ref::<reqwest::Error>().is_some() =>
+                {
+                    return Err(Box::new(AmbiguousSubmissionError {
+                        reason: error.to_string(),
+                    }))
+                }
+                Ok(Err(error)) => return Err(error),
+            };
+            if attempt < attempts && matches!(response.status().as_u16(), 429 | 503) {
+                let backoff = options.retry.delay(attempt);
+                let delay = match response.headers().get(reqwest::header::RETRY_AFTER) {
+                    Some(value) => {
+                        retry_after(value.to_str()?, std::time::SystemTime::now())?.max(backoff)
+                    }
+                    None => backoff,
+                };
+                drop(response);
+                options.operation.sleep(delay).await?;
+                continue;
+            }
+            let result = options
+                .operation
+                .run(response_text(response, options.limits))
+                .await;
+            return match result {
+                Ok(Ok(body)) => Ok(body),
+                Ok(Err(error))
+                    if options.safety == ReplaySafety::NonReplayable
+                        && error.downcast_ref::<reqwest::Error>().is_some() =>
+                {
+                    Err(Box::new(AmbiguousSubmissionError {
+                        reason: error.to_string(),
+                    }))
+                }
+                Ok(Err(error)) => Err(error),
+                Err(error) if options.safety == ReplaySafety::NonReplayable => {
+                    Err(Box::new(AmbiguousSubmissionError {
+                        reason: error.to_string(),
+                    }))
+                }
+                Err(error) => Err(Box::new(error)),
+            };
+        }
+        Err("retry attempts exhausted".into())
+    }
+
+    /// Shared API-relative request construction. Service-specific callers can
+    /// add headers, streaming bodies or custom methods without losing policies.
+    /// Authentication remains controlled by the configured/injected client;
+    /// see #31 for configuration-based authentication support.
+    pub fn request_builder(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+    ) -> Result<reqwest::RequestBuilder, EndpointError> {
+        let mut request = self.client.request(method, self.endpoint(endpoint)?);
+        if let Some(agent) = &self.config.user_agent {
+            request = request.header(reqwest::header::USER_AGENT, agent);
+        }
+        Ok(request)
     }
 
     /// Resolves a relative path beneath the configured API root, with or without a trailing slash.
@@ -224,7 +484,9 @@ impl Transport {
         Ok(url)
     }
 
-    /// Sends an HTTP request with the specified method, endpoint, data, and parameters.
+    /// Sends one request and returns status/headers before decoding its body.
+    /// Non-2xx responses are also returned unchanged. Callers must interpret the
+    /// status and either consume bounded bytes, stream chunks, or drop it.
     ///
     /// # Arguments
     ///
@@ -235,22 +497,15 @@ impl Transport {
     ///
     /// # Returns
     ///
-    /// A `Result` containing the response body as a string, or an error if the request fails.
-    async fn request(
+    /// A raw response, or an endpoint/transport error. No automatic replay.
+    pub async fn request_response(
         &self,
         method: reqwest::Method,
         endpoint: &str,
         data: Option<Value>,
         params: Option<Value>,
-    ) -> Result<String, Box<dyn Error>> {
-        let url = self.endpoint(endpoint)?;
-
-        let mut request_builder = self.client.request(method, url);
-
-        if let Some(ref user_agent) = self.config.user_agent {
-            request_builder =
-                request_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
-        }
+    ) -> Result<reqwest::Response, Box<dyn Error>> {
+        let mut request_builder = self.request_builder(method, endpoint)?;
 
         if let Some(ref params_value) = params {
             // Validate or log params_value before setting it as query parameters
@@ -276,19 +531,35 @@ impl Transport {
             }
         }
 
-        let resp = request_builder.send().await?;
+        Ok(request_builder.send().await?)
+    }
 
-        let status = resp.status();
-        let content = read_response_text(resp).await?;
+    /// Text helper with caller-selected success/error bounds. No implicit retry.
+    pub async fn request_text(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+        data: Option<Value>,
+        params: Option<Value>,
+        limits: BodyLimits,
+    ) -> Result<String, Box<dyn Error>> {
+        response_text(
+            self.request_response(method, endpoint, data, params)
+                .await?,
+            limits,
+        )
+        .await
+    }
 
-        if status.is_success() {
-            Ok(content)
-        } else {
-            Err(Box::new(HttpError {
-                status,
-                body: content,
-            }))
-        }
+    async fn request(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+        data: Option<Value>,
+        params: Option<Value>,
+    ) -> Result<String, Box<dyn Error>> {
+        self.request_text(method, endpoint, data, params, BodyLimits::default())
+            .await
     }
 
     /// Sends a GET request to the specified endpoint with the given query parameters.
@@ -335,19 +606,11 @@ impl Transport {
         endpoint: &str,
         form: Form,
     ) -> Result<String, Box<dyn Error>> {
-        let url = self.endpoint(endpoint)?;
-        let mut request = self.client.post(url).multipart(form);
-        if let Some(user_agent) = &self.config.user_agent {
-            request = request.header(reqwest::header::USER_AGENT, user_agent);
-        }
+        let request = self
+            .request_builder(reqwest::Method::POST, endpoint)?
+            .multipart(form);
         let response = request.send().await?;
-        let status = response.status();
-        let body = read_response_text(response).await?;
-        if status.is_success() {
-            Ok(body)
-        } else {
-            Err(Box::new(HttpError { status, body }))
-        }
+        response_text(response, BodyLimits::default()).await
     }
 
     /// Sends a PUT request to the specified endpoint with the given data.
