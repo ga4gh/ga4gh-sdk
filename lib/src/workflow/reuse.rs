@@ -361,11 +361,12 @@ impl ReuseReceipt {
         max_bytes: u64,
         mut read: impl FnMut(&ArtifactReference) -> Result<ArtifactRead, AccessFailure>,
     ) -> (ReuseReport, ResultRecord) {
+        let requested_fingerprint = requested.fingerprint().ok();
         let mut report = ReuseReport {
             status: ReuseStatus::Eligible,
             reasons: vec![],
             original: self.original.clone(),
-            recipe_fingerprint: requested.fingerprint().unwrap_or_default(),
+            recipe_fingerprint: requested_fingerprint.clone().unwrap_or_default(),
             receipt_sha256: self.content_digest().unwrap_or_default(),
             measurements: ReuseMeasurements::default(),
         };
@@ -408,8 +409,11 @@ impl ReuseReceipt {
                 "stored recipe fingerprint does not match its recipe",
             );
         }
-        if self.recipe != *requested {
-            reject(ReasonCode::RecipeChanged, "requested recipe/input/parameters/executable/reference/output/runtime identity differs");
+        // The canonical fingerprint is the exact identity contract. JSON value
+        // equality is weaker (for example, -0.0 == 0.0), so never use PartialEq
+        // to authorize substitution. Fingerprinting failure also rejects reuse.
+        if requested_fingerprint.as_ref() != Some(&self.recipe_fingerprint) {
+            reject(ReasonCode::RecipeChanged, "requested recipe/input/parameters/executable/reference/output/runtime fingerprint differs");
         }
         if self.result.execution_state != "COMPLETE" {
             reject(

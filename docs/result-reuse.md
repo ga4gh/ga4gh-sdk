@@ -19,7 +19,9 @@ near-equal scientific metrics never authorizes this exact-reuse policy.
 
 Version 1 fingerprints the complete `RecipeIdentity` using SHA-256 over compact
 JSON with recursively sorted object keys. Array order and typed values remain
-significant. The format is versioned; it does not claim interoperability with
+significant, including the serialized distinction between JSON `-0.0` and `0.0`.
+Eligibility compares canonical fingerprints rather than JSON value equality.
+The format is versioned; it does not claim interoperability with
 engine-specific cache hashes. Identity includes:
 
 | Component | Required evidence |

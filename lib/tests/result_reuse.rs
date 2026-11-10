@@ -210,6 +210,100 @@ fn every_execution_relevant_change_invalidates_without_reading_artifacts() {
     }
 }
 #[test]
+fn canonical_fingerprints_reject_negative_zero_drift_in_configuration_and_json_parameters() {
+    for json_parameter in [false, true] {
+        let mut original = receipt();
+        if json_parameter {
+            original
+                .recipe
+                .parameters
+                .insert("numeric".into(), TypedValue::Json(json!({"value": -0.0})));
+        } else {
+            original.recipe.configuration = json!({"value": -0.0});
+        }
+        original.recipe_fingerprint = original.recipe.fingerprint().unwrap();
+        let mut requested = original.recipe.clone();
+        if json_parameter {
+            requested
+                .parameters
+                .insert("numeric".into(), TypedValue::Json(json!({"value": 0.0})));
+        } else {
+            requested.configuration = json!({"value": 0.0});
+        }
+        // serde_json value equality is weaker than the exact serialized identity.
+        assert_eq!(original.recipe, requested);
+        assert_ne!(
+            original.recipe_fingerprint,
+            requested.fingerprint().unwrap()
+        );
+        let reads = AtomicUsize::new(0);
+        let report = original.assess(&requested, &trust(&original), 32, |artifact| {
+            reads.fetch_add(1, Ordering::SeqCst);
+            read(artifact)
+        });
+        assert_eq!(
+            report.status,
+            ReuseStatus::Ineligible,
+            "JSON parameter: {json_parameter}; {report:?}"
+        );
+        reason(&report, ReasonCode::RecipeChanged);
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            original
+                .assess(&original.recipe, &trust(&original), 32, read)
+                .status,
+            ReuseStatus::Eligible
+        );
+    }
+}
+
+#[test]
+fn unsupported_and_nonfinite_numeric_identity_stays_ineligible() {
+    let original = receipt();
+    for decimal in ["NaN", "Infinity", "-Infinity", "1e9999"] {
+        let mut changed = original.clone();
+        changed
+            .recipe
+            .parameters
+            .insert("numeric".into(), TypedValue::Decimal(decimal.into()));
+        changed.recipe_fingerprint = changed.recipe.fingerprint().unwrap();
+        let report = changed.assess(&changed.recipe, &trust(&changed), 32, |_| {
+            panic!("invalid numeric identity must not read artifacts")
+        });
+        assert_eq!(report.status, ReuseStatus::Ineligible);
+        reason(&report, ReasonCode::InvalidIdentity);
+    }
+    for nonfinite in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(serde_json::Number::from_f64(nonfinite).is_none());
+    }
+    for json_parameter in [false, true] {
+        let mut changed = original.clone();
+        if json_parameter {
+            changed.recipe.parameters.insert(
+                "numeric".into(),
+                TypedValue::Json(json!("NONFINITE_LITERAL")),
+            );
+        } else {
+            changed.recipe.configuration = json!("NONFINITE_LITERAL");
+        }
+        let exported = String::from_utf8(changed.export().unwrap()).unwrap();
+        for literal in ["NaN", "Infinity", "-Infinity", "1e9999"] {
+            let invalid = exported.replace("\"NONFINITE_LITERAL\"", literal);
+            assert!(ReuseReceipt::import(invalid.as_bytes()).is_err());
+        }
+    }
+    let mut changed = original.clone();
+    changed.recipe.version += 1;
+    changed.recipe_fingerprint = changed.recipe.fingerprint().unwrap();
+    reason(
+        &changed.assess(&changed.recipe, &trust(&changed), 32, |_| {
+            panic!("unsupported identity must not read artifacts")
+        }),
+        ReasonCode::InvalidIdentity,
+    );
+}
+
+#[test]
 fn denial_missing_corrupt_size_and_unknown_access_remain_distinct() {
     let receipt = receipt();
     let trust = trust(&receipt);
