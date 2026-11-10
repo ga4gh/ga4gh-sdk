@@ -52,6 +52,9 @@ async fn real_qc_on_two_wes_instances() {
             .unwrap();
         let mut options = WaitOptions::new(Duration::from_secs(180));
         options.fetch_failure_logs = true;
+        // Toil can close a keep-alive connection while a run is still active.
+        // Retry only read-only status polls; the accepted submission is not replayed.
+        options.retry.max_attempts = 3;
         let wait = run.wait(&options).await;
         assert_eq!(wait.outcome, WaitOutcome::Complete, "{wait:?}");
         let log: Value = serde_json::from_str(

@@ -1,11 +1,15 @@
 //! Opt-in cross-client scenarios against the shared, nonexecuting API.
 use ga4gh_sdk::{
     clients::{
+        drs::uri::{AccessPreferences, AccessResolution, DrsResolver},
         tes::{models::TesTask, TES},
+        trs::{models::DescriptorTypeWithPlain, TRS},
         wes::{models::RunRequest, WorkflowAttachment, WES},
     },
     utils::{
-        configuration::Configuration, operation::AmbiguousSubmissionError, transport::Transport,
+        configuration::Configuration,
+        operation::{AmbiguousSubmissionError, Operation},
+        transport::Transport,
     },
 };
 use serde_json::{json, Value};
@@ -40,8 +44,11 @@ impl Session {
     fn config(&self, service: &str) -> Configuration {
         let mut config = Configuration::new(
             url::Url::parse(&format!(
-                "{}/sessions/{}/{}/v1",
-                self.base, self.id, service
+                "{}/sessions/{}/{}/{}",
+                self.base,
+                self.id,
+                service,
+                if service == "trs" { "v2" } else { "v1" }
             ))
             .unwrap(),
         );
@@ -133,6 +140,12 @@ async fn sdk_shared_scenarios() {
     let base = std::env::var("GA4GH_SCENARIO_API").unwrap();
     let s = Session::new(&base).await;
     let wes = s.wes().await;
+    let mut unsupported = request();
+    unsupported.workflow_type_version = "unsupported".into();
+    assert!(wes
+        .run_workflow_with_attachments(unsupported, attachment())
+        .await
+        .is_err());
     let a = wes
         .run_workflow_with_attachments(request(), attachment())
         .await
@@ -194,6 +207,80 @@ async fn sdk_shared_scenarios() {
         .unwrap_err()
         .downcast_ref::<AmbiguousSubmissionError>()
         .is_some());
+    let data_session = Session::new(&base).await;
+    let resolver = DrsResolver::default()
+        .with_service("synthetic", data_session.transport("drs").await)
+        .unwrap();
+    let budget = || Operation::new(std::time::Duration::from_secs(5));
+    assert!(matches!(
+        resolver
+            .access_plan_once(
+                "drs://synthetic/fixture",
+                &AccessPreferences::default(),
+                &budget()
+            )
+            .await
+            .unwrap(),
+        AccessResolution::Pending(_)
+    ));
+    data_session.control(json!({"action":"advance"})).await;
+    let plan = match resolver
+        .access_plan_once(
+            "drs://synthetic/fixture",
+            &AccessPreferences::default(),
+            &budget(),
+        )
+        .await
+        .unwrap()
+    {
+        AccessResolution::Ready(plan) => plan,
+        _ => panic!("fixture still pending"),
+    };
+    let bytes = reqwest::Client::new()
+        .get(plan.url.clone())
+        .headers(plan.headers.clone())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let expected = (0u8..=255)
+        .chain(b"\0GA4GH\xff\n".iter().copied())
+        .collect::<Vec<_>>();
+    assert_eq!(bytes.as_ref(), expected.as_slice());
+    data_session
+        .control(json!({"action":"advance","ticks":9}))
+        .await;
+    assert_eq!(
+        reqwest::Client::new()
+            .get(plan.url)
+            .headers(plan.headers)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    let trs_transport = data_session.transport("trs").await;
+    let trs = TRS {
+        config: data_session.config("trs"),
+        service: Ok(
+            serde_json::from_str(&trs_transport.get("service-info", None).await.unwrap()).unwrap(),
+        ),
+        transport: trs_transport,
+    };
+    let wrapper = trs
+        .get_descriptor("fixture", "1", DescriptorTypeWithPlain::Cwl)
+        .await
+        .unwrap();
+    assert_eq!(
+        wrapper.content.unwrap().as_bytes(),
+        include_bytes!("../../testbed/pack/fixture.cwl")
+    );
+
     let replay = s.journal().await;
     assert_eq!(replay["accepted_tasks"], 2);
     assert_eq!(replay["accepted_runs"], 3);

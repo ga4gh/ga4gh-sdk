@@ -85,6 +85,9 @@ fn resume_descriptor_is_credential_free_and_checked() {
     assert!(descriptor.run(&config).is_err());
     let other = Configuration::new(url::Url::parse("https://other.example/tes/v1").unwrap());
     assert!(descriptor.task(&other).is_err());
+
+    let double_slash = Configuration::new(url::Url::parse("https://example.org/tes/v1//").unwrap());
+    assert!(descriptor.task(&double_slash).is_err());
 }
 #[tokio::test]
 async fn real_waiter_retries_poll_and_fetches_failure_logs_once() {

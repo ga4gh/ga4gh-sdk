@@ -14,6 +14,7 @@ class AuthenticatedProvider extends RestWesProvider {
 const provider=new AuthenticatedProvider(base+s.base_path+'/wes/v1');
 assert.deepEqual((await provider.getServiceInfo()).supported_wes_versions,['1.1.0']);
 const req=()=>({workflow_params:{message:'synthetic'},workflow_type:'CWL',workflow_type_version:'v1.2',workflow_url:'fixture.cwl',workflow_attachment:[new File([fixture],'fixture.cwl')]});
+await assert.rejects(provider.runWorkflow({...req(),workflow_type_version:'unsupported'}));
 const a=await provider.runWorkflow(req());
 const b=await provider.runWorkflow(req());
 const page=await provider.listRuns(1);assert.equal(page.runs[0].run_id,a.run_id);

@@ -1,5 +1,27 @@
 # Phase two: reviewer handoff
 
+## Upstream reconciliation: 2026-11-10
+
+The workflow branch now includes upstream main `a1876a9`, including merged
+#113/#117/#123/#137–#140. The current DRS CLI/raw-response and resume-root fixes
+are retained alongside workflow commands; Python string inputs retain Rust
+ownership before releasing the GIL. The missing #138 prerequisite described in
+the historical handoff below is now included.
+
+All four workspace Rust checks passed on the reconciled source: 220 tests
+passed, none failed, four opt-in tests ignored. Workflow-contract feature tests
+also passed. Two real Toil WES 9.3.0 container executions were repeated on this
+source: both reached COMPLETE, golden report bytes and metrics were verified,
+comparison passed, and IPython consumed both HTML reports. The harness permits
+up to three read-only status attempts within its existing deadline; it never
+replays a submission. This completes the local integrated QC check requested
+below. It does not establish external-node or production operator acceptance.
+
+The remaining sections preserve the original source/evidence identities and
+historical execution results. Their old pre-merge synchronization instructions
+are superseded by this reconciliation note; operator gates remain open.
+
+
 Review entry point for the six phase-two issues. This packet contains the review
 route, acceptance boundaries, reproducible commands and preserved local results.
 It does not record an independent review or declare deployment acceptance.
