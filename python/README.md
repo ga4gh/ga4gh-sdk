@@ -143,26 +143,33 @@ for listed in page.tasks:
 ```
 
 - `TES.create(task)` takes a `dict` (or other mapping), a `TesTask`, or the path of a JSON
-  file (`str` or `os.PathLike`). It sends the task's JSON as given, including fields that
-  the TES models don't know, and returns a `Task`. An invalid task raises `ValueError`; a
-  missing file raises `FileNotFoundError`.
+  file (`str` or `os.PathLike`). A `str` is always a path, unlike for `TesTask(task)`; pass
+  JSON text as `TesTask.from_json(text)`. It sends the task's JSON as given, including
+  fields that the TES models don't know, and returns a `Task`.
 - `Task` addresses a task on the server by its `id`. `Task.status()` returns the current
   state as a `TesState`; `Task.cancel()` cancels the task and returns `None`.
 - `TES.get(view, id)` returns a `TesTask`; `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
 - `TES.list(params=None)` returns a `ListTasksResponse` with `tasks` (a list of
   `TesTask`) and `next_page_token`; see [Listing tasks](#listing-tasks).
+- Errors: invalid tasks and arguments raise `ValueError`, a missing task file
+  `FileNotFoundError` (an `OSError`). Failed requests and responses that don't fit the TES
+  models raise `RuntimeError`.
 
 ### Task objects
 
 `TesTask` holds a task: one to create, or one as returned by the server. Build one with
 `TesTask(task)` from a `dict` or JSON text, or with `TesTask.from_dict(d)`,
 `TesTask.from_json(text)` or `TesTask.from_file(path)`; all of them check the task
-against the TES models and raise `ValueError` if it doesn't fit.
+against the TES models and raise `ValueError` if it doesn't fit. The classmethods call
+`cls(task)`, so further constructor arguments of a subclass need defaults. Tasks can be
+pickled and copied.
 
 Its fields are properties: `id`, `state`, `name`, `description`, `creation_time`,
 `inputs`, `outputs`, `resources`, `executors`, `volumes`, `tags` and `logs`. Missing
 fields are `None`, except `state`, which is `TesState.UNKNOWN` then. Nested values, such
-as executors, come as `dict`s and `list`s. `status` is the same as `state`.
+as executors, come as `dict`s and `list`s. The `status` property is the same as `state` and
+is kept for compatibility. Data objects such as `TesTask` have properties; `Task`, which
+asks the server, has methods (`Task.status()`).
 
 `task.to_dict()` returns the whole task as a new `dict` and `task.json()` as JSON text,
 both including fields that the TES models don't know. `ListTasksResponse` has the same
@@ -174,7 +181,7 @@ two methods for the whole page.
 `INITIALIZING`, `RUNNING`, `PAUSED`, `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`,
 `CANCELED`, `PREEMPTED`, `CANCELING`). Its members are also strings:
 `TesState.RUNNING == "RUNNING"`, and `str()`, f-strings and `json.dumps()` give the
-state's name. `TesState("RUNNING")` looks a state up by name.
+state's name. `TesState("RUNNING")` looks a state up by name. Members can be pickled.
 
 ### Type hints
 

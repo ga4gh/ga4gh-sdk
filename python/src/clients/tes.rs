@@ -58,10 +58,15 @@ static TES_STATE: GILOnceCell<Py<PyType>> = GILOnceCell::new();
 pub fn tes_state_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     TES_STATE
         .get_or_try_init(py, || {
-            let module =
-                PyModule::from_code_bound(py, TES_STATE_SOURCE, "GA4GH/tes_state.py", "GA4GH")?;
-            Ok(module
-                .getattr("TesState")?
+            // Runs in a namespace of its own. `PyModule::from_code_bound` would register a
+            // module in `sys.modules` and, under the name `GA4GH`, overwrite the package's
+            // attributes; the class itself names `GA4GH` as its module.
+            let namespace = PyDict::new_bound(py);
+            namespace.set_item("__name__", "GA4GH")?;
+            py.run_bound(TES_STATE_SOURCE, Some(&namespace), None)?;
+            Ok(namespace
+                .get_item("TesState")?
+                .ok_or_else(|| PyRuntimeError::new_err("TesState is not defined"))?
                 .downcast_into::<PyType>()?
                 .unbind())
         })
@@ -193,8 +198,8 @@ impl PyTesTask {
     }
 
     /// Reads a task from a JSON file.
-    pub fn from_path(path: &Path) -> PyResult<Self> {
-        let text = read_file(path)?;
+    pub fn from_path(py: Python<'_>, path: &Path) -> PyResult<Self> {
+        let text = read_file(py, path)?;
         let raw = serde_json::from_str(&text).map_err(|e| {
             PyValueError::new_err(format!("Invalid task JSON in {}: {e}", path.display()))
         })?;
@@ -226,6 +231,9 @@ impl PyTesTask {
     }
 
     /// Builds a task from a mapping, such as the result of `to_dict()`.
+    ///
+    /// Like `from_json` and `from_file`, it calls `cls(task)`, so a subclass's further
+    /// constructor arguments need defaults.
     #[classmethod]
     fn from_dict<'py>(
         cls: &Bound<'py, PyType>,
@@ -249,8 +257,14 @@ impl PyTesTask {
     /// Reads a task from a JSON file. `path` is a `str` or `os.PathLike`.
     #[classmethod]
     fn from_file<'py>(cls: &Bound<'py, PyType>, path: PathBuf) -> PyResult<Bound<'py, PyAny>> {
-        let task = Self::from_path(&path)?;
+        let task = Self::from_path(cls.py(), &path)?;
         cls.call1((to_python(cls.py(), &task.raw)?,))
+    }
+
+    /// Lets `pickle` and `copy` rebuild the task, as `type(task)(task.to_dict())`.
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<(Bound<'py, PyType>, (PyObject,))> {
+        let raw = to_python(slf.py(), &slf.borrow().raw)?;
+        Ok((slf.get_type(), (raw,)))
     }
 
     #[getter]
@@ -525,11 +539,20 @@ impl PyTES {
     /// Creates a task and returns a `Task` for it.
     ///
     /// `task` is a `TesTask`, a `dict` (or other JSON-serialisable object), or the path of a
-    /// JSON file as `str` or `os.PathLike`. The task's JSON is sent as given, including
-    /// fields that the TES models don't know.
+    /// JSON file as `str` or `os.PathLike`. A `str` is always a path; pass JSON text as
+    /// `TesTask.from_json(text)`. The task's JSON is sent as given, including fields that
+    /// the TES models don't know.
     pub fn create(&self, py: Python<'_>, task: &Bound<'_, PyAny>) -> PyResult<PyTask> {
+        if let Ok(text) = task.downcast::<PyString>() {
+            if text.to_cow()?.trim_start().starts_with('{') {
+                return Err(PyValueError::new_err(
+                    "TES.create() takes a str as a file path; pass JSON text as \
+                     TesTask.from_json(text)",
+                ));
+            }
+        }
         let task = if task.is_instance_of::<PyString>() || task.hasattr("__fspath__")? {
-            PyTesTask::from_path(&task.extract::<PathBuf>()?)?
+            PyTesTask::from_path(task.py(), &task.extract::<PathBuf>()?)?
         } else {
             PyTesTask::from_python(task)?
         };

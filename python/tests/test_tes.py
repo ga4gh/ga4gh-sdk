@@ -1,11 +1,17 @@
 """The TES bindings: tasks from dicts and objects, typed results and the state enum."""
 
+import copy
 import enum
+import errno
 import json
+import os
 import pickle
+import sys
+from types import MappingProxyType
 
 import pytest
 
+import GA4GH
 from GA4GH import (
     ListTasksParams,
     ListTasksResponse,
@@ -57,6 +63,12 @@ def test_state_enum_members_are_strings():
     assert pickle.loads(pickle.dumps(TesState.QUEUED)) is TesState.QUEUED
 
 
+def test_state_enum_leaves_the_package_alone():
+    assert GA4GH.__file__.endswith("__init__.py")
+    assert not hasattr(GA4GH, "enum")
+    assert "GA4GH._tes_state" not in sys.modules
+
+
 def test_state_enum_rejects_unknown_names():
     with pytest.raises(ValueError):
         TesState("NOT_A_STATE")
@@ -82,6 +94,41 @@ def test_create_from_file_path(server, config, tmp_path):
     for argument in (path, str(path)):
         TES(config).create(argument)
         assert json.loads(server.last()["body"]) == NEW_TASK
+
+
+def test_create_from_other_mapping(server, config):
+    TES(config).create(MappingProxyType(NEW_TASK))
+    assert json.loads(server.last()["body"]) == NEW_TASK
+
+
+def test_create_takes_str_as_path_not_json_text(config):
+    with pytest.raises(ValueError, match="from_json"):
+        TES(config).create(json.dumps(NEW_TASK))
+
+
+def test_missing_file_has_system_message(tmp_path):
+    with pytest.raises(FileNotFoundError) as error:
+        TesTask.from_file(tmp_path / "missing.json")
+    assert error.value.strerror == os.strerror(errno.ENOENT)
+    assert error.value.filename == str(tmp_path / "missing.json")
+
+
+def test_file_that_is_not_utf8_raises_value_error(tmp_path):
+    path = tmp_path / "task.json"
+    path.write_bytes(b"\xff\xfe{}")
+    with pytest.raises(ValueError, match="UTF-8"):
+        TesTask.from_file(path)
+
+
+class PicklableTask(TesTask):
+    """A subclass at module level, so that pickle can find it."""
+
+
+def test_task_can_be_pickled_and_copied():
+    for task in (TesTask(NEW_TASK), PicklableTask(NEW_TASK)):
+        for clone in (pickle.loads(pickle.dumps(task)), copy.copy(task), copy.deepcopy(task)):
+            assert type(clone) is type(task)
+            assert clone.to_dict() == NEW_TASK
 
 
 def test_create_from_missing_file_raises_os_error(config, tmp_path):
@@ -193,3 +240,25 @@ def test_list_tasks_params_state_is_enum(server, config):
     assert ListTasksParams().state is None
     TES(config).list(params)
     assert server.last()["query"] == {"state": ["RUNNING"]}
+
+
+def test_list_tasks_params_rejects_unknown_state_in_any_case():
+    with pytest.raises(ValueError, match="Invalid TES state"):
+        ListTasksParams(state="running!")
+
+
+def test_server_task_without_state_is_unknown(config):
+    assert TesTask({"id": "x"}).state is TesState.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda tes, transport: tes.get("FULL", "missing"),
+        lambda tes, transport: Task("missing", transport).status(),
+        lambda tes, transport: Task("missing", transport).cancel(),
+    ],
+)
+def test_failed_requests_raise_runtime_error(config, call):
+    with pytest.raises(RuntimeError):
+        call(TES(config), Transport(config))
