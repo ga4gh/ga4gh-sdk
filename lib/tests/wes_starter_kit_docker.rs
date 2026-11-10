@@ -1,6 +1,6 @@
 #![cfg(feature = "wes_docker_integration_tests")]
 
-use ga4gh_sdk::clients::wes::models::{WesRunRequest, WesState};
+use ga4gh_sdk::clients::wes::models::{RunRequest, State};
 use ga4gh_sdk::clients::wes::{Run, WES};
 use ga4gh_sdk::utils::configuration::Configuration;
 use serde_json::json;
@@ -11,16 +11,13 @@ use url::Url;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn request(workflow_url: &str, sleep_seconds: u64) -> WesRunRequest {
-    WesRunRequest {
+fn request(workflow_url: &str, sleep_seconds: u64) -> RunRequest {
+    RunRequest {
         workflow_params: Some(json!({
             "sleep_seconds": sleep_seconds,
             "message": "sdk-integration",
         })),
-        workflow_type: Some("NEXTFLOW".into()),
-        workflow_type_version: Some("21.04.0".into()),
-        workflow_url: Some(workflow_url.into()),
-        ..Default::default()
+        ..RunRequest::new("NEXTFLOW".into(), "21.04.0".into(), workflow_url.into())
     }
 }
 
@@ -28,8 +25,8 @@ async fn wait_for_completion(run: &Run, deadline: Instant) {
     let mut last_observation = String::from("no status received");
     while Instant::now() < deadline {
         match timeout(REQUEST_TIMEOUT, run.status()).await {
-            Ok(Ok(WesState::Complete)) => return,
-            Ok(Ok(WesState::ExecutorError | WesState::SystemError | WesState::Canceled)) => {
+            Ok(Ok(State::Complete)) => return,
+            Ok(Ok(State::ExecutorError | State::SystemError | State::Canceled)) => {
                 panic!("run {} failed: {:?}", run.id, run.log().await);
             }
             Ok(Ok(state)) => last_observation = state.to_string(),
@@ -135,9 +132,9 @@ async fn starter_kit_wes_101_client_round_trip() {
         .expect("GetRunLog request timed out")
         .expect("SDK could not read completed run log");
     assert_eq!(log.run_id.as_deref(), Some(run.id.as_str()));
-    assert_eq!(log.state, Some(WesState::Complete));
+    assert_eq!(log.state, Some(State::Complete));
     assert_eq!(
-        log.request.as_ref().and_then(|r| r.workflow_url.as_deref()),
+        log.request.as_ref().map(|r| r.workflow_url.as_str()),
         Some(workflow_url.as_str())
     );
     assert_eq!(

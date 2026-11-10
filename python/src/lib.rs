@@ -43,7 +43,7 @@
 //!
 //! # Notes
 //!
-//! - The `Runtime::new().unwrap()` calls are used to create a Tokio runtime for asynchronous operations.
+//! - Synchronous network calls release the GIL and share a persistent Tokio runtime.
 //! - Error handling is done using `PyResult` and `pyo3::exceptions::PyRuntimeError`.
 //! - The `#[pymodule]` attribute is used to define the Python module initialization function.
 
