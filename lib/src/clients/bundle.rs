@@ -263,21 +263,62 @@ fn relative_reference(document: &str, reference: &str) -> Result<String, Box<dyn
     validate_filename(&path)?;
     Ok(path)
 }
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+enum ParseContext {
+    // $include contributes bytes but is not a YAML document.
+    Raw,
+    // Standalone CWL document or object imported outside a workflow step.
+    Document,
+    // A workflow step imported as an object; its `run` is a dependency.
+    Step,
+    // A map or sequence of workflow steps imported through `steps`.
+    Steps,
+}
+
 fn references(
     value: &serde_yaml::Value,
     document: &str,
-    result: &mut Vec<(String, bool)>,
-    step: bool,
+    result: &mut Vec<(String, ParseContext)>,
+    context: ParseContext,
 ) -> Result<(), Box<dyn Error>> {
     match value {
         serde_yaml::Value::Mapping(map) => {
+            if context == ParseContext::Steps {
+                if map.len() == 1 {
+                    if let Some((key, value)) = map.iter().next() {
+                        if key.as_str() == Some("$import") {
+                            let reference = value
+                                .as_str()
+                                .ok_or("dynamic CWL dependency is outside this MVP")?;
+                            result.push((
+                                relative_reference(document, reference)?,
+                                ParseContext::Steps,
+                            ));
+                            return Ok(());
+                        }
+                        if key.as_str() == Some("$include") {
+                            return Err("unsupported CWL steps declaration".into());
+                        }
+                    }
+                }
+                for value in map.values() {
+                    references(value, document, result, ParseContext::Step)?;
+                }
+                return Ok(());
+            }
             for (key, value) in map {
                 let key = key.as_str();
-                if matches!(key, Some("$import" | "$include")) || (step && key == Some("run")) {
+                if matches!(key, Some("$import" | "$include"))
+                    || (context == ParseContext::Step && key == Some("run"))
+                {
                     if let Some(reference) = value.as_str() {
                         result.push((
                             relative_reference(document, reference)?,
-                            key != Some("$include"),
+                            match key {
+                                Some("$include") => ParseContext::Raw,
+                                Some("run") => ParseContext::Document,
+                                _ => context,
+                            },
                         ));
                     } else if key != Some("run") || !value.is_mapping() {
                         return Err("dynamic CWL dependency is outside this MVP".into());
@@ -289,31 +330,27 @@ fn references(
                         .and_then(serde_yaml::Value::as_str)
                         == Some("Workflow")
                 {
-                    match value {
-                        serde_yaml::Value::Mapping(steps) => {
-                            for (_, value) in steps {
-                                references(value, document, result, true)?;
-                            }
-                        }
-                        serde_yaml::Value::Sequence(steps) => {
-                            for value in steps {
-                                references(value, document, result, true)?;
-                            }
-                        }
-                        _ => return Err("unsupported CWL steps declaration".into()),
-                    }
+                    references(value, document, result, ParseContext::Steps)?;
                 } else {
-                    references(value, document, result, false)?;
+                    references(value, document, result, ParseContext::Document)?;
                 }
             }
         }
         serde_yaml::Value::Sequence(values) => {
             for value in values {
-                references(value, document, result, false)?;
+                let item_context = if context == ParseContext::Steps {
+                    ParseContext::Step
+                } else {
+                    context
+                };
+                references(value, document, result, item_context)?;
             }
         }
         serde_yaml::Value::Tagged(_) => {
             return Err("tagged YAML is outside the CWL bundle MVP".into())
+        }
+        _ if matches!(context, ParseContext::Step | ParseContext::Steps) => {
+            return Err("unsupported CWL steps declaration".into())
         }
         _ => (),
     }
@@ -406,11 +443,11 @@ impl PreparedBundle {
             return Err("CWL bundle requires exactly one declared primary descriptor".into());
         }
         let primary = primaries.remove(0);
-        let mut queue = VecDeque::from([(primary.clone(), true)]);
+        let mut queue = VecDeque::from([(primary.clone(), ParseContext::Document)]);
         // Stage every declared descriptor, including imports not reached until parsing.
         for (path, file) in &available {
             if file.file_type == Some(FileType::SecondaryDescriptor) {
-                queue.push_back((path.clone(), true));
+                queue.push_back((path.clone(), ParseContext::Document));
             }
         }
         let mut files: BTreeMap<String, Arc<[u8]>> = BTreeMap::new();
@@ -419,7 +456,7 @@ impl PreparedBundle {
         let mut graph = BTreeMap::new();
         let mut total = 0usize;
         let mut cwl_version = None;
-        while let Some((path, parse)) = queue.pop_front() {
+        while let Some((path, context)) = queue.pop_front() {
             if !files.contains_key(&path) {
                 let declared = available
                     .get(&path)
@@ -466,7 +503,7 @@ impl PreparedBundle {
                 );
                 files.insert(path.clone(), bytes.into());
             }
-            if parse && parsed.insert(path.clone()) {
+            if context != ParseContext::Raw && parsed.insert((path.clone(), context)) {
                 let document: serde_yaml::Value = serde_yaml::from_slice(files[&path].as_ref())?;
                 if path == primary {
                     if document.get("class").and_then(serde_yaml::Value::as_str) != Some("Workflow")
@@ -479,18 +516,18 @@ impl PreparedBundle {
                         .map(str::to_owned);
                 }
                 let mut dependencies = Vec::new();
-                references(&document, &path, &mut dependencies, false)?;
-                for (dependency, parse) in dependencies {
+                references(&document, &path, &mut dependencies, context)?;
+                for (dependency, dependency_context) in dependencies {
                     if !available.contains_key(&dependency) {
                         return Err("CWL dependency is missing from the TRS file listing".into());
                     }
-                    if parse {
+                    if dependency_context != ParseContext::Raw {
                         graph
                             .entry(path.clone())
                             .or_insert_with(BTreeSet::new)
                             .insert(dependency.clone());
                     }
-                    queue.push_back((dependency, parse));
+                    queue.push_back((dependency, dependency_context));
                 }
             }
         }
