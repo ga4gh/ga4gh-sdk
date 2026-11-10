@@ -40,6 +40,10 @@ pub struct RunLog {
     /// The outputs from the workflow run.
     #[serde(rename = "outputs", skip_serializing_if = "Option::is_none")]
     pub outputs: Option<serde_json::Value>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl RunLog {
@@ -52,6 +56,7 @@ impl RunLog {
             task_logs_url: None,
             task_logs: None,
             outputs: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

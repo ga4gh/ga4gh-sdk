@@ -247,7 +247,7 @@ impl WES {
                     RunListBody::Standard(list) => list,
                     RunListBody::StarterKit(runs) => RunListResponse {
                         runs: Some(runs),
-                        next_page_token: None,
+                        ..Default::default()
                     },
                 };
                 Ok(list)
@@ -664,6 +664,33 @@ mod tests {
                 .id,
             "tagged"
         );
+    }
+
+    #[tokio::test]
+    async fn test_wes_sends_extra_fields_as_form_parts() {
+        let _m = mock("POST", "/extra-fields/runs")
+            .match_body(Matcher::AllOf(vec![
+                Matcher::Regex(r#"name="x_queue"\r\n\r\nlong"#.to_string()),
+                Matcher::Regex(r#"name="x_limits"\r\n\r\n\{"cpus":2\}"#.to_string()),
+            ]))
+            .with_status(200)
+            .with_body(r#"{"run_id":"extra"}"#)
+            .create();
+        let mut request = valid_request();
+        request.extra.insert("x_queue".to_string(), json!("long"));
+        request
+            .extra
+            .insert("x_limits".to_string(), json!({ "cpus": 2 }));
+        let wes = wes_for(&format!("{}/extra-fields", server_url()));
+        assert_eq!(wes.run_workflow(request).await.unwrap().id, "extra");
+
+        // An extra field must not replace a part of the request.
+        for field in ["workflow_url", "workflow_attachment"] {
+            let mut request = valid_request();
+            request.extra.insert(field.to_string(), json!("other"));
+            let error = wes.run_workflow(request).await.unwrap_err();
+            assert!(error.to_string().contains("would replace"), "{error}");
+        }
     }
 
     #[tokio::test]

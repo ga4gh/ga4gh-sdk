@@ -32,6 +32,10 @@ pub struct Authorizations {
         skip_serializing_if = "Option::is_none"
     )]
     pub bearer_auth_issuers: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Authorizations {
@@ -41,11 +45,12 @@ impl Authorizations {
             supported_types: None,
             passport_auth_issuers: None,
             bearer_auth_issuers: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
 /// An Optional list of support authorization types. More than one can be supported and tried in sequence. Defaults to `None` if empty or missing.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum SupportedTypes {
     #[serde(rename = "None")]
     None,
@@ -55,6 +60,9 @@ pub enum SupportedTypes {
     BearerAuth,
     #[serde(rename = "PassportAuth")]
     PassportAuth,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
 }
 
 impl Default for SupportedTypes {

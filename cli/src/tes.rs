@@ -253,11 +253,16 @@ fn parse_state(value: &str) -> anyhow::Result<TesState> {
         .and_then(|state| state.strip_suffix('"'))
         .unwrap_or(trimmed);
     let normalized = unquoted.to_ascii_uppercase().replace(' ', "_");
-    serde_json::from_value(serde_json::Value::String(normalized)).map_err(|_| {
-        anyhow::anyhow!(
-            "Invalid state '{value}': expected UNKNOWN, QUEUED, INITIALIZING, RUNNING, PAUSED, COMPLETE, EXECUTOR_ERROR, SYSTEM_ERROR, CANCELED, CANCELING, or PREEMPTED"
-        )
-    })
+    // `TesState` reads states that it doesn't know as `Unknown`; a filter
+    // must name a state exactly.
+    serde_json::from_value::<TesState>(serde_json::Value::String(normalized.clone()))
+        .ok()
+        .filter(|state| state.to_string() == normalized)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid state '{value}': expected UNKNOWN, QUEUED, INITIALIZING, RUNNING, PAUSED, COMPLETE, EXECUTOR_ERROR, SYSTEM_ERROR, CANCELED, CANCELING, or PREEMPTED"
+            )
+        })
 }
 
 // Helper functions

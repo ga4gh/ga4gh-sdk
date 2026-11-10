@@ -22,6 +22,10 @@ pub struct ToolFile {
     pub file_type: Option<FileType>,
     #[serde(rename = "checksum", skip_serializing_if = "Option::is_none")]
     pub checksum: Option<Box<models::Checksum>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ToolFile {
@@ -30,11 +34,12 @@ impl ToolFile {
             path: None,
             file_type: None,
             checksum: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
 ///
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum FileType {
     #[serde(rename = "TEST_FILE")]
     TestFile,
@@ -46,6 +51,9 @@ pub enum FileType {
     Containerfile,
     #[serde(rename = "OTHER")]
     Other,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
 }
 
 impl Default for FileType {

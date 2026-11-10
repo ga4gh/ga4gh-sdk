@@ -25,6 +25,10 @@ pub struct Summary {
     /// Number of objects not resolved.
     #[serde(rename = "unresolved", skip_serializing_if = "Option::is_none")]
     pub unresolved: Option<i32>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Summary {
@@ -34,6 +38,7 @@ impl Summary {
             requested: None,
             resolved: None,
             unresolved: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

@@ -27,6 +27,10 @@ pub struct ContentsObject {
     /// If this ContentsObject describes a nested bundle and the caller specified \"?expand=true\" on the request, then this contents array must be present and describe the objects within the nested bundle.
     #[serde(rename = "contents", skip_serializing_if = "Option::is_none")]
     pub contents: Option<Vec<models::ContentsObject>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ContentsObject {
@@ -36,6 +40,7 @@ impl ContentsObject {
             id: None,
             drs_uri: None,
             contents: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

@@ -25,6 +25,10 @@ pub struct DefaultWorkflowEngineParameter {
     /// The stringified version of the default parameter. e.g. \"2.45\".
     #[serde(rename = "default_value", skip_serializing_if = "Option::is_none")]
     pub default_value: Option<String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl DefaultWorkflowEngineParameter {
@@ -34,6 +38,7 @@ impl DefaultWorkflowEngineParameter {
             name: None,
             r#type: None,
             default_value: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

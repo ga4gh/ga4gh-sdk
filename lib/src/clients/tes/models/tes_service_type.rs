@@ -23,6 +23,10 @@ pub struct TesServiceType {
     /// Version of the API or specification. GA4GH specifications use semantic versioning.
     #[serde(rename = "version")]
     pub version: String,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesServiceType {
@@ -31,14 +35,18 @@ impl TesServiceType {
             group,
             artifact,
             version,
+            extra: serde_json::Map::new(),
         }
     }
 }
 ///
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Artifact {
     #[serde(rename = "tes")]
     Tes,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
 }
 
 impl Default for Artifact {

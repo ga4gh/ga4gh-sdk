@@ -17,18 +17,28 @@ use serde::{Deserialize, Serialize};
 pub struct DrsServiceType {
     #[serde(rename = "artifact")]
     pub artifact: Artifact,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl DrsServiceType {
     pub fn new(artifact: Artifact) -> DrsServiceType {
-        DrsServiceType { artifact }
+        DrsServiceType {
+            artifact,
+            extra: serde_json::Map::new(),
+        }
     }
 }
 ///
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Artifact {
     #[serde(rename = "drs")]
     Drs,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
 }
 
 impl Default for Artifact {

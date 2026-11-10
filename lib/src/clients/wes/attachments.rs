@@ -48,7 +48,8 @@ pub fn validate_filename(filename: &str) -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
-fn workflow_form(request: RunRequest) -> Result<Form, Box<dyn Error>> {
+fn workflow_form(mut request: RunRequest) -> Result<Form, Box<dyn Error>> {
+    let extra = std::mem::take(&mut request.extra);
     let value = serde_json::to_value(request)?;
     let required = |field: &str| -> Result<String, Box<dyn Error>> {
         value
@@ -81,7 +82,36 @@ fn workflow_form(request: RunRequest) -> Result<Form, Box<dyn Error>> {
             form = form.text(field, value.to_owned());
         }
     }
+    // Fields that the spec doesn't define go as further parts: strings as
+    // they are, other values as JSON, like `tags`.
+    for (field, value) in extra {
+        if is_reserved_part(&field) {
+            return Err(
+                format!("extra field {field} would replace a RunWorkflow form part").into(),
+            );
+        }
+        let text = match value {
+            serde_json::Value::String(text) => text,
+            value => serde_json::to_string(&value)?,
+        };
+        form = form.text(field, text);
+    }
     Ok(form)
+}
+
+fn is_reserved_part(field: &str) -> bool {
+    matches!(
+        field,
+        "workflow_params"
+            | "workflow_type"
+            | "workflow_type_version"
+            | "tags"
+            | "workflow_engine_parameters"
+            | "workflow_engine"
+            | "workflow_engine_version"
+            | "workflow_url"
+            | "workflow_attachment"
+    )
 }
 
 impl WES {

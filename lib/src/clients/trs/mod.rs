@@ -76,15 +76,18 @@ fn is_trs(service: &Service) -> bool {
     service.r#type.group == "org.ga4gh" && service.r#type.artifact.eq_ignore_ascii_case("trs")
 }
 
-fn is_plain(descriptor_type: DescriptorTypeWithPlain) -> bool {
-    matches!(
-        descriptor_type,
+// Descriptor types that the spec doesn't define count as plain if they use the
+// spec's `PLAIN_` prefix.
+fn is_plain(descriptor_type: &DescriptorTypeWithPlain) -> bool {
+    match descriptor_type {
         DescriptorTypeWithPlain::PlainCwl
-            | DescriptorTypeWithPlain::PlainWdl
-            | DescriptorTypeWithPlain::PlainNfl
-            | DescriptorTypeWithPlain::PlainGalaxy
-            | DescriptorTypeWithPlain::PlainSmk
-    )
+        | DescriptorTypeWithPlain::PlainWdl
+        | DescriptorTypeWithPlain::PlainNfl
+        | DescriptorTypeWithPlain::PlainGalaxy
+        | DescriptorTypeWithPlain::PlainSmk => true,
+        DescriptorTypeWithPlain::Unrecognized(value) => value.starts_with("PLAIN_"),
+        _ => false,
+    }
 }
 
 // Plain descriptor types return the bare file, not a JSON `FileWrapper`.
@@ -280,7 +283,7 @@ impl TRS {
         let path = format!(
             "{}/{}/descriptor",
             version_path(id, version_id)?,
-            descriptor_type
+            segment("descriptor type", &descriptor_type.to_string())?
         );
         self.get_file(&path, descriptor_type).await
     }
@@ -301,7 +304,7 @@ impl TRS {
         let path = format!(
             "{}/{}/descriptor/{}",
             version_path(id, version_id)?,
-            descriptor_type,
+            segment("descriptor type", &descriptor_type.to_string())?,
             segment("relative path", relative_path)?
         );
         self.get_file(&path, descriptor_type).await
@@ -312,7 +315,7 @@ impl TRS {
         path: &str,
         descriptor_type: DescriptorTypeWithPlain,
     ) -> Result<FileWrapper, Box<dyn Error>> {
-        if is_plain(descriptor_type) {
+        if is_plain(&descriptor_type) {
             Ok(plain_file(self.get_text(path, None).await?))
         } else {
             self.get_json(path, None).await
@@ -335,9 +338,9 @@ impl TRS {
         let path = format!(
             "{}/{}/tests",
             version_path(id, version_id)?,
-            descriptor_type
+            segment("descriptor type", &descriptor_type.to_string())?
         );
-        if is_plain(descriptor_type) {
+        if is_plain(&descriptor_type) {
             Ok(plain_tests(self.get_text(&path, None).await?))
         } else {
             self.get_json(&path, None).await
@@ -357,7 +360,7 @@ impl TRS {
         let path = format!(
             "{}/{}/files",
             version_path(id, version_id)?,
-            descriptor_type
+            segment("descriptor type", &descriptor_type.to_string())?
         );
         self.get_json(&path, None).await
     }
@@ -702,8 +705,51 @@ mod tests {
                     .await
                     .unwrap_err();
                 assert!(error.to_string().contains("relative path"), "{error}");
+                let error = client
+                    .get_descriptor("1", "1", DescriptorTypeWithPlain::Unrecognized(id.into()))
+                    .await
+                    .unwrap_err();
+                assert!(error.to_string().contains("descriptor type"), "{error}");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_unrecognized_descriptor_types_are_one_encoded_segment() {
+        let json = get_mock(
+            "unrecognized",
+            &tool_version("JUPYTER%2F..%3Fx/descriptor"),
+            r#"{"content":"notebook"}"#,
+        );
+        let plain = get_mock(
+            "unrecognized",
+            &tool_version("PLAIN_JUPYTER/descriptor"),
+            "notebook",
+        );
+        for client in clients("unrecognized") {
+            let file = client
+                .get_descriptor(
+                    TOOL_ID,
+                    VERSION_ID,
+                    DescriptorTypeWithPlain::Unrecognized("JUPYTER/..?x".into()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(file.content.as_deref(), Some("notebook"));
+            // The spec's `PLAIN_` prefix marks a bare file, also for types that
+            // the spec doesn't define.
+            let file = client
+                .get_descriptor(
+                    TOOL_ID,
+                    VERSION_ID,
+                    DescriptorTypeWithPlain::Unrecognized("PLAIN_JUPYTER".into()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(file, plain_file("notebook".into()));
+        }
+        json.assert();
+        plain.assert();
     }
 
     #[tokio::test]
@@ -753,7 +799,7 @@ mod tests {
             );
             for client in clients("descriptor") {
                 let file = client
-                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type)
+                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type.clone())
                     .await
                     .unwrap();
                 assert_eq!(file.content, Some(format!("{name} content")));
@@ -782,7 +828,7 @@ mod tests {
             );
             for client in clients("plain-descriptor") {
                 let file = client
-                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type)
+                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type.clone())
                     .await
                     .unwrap();
                 assert_eq!(file, plain_file(body.clone()));
