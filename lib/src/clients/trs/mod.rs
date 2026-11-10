@@ -44,9 +44,8 @@ use crate::clients::serviceinfo::models::Service;
 use crate::clients::trs::models::{
     DescriptorType, DescriptorTypeWithPlain, FileWrapper, Tool, ToolClass, ToolFile, ToolVersion,
 };
-use crate::clients::wes::urlencode;
 use crate::utils::configuration::Configuration;
-use crate::utils::transport::Transport;
+use crate::utils::transport::{urlencode, Transport};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
@@ -55,7 +54,6 @@ use std::error::Error;
 // Encodes a path parameter as one URL path segment. Empty values and dot
 // segments would change the path that the URL resolves to, so they are
 // rejected before any request.
-// TODO: use `crate::utils::transport::urlencode` once #109 moves it there.
 fn segment(name: &str, value: &str) -> Result<String, Box<dyn Error>> {
     if value.is_empty() || value == "." || value == ".." {
         return Err(format!("TRS {name} must not be empty, '.' or '..'").into());
@@ -195,18 +193,10 @@ impl TRS {
         Ok(instance)
     }
 
-    // Resolves `path` below the API root, with or without a trailing slash.
-    // TODO: use `Transport::endpoint` with API-relative paths once #109 lands.
-    fn url(&self, path: &str) -> Result<String, Box<dyn Error>> {
-        let mut base = self.config.base_path.clone();
-        if !base.path().ends_with('/') {
-            base.set_path(&format!("{}/", base.path()));
-        }
-        Ok(base.join(path)?.to_string())
-    }
-
+    // `path` is relative to the API root; `Transport` resolves it below
+    // `base_path`, with or without a trailing slash.
     async fn get_text(&self, path: &str, params: Option<Value>) -> Result<String, Box<dyn Error>> {
-        self.transport.get(&self.url(path)?, params).await
+        self.transport.get(path, params).await
     }
 
     async fn get_json<T: DeserializeOwned>(
@@ -492,7 +482,7 @@ mod tests {
                 service: Ok(Service::default()),
             };
             assert_eq!(
-                trs.url("tools/a%2Fb").unwrap(),
+                trs.transport.endpoint("tools/a%2Fb").unwrap().as_str(),
                 "https://example.org/a%20b/trs/v2/tools/a%2Fb"
             );
         }
