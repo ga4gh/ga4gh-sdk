@@ -26,7 +26,8 @@ tokio-util = { version = "0.7", features = ["rt", "io"] }
 httpdate = "1"
 futures-util = "0.3"
 sha2 = "0.10"
-serde_yaml = "0.9"
+# Maintained fork of serde_yaml; keep the existing Rust import path.
+serde_yaml = { package = "yaml_serde", version = "0.10" }
 percent-encoding = "2"
 
 [dependencies.reqwest]
