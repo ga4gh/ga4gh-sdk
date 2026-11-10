@@ -48,6 +48,37 @@ async fn malformed_tes_acknowledgements_never_return_handles_or_replay() {
 }
 
 #[tokio::test]
+async fn raw_tes_creation_preserves_extensions_and_rejects_missing_id() {
+    let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+    let tes = TES {
+        transport: Transport::new(&config),
+        config,
+        service: Ok(Service {
+            r#type: Box::new(ServiceType {
+                artifact: "tes".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+    };
+    let body = serde_json::json!({
+        "executors": [],
+        "extension_field": {"kept": true}
+    });
+    let expected_body = body.to_string();
+    let request = mock("POST", "/tasks")
+        .match_body(expected_body.as_str())
+        .with_status(200)
+        .with_body("{}")
+        .expect(1)
+        .create();
+    let error = tes.create_value(body).await.unwrap_err();
+    assert!(error.downcast_ref::<AcknowledgementError>().is_some());
+    assert!(error.to_string().contains("may have succeeded"));
+    request.assert();
+}
+
+#[tokio::test]
 async fn opaque_tes_id_survives_creation_and_later_requests() {
     let id = "\"opaque / % id\"";
     let create = mock("POST", "/tasks")

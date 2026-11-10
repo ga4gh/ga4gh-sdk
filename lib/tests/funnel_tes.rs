@@ -5,6 +5,7 @@ mod tests {
     use ga4gh_sdk::clients::tes::models::TesState;
     use ga4gh_sdk::clients::tes::models::TesTask;
     use ga4gh_sdk::clients::tes::Task;
+    use ga4gh_sdk::clients::tes::TesView;
     use ga4gh_sdk::clients::tes::TES;
     use ga4gh_sdk::utils::configuration::Configuration;
     use ga4gh_sdk::utils::test_utils::{ensure_funnel_running, setup};
@@ -98,7 +99,7 @@ mod tests {
             tag_value: None,
             page_size: None,
             page_token: None,
-            view: Some("BASIC".to_string()),
+            view: Some(TesView::Basic),
         };
 
         let list = tes.list_tasks(Some(params)).await;
