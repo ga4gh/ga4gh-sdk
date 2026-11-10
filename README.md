@@ -226,7 +226,8 @@ dependencies are rejected before submission.
 
 Preparation exposes a reviewable request plan and a credential-free provenance
 manifest. Wrapper URLs require an explicit `DescriptorFetcher`; the provided
-anonymous allowlist never reuses registry credentials or follows redirects.
+anonymous allowlist accepts only bare HTTP(S) origins, never reuses registry
+credentials, and never follows redirects.
 `submit` is a separate explicit call and uploads the same immutable staged bytes
 that were hashed, returning a run plus manifest/execution linkage. Workflow
 parameters, bearer tokens and signed descriptor URLs are excluded from provenance.
