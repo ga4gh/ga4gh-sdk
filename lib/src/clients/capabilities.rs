@@ -6,7 +6,7 @@ use super::{
         Task, TES,
     },
     wes::{
-        models::{WesRunRequest, WesServiceInfo},
+        models::{RunRequest, ServiceInfo},
         Run, WES,
     },
 };
@@ -52,7 +52,7 @@ impl CapabilitySnapshot {
     pub fn tes_info(&self) -> Result<TesServiceInfo, serde_json::Error> {
         self.typed_as()
     }
-    pub fn wes_info(&self) -> Result<WesServiceInfo, serde_json::Error> {
+    pub fn wes_info(&self) -> Result<ServiceInfo, serde_json::Error> {
         self.typed_as()
     }
     fn diagnostic(
@@ -79,9 +79,10 @@ impl CapabilitySnapshot {
     }
     /// Missing metadata remains unknown. An explicit nonempty language map is
     /// authoritative; version/engine constraints are compared only when supplied.
-    pub fn validate_wes(&self, request: &WesRunRequest) -> Vec<Diagnostic> {
+    pub fn validate_wes(&self, request: &RunRequest) -> Vec<Diagnostic> {
         let mut result = Vec::new();
-        let language = request.workflow_type.as_deref();
+        let request = serde_json::to_value(request).unwrap_or_default();
+        let language = request.get("workflow_type").and_then(Value::as_str);
         let map = self
             .raw
             .get("workflow_type_versions")
@@ -106,7 +107,7 @@ impl CapabilitySnapshot {
             ),
             support == Support::Unsupported,
         ));
-        if let Some(version) = request.workflow_type_version.as_deref() {
+        if let Some(version) = request.get("workflow_type_version").and_then(Value::as_str) {
             let versions = language_info
                 .and_then(|v| v.get("workflow_type_version"))
                 .and_then(Value::as_array);
@@ -127,7 +128,7 @@ impl CapabilitySnapshot {
                 support == Support::Unsupported,
             ));
         }
-        if let Some(engine) = request.workflow_engine.as_deref() {
+        if let Some(engine) = request.get("workflow_engine").and_then(Value::as_str) {
             let map = self
                 .raw
                 .get("workflow_engine_versions")
@@ -148,7 +149,10 @@ impl CapabilitySnapshot {
                 format!("requested engine {engine}"),
                 support == Support::Unsupported,
             ));
-            if let Some(version) = request.workflow_engine_version.as_deref() {
+            if let Some(version) = request
+                .get("workflow_engine_version")
+                .and_then(Value::as_str)
+            {
                 let advertised = map.and_then(|m| m.get(engine));
                 let versions = advertised
                     .and_then(|v| v.get("workflow_engine_version"))
@@ -318,7 +322,7 @@ impl Discovered<WES> {
     }
     pub async fn run_validated(
         &self,
-        request: WesRunRequest,
+        request: RunRequest,
         strict: bool,
     ) -> Result<Run, Box<dyn Error>> {
         ensure_strict(&self.capabilities.validate_wes(&request), strict)?;

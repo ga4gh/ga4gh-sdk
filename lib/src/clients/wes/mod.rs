@@ -2,18 +2,19 @@ pub mod attachments;
 pub mod models;
 
 use crate::clients::serviceinfo::models::Service;
-use crate::clients::wes::models::WesRunId;
-use crate::clients::wes::models::WesRunListResponse;
-use crate::clients::wes::models::WesRunLog;
-use crate::clients::wes::models::WesRunRequest;
-use crate::clients::wes::models::WesRunStatus;
-use crate::clients::wes::models::WesState;
+use crate::clients::wes::models::RunId;
+use crate::clients::wes::models::RunListResponse;
+use crate::clients::wes::models::RunListResponseRunsInner;
+use crate::clients::wes::models::RunLog;
+use crate::clients::wes::models::RunRequest;
+use crate::clients::wes::models::State;
+use crate::clients::wes::models::TaskListResponse;
+use crate::clients::wes::models::TaskLog;
 use crate::utils::configuration::Configuration;
 /// Existing import path for the shared path-segment encoder.
 pub use crate::utils::transport::urlencode;
 use crate::utils::transport::{HttpStatusError, Transport};
 use log::error;
-use reqwest::multipart::{Form, Part};
 use serde_json::from_str;
 use serde_json::json;
 
@@ -39,7 +40,7 @@ impl Run {
     }
 
     /// Fetches the current status of the run.
-    pub async fn status(&self) -> Result<WesState, Box<dyn std::error::Error>> {
+    pub async fn status(&self) -> Result<State, Box<dyn std::error::Error>> {
         let run_id = &self.id;
         let url = format!("runs/{}/status", urlencode(run_id));
         let response = self.transport.get(&url, None).await;
@@ -51,7 +52,7 @@ impl Run {
                     .get("state")
                     .and_then(|s| s.as_str())
                     .ok_or("Missing state field")?;
-                let state: WesState = serde_json::from_value(json!(state_str))?;
+                let state: State = serde_json::from_value(json!(state_str))?;
                 Ok(state)
             }
             Err(e) => {
@@ -66,7 +67,7 @@ impl Run {
     }
 
     /// Cancels the run.
-    pub async fn cancel(&self) -> Result<WesRunId, Box<dyn std::error::Error>> {
+    pub async fn cancel(&self) -> Result<RunId, Box<dyn std::error::Error>> {
         let id = &self.id;
         let id = urlencode(id);
         let url = format!("runs/{}/cancel", id);
@@ -79,7 +80,7 @@ impl Run {
                     "WES cancellation",
                     Some(&self.id),
                 )?;
-                let run_id: WesRunId = from_str(&resp_str)?;
+                let run_id: RunId = from_str(&resp_str)?;
                 Ok(run_id)
             }
             Err(e) => Err(format!("HTTP request failed: {}", e).into()),
@@ -87,17 +88,58 @@ impl Run {
     }
 
     /// Fetches the details of the run (including logs and outputs).
-    pub async fn log(&self) -> Result<WesRunLog, Box<dyn std::error::Error>> {
+    pub async fn log(&self) -> Result<RunLog, Box<dyn std::error::Error>> {
         let id = &self.id;
         let url = format!("runs/{}", urlencode(id));
         let response = self.transport.get(&url, None).await;
         match response {
             Ok(resp_str) => {
-                let log: WesRunLog = from_str(&resp_str)?;
+                let log: RunLog = from_str(&resp_str)?;
                 Ok(log)
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Lists the tasks of the run, one page at a time (WES 1.1 `ListTasks`).
+    pub async fn list_tasks(
+        &self,
+        page_token: Option<String>,
+        page_size: Option<i64>,
+    ) -> Result<TaskListResponse, Box<dyn std::error::Error>> {
+        let path = format!("runs/{}/tasks", urlencode(&self.id));
+        let resp_str = self
+            .transport
+            .get(&path, paging_params(page_token, page_size))
+            .await?;
+        Ok(from_str(&resp_str)?)
+    }
+
+    /// Fetches one task of the run (WES 1.1 `GetTask`).
+    pub async fn get_task(&self, task_id: &str) -> Result<TaskLog, Box<dyn std::error::Error>> {
+        // An empty ID would address the task list instead.
+        if task_id.is_empty() {
+            return Err("task ID must not be empty".into());
+        }
+        let path = format!("runs/{}/tasks/{}", urlencode(&self.id), urlencode(task_id));
+        let resp_str = self.transport.get(&path, None).await?;
+        Ok(from_str(&resp_str)?)
+    }
+}
+
+// Builds the query parameters of the WES list endpoints.
+fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<serde_json::Value> {
+    let mut params = serde_json::Map::new();
+    if let Some(token) = page_token {
+        params.insert("page_token".to_string(), json!(token));
+    }
+    if let Some(size) = page_size {
+        params.insert("page_size".to_string(), json!(size));
+    }
+    if params.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(params))
     }
 }
 
@@ -153,7 +195,7 @@ impl WES {
     /// Creates a new workflow run.
     pub async fn run_workflow(
         &self,
-        request: WesRunRequest,
+        request: RunRequest,
     ) -> Result<Run, Box<dyn std::error::Error>> {
         self.run_workflow_with_attachments(request, Vec::new())
             .await
@@ -162,91 +204,22 @@ impl WES {
     /// Creates a workflow run with optional uploaded workflow files.
     pub async fn run_workflow_with_attachments(
         &self,
-        request: WesRunRequest,
+        request: RunRequest,
         attachments: Vec<WorkflowAttachment>,
     ) -> Result<Run, Box<dyn std::error::Error>> {
-        self.check().map_err(|e| {
-            error!("Service check failed: {}", e);
-            e
-        })?;
-
-        let workflow_type = request
-            .workflow_type
-            .filter(|s| !s.is_empty())
-            .ok_or("workflow_type is required")?;
-        let workflow_type_version = request
-            .workflow_type_version
-            .filter(|s| !s.is_empty())
-            .ok_or("workflow_type_version is required")?;
-        let workflow_params = request
-            .workflow_params
-            .ok_or("workflow_params is required")?;
-        let workflow_url = request
-            .workflow_url
-            .filter(|s| !s.is_empty())
-            .ok_or("workflow_url is required")?;
-
-        let mut form = Form::new()
-            .text("workflow_type", workflow_type)
-            .text("workflow_type_version", workflow_type_version)
-            .text("workflow_params", serde_json::to_string(&workflow_params)?)
-            .text("workflow_url", workflow_url);
-        if let Some(value) = request.tags {
-            form = form.text("tags", serde_json::to_string(&value)?);
-        }
-        if let Some(value) = request.workflow_engine_parameters {
-            form = form.text("workflow_engine_parameters", serde_json::to_string(&value)?);
-        }
-        if let Some(value) = request.workflow_engine {
-            form = form.text("workflow_engine", value);
-        }
-        if let Some(value) = request.workflow_engine_version {
-            form = form.text("workflow_engine_version", value);
-        }
-        for attachment in attachments {
-            if attachment.filename.is_empty()
-                || attachment
-                    .filename
-                    .split('/')
-                    .any(|segment| segment == "..")
-                || attachment
-                    .filename
-                    .split('\\')
-                    .any(|segment| segment == "..")
-            {
-                return Err(
-                    "workflow attachment filename must not be empty or contain '..' segments"
-                        .into(),
-                );
-            }
-            form = form.part(
-                "workflow_attachment",
-                Part::bytes(attachment.content).file_name(attachment.filename),
-            );
-        }
-
-        let response = self.transport.post_multipart("runs", form).await;
-
-        match response {
-            Ok(response_body) => {
-                let run_id = crate::utils::acknowledgement::execution_id(
-                    &response_body,
-                    "run_id",
-                    "WES creation",
-                    None,
-                )?;
-
-                let run = Run {
-                    id: run_id,
-                    transport: self.transport.clone(),
-                };
-                Ok(run)
-            }
-            Err(e) => Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create run: {}", e),
-            ))),
-        }
+        let attachments = attachments
+            .into_iter()
+            .map(|file| attachments::StreamingAttachment {
+                filename: file.filename,
+                source: attachments::AttachmentSource::Bytes(file.content),
+            })
+            .collect();
+        self.run_workflow_streaming(
+            request,
+            attachments,
+            &crate::utils::operation::Operation::new(std::time::Duration::from_secs(60)),
+        )
+        .await
     }
 
     /// List runs.
@@ -254,34 +227,25 @@ impl WES {
         &self,
         next_page_token: Option<String>,
         page_size: Option<i64>,
-    ) -> Result<WesRunListResponse, Box<dyn std::error::Error>> {
-        let mut params = serde_json::Map::new();
-        if let Some(token) = next_page_token {
-            params.insert("page_token".to_string(), json!(token));
-        }
-        if let Some(size) = page_size {
-            params.insert("page_size".to_string(), json!(size));
-        }
-        let params = if params.is_empty() {
-            None
-        } else {
-            Some(serde_json::Value::Object(params))
-        };
-        let response = self.transport.get("runs", params).await;
+    ) -> Result<RunListResponse, Box<dyn std::error::Error>> {
+        let response = self
+            .transport
+            .get("runs", paging_params(next_page_token, page_size))
+            .await;
 
         match response {
             Ok(resp_str) => {
                 // Starter Kit WES 0.2.0 returns a bare array, while WES 1.0.1
-                // specifies an object with `runs` and `next_page_token`.
+                // and 1.1.0 specify an object with `runs` and `next_page_token`.
                 #[derive(serde::Deserialize)]
                 #[serde(untagged)]
                 enum RunListBody {
-                    Standard(WesRunListResponse),
-                    StarterKit(Vec<WesRunStatus>),
+                    Standard(RunListResponse),
+                    StarterKit(Vec<RunListResponseRunsInner>),
                 }
                 let list = match from_str::<RunListBody>(&resp_str)? {
                     RunListBody::Standard(list) => list,
-                    RunListBody::StarterKit(runs) => WesRunListResponse {
+                    RunListBody::StarterKit(runs) => RunListResponse {
                         runs: Some(runs),
                         next_page_token: None,
                     },
@@ -299,7 +263,7 @@ impl WES {
     }
 
     /// Get run full details (wrapper around Run::log for convenience from client)
-    pub async fn get_run(&self, id: &str) -> Result<WesRunLog, Box<dyn std::error::Error>> {
+    pub async fn get_run(&self, id: &str) -> Result<RunLog, Box<dyn std::error::Error>> {
         let run = Run::new(id.to_string(), self.transport.clone());
         run.log().await
     }
@@ -377,13 +341,14 @@ mod tests {
         }
     }
 
-    fn valid_request() -> WesRunRequest {
-        WesRunRequest {
+    fn valid_request() -> RunRequest {
+        RunRequest {
             workflow_params: Some(json!({})),
-            workflow_type: Some("CWL".to_string()),
-            workflow_type_version: Some("v1.2".to_string()),
-            workflow_url: Some("https://example.org/workflow.cwl".to_string()),
-            ..Default::default()
+            ..RunRequest::new(
+                "CWL".to_string(),
+                "v1.2".to_string(),
+                "https://example.org/workflow.cwl".to_string(),
+            )
         }
     }
 
@@ -429,7 +394,7 @@ mod tests {
             let base = Url::parse(&format!("{}/ga4gh/wes/v1{suffix}", server_url())).unwrap();
             let wes = WES::new(&Configuration::new(base)).await.unwrap();
             let run = wes.run_workflow(valid_request()).await.unwrap();
-            assert_eq!(run.status().await.unwrap(), WesState::Complete);
+            assert_eq!(run.status().await.unwrap(), State::Complete);
         }
     }
 
@@ -532,12 +497,9 @@ mod tests {
                 ..Service::default()
             }),
         };
-        let request = WesRunRequest {
-            workflow_params: Some(json!({})),
-            workflow_type: Some("CWL".to_string()),
-            workflow_type_version: Some("v1.2".to_string()),
-            workflow_url: Some("workflow.cwl".to_string()),
-            ..Default::default()
+        let request = RunRequest {
+            workflow_url: "workflow.cwl".to_string(),
+            ..valid_request()
         };
         let attachments = vec![WorkflowAttachment {
             filename: "workflow.cwl".to_string(),
@@ -565,7 +527,7 @@ mod tests {
 
         let result = run.status().await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), WesState::Complete);
+        assert_eq!(result.unwrap(), State::Complete);
     }
 
     #[tokio::test]
@@ -587,7 +549,7 @@ mod tests {
             "a/b ?#".to_string(),
             Transport::new(&Configuration::new(base)),
         );
-        assert_eq!(run.status().await.unwrap(), WesState::Complete);
+        assert_eq!(run.status().await.unwrap(), State::Complete);
         assert_eq!(run.log().await.unwrap().run_id.as_deref(), Some("a/b ?#"));
         assert_eq!(
             run.cancel().await.unwrap().run_id.as_deref(),
@@ -662,7 +624,7 @@ mod tests {
         let runs = list.runs.unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].run_id, "123");
-        assert_eq!(runs[0].state, Some(WesState::Complete));
+        assert_eq!(runs[0].state, Some(State::Complete));
     }
 
     #[tokio::test]
@@ -707,5 +669,211 @@ mod tests {
         let result = wes.get_run("123").await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().run_id, Some("123".to_string()));
+    }
+
+    fn wes_for(base: &str) -> WES {
+        let config = Configuration::new(Url::parse(base).unwrap());
+        WES {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service {
+                r#type: Box::new(ServiceType {
+                    artifact: "wes".to_string(),
+                    ..Default::default()
+                }),
+                ..Service::default()
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wes_sends_tags_and_engine_parameters_as_json() {
+        let _m = mock("POST", "/runs")
+            .match_body(Matcher::AllOf(vec![
+                Matcher::Regex(r#"name="tags"\r\n\r\n\{"project":"biohackathon"\}"#.to_string()),
+                Matcher::Regex(
+                    r#"name="workflow_engine_parameters"\r\n\r\n\{"--cpus":"2"\}"#.to_string(),
+                ),
+                Matcher::Regex(r#"name="workflow_engine"\r\n\r\ncwltool"#.to_string()),
+            ]))
+            .with_status(200)
+            .with_body(r#"{"run_id":"tagged"}"#)
+            .create();
+        let request = RunRequest {
+            tags: Some([("project".to_string(), "biohackathon".to_string())].into()),
+            workflow_engine_parameters: Some([("--cpus".to_string(), "2".to_string())].into()),
+            workflow_engine: Some("cwltool".to_string()),
+            ..valid_request()
+        };
+        assert_eq!(
+            wes_for(&server_url())
+                .run_workflow(request)
+                .await
+                .unwrap()
+                .id,
+            "tagged"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wes_rejects_empty_required_fields() {
+        let wes = wes_for(&server_url());
+        for (field, request) in [
+            (
+                "workflow_type",
+                RunRequest {
+                    workflow_type: String::new(),
+                    ..valid_request()
+                },
+            ),
+            (
+                "workflow_type_version",
+                RunRequest {
+                    workflow_type_version: String::new(),
+                    ..valid_request()
+                },
+            ),
+            (
+                "workflow_url",
+                RunRequest {
+                    workflow_url: String::new(),
+                    ..valid_request()
+                },
+            ),
+            (
+                "workflow_params",
+                RunRequest {
+                    workflow_params: None,
+                    ..valid_request()
+                },
+            ),
+        ] {
+            let err = wes.run_workflow(request).await.unwrap_err();
+            assert_eq!(err.to_string(), format!("{} is required", field));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wes_list_runs_reads_status_and_summary_items() {
+        let _m = mock("GET", "/ga4gh/wes/v1/runs")
+            .with_status(200)
+            .with_body(r#"{"runs":[{"run_id":"1","state":"PREEMPTED"},{"run_id":"2","state":"COMPLETE","tags":{"a":"b"}}],"next_page_token":"next"}"#)
+            .create();
+        let wes = wes_for(&format!("{}/ga4gh/wes/v1", server_url()));
+        let list = wes.list_runs(None, None).await.unwrap();
+        let runs = list.runs.unwrap();
+        assert_eq!(runs[0].state, Some(State::Preempted));
+        assert_eq!(runs[1].tags.as_ref().unwrap()["a"], "b");
+        assert_eq!(list.next_page_token.as_deref(), Some("next"));
+    }
+
+    #[tokio::test]
+    async fn test_run_list_tasks() {
+        let _m = mock("GET", "/ga4gh/wes/v1/runs/a%2Fb/tasks")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::Regex("(^|&)page_token=a%2Bb%26c(&|$)".to_string()),
+                Matcher::Regex("(^|&)page_size=2(&|$)".to_string()),
+            ]))
+            .with_status(200)
+            .with_body(r#"{"task_logs":[{"id":"t1","name":"align","exit_code":0}],"next_page_token":"next"}"#)
+            .create();
+        let base = Url::parse(&format!("{}/ga4gh/wes/v1", server_url())).unwrap();
+        let run = Run::new("a/b".to_string(), Transport::new(&Configuration::new(base)));
+        let list = run
+            .list_tasks(Some("a+b&c".to_string()), Some(2))
+            .await
+            .unwrap();
+        let tasks = list.task_logs.unwrap();
+        assert_eq!(tasks[0].id, "t1");
+        assert_eq!(tasks[0].exit_code, Some(0));
+        assert_eq!(list.next_page_token.as_deref(), Some("next"));
+    }
+
+    #[tokio::test]
+    async fn test_run_list_tasks_without_paging() {
+        let _m = mock("GET", "/runs/123/tasks")
+            .match_query(Matcher::Missing)
+            .with_status(200)
+            .with_body(r#"{"task_logs":[]}"#)
+            .create();
+        let run = Run::new(
+            "123".to_string(),
+            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+        );
+        assert!(run
+            .list_tasks(None, None)
+            .await
+            .unwrap()
+            .task_logs
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_run_list_tasks_rejects_invalid_body() {
+        let _m = mock("GET", "/runs/bad/tasks")
+            .with_status(200)
+            .with_body(r#"{"task_logs":[{"name":"no id"}]}"#)
+            .create();
+        let run = Run::new(
+            "bad".to_string(),
+            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+        );
+        assert!(run.list_tasks(None, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_task_methods_reject_invalid_ids() {
+        let run = Run::new(
+            "123".to_string(),
+            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+        );
+        let err = run.get_task("").await.unwrap_err();
+        assert_eq!(err.to_string(), "task ID must not be empty");
+        // Transport rejects dot segments before sending a request.
+        let is_endpoint_error = |err: Box<dyn std::error::Error>| {
+            err.downcast_ref::<crate::utils::transport::EndpointError>()
+                .is_some()
+        };
+        for id in [".", ".."] {
+            assert!(is_endpoint_error(run.get_task(id).await.unwrap_err()));
+            let run = Run::new(id.to_string(), run.transport.clone());
+            assert!(is_endpoint_error(
+                run.list_tasks(None, None).await.unwrap_err()
+            ));
+            assert!(is_endpoint_error(run.get_task("t1").await.unwrap_err()));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_get_task() {
+        let _m = mock("GET", "/ga4gh/wes/v1/runs/123/tasks/t%2F1")
+            .with_status(200)
+            .with_body(
+                r#"{"id":"t/1","name":"align","tes_uri":"https://tes.example.org/v1/tasks/x"}"#,
+            )
+            .create();
+        let base = Url::parse(&format!("{}/ga4gh/wes/v1/", server_url())).unwrap();
+        let run = Run::new("123".to_string(), Transport::new(&Configuration::new(base)));
+        let task = run.get_task("t/1").await.unwrap();
+        assert_eq!(task.id, "t/1");
+        assert_eq!(
+            task.tes_uri.as_deref(),
+            Some("https://tes.example.org/v1/tasks/x")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_get_task_reports_http_errors() {
+        let _m = mock("GET", "/runs/123/tasks/missing")
+            .with_status(404)
+            .with_body(r#"{"msg":"not found","status_code":404}"#)
+            .create();
+        let run = Run::new(
+            "123".to_string(),
+            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+        );
+        let err = run.get_task("missing").await.unwrap_err();
+        assert!(err.to_string().contains("404"), "{err}");
     }
 }

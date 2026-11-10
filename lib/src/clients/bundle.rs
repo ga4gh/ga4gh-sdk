@@ -3,7 +3,7 @@ use super::{
     trs::models::{tool_file::FileType, Checksum, FileWrapper, ToolFile},
     wes::{
         attachments::{validate_filename, StreamingAttachment},
-        models::WesRunRequest,
+        models::RunRequest,
         Run, WES,
     },
 };
@@ -133,7 +133,7 @@ impl DescriptorFetcher for AnonymousFetcher {
 pub struct PreparedBundle {
     files: BTreeMap<String, Arc<[u8]>>,
     manifest: BundleManifest,
-    request: WesRunRequest,
+    request: RunRequest,
 }
 pub struct SubmittedBundle {
     pub run: Run,
@@ -319,7 +319,7 @@ impl PreparedBundle {
     pub fn manifest(&self) -> &BundleManifest {
         &self.manifest
     }
-    pub fn request_plan(&self) -> WesRunRequest {
+    pub fn request_plan(&self) -> RunRequest {
         self.request.clone()
     }
     pub fn staged_files(&self) -> impl Iterator<Item = (&str, &[u8])> {
@@ -482,10 +482,10 @@ impl PreparedBundle {
             bundle_sha256: digest(&serde_json::to_vec(&canonical)?),
             execution: None,
         };
-        let request = WesRunRequest {
-            workflow_type: Some("CWL".into()),
-            workflow_type_version: Some(cwl_version),
-            workflow_url: Some(primary),
+        let request = RunRequest {
+            workflow_type: "CWL".into(),
+            workflow_type_version: cwl_version,
+            workflow_url: primary,
             workflow_params: Some(request.workflow_params),
             ..Default::default()
         };

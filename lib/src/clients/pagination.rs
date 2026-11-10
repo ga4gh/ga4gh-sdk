@@ -10,6 +10,7 @@ use crate::utils::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashSet, VecDeque},
     error::Error,
@@ -68,7 +69,7 @@ pub struct Pager {
     transport: Transport,
     checkpoint: PageCheckpoint,
     options: PagingOptions,
-    seen: HashSet<String>,
+    seen: HashSet<[u8; 32]>,
     requests: usize,
     items: usize,
     buffer: VecDeque<Value>,
@@ -102,7 +103,7 @@ impl Pager {
         };
         let mut seen = HashSet::new();
         if let Some(token) = &token {
-            seen.insert(token.clone());
+            seen.insert(Sha256::digest(token.as_bytes()).into());
         }
         Ok(Self {
             transport: transport.clone(),
@@ -141,7 +142,7 @@ impl Pager {
         }
         pager.checkpoint = checkpoint;
         if let Some(token) = &pager.checkpoint.next_token {
-            pager.seen.insert(token.clone());
+            pager.seen.insert(Sha256::digest(token.as_bytes()).into());
         }
         Ok(pager)
     }
@@ -150,7 +151,7 @@ impl Pager {
     pub fn checkpoint(&self) -> PageCheckpoint {
         self.partial_page
             .as_ref()
-            .or_else(|| {
+            .or({
                 if self.buffer.is_empty() {
                     None
                 } else {
@@ -219,24 +220,29 @@ impl Pager {
         let mut items = if self.checkpoint.service == ServiceKind::Wes && body.is_array() {
             body.as_array().unwrap().clone()
         } else {
-            body.get(path)
-                .and_then(Value::as_array)
-                .ok_or_else(|| self.failure("page is missing its items array"))?
-                .clone()
+            match body.get(path) {
+                Some(Value::Array(items)) => items.clone(),
+                None | Some(Value::Null)
+                    if self.checkpoint.service == ServiceKind::Wes && body.is_object() =>
+                {
+                    Vec::new()
+                }
+                _ => return Err(self.failure("page is missing its items array")),
+            }
         };
         let token = match body.get("next_page_token") {
             None | Some(Value::Null) => None,
             Some(Value::String(s)) => Some(s.clone()).filter(|s| !s.is_empty()),
             _ => return Err(self.failure("next_page_token must be a string")),
         };
-        if token
-            .as_ref()
-            .is_some_and(|token| self.seen.contains(token))
-        {
+        if token.as_ref().is_some_and(|token| {
+            self.seen
+                .contains(&<[u8; 32]>::from(Sha256::digest(token.as_bytes())))
+        }) {
             return Err(self.failure("continuation token cycle"));
         }
         if let Some(token) = &token {
-            self.seen.insert(token.clone());
+            self.seen.insert(Sha256::digest(token.as_bytes()).into());
         }
         let remaining = self
             .options

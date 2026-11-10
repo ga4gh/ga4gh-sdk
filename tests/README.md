@@ -96,6 +96,16 @@ Evidence is written to `target/phase2-qc/evidence.json`; servers stop on exit.
 `GA4GH_QC_NO_CONTAINER=1` mode executes on the host and must be reported separately.
 This suite uses native WES discovery; it makes no external-node/federation claim.
 
+## TRS public registries
+
+These smoke tests call WorkflowHub and Dockstore, so they need network
+access. They are marked `#[ignore]` rather than gated by a Cargo feature, so
+they build with the other tests but only run on request:
+
+```sh
+cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
+```
+
 ## Test fixtures
 
 - [`sample.tes`](sample.tes) comes from the Funnel task examples and is used by
