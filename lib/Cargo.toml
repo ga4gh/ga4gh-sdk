@@ -29,6 +29,10 @@ futures-util = "0.3"
 serde_yaml = "0.9"
 percent-encoding = "2"
 
+num-bigint = { version = "0.4", optional = true }
+num-rational = { version = "0.4", optional = true }
+jsonschema = { version = "0.61", default-features = false, optional = true }
+
 [dependencies.reqwest]
 version = "^0.11"
 features = ["json", "multipart", "stream"]
@@ -44,5 +48,6 @@ name = "ga4gh_sdk"
 path = "src/lib.rs"
 
 [features]
+workflow-contracts = ["dep:jsonschema", "dep:num-bigint", "dep:num-rational"]
 integration_tests = []
 wes_docker_integration_tests = []

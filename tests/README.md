@@ -76,6 +76,26 @@ instead of the SDK's generic discovery constructor. TRS is a controlled fixture;
 WES, the CWL engine and output verification are real. Starter Kit's disabled
 attachment handling remains unsupported for this bundle scenario.
 
+## Workflow contracts and two local QC executions
+
+```sh
+cargo test -p ga4gh-lib --features workflow-contracts --test workflow_contracts
+cargo test -p ga4gh-cli --test workflow
+python3 tests/run-phase2-qc.py
+```
+
+The first two commands exercise offline Draft 2020-12 validation, pinned upstream
+fixtures, actual CLI JSON/errors, partial output delivery and comparison policies.
+The optional Python harness requires Python 3.12+, Rust on PATH and a working Docker
+context with this checkout shared into its VM. It installs Toil 9.3.0 and IPython
+9.6.0, starts two independent loopback-only WES processes, submits the same
+sequence-QC CWL descriptor in its pinned Python container, verifies metrics and
+golden report bytes, compares their results and supplies both reports to IPython.
+Evidence is written to `target/phase2-qc/evidence.json`; servers stop on exit.
+`GA4GH_TOIL_ENV_DIR` can reuse an environment. The optional
+`GA4GH_QC_NO_CONTAINER=1` mode executes on the host and must be reported separately.
+This suite uses native WES discovery; it makes no external-node/federation claim.
+
 ## Test fixtures
 
 - [`sample.tes`](sample.tes) comes from the Funnel task examples and is used by

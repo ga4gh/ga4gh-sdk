@@ -130,7 +130,14 @@ that were hashed, returning a run plus manifest/execution linkage. Workflow
 parameters, bearer tokens and signed descriptor URLs are excluded from provenance.
 See the [named Toil integration check](tests/README.md) for an actual CWL execution.
 
-## Installation
+## Experimental workflow contracts
+
+Enable `ga4gh-lib/workflow-contracts` for pinned local I/O validation, immutable
+WES invocation plans, typed results with selected artifact evidence, and explicit
+scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
+`results`, `verify` and `compare`. See the [workflow guide](docs/workflow-contracts.md)
+for the public sequence-QC example, offline commands and evidence boundaries.
+
 `clients::drs::uri::DrsResolver` accepts hostname-based `drs://host/encoded-id`
 references, decodes IDs once, and returns an explicit access plan (URL and
 object-store headers). Configure an authority-to-`Transport` mapping for gateways
@@ -153,6 +160,8 @@ receive fabricated per-access attribution. A 202 retains pending keys and delay;
 resume through the same bulk API with caller-supplied credentials/Passports.
 There is no singular or anonymous fallback. Compatibility is verified against
 protocol fixtures, without a claim of broad real-service interoperability.
+
+## Installation
 
 TBA
 

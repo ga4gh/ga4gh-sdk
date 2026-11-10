@@ -11,9 +11,10 @@ readme.workspace = true
 license-file.workspace = true
 
 [dependencies]
-ga4gh-lib = { path = "../lib" }
+ga4gh-lib = { path = "../lib", features = ["workflow-contracts"] }
 clap = "4"
 tokio = { version = "1", features = ["full"] }
+serde = "1"
 serde_json = "^1.0"
 tempfile = "3.2"
 dirs = "5.0.1"
