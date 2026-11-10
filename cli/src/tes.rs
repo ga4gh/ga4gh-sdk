@@ -300,23 +300,6 @@ fn format_tasks_response(response: &TesListTasksResponse) -> String {
     table
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{parse_state, tes_state_to_str};
-    use ga4gh_sdk::clients::tes::models::TesState;
-
-    #[test]
-    fn displayed_error_states_can_be_used_as_list_filters() {
-        for state in [TesState::ExecutorError, TesState::SystemError] {
-            assert_eq!(parse_state(tes_state_to_str(&Some(state))).unwrap(), state);
-        }
-        assert!(parse_state("invalid")
-            .unwrap_err()
-            .to_string()
-            .contains("PREEMPTED"));
-    }
-}
-
 /// Stream JSONL a page at a time. Diagnostics and resume data go only to stderr.
 pub async fn export_all(
     sub: &ArgMatches,
@@ -410,5 +393,22 @@ pub async fn export_all(
                 return Ok(std::process::ExitCode::FAILURE);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_state, tes_state_to_str};
+    use ga4gh_sdk::clients::tes::models::TesState;
+
+    #[test]
+    fn displayed_error_states_can_be_used_as_list_filters() {
+        for state in [TesState::ExecutorError, TesState::SystemError] {
+            assert_eq!(parse_state(tes_state_to_str(&Some(state))).unwrap(), state);
+        }
+        assert!(parse_state("invalid")
+            .unwrap_err()
+            .to_string()
+            .contains("PREEMPTED"));
     }
 }

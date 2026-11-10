@@ -86,6 +86,18 @@ impl DRS {
         }
     }
 
+    /// Retrieves an object's JSON without discarding fields unknown to the SDK model.
+    pub async fn get_object_raw(
+        &self,
+        object_id: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let reference = self.resolution_reference(format!("objects/{}", urlencode(object_id)));
+        match self.resolve_reference_raw(&reference).await? {
+            resolution::Resolution::Ready(body) => Ok(body),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+        }
+    }
+
     /// Retrieves an access URL for a specific DRS object.
     ///
     /// # Arguments
@@ -102,6 +114,23 @@ impl DRS {
     ) -> Result<AccessUrl, Box<dyn std::error::Error>> {
         match self.get_access_url_once(object_id, access_id).await? {
             resolution::Resolution::Ready(value) => Ok(value),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+        }
+    }
+
+    /// Retrieves access URL JSON without discarding fields unknown to the SDK model.
+    pub async fn get_access_url_raw(
+        &self,
+        object_id: &str,
+        access_id: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let reference = self.resolution_reference(format!(
+            "objects/{}/access/{}",
+            urlencode(object_id),
+            urlencode(access_id)
+        ));
+        match self.resolve_reference_raw(&reference).await? {
+            resolution::Resolution::Ready(body) => Ok(body),
             resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
         }
     }
