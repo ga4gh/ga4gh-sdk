@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "owned_compose_containers_remaining": 0,
+  "owned_compose_volumes_remaining": 0,
+  "other_scenario_api_still_running": true,
+  "own_forward_ports_listening": {
+    "18910": false,
+    "18920": false
+  },
+  "vm_deleted": false,
+  "shared_ssh_mux_stopped": false,
+  "cloud_cleanup": "No acknowledged run ID after HTTP400; private UNKNOWN intent retained; no guessed cancellation"
+}

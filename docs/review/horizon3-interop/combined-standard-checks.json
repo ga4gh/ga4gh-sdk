@@ -1,0 +1,25 @@
+{
+  "source_commit": "56fa5ab275c9a6101c1bdfa9a1fe3f6de7ef94d7",
+  "checks": [
+    {
+      "command": "cargo fmt --all --check",
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets",
+      "exit_code": 0,
+      "log_sha256": "965b535fac83421a20610749045c1e71d1c8c3eef8cadce4f1d6d29ea4fb5b82"
+    },
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "log_sha256": "dabf928a2db79d3ef7b20e9b8ba88082b254d07b67ebd2cdc12fda95999073ba"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "log_sha256": "2d7c52d4517391d03deed7f7ff680b2a47f4d4c16dac5c56195bf664a18cf1d0"
+    }
+  ]
+}

@@ -1,0 +1,421 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-11-10T03:36:10.668490+00:00",
+  "sdk_revision": "955bf54128b00297842734976547d6c285e377a2",
+  "sdk_dirty": false,
+  "harness_sha256": "1035f61be9a84839e73eb8fed5d81aec91ffb6b916cd8ef15929cb0be6af2728",
+  "sdk_example_sha256": "52005d4ab3c0d05c658529bc36ad789549e74d4dcb497c433211ce2e851600d9",
+  "command": [
+    "tests/interop/run.py",
+    "--out",
+    "tests/interop/reports/final-not-run"
+  ],
+  "profiles": [
+    {
+      "id": "direct-funnel",
+      "profile": {
+        "schema_version": 1,
+        "fixtures": "../fixtures/manifest.json",
+        "advertised_spec": "observed in report; never inferred from the endpoint path",
+        "authentication": {
+          "kind": "synthetic OIDC for disposable local stack; bearer via environment/file",
+          "secrets_in_profile": false
+        },
+        "storage": {
+          "shared_work": "same absolute path on Nextflow host, Funnel and Docker VM",
+          "private_backend": "loopback published API, internal database/broker"
+        },
+        "upstream_suites": [
+          {
+            "repository": "https://github.com/elixir-cloud-aai/proTES",
+            "revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+            "path": "tests/integration/check.sh"
+          },
+          {
+            "repository": "https://github.com/ga4gh/openapi-test-runner",
+            "revision": "bc3eb911e877521409348e0225852d072d4de196",
+            "use": "optional existing schema suite; not replaced by this harness"
+          },
+          {
+            "repository": "https://github.com/ga4gh/drs-compliance-suite",
+            "use": "seed deployment-owned DRS objects before that existing suite; not run by TES-only profile"
+          }
+        ],
+        "id": "direct-funnel",
+        "kind": "direct-sdk",
+        "api_root": {
+          "environment": "TES_PROFILE_API_ROOT"
+        },
+        "spec": {
+          "protocol": "TES",
+          "tested": "1.1.0"
+        },
+        "implementation": {
+          "name": "Funnel",
+          "revision": "738ab75a",
+          "version": "0.12.3",
+          "linux_arm64_archive_sha256": "01c57611a8627781400cab6a17ce84fc2b5e782c9c39b3a14fd62dfcf1fe9184",
+          "task_image": "alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f"
+        },
+        "client": {
+          "name": "ga4gh-sdk provider_profiles real TES test",
+          "revision": "report.sdk_revision",
+          "suite": "lib/tests/provider_profiles.rs"
+        },
+        "features": [
+          "inline input staging",
+          "stdout/stderr",
+          "executor failure",
+          "cancel API state"
+        ],
+        "upstream_issues": [
+          "https://github.com/nextflow-io/nf-ga4gh/issues/2",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/6",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/7",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/11",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/12"
+        ]
+      },
+      "evidence": "not_run",
+      "checks": [
+        {
+          "id": "fixtures",
+          "outcome": "passed",
+          "detail": "Public fixture bytes verified and seeded",
+          "observed": {
+            "schema_version": 1,
+            "fixtures": [
+              {
+                "path": "main.nf",
+                "sha256": "b89064c24114e603b17c8ea816ca425c3c2773c578eac2b518b80cdd9e7bb6fc",
+                "size": 387
+              },
+              {
+                "path": "seed.txt",
+                "sha256": "c69c404318a3dbf8df2d67374f244c03cd5969c94ba42ca24b73a54712f594fa",
+                "size": 34
+              },
+              {
+                "path": "seqera.nf",
+                "sha256": "86ed3a8dd1ebfb1132468141b9f89f52e63b2dcfed6ce148657f2f86356a5db9",
+                "size": 246
+              }
+            ]
+          }
+        },
+        {
+          "id": "execution",
+          "outcome": "not_run",
+          "detail": "Explicit execution opt-in is absent"
+        }
+      ]
+    },
+    {
+      "id": "nf-ga4gh-protes",
+      "profile": {
+        "schema_version": 1,
+        "fixtures": "../fixtures/manifest.json",
+        "advertised_spec": "observed in report; never inferred from the endpoint path",
+        "authentication": {
+          "kind": "synthetic OIDC for disposable local stack; bearer via environment/file",
+          "secrets_in_profile": false
+        },
+        "storage": {
+          "shared_work": "same absolute path on Nextflow host, Funnel and Docker VM",
+          "private_backend": "loopback published API, internal database/broker"
+        },
+        "upstream_suites": [
+          {
+            "repository": "https://github.com/elixir-cloud-aai/proTES",
+            "revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+            "path": "tests/integration/check.sh"
+          },
+          {
+            "repository": "https://github.com/ga4gh/openapi-test-runner",
+            "revision": "bc3eb911e877521409348e0225852d072d4de196",
+            "use": "optional existing schema suite; not replaced by this harness"
+          },
+          {
+            "repository": "https://github.com/ga4gh/drs-compliance-suite",
+            "use": "seed deployment-owned DRS objects before that existing suite; not run by TES-only profile"
+          }
+        ],
+        "id": "nf-ga4gh-protes",
+        "kind": "nf",
+        "api_root": {
+          "environment": "NEXTFLOW_PROFILE_ENDPOINT",
+          "convention": "Plugin appends /v1/tasks; use proTES /ga4gh/tes, with no trailing slash"
+        },
+        "spec": {
+          "protocol": "TES",
+          "tested": "1.1.0"
+        },
+        "implementation": {
+          "name": "Nextflow/nf-ga4gh through proTES/Funnel",
+          "task_image": "python@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c",
+          "plugin_version": "1.5.0",
+          "nextflow_version": "26.10.5",
+          "nextflow_dist_sha256": "b030030c06040bf5f13ac423c318d146c95e8d1d82f5022799dcb24738bccf3e",
+          "plugin_documentation_revision": "00c313135a88eca3a4b0de1bfa6475eb5a63f8fe",
+          "plugin_release_revision": "23bcecd673dffcf5706b324494ab89ac1efd170c",
+          "plugin_tree_sha256": "9468cd66d5a07a67865fa74e430f9f4b30cd0ad6ab502b1fcf7c40c40ec9d92b",
+          "java_runtime": {
+            "name": "Temurin",
+            "version": "21.0.13+9 JRE",
+            "darwin_arm64_archive_sha256": "225bab0a09491ef06835488cd942f5d2befa9a0410a2484f0c8bbcf7506ec09a"
+          }
+        },
+        "client": {
+          "name": "Nextflow",
+          "suite_sha256": "7e8664a6b03ddde30cc079fba8642d9af6903a317257da8b27a538c23dd917b7"
+        },
+        "features": [
+          "shared work directory",
+          "directory and glob outputs",
+          "log selection",
+          "path prefix and cancellation coverage gaps"
+        ],
+        "upstream_issues": [
+          "https://github.com/nextflow-io/nf-ga4gh/issues/2",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/6",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/7",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/11",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/12"
+        ]
+      },
+      "evidence": "not_run",
+      "checks": [
+        {
+          "id": "fixtures",
+          "outcome": "passed",
+          "detail": "Public fixture bytes verified and seeded",
+          "observed": {
+            "schema_version": 1,
+            "fixtures": [
+              {
+                "path": "main.nf",
+                "sha256": "b89064c24114e603b17c8ea816ca425c3c2773c578eac2b518b80cdd9e7bb6fc",
+                "size": 387
+              },
+              {
+                "path": "seed.txt",
+                "sha256": "c69c404318a3dbf8df2d67374f244c03cd5969c94ba42ca24b73a54712f594fa",
+                "size": 34
+              },
+              {
+                "path": "seqera.nf",
+                "sha256": "86ed3a8dd1ebfb1132468141b9f89f52e63b2dcfed6ce148657f2f86356a5db9",
+                "size": 246
+              }
+            ]
+          }
+        },
+        {
+          "id": "execution",
+          "outcome": "not_run",
+          "detail": "Explicit execution opt-in is absent"
+        }
+      ]
+    },
+    {
+      "id": "protes-funnel",
+      "profile": {
+        "schema_version": 1,
+        "fixtures": "../fixtures/manifest.json",
+        "advertised_spec": "observed in report; never inferred from the endpoint path",
+        "authentication": {
+          "kind": "synthetic OIDC for disposable local stack; bearer via environment/file",
+          "secrets_in_profile": false
+        },
+        "storage": {
+          "shared_work": "same absolute path on Nextflow host, Funnel and Docker VM",
+          "private_backend": "loopback published API, internal database/broker"
+        },
+        "upstream_suites": [
+          {
+            "repository": "https://github.com/elixir-cloud-aai/proTES",
+            "revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+            "path": "tests/integration/check.sh"
+          },
+          {
+            "repository": "https://github.com/ga4gh/openapi-test-runner",
+            "revision": "bc3eb911e877521409348e0225852d072d4de196",
+            "use": "optional existing schema suite; not replaced by this harness"
+          },
+          {
+            "repository": "https://github.com/ga4gh/drs-compliance-suite",
+            "use": "seed deployment-owned DRS objects before that existing suite; not run by TES-only profile"
+          }
+        ],
+        "id": "protes-funnel",
+        "kind": "tes-suite",
+        "api_root": {
+          "environment": "TES_PROFILE_API_ROOT"
+        },
+        "spec": {
+          "protocol": "TES",
+          "tested": "1.1.0"
+        },
+        "implementation": {
+          "name": "proTES with Funnel",
+          "revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+          "image": "h3-protes@sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593",
+          "backend": "direct-funnel",
+          "advertised_version": "0.0.0+h3.55c4d15"
+        },
+        "client": {
+          "name": "proTES existing real integration script",
+          "suite_sha256": "7e8664a6b03ddde30cc079fba8642d9af6903a317257da8b27a538c23dd917b7"
+        },
+        "features": [
+          "inline input staging",
+          "stdout/stderr",
+          "executor failure",
+          "cancel API state"
+        ],
+        "upstream_issues": [
+          "https://github.com/nextflow-io/nf-ga4gh/issues/2",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/6",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/7",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/11",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/12"
+        ]
+      },
+      "evidence": "not_run",
+      "checks": [
+        {
+          "id": "fixtures",
+          "outcome": "passed",
+          "detail": "Public fixture bytes verified and seeded",
+          "observed": {
+            "schema_version": 1,
+            "fixtures": [
+              {
+                "path": "main.nf",
+                "sha256": "b89064c24114e603b17c8ea816ca425c3c2773c578eac2b518b80cdd9e7bb6fc",
+                "size": 387
+              },
+              {
+                "path": "seed.txt",
+                "sha256": "c69c404318a3dbf8df2d67374f244c03cd5969c94ba42ca24b73a54712f594fa",
+                "size": 34
+              },
+              {
+                "path": "seqera.nf",
+                "sha256": "86ed3a8dd1ebfb1132468141b9f89f52e63b2dcfed6ce148657f2f86356a5db9",
+                "size": 246
+              }
+            ]
+          }
+        },
+        {
+          "id": "execution",
+          "outcome": "not_run",
+          "detail": "Explicit execution opt-in is absent"
+        }
+      ]
+    },
+    {
+      "id": "seqera-native-wes",
+      "profile": {
+        "schema_version": 1,
+        "id": "seqera-native-wes",
+        "kind": "seqera",
+        "api_root": {
+          "environment": "SEQERA_PROFILE_API_ROOT",
+          "public_cloud": "https://api.cloud.seqera.io/ga4gh/wes/v1/"
+        },
+        "spec": {
+          "protocol": "WES",
+          "tested": "1.0",
+          "sdk_models": "1.1.0; runtime native profile checks remain explicit"
+        },
+        "implementation": {
+          "name": "Seqera native WES",
+          "version": "observed by operator; server image/revision not exposed",
+          "public_platform_version_observed": "27.1.0-cycle79"
+        },
+        "client": {
+          "name": "ga4gh-sdk seqera_wes_profile example",
+          "revision": "report.sdk_revision",
+          "auth": "Transport::with_client; sensitive reqwest default bearer header; redirects disabled"
+        },
+        "fixtures": "../fixtures/manifest.json",
+        "authentication": {
+          "kind": "operator-owned test account PAT file",
+          "private_context": [
+            "workspaceId",
+            "computeEnvId"
+          ],
+          "offline": "synthetic token/workspace/compute only"
+        },
+        "storage": {
+          "assumptions": "operator-approved compute environment provides its configured work storage",
+          "physical_cleanup": "WES state does not prove worker shutdown"
+        },
+        "features": [
+          "native NFL descriptor",
+          "multipart attachment",
+          "workspaceId and computeEnvId engine parameters",
+          "status",
+          "run details/log decoding",
+          "cancel API outcome"
+        ],
+        "launch_bound": {
+          "max_runs": 1,
+          "cpus": 1,
+          "memory": "512 MB",
+          "process_time": "2 min",
+          "workflow_sleep_seconds": 30,
+          "poll_budget_seconds_max": 60,
+          "cleanup": "cancel same acknowledged ID; retain private ledger on uncertainty; no automatic submission retry"
+        },
+        "references": [
+          "https://docs.seqera.io/platform-api/ga-4-gh-run-create/",
+          "https://github.com/ga4gh/ga4gh-sdk/issues/31",
+          "https://github.com/ga4gh/ga4gh-sdk/pull/142"
+        ],
+        "public_hello": {
+          "url": "https://github.com/nextflow-io/hello",
+          "expected_repository_head": "3c2cdc9823c2b4636e5e3e73e223878099ff5dc9",
+          "revision_enforced": false,
+          "resource_overrides": "not documented for native WES; selected environment policy remains operator-owned",
+          "global_observation_budget": "under 5 min including bounded HTTP calls; cancellation attempted on known acknowledged ID"
+        }
+      },
+      "evidence": "not_run",
+      "checks": [
+        {
+          "id": "fixtures",
+          "outcome": "passed",
+          "detail": "Public fixture bytes verified and seeded",
+          "observed": {
+            "schema_version": 1,
+            "fixtures": [
+              {
+                "path": "main.nf",
+                "sha256": "b89064c24114e603b17c8ea816ca425c3c2773c578eac2b518b80cdd9e7bb6fc",
+                "size": 387
+              },
+              {
+                "path": "seed.txt",
+                "sha256": "c69c404318a3dbf8df2d67374f244c03cd5969c94ba42ca24b73a54712f594fa",
+                "size": 34
+              },
+              {
+                "path": "seqera.nf",
+                "sha256": "86ed3a8dd1ebfb1132468141b9f89f52e63b2dcfed6ce148657f2f86356a5db9",
+                "size": 246
+              }
+            ]
+          }
+        },
+        {
+          "id": "execution",
+          "outcome": "not_run",
+          "detail": "Explicit execution opt-in is absent"
+        }
+      ]
+    }
+  ]
+}
