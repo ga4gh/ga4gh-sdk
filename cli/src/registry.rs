@@ -20,7 +20,10 @@ pub fn command() -> Command {
         .subcommand(
             Command::new("get")
                 .about("Get a service by its ID")
-                .arg(arg!(<id> "The ID of the service"))
+                .arg(
+                    arg!(<id> "The ID of the service")
+                        .value_parser(clap::builder::NonEmptyStringValueParser::new()),
+                )
                 .arg_required_else_help(true),
         )
         .subcommand(Command::new("types").about("List the types of the services in the registry"))
@@ -58,6 +61,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                 Ok(service) => {
                     CommandOutput::success(format!("{}\n", serde_json::to_string_pretty(&service)?))
                 }
+                // A 404 means an unknown ID here, so no base_path hint.
                 Err(error) => CommandOutput::failure(error),
             }
         }
@@ -88,11 +92,26 @@ fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
     }
 }
 
+/// Escapes control characters in a value from the registry, so that it can't
+/// add lines or terminal sequences to the output.
+fn printable(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().collect()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
 fn type_label(service_type: &ServiceType) -> String {
-    format!(
+    printable(&format!(
         "{}:{}:{}",
         service_type.group, service_type.artifact, service_type.version
-    )
+    ))
 }
 
 fn format_services(services: &[&ExternalService]) -> String {
@@ -100,16 +119,21 @@ fn format_services(services: &[&ExternalService]) -> String {
         .iter()
         .map(|service| {
             [
-                service.id.clone(),
+                printable(&service.id),
                 type_label(&service.r#type),
-                service.url.clone(),
+                printable(&service.url),
             ]
         })
         .collect();
     let header = ["ID", "TYPE", "URL"].map(String::from);
-    let id_width = rows.iter().chain([&header]).map(|row| row[0].len()).max();
-    let type_width = rows.iter().chain([&header]).map(|row| row[1].len()).max();
-    let (id_width, type_width) = (id_width.unwrap_or(0), type_width.unwrap_or(0));
+    let width = |column: usize| {
+        rows.iter()
+            .chain([&header])
+            .map(|row| row[column].chars().count())
+            .max()
+            .unwrap_or(0)
+    };
+    let (id_width, type_width) = (width(0), width(1));
     [header]
         .iter()
         .chain(&rows)
@@ -146,5 +170,33 @@ mod tests {
              org.example.wes  org.ga4gh:wes:1.1.0  https://example.org/wes\n"
         );
         assert_eq!(format_services(&[]), "ID  TYPE  URL\n");
+    }
+
+    #[test]
+    fn non_ascii_values_are_aligned_by_characters() {
+        let wide = service("org.exämple", "tes");
+        let short = service("a", "wes");
+        assert_eq!(
+            format_services(&[&wide, &short]),
+            "ID           TYPE                 URL\n\
+             org.exämple  org.ga4gh:tes:1.1.0  https://example.org/tes\n\
+             a            org.ga4gh:wes:1.1.0  https://example.org/wes\n"
+        );
+    }
+
+    #[test]
+    fn control_characters_are_escaped() {
+        let mut forged = service("a\nfake  org.ga4gh:tes:1.1.0  https://evil.example", "tes");
+        forged.url = "\u{1b}[2Khttps://example.org/tes\r".to_string();
+        forged.r#type.version = "1\n".to_string();
+        let output = format_services(&[&forged]);
+        assert_eq!(output.lines().count(), 2, "{output}");
+        assert!(
+            !output.contains('\u{1b}') && !output.contains('\r'),
+            "{output}"
+        );
+        assert!(output.contains(r"a\nfake"), "{output}");
+        assert!(output.contains(r"\u{1b}[2K"), "{output}");
+        assert!(output.contains(r"org.ga4gh:tes:1\n"), "{output}");
     }
 }

@@ -220,10 +220,15 @@ ga4gh-cli registry get org.example.tes
 ga4gh-cli registry types
 ```
 
+The specification has no server-side filter, so `--type` fetches all services
+and filters them in the CLI.
+
 The commands print only the fields of the Service Registry specification;
-fields that a registry adds are ignored. They exit with code 0 on success and
-code 1 on request or server errors. A 404 from `list` or `types` adds a hint to
-check `base_path`.
+fields that a registry adds are ignored. Control characters in values from the
+registry are printed escaped, such as `\n`. The commands exit with code 0 on
+success and code 1 on request or server errors. A 404 from `list` or `types`
+adds a hint to check `base_path`; from `get`, a 404 means that no service has
+that ID.
 
 ## Extending the CLI in Rust
 

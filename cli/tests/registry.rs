@@ -209,6 +209,13 @@ fn invalid_responses_and_unreachable_registries_fail() {
 }
 
 #[test]
+fn empty_service_id_is_a_usage_error() {
+    let output = run("http://127.0.0.1:9", &["registry", "get", ""]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
 fn missing_registry_section_is_an_error() {
     let output = run_with_section(
         json!({"TES": {"base_path": "http://localhost/ga4gh/tes/v1"}}),

@@ -52,11 +52,15 @@ impl ServiceRegistry {
 
     /// Gets one service by its ID (`GET /services/{serviceId}`).
     ///
-    /// The ID is percent-encoded as a single path segment.
+    /// The ID is percent-encoded as a single path segment. An empty ID is an
+    /// error, sent to no server.
     pub async fn get_service(
         &self,
         service_id: &str,
     ) -> Result<models::ExternalService, Box<dyn Error>> {
+        if service_id.is_empty() {
+            return Err("service ID must not be empty".into());
+        }
         self.get_json(&format!("services/{}", urlencode(service_id)))
             .await
     }
@@ -156,6 +160,8 @@ mod tests {
             let error = registry("/dots").get_service(id).await.unwrap_err();
             assert!(error.to_string().contains("dot segments"), "{error}");
         }
+        let error = registry("/dots").get_service("").await.unwrap_err();
+        assert_eq!(error.to_string(), "service ID must not be empty");
     }
 
     #[tokio::test]
