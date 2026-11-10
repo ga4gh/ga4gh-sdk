@@ -155,7 +155,12 @@ pub struct WES {
 impl WES {
     /// Creates a new `WES` instance.
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
-        let transport = Transport::new(config);
+        Self::from_transport(Transport::new(config)).await
+    }
+
+    /// Discover using a caller-owned transport, including its authenticated client.
+    pub async fn from_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        let config = transport.config.clone();
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             transport.get("service-info", None),
@@ -165,7 +170,7 @@ impl WES {
             response.and_then(|body| service_from_info(serde_json::from_str(&body)?));
 
         let instance = WES {
-            config: config.clone(),
+            config,
             transport,
             service,
         };

@@ -9,6 +9,16 @@ use sha2::{Digest, Sha256};
 use std::{collections::HashMap, error::Error};
 pub type ContractError = Box<dyn Error>;
 pub const PROFILE_REVISION: &str = "45d41324353cb4900fdd999c307c2e36a3f2a410";
+const FRAGMENT: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b' ')
+    .add(b'%')
+    .add(b'#')
+    .add(b'?')
+    .add(b'"')
+    .add(b'<')
+    .add(b'>')
+    .add(b'`')
+    .add(b'\\');
 const DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
 const PROFILE_URI: &str = "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/ga4gh-io-profile.schema.json";
 const WIDGET_URI: &str = "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/vocabularies/ui-widgets.schema.json";
@@ -44,41 +54,66 @@ impl Retrieve for LocalResources {
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn vocabulary_check(v: &Value) -> Result<(), ContractError> {
-    match v {
-        Value::Object(o) => {
-            if let Some(vocab) = o.get("$vocabulary").and_then(Value::as_object) {
-                for (uri, required) in vocab {
-                    if required == true
-                        && ![
-                            "core",
-                            "applicator",
-                            "unevaluated",
-                            "validation",
-                            "meta-data",
-                            "format-annotation",
-                            "format-assertion",
-                            "content",
-                        ]
-                        .iter()
-                        .any(|name| {
-                            uri == &format!("https://json-schema.org/draft/2020-12/vocab/{name}")
-                        })
-                    {
-                        return Err(format!("unsupported required vocabulary: {uri}").into());
-                    }
-                }
-            }
-            for value in o.values() {
-                vocabulary_check(value)?;
+fn vocabulary_check(value: &Value) -> Result<(), ContractError> {
+    let Some(object) = value.as_object() else {
+        return Ok(());
+    };
+    if let Some(vocab) = object.get("$vocabulary").and_then(Value::as_object) {
+        for (uri, required) in vocab {
+            if required == true
+                && ![
+                    "core",
+                    "applicator",
+                    "unevaluated",
+                    "validation",
+                    "meta-data",
+                    "format-annotation",
+                    "format-assertion",
+                    "content",
+                ]
+                .iter()
+                .any(|name| uri == &format!("https://json-schema.org/draft/2020-12/vocab/{name}"))
+            {
+                return Err(format!("unsupported required vocabulary: {uri}").into());
             }
         }
-        Value::Array(a) => {
-            for value in a {
-                vocabulary_check(value)?;
+    }
+    // Traverse schema-bearing keywords only: const/default/examples are data.
+    for key in [
+        "additionalProperties",
+        "contains",
+        "not",
+        "if",
+        "then",
+        "else",
+        "propertyNames",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "items",
+        "contentSchema",
+    ] {
+        if let Some(schema) = object.get(key) {
+            vocabulary_check(schema)?;
+        }
+    }
+    for key in ["allOf", "anyOf", "oneOf", "prefixItems"] {
+        if let Some(schemas) = object.get(key).and_then(Value::as_array) {
+            for schema in schemas {
+                vocabulary_check(schema)?;
             }
         }
-        _ => (),
+    }
+    for key in [
+        "properties",
+        "patternProperties",
+        "$defs",
+        "dependentSchemas",
+    ] {
+        if let Some(schemas) = object.get(key).and_then(Value::as_object) {
+            for schema in schemas.values() {
+                vocabulary_check(schema)?;
+            }
+        }
     }
     Ok(())
 }
@@ -242,7 +277,7 @@ impl Profile {
             .with_draft(Draft::Draft202012)
             .should_validate_formats(true)
             .with_retriever(self.resources.clone())
-            .build(&json!({"$schema":DRAFT,"$ref":format!("{}#{}",self.root_uri,pointer)}))
+            .build(&json!({"$schema":DRAFT,"$ref":format!("{}#{}",self.root_uri,percent_encoding::utf8_percent_encode(pointer,FRAGMENT))}))
             .map_err(|e| e.to_string())?;
         Ok(diagnostics(&validator, value))
     }

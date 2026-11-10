@@ -31,19 +31,23 @@ pub fn command() -> Command {
         )
     };
     let invocation = |name: &'static str| {
-        pins(
+        let command = pins(
             Command::new(name)
                 .arg(file_arg("schema"))
                 .arg(file_arg("request"))
                 .arg(file_arg("workflow-identity"))
-                .arg(Arg::new("descriptor-digest").long("descriptor-digest"))
-                .arg(
-                    Arg::new("attachment")
-                        .long("attachment")
-                        .action(clap::ArgAction::Append)
-                        .help("Explicit filename=local-path attachment for submit"),
-                ),
-        )
+                .arg(Arg::new("descriptor-digest").long("descriptor-digest")),
+        );
+        if name == "submit" {
+            command.arg(
+                Arg::new("attachment")
+                    .long("attachment")
+                    .action(clap::ArgAction::Append)
+                    .help("Explicit filename=local-path attachment"),
+            )
+        } else {
+            command
+        }
     };
     Command::new("workflow")
         .about("Prepare, project and compare pinned workflow contracts")
@@ -126,7 +130,14 @@ pub async fn run(args: &ArgMatches) -> anyhow::Result<CommandOutput> {
                     Ok(serde_json::to_value(invocation)?)
                 } else {
                     let config = Configuration::from_file(ServiceType::WES)?;
-                    let wes = WES::new(&config).await?;
+                    let mut headers = ga4gh_sdk::reqwest::header::HeaderMap::new();
+                    if config.basic_auth.is_some() || config.api_key.is_some() { return Err("workflow CLI supports OAuth bearer auth; use a caller-owned transport for other schemes".into()); }
+                    if let Some(token)=config.oauth_access_token.as_ref().or(config.bearer_access_token.as_ref()) {
+                        let mut value=ga4gh_sdk::reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
+                        value.set_sensitive(true);headers.insert(ga4gh_sdk::reqwest::header::AUTHORIZATION,value);
+                    }
+                    let client=ga4gh_sdk::reqwest::Client::builder().default_headers(headers).redirect(ga4gh_sdk::reqwest::redirect::Policy::none()).connect_timeout(std::time::Duration::from_secs(10)).timeout(std::time::Duration::from_secs(60)).build()?;
+                    let wes = WES::from_transport(ga4gh_sdk::utils::transport::Transport::with_client(&config,client)).await?;
                     let attachments = m
                         .get_many::<String>("attachment")
                         .into_iter()

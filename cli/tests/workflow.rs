@@ -92,3 +92,62 @@ fn cli_output_projection_keeps_complete_with_missing_delivery() {
     assert_eq!(record["execution_state"], "COMPLETE");
     assert_eq!(record["outputs"]["report"]["contract_status"], "missing");
 }
+
+#[test]
+fn explicit_cli_submission_uploads_the_reviewed_request_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let config_dir = temp.path().join(".ga4gh-cli");
+    std::fs::create_dir(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        json!({"WES":{"base_path":format!("{}/cli-wes",mockito::server_url()),"oauth_access_token":"cli-fixture-token"}}).to_string(),
+    )
+    .unwrap();
+    let info = json!({"workflow_type_versions":{"CWL":{"workflow_type_version":["v1.2"]}},"supported_wes_versions":["1.0.0"],"supported_filesystem_protocols":["file"],"workflow_engine_versions":{},"default_workflow_engine_parameters":[],"system_state_counts":{},"tags":{}});
+    let service = mockito::mock("GET", "/cli-wes/service-info")
+        .match_header("authorization", "Bearer cli-fixture-token")
+        .with_body(info.to_string())
+        .expect(1)
+        .create();
+    let submission = mockito::mock("POST", "/cli-wes/runs")
+        .match_header("authorization", "Bearer cli-fixture-token")
+        .match_body(mockito::Matcher::Regex("Sequence QC".into()))
+        .with_body(r#"{"run_id":"cli-qc-run"}"#)
+        .expect(1)
+        .create();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let schema = root.join("examples/qc-demo/profile.json");
+    let request = root.join("examples/qc-demo/request.json");
+    let descriptor = root.join("examples/qc-demo/main.cwl");
+    let attachment = format!("main.cwl={}", descriptor.display());
+    let pin = "45d41324353cb4900fdd999c307c2e36a3f2a410";
+    let output = run(
+        &[
+            "workflow",
+            "submit",
+            schema.to_str().unwrap(),
+            request.to_str().unwrap(),
+            "public-qc@1",
+            "--profile-revision",
+            pin,
+            "--vocabulary-revision",
+            pin,
+            "--attachment",
+            &attachment,
+        ],
+        temp.path(),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["run_id"], "cli-qc-run");
+    assert_eq!(
+        result["invocation"]["request"]["workflow_params"]["sequences"][0],
+        "ACGT"
+    );
+    service.assert();
+    submission.assert();
+}
