@@ -1,14 +1,23 @@
+use crate::utils::convert::{block_on, to_json, to_json_opt, with_query};
 use crate::PyConfiguration;
 use ga4gh_sdk::utils::transport::Transport;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
+use reqwest::multipart::{Form, Part};
+use std::borrow::Cow;
+use std::error::Error;
 
-fn runtime() -> PyResult<tokio::runtime::Runtime> {
-    tokio::runtime::Runtime::new()
-        .map_err(|error| PyRuntimeError::new_err(format!("Cannot start async runtime: {error}")))
+fn request_error(method: &str, error: Box<dyn Error>) -> PyErr {
+    PyRuntimeError::new_err(format!("{method} request failed: {error}"))
 }
 
-#[pyclass(name = "Transport", module = "GA4GH")]
+/// Sends requests below the configured API root.
+///
+/// `params` is a `dict` or a JSON object string of query parameters; list values repeat the
+/// parameter. `data` is a JSON string or any JSON-serialisable object. Responses are returned as
+/// text. Subclass it to add helpers for further endpoints.
+#[pyclass(name = "Transport", module = "GA4GH", subclass)]
 pub struct PyTransport {
     pub inner: Transport,
 }
@@ -22,70 +31,90 @@ impl PyTransport {
     }
 
     #[pyo3(signature = (endpoint, params=None))]
-    pub fn get(&self, endpoint: String, params: Option<String>) -> PyResult<String> {
-        let params_value = params
-            .map(|params| {
-                serde_json::from_str(&params)
-                    .map_err(|error| PyValueError::new_err(format!("Invalid params JSON: {error}")))
-            })
-            .transpose()?;
-        let rt = runtime()?;
-        let result = rt.block_on(self.inner.get(&endpoint, params_value));
-
-        match result {
-            Ok(response) => Ok(response),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "GET request failed: {}",
-                e
-            ))),
-        }
+    pub fn get(&self, endpoint: &str, params: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+        let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
+        block_on(self.inner.get(&endpoint, None))?.map_err(|error| request_error("GET", error))
     }
 
-    #[pyo3(signature = (endpoint, data=None))]
-    pub fn post(&self, endpoint: String, data: Option<String>) -> PyResult<String> {
-        let data_value = data
-            .map(|data| {
-                serde_json::from_str(&data)
-                    .map_err(|error| PyValueError::new_err(format!("Invalid data JSON: {error}")))
-            })
-            .transpose()?;
-        let rt = runtime()?;
-        let result = rt.block_on(self.inner.post(&endpoint, data_value));
-
-        match result {
-            Ok(response) => Ok(response),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "POST request failed: {}",
-                e
-            ))),
-        }
+    #[pyo3(signature = (endpoint, data=None, params=None))]
+    pub fn post(
+        &self,
+        endpoint: &str,
+        data: Option<&Bound<'_, PyAny>>,
+        params: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        let data = to_json_opt(data, "data")?;
+        let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
+        block_on(self.inner.post(&endpoint, data))?.map_err(|error| request_error("POST", error))
     }
 
-    pub fn put(&self, endpoint: String, data: String) -> PyResult<String> {
-        let data_value = serde_json::from_str(&data)
-            .map_err(|error| PyValueError::new_err(format!("Invalid data JSON: {error}")))?;
-        let rt = runtime()?;
-        let result = rt.block_on(self.inner.put(&endpoint, data_value));
-
-        match result {
-            Ok(response) => Ok(response),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "PUT request failed: {}",
-                e
-            ))),
-        }
+    #[pyo3(signature = (endpoint, data, params=None))]
+    pub fn put(
+        &self,
+        endpoint: &str,
+        data: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        let data = to_json(data, "data")?;
+        let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
+        block_on(self.inner.put(&endpoint, data))?.map_err(|error| request_error("PUT", error))
     }
 
-    pub fn delete(&self, endpoint: String) -> PyResult<String> {
-        let rt = runtime()?;
-        let result = rt.block_on(self.inner.delete(&endpoint));
-
-        match result {
-            Ok(response) => Ok(response),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "DELETE request failed: {}",
-                e
-            ))),
-        }
+    #[pyo3(signature = (endpoint, params=None))]
+    pub fn delete(&self, endpoint: &str, params: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+        let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
+        block_on(self.inner.delete(&endpoint))?.map_err(|error| request_error("DELETE", error))
     }
+
+    /// Sends a `multipart/form-data` POST request.
+    ///
+    /// `fields` is a list of `(name, value)` text parts. `files` is a list of
+    /// `(name, filename, content)` or `(name, filename, content, content_type)` tuples, where
+    /// `content` is `bytes`. Names may repeat, as for WES `workflow_attachment`.
+    #[pyo3(signature = (endpoint, fields=None, files=None, params=None))]
+    pub fn post_multipart(
+        &self,
+        endpoint: &str,
+        fields: Option<Vec<(String, String)>>,
+        files: Option<Vec<Bound<'_, PyTuple>>>,
+        params: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        let mut form = Form::new();
+        for (name, value) in fields.unwrap_or_default() {
+            form = form.text(name, value);
+        }
+        for file in files.unwrap_or_default() {
+            form = form.part(file_name(&file)?, file_part(&file)?);
+        }
+        let endpoint = with_query(endpoint, to_json_opt(params, "params")?)?;
+        block_on(self.inner.post_multipart(&endpoint, form))?
+            .map_err(|error| request_error("POST", error))
+    }
+}
+
+const FILE_TUPLE: &str =
+    "files items must be (name, filename, content) or (name, filename, content, content_type)";
+
+fn file_name(file: &Bound<'_, PyTuple>) -> PyResult<String> {
+    if !(3..=4).contains(&file.len()) {
+        return Err(PyValueError::new_err(FILE_TUPLE));
+    }
+    file.get_item(0)?
+        .extract()
+        .map_err(|_| PyValueError::new_err(FILE_TUPLE))
+}
+
+fn file_part(file: &Bound<'_, PyTuple>) -> PyResult<Part> {
+    let invalid = |_| PyValueError::new_err(FILE_TUPLE);
+    let filename: String = file.get_item(1)?.extract().map_err(invalid)?;
+    let content = file.get_item(2)?;
+    let content: Cow<'_, [u8]> = content.extract().map_err(invalid)?;
+    let mut part = Part::bytes(content.into_owned()).file_name(filename);
+    if file.len() == 4 {
+        let content_type: String = file.get_item(3)?.extract().map_err(invalid)?;
+        part = part.mime_str(&content_type).map_err(|error| {
+            PyValueError::new_err(format!("Invalid files content type: {error}"))
+        })?;
+    }
+    Ok(part)
 }

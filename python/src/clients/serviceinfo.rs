@@ -2,9 +2,9 @@ use crate::PyConfiguration;
 use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ServiceInfo", module = "GA4GH")]
+#[pyclass(name = "ServiceInfo", module = "GA4GH", subclass)]
 pub struct PyServiceInfo {
-    inner: ServiceInfo,
+    pub inner: ServiceInfo,
 }
 
 #[pymethods]

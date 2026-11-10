@@ -1,0 +1,225 @@
+"""Extending the Python bindings: subclasses, full task JSON, extra endpoints."""
+
+import base64
+import json
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+import GA4GH
+from GA4GH import Configuration, ListTasksParams, TES, TesTask, Transport
+
+from .mock_server import TASK
+
+
+class MockServer:
+    """Runs `mock_server.py` in a subprocess and reads back what it received."""
+
+    def __init__(self):
+        script = Path(__file__).with_name("mock_server.py")
+        self.process = subprocess.Popen(
+            [sys.executable, str(script)], stdout=subprocess.PIPE, text=True
+        )
+        port = int(self.process.stdout.readline())
+        self.root = f"http://127.0.0.1:{port}"
+        self.base = f"{self.root}/api"
+
+    def last(self):
+        with urllib.request.urlopen(f"{self.root}/__requests__", timeout=10) as response:
+            request = json.load(response)[-1]
+        request["body"] = base64.b64decode(request["body"])
+        return request
+
+    def close(self):
+        self.process.terminate()
+        self.process.wait(timeout=10)
+        self.process.stdout.close()
+
+
+@pytest.fixture(scope="module")
+def server():
+    mock = MockServer()
+    yield mock
+    mock.close()
+
+
+@pytest.fixture
+def config(server):
+    return Configuration(server.base)
+
+
+class ProvenanceTES(TES):
+    """A downstream client that adds an endpoint to TES."""
+
+    def provenance(self, task_id):
+        return json.loads(self.transport.get(f"tasks/{task_id}/provenance"))
+
+
+class PluginTransport(Transport):
+    """A downstream transport with helpers for extra endpoints."""
+
+    def update_plugin(self, plugin_id, data):
+        return json.loads(self.put(f"plugins/{plugin_id}", json.dumps(data)))
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        GA4GH.Configuration,
+        GA4GH.ServiceInfo,
+        GA4GH.Transport,
+        GA4GH.TES,
+        GA4GH.Task,
+        GA4GH.TesTask,
+        GA4GH.ListTasksParams,
+        GA4GH.ListTasksResponse,
+    ],
+)
+def test_classes_can_be_subclassed(cls):
+    subclass = type(f"My{cls.__name__}", (cls,), {})
+    assert issubclass(subclass, cls)
+
+
+def test_tes_subclass_calls_extra_endpoint(server, config):
+    tes = ProvenanceTES(config)
+    assert isinstance(tes, TES)
+    assert tes.provenance("task-1") == {"events": ["created"]}
+    assert server.last()["path"] == "/api/tasks/task-1/provenance"
+
+
+def test_transport_subclass_calls_extra_endpoint(server, config):
+    transport = PluginTransport(config)
+    assert transport.update_plugin("p1", {"enabled": True}) == {"updated": True}
+    request = server.last()
+    assert request["method"] == "PUT"
+    assert json.loads(request["body"]) == {"enabled": True}
+
+
+def test_task_keeps_full_json_including_unknown_fields(server, config):
+    task = TES(config).get("FULL", "task-1")
+    assert isinstance(task, TesTask)
+    assert task.id == "task-1"
+    assert task.status == "COMPLETE"
+    assert task.to_dict() == TASK
+    assert json.loads(task.json()) == TASK
+    assert server.last()["query"] == {"view": ["FULL"]}
+
+
+def test_listed_tasks_keep_full_json(server, config):
+    response = TES(config).list()
+    assert response.next_page_token == "next"
+    assert [task.to_dict() for task in response.tasks] == [TASK]
+
+
+def test_task_cancel_and_status_still_work(server, config):
+    task = GA4GH.Task("task-1", Transport(config))
+    assert task.status() == "Complete"
+    task.cancel()
+    assert server.last()["path"] == "/api/tasks/task-1:cancel"
+
+
+def test_query_parameters_on_every_method(server, config):
+    transport = Transport(config)
+    params = {"force": True, "tag": ["a", "b"], "n": 3, "skip": None}
+    expected = {"force": ["true"], "tag": ["a", "b"], "n": ["3"]}
+    transport.get("tasks/task-1", params)
+    assert server.last()["query"] == expected
+    transport.post("runs", '{"x": 1}', params)
+    assert server.last()["query"] == expected
+    assert json.loads(server.last()["body"]) == {"x": 1}
+    transport.put("plugins/p1", "{}", params=params)
+    assert server.last()["query"] == expected
+    transport.delete("plugins/p1", params=params)
+    assert server.last()["query"] == expected
+
+
+def test_query_parameters_as_json_string_and_dict_data(server, config):
+    transport = Transport(config)
+    transport.get("tasks/task-1", '{"view": "BASIC"}')
+    assert server.last()["query"] == {"view": ["BASIC"]}
+    transport.post("runs", {"a": [1, "b"]})
+    assert json.loads(server.last()["body"]) == {"a": [1, "b"]}
+
+
+def test_query_parameters_are_encoded_and_appended(server, config):
+    transport = Transport(config)
+    transport.get("tasks/task-1?view=MINIMAL", {"name": "a b&c=d"})
+    assert server.last()["query"] == {"view": ["MINIMAL"], "name": ["a b&c=d"]}
+    transport.get("tasks/task-1?", {"view": "BASIC", "skip": [None]})
+    assert server.last()["query"] == {"view": ["BASIC"]}
+    transport.get("tasks/task-1#top", {"view": "FULL"})
+    assert server.last()["query"] == {"view": ["FULL"]}
+    transport.get("tasks/task-1", {})
+    assert server.last()["query"] == {}
+
+
+@pytest.mark.parametrize("params", ['["a"]', {"nested": {"a": 1}}, {"list": [{"a": 1}]}])
+def test_invalid_query_parameters(config, params):
+    with pytest.raises(ValueError, match="params"):
+        Transport(config).get("tasks", params)
+
+
+def test_multipart(server, config):
+    transport = Transport(config)
+    response = transport.post_multipart(
+        "runs",
+        fields=[("workflow_type", "CWL"), ("workflow_params", '{"a": 1}')],
+        files=[
+            ("workflow_attachment", "main.cwl", b"cwlVersion: v1.2\n"),
+            ("workflow_attachment", "data.bin", b"\x00\x01", "application/octet-stream"),
+        ],
+        params={"dry": True},
+    )
+    assert json.loads(response) == {"run_id": "run-1"}
+    request = server.last()
+    assert request["query"] == {"dry": ["true"]}
+    headers = {key.lower(): value for key, value in request["headers"].items()}
+    content_type = headers["content-type"]
+    assert content_type.startswith("multipart/form-data; boundary=")
+    body = request["body"]
+    assert b'name="workflow_type"\r\n\r\nCWL\r\n' in body
+    assert b'name="workflow_attachment"; filename="main.cwl"' in body
+    assert b"cwlVersion: v1.2\n" in body
+    assert b"Content-Type: application/octet-stream\r\n\r\n\x00\x01" in body
+
+
+def test_multipart_rejects_malformed_files(config):
+    with pytest.raises(ValueError, match="files"):
+        Transport(config).post_multipart("runs", files=[("only-name",)])
+
+
+def test_list_tasks_params(server, config):
+    params = ListTasksParams(
+        name_prefix="hel",
+        state="complete",
+        tag_key=["foo1", "foo2"],
+        tag_value=["bar1", ""],
+        page_size=10,
+        page_token="tok",
+        view="BASIC",
+    )
+    assert params.state == "COMPLETE"
+    assert params.page_size == 10
+    TES(config).list(params)
+    assert server.last()["query"] == {
+        "name_prefix": ["hel"],
+        "state": ["COMPLETE"],
+        "tag_key": ["foo1", "foo2"],
+        "tag_value": ["bar1", ""],
+        "page_size": ["10"],
+        "page_token": ["tok"],
+        "view": ["BASIC"],
+    }
+    assert ListTasksParams().view is None
+
+
+def test_list_tasks_params_rejects_unknown_state():
+    with pytest.raises(ValueError, match="state"):
+        ListTasksParams(state="NOT_A_STATE")
+
+
+def test_old_task_class_name_still_works():
+    assert GA4GH.PyTesTask is GA4GH.TesTask

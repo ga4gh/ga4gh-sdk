@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch
-from GA4GH import Configuration, Transport, ServiceInfo, TES
+from GA4GH import Configuration, Transport, ServiceInfo
 
 @pytest.fixture
 def config():
@@ -13,10 +13,6 @@ def transport(config):
 @pytest.fixture
 def service_info(config):
     return ServiceInfo(config)
-
-@pytest.fixture
-def tes(config):
-    return TES.new(config)
 
 @patch.object(ServiceInfo, 'get_service_info')
 def test_get_service_info(mock_get_service_info, service_info):

@@ -4,7 +4,7 @@ use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyValueError};
 use pyo3::prelude::*;
 use url::Url;
 
-#[pyclass(name = "Configuration", module = "GA4GH")]
+#[pyclass(name = "Configuration", module = "GA4GH", subclass)]
 pub struct PyConfiguration {
     pub inner: Configuration,
 }
