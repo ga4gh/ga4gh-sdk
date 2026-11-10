@@ -62,7 +62,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install Maturin and pytest
-        run: python -m pip install 'maturin==1.7.0' 'pytest==8.3.5'
+        run: python -m pip install 'maturin==1.15.0' 'pytest==8.3.5'
       - name: Build and install the bindings
         working-directory: python
         run: |
@@ -72,8 +72,10 @@ jobs:
         working-directory: python
         run: python -m pytest
 
+  # Builds the wheels of every release platform and the sdist, so that a
+  # platform-specific break shows up before a tag; nothing is published.
   wheels:
-    name: Wheels
+    name: Python wheels
     uses: ./.github/workflows/wheels.yml
 
   integration:

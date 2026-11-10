@@ -1,4 +1,4 @@
-name: Wheels
+name: Python distributions
 
 # Builds the Python distributions: one abi3 wheel per platform and an sdist.
 # Called by CI (build only) and by Release (build, then publish).
@@ -29,10 +29,9 @@ jobs:
             smoke: true
           - platform: macOS x86-64
             id: macos-x86_64
-            runner: macos-15
+            runner: macos-15-intel
             target: x86_64-apple-darwin
-            # Cross-compiled on an Apple silicon runner; it can't import the wheel.
-            smoke: false
+            smoke: true
           - platform: macOS arm64
             id: macos-arm64
             runner: macos-15
@@ -83,12 +82,15 @@ jobs:
 
   sdist:
     name: Build sdist
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
       - name: Build sdist
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
@@ -96,10 +98,10 @@ jobs:
           working-directory: python
           command: sdist
           args: --out dist
-      - name: Build a wheel from the sdist
+      - name: Install the sdist and import it
         shell: bash
         run: |
-          python3 -m venv "$RUNNER_TEMP/sdist"
+          python -m venv "$RUNNER_TEMP/sdist"
           "$RUNNER_TEMP/sdist/bin/python" -m pip install python/dist/*.tar.gz
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/sdist/bin/python" -c 'import GA4GH; print(GA4GH.TES.__name__)'

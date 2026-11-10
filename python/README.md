@@ -1,10 +1,10 @@
 ## GA4GH-SDK Python Bindings
 
 This directory provides Python bindings for the GA4GH SDK using [PyO3](https://docs.rs/pyo3/latest/pyo3).
-Released versions are published on PyPI (there is no release yet). The other
-instructions build the bindings from this repository. Start at the repository
-root; after `cd python`, run later commands from `python/` with the virtual
-environment active.
+Released versions are published on [PyPI](https://pypi.org/project/ga4gh-sdk/).
+The other instructions build the bindings from this repository. Start at the
+repository root; after `cd python`, run later commands from `python/` with the
+virtual environment active.
 
 ## Install from PyPI
 
@@ -16,9 +16,10 @@ python -c 'from GA4GH import TES; print(TES.__name__)'
 ```
 
 Wheels exist for Linux (x86-64 and aarch64, glibc 2.28 or newer), macOS (x86-64
-and arm64) and Windows (x86-64); they need no Rust toolchain. On other
-platforms, pip builds the bindings from the sdist, which needs the
-prerequisites below. Releases are described in [Releasing](../docs/releasing.md).
+and arm64) and Windows (x86-64); they need no Rust toolchain. Elsewhere, for
+example on musl-based Linux such as Alpine or with an older glibc, pip builds
+the bindings from the sdist, which needs the prerequisites below. Releases are
+described in [Releasing](../docs/releasing.md).
 
 ## Prerequisites
 
@@ -26,6 +27,8 @@ To build the bindings from source:
 
 - CPython 3.11 or newer (PyPy and free-threaded builds are not supported)
 - The [Rust toolchain](../README.md#installation)
+- On Linux, `pkg-config` and the OpenSSL development headers (for example
+  `libssl-dev` on Debian and Ubuntu, `openssl-devel` on Fedora and RHEL)
 
 ## Installation
 
