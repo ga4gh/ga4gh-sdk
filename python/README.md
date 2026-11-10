@@ -59,9 +59,10 @@ The module is called `GA4GH` and currently covers `TES` and `ServiceInfo`.
 the [usage guide](../docs/usage.md#api-root-base_path)).
 
 Run this example from `python/` after starting Funnel and Docker as described
-in the [quick start](../README.md#quick-start). The checked-in
-[task file](../examples/tes-hello.json) runs `echo` in an Alpine container
-without external storage.
+in the [quick start](../README.md#quick-start). The checked-in task is
+[`examples/tes-hello.json`](../examples/tes-hello.json) from the repository
+root, so its path from `python/` is `../examples/tes-hello.json`. It runs
+`echo` in an Alpine container without external storage.
 
 ```python
 from GA4GH import Configuration, ServiceInfo, ServiceType, TES
@@ -115,7 +116,15 @@ python tests/example.py
 ```
 
 It submits the same file-based hello task, prints its ID and current status,
-and lists tasks. IDs and states depend on the server and timing.
+and lists tasks. For example:
+
+```text
+Created task <task-id>: Queued
+Tasks:
+<task-id>: QUEUED
+```
+
+The ID, state, and number of listed tasks depend on the server and timing.
 
 ## Documentation
 
