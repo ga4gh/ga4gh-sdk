@@ -11,13 +11,34 @@ different directory is shown.
   `docs: add contributor checks` or `fix(cli): handle missing config`.
 - Never put secrets or private details in commits, issues, or pull requests.
 - Treat `lib/src/clients/*/models/` as generated code. Do not edit models by
-  hand. See [the generation guide](docs/autogenerate_OAI_models.md) and
-  [#85](https://github.com/ga4gh/ga4gh-sdk/issues/85) before changing them;
-  #85 tracks repeatable regeneration and preservation of existing adaptations.
-  Run `cargo fmt --all` after regeneration so the generated files pass
-  `cargo fmt --all --check`.
+  hand. Regenerate them with `utils/build_models_wrapper.sh` and put hand
+  edits into `utils/patches/<api>.patch`; see
+  [the generation guide](docs/autogenerate_OAI_models.md). A clean run of the
+  wrapper must not change `lib/src/clients`.
 - When changing a public Rust, CLI, or Python API, consider the downstream
   extension use cases in [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78).
+
+## Before opening a pull request
+
+Before creating a PR, including a draft, review the complete diff against its
+intended base using [the reviewer framework](docs/reviewer_framework.md). Check
+the linked issue, affected contracts, tests, documentation, and the actual CI
+coverage. Run the relevant local checks first; CI results arrive after the PR
+is opened.
+
+Report the pre-PR review result in the chat. If it finds required work, explain
+the findings, fix them, and repeat the affected checks and review. Do not open
+the PR while a blocking defect, required verification, or material design
+question remains unresolved. If the work cannot be resolved, report what is
+left and stop before creating the PR. Nonblocking follow-ups do not prevent
+publication; identify them separately.
+
+Keep PR descriptions focused on the change and evidence specific to the issue.
+Report routine check results in the chat review; list them in the PR only when
+they add context that CI does not show. Do not list unrelated opt-in suites as
+limitations. When updating someone else's PR, preserve accurate validation
+evidence they supplied. Correct stale claims without replacing that evidence
+with a generic list of workspace commands.
 
 ## Standard Rust checks
 
@@ -47,6 +68,7 @@ prerequisites, and commands. Add new suites there.
 
 ## Python bindings
 
-See [the Python bindings guide](python/README.md) for setup, build, and test
-commands and the current standalone-build limitation. Update that guide when
-the Python workflow changes.
+For changes under `python/`, and for SDK client or model changes that may affect
+Python users, read [the Python agent guide](python/AGENTS.md). It routes to the
+[Python bindings guide](python/README.md) for setup, supported API, build, and
+test commands. Update those guides when the Python workflow or API changes.

@@ -6,10 +6,12 @@
 # commands. See `docs/development.md`.
 #
 # The file-level hooks skip the generated models (`lib/src/clients/*/models/`):
-# their text comes from the upstream OpenAPI specifications. The Rust hooks
+# their text comes from the upstream OpenAPI specifications. They also skip
+# the patches for those models (`utils/patches/`), whose whitespace must
+# match the generated files exactly. The Rust hooks
 # still format and lint the whole workspace, models included, but a commit
 # that only changes models does not trigger them (see docs/development.md).
-exclude: ^lib/src/clients/[^/]+/models/
+exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0

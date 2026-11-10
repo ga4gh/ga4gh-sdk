@@ -1,84 +1,175 @@
 #!/bin/bash
 
+# Generates Rust models from a GA4GH OpenAPI specification.
+#
 # Usage:
-# -----
-# To run the script, use the following command:
-# ./script.sh <OPENAPI_SPEC_PATH> <API_NAME> <DESTINATION_DIR>
+#   utils/build_models.sh [-m MODULE_PATH] [-p PATCH_FILE] [-n] \
+#       <OPENAPI_SPEC_PATH> <API_NAME> <DESTINATION_DIR> [-- GENERATOR_ARGS...]
 #
 # Example:
-# ./script.sh https://example.com/path/to/openapi.yaml myapi lib/src/clients/myapi/
+#   utils/build_models.sh -p utils/patches/wes.patch \
+#       https://example.org/openapi.yaml wes lib/src/clients/wes/
 #
-# Parameters:
-# - OPENAPI_SPEC_PATH: The URL or file path to the OpenAPI specification.
-# - API_NAME: The name of the API.
-# - DESTINATION_DIR: The directory where the generated models should be copied.
+# Arguments:
+# - OPENAPI_SPEC_PATH: URL or file path of the OpenAPI specification.
+# - API_NAME: name of the API, used for the default module path.
+# - DESTINATION_DIR: directory that receives the `models` folder. An existing
+#   `models` folder in it is replaced.
+# - GENERATOR_ARGS: extra arguments for `openapi-generator-cli generate`.
 #
-# The script will generate Rust models from the OpenAPI specification and place them in the specified destination directory.
+# Options:
+# - -m MODULE_PATH: Rust path of the generated `models` module, used in the
+#   `use` statements of the models. Default: `crate::clients::<API_NAME>::models`.
+#   Set it when generating models for another crate.
+# - -p PATCH_FILE: unified diff with the hand edits of the models, applied to
+#   the generated `models` folder with `patch -p1` (paths `a/models/...`).
+# - -n: don't format the models with `rustfmt`. Patches apply to the
+#   unformatted output, so use this to write them.
+#
+# Environment:
+# - OPENAPI_GENERATOR_VERSION: generator version (default: 7.9.0). If
+#   `openapi-generator-cli` is on the PATH, it is used (the npm wrapper is
+#   pinned to this version) and must report it; otherwise the script runs the
+#   generator's Docker image.
+#
+# `rustfmt` runs in the current directory, so from the repository root it
+# uses the toolchain pinned in rust-toolchain.toml.
+#
+# Steps: generate, fix the `use` statements, apply the patch, format with
+# `rustfmt` (if installed), replace `<DESTINATION_DIR>/models`.
 
-# Ensure the correct number of arguments
-if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 <OPENAPI_SPEC_PATH> <API_NAME> <DESTINATION_DIR>"
+set -euo pipefail
+
+usage() {
+    echo "Usage: $0 [-m MODULE_PATH] [-p PATCH_FILE] [-n] <OPENAPI_SPEC_PATH> <API_NAME> <DESTINATION_DIR> [-- GENERATOR_ARGS...]" >&2
     exit 1
-fi
+}
 
-# Get the parameters
+MODULE_PATH=""
+PATCH_FILE=""
+FORMAT=true
+while getopts ":m:p:n" opt; do
+    case "$opt" in
+        m) MODULE_PATH="$OPTARG" ;;
+        p) PATCH_FILE="$OPTARG" ;;
+        n) FORMAT=false ;;
+        *) usage ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+if [ "$#" -lt 3 ]; then
+    usage
+fi
 OPENAPI_SPEC_PATH="$1"
 API_NAME="$2"
 DESTINATION_DIR="$3"
+shift 3
+if [ "$#" -gt 0 ]; then
+    if [ "$1" != "--" ]; then
+        usage
+    fi
+    shift
+fi
+GENERATOR_ARGS=("$@")
 
-# Define constants
-SED_RULE="s/^use\s\+crate::models\s*;/#![allow(unused_imports)]\n#![allow(clippy::empty_docs)]\nuse crate::clients::$API_NAME::models;/"
-TEMP_OUTPUT_DIR=$(mktemp -d)  # Define the temporary output directory for the OpenAPI generator
-
-# Exit immediately if a command exits with a non-zero status.
-set -euo pipefail
-
-generate_openapi_models() {
-    # Remove the temporary directory at the end of the script
-    trap 'rm -rf "$TEMP_OUTPUT_DIR"' EXIT
-
-    openapi-generator-cli version
-
-    # Run the OpenAPI generator CLI using the JAR file
-    openapi-generator-cli generate -g rust \
-        -i "$OPENAPI_SPEC_PATH" \
-        -o "$TEMP_OUTPUT_DIR" \
-        --additional-properties=useSingleRequestParameter=true
-
-    # Check if the generation was successful
-    if [ $? -ne 0 ]; then
-        echo "OpenAPI generation failed. Check the verbose output for details."
+MODULE_PATH="${MODULE_PATH:-crate::clients::$API_NAME::models}"
+if ! [[ "$MODULE_PATH" =~ ^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*$ ]]; then
+    echo "Error: invalid module path: $MODULE_PATH" >&2
+    exit 1
+fi
+if [ -n "$PATCH_FILE" ]; then
+    if [ ! -f "$PATCH_FILE" ]; then
+        echo "Error: patch file not found: $PATCH_FILE" >&2
         exit 1
     fi
+    PATCH_FILE="$(cd "$(dirname "$PATCH_FILE")" && pwd)/$(basename "$PATCH_FILE")"
+fi
+OPENAPI_GENERATOR_VERSION="${OPENAPI_GENERATOR_VERSION:-7.9.0}"
+IMPORT_PATTERN='^use[[:space:]]+crate::models[[:space:]]*;'
+SED_RULE="s/$IMPORT_PATTERN/#![allow(unused_imports)]\n#![allow(clippy::empty_docs)]\nuse $MODULE_PATH;/"
 
-    # Remove the openapitools.json file
-    rm -f "$TEMP_OUTPUT_DIR/openapitools.json"
+TEMP_OUTPUT_DIR=$(mktemp -d)
+trap 'rm -rf "$TEMP_OUTPUT_DIR"' EXIT
 
-    echo "TEMP_OUTPUT_DIR is $TEMP_OUTPUT_DIR"
-
-    # Modify the import statements in each generated file
-    find "$TEMP_OUTPUT_DIR" -name '*.rs' > /dev/null
-    if [ $? -ne 0 ]; then
-        echo "Error: 'find' command failed."
-        exit 1
-    fi
-
-    for file in $(find "$TEMP_OUTPUT_DIR" -name '*.rs'); do
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            # macOS (BSD) sed syntax
-            sed -i '' "$SED_RULE" "$file"
-        else
-            # Linux (GNU) sed syntax
-            sed -i "$SED_RULE" "$file"
+run_generator() {
+    local spec="$OPENAPI_SPEC_PATH"
+    if command -v openapi-generator-cli >/dev/null 2>&1; then
+        # The npm wrapper (@openapitools/openapi-generator-cli) reads the
+        # generator version from openapitools.json in its working directory.
+        local cli_dir="$TEMP_OUTPUT_DIR/cli"
+        mkdir -p "$cli_dir"
+        printf '{"generator-cli": {"version": "%s"}}\n' "$OPENAPI_GENERATOR_VERSION" \
+            > "$cli_dir/openapitools.json"
+        if [ -f "$spec" ]; then
+            spec="$(cd "$(dirname "$spec")" && pwd)/$(basename "$spec")"
         fi
-    done
-
-    rm -rf "$DESTINATION_DIR/models"
-    mkdir -p "$DESTINATION_DIR"
-    cp -r "$TEMP_OUTPUT_DIR/src/models" "$DESTINATION_DIR"
-
-    echo "OpenAPI generation complete. Models copied to $DESTINATION_DIR"
+        local version
+        version=$(cd "$cli_dir" && openapi-generator-cli version | tail -n 1)
+        if [ "$version" != "$OPENAPI_GENERATOR_VERSION" ]; then
+            echo "Error: openapi-generator-cli is $version, expected $OPENAPI_GENERATOR_VERSION" >&2
+            exit 1
+        fi
+        (cd "$cli_dir" && openapi-generator-cli generate -g rust -i "$spec" -o "$TEMP_OUTPUT_DIR" \
+            --additional-properties=useSingleRequestParameter=true \
+            ${GENERATOR_ARGS[@]+"${GENERATOR_ARGS[@]}"})
+    elif command -v docker >/dev/null 2>&1; then
+        local mounts=(-v "$TEMP_OUTPUT_DIR:/out")
+        if [ -f "$spec" ]; then
+            local spec_dir
+            spec_dir="$(cd "$(dirname "$spec")" && pwd)"
+            mounts+=(-v "$spec_dir:/spec:ro")
+            spec="/spec/$(basename "$spec")"
+        fi
+        docker run --rm -u "$(id -u):$(id -g)" "${mounts[@]}" \
+            "openapitools/openapi-generator-cli:v$OPENAPI_GENERATOR_VERSION" \
+            generate -g rust -i "$spec" -o /out \
+            --additional-properties=useSingleRequestParameter=true \
+            ${GENERATOR_ARGS[@]+"${GENERATOR_ARGS[@]}"}
+    else
+        echo "Error: neither openapi-generator-cli nor docker is installed" >&2
+        exit 1
+    fi
 }
 
-# Call the function to generate models
-generate_openapi_models "$OPENAPI_SPEC_PATH" "$API_NAME" "$DESTINATION_DIR"
+run_generator
+
+MODELS_DIR="$TEMP_OUTPUT_DIR/src/models"
+if [ ! -d "$MODELS_DIR" ]; then
+    echo "Error: the generator wrote no models" >&2
+    exit 1
+fi
+
+while IFS= read -r -d '' file; do
+    if ! grep -Eq "$IMPORT_PATTERN" "$file"; then
+        continue
+    fi
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -E -i '' "$SED_RULE" "$file"
+    else
+        sed -E -i "$SED_RULE" "$file"
+    fi
+    if ! grep -Fq '#![allow(clippy::empty_docs)]' "$file" ||
+       ! grep -Fq "use $MODULE_PATH;" "$file"; then
+        echo "Error: failed to rewrite generated model import in $file" >&2
+        exit 1
+    fi
+done < <(find "$MODELS_DIR" -name '*.rs' -print0)
+
+if [ -n "$PATCH_FILE" ]; then
+    patch -p1 --batch --forward --fuzz=0 --no-backup-if-mismatch -d "$TEMP_OUTPUT_DIR/src" -i "$PATCH_FILE"
+fi
+
+if [ "$FORMAT" = true ]; then
+    if command -v rustfmt >/dev/null 2>&1; then
+        find "$MODELS_DIR" -name '*.rs' -exec rustfmt --edition 2021 {} +
+    else
+        echo "Warning: rustfmt not found; run 'cargo fmt --all' afterwards" >&2
+    fi
+fi
+
+rm -rf "$DESTINATION_DIR/models"
+mkdir -p "$DESTINATION_DIR"
+cp -r "$MODELS_DIR" "$DESTINATION_DIR"
+
+echo "Models for $API_NAME generated in $DESTINATION_DIR/models"

@@ -65,13 +65,15 @@ merge conflict markers, large files, executable bits), validate YAML and
 TOML, check the GitHub issue forms, workflows and Dependabot configuration
 against their schemas, lint the workflows with
 [actionlint](https://github.com/rhysd/actionlint), fix spelling with
-[typos](https://github.com/crate-ci/typos), and run `cargo fmt --all` and
+[typos](https://github.com/crate-ci/typos) (intended words that it flags go
+into [`_typos.toml`](../_typos.toml)), and run `cargo fmt --all` and
 `cargo clippy --workspace --all-targets --locked`. When a hook changes
 files, the commit stops: review the changes, stage them, and commit again.
 
 The file-level hooks (hygiene, typos) skip the generated models in
 `lib/src/clients/*/models/`, because their text comes from the upstream
-OpenAPI specifications. The Rust hooks work on the whole workspace, so
+OpenAPI specifications, and the patches for them in `utils/patches/`, whose
+whitespace must match the generated files exactly. The Rust hooks work on the whole workspace, so
 `cargo fmt --all` also formats the models, as the `lint` job requires. A
 commit that only changes models doesn't trigger the Rust hooks, though: run
 `make fmt`, then `make lint`, after regenerating models.
@@ -121,6 +123,7 @@ on pushes to `main` and on manual dispatch:
 | `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` |
 | `test` | Test | `cargo test --workspace --locked` |
 | `build` | Build | Lockfile check, builds of library, CLI and Python wheel |
+| `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |

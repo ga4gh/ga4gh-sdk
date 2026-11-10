@@ -1,30 +1,78 @@
 #!/bin/bash
 
-# *Developer note*: Add entries to the SPECS associative array as shown in the examples below.
-# Each entry should map an API name to a URL and a destination directory.
+# Regenerates the models of all GA4GH APIs in this repository from their pinned
+# specifications.
 #
-# Example:
-# SPECS["serviceinfo"]="https://raw.githubusercontent.com/ga4gh-discovery/ga4gh-service-info/develop/service-info.yaml lib/src/clients/serviceinfo/"
-# SPECS["tes"]="https://raw.githubusercontent.com/ga4gh/task-execution-schemas/develop/openapi/task_execution_service.openapi.yaml lib/src/clients/tes/"
+# Usage:
+#   utils/build_models_wrapper.sh [API_NAME...]
 #
-# To add a new entry, follow this format:
-# SPECS["<api_name>"]="<url> <destination_directory>"
+# Without arguments, all APIs in SPECS are regenerated; otherwise only the
+# named ones. Run it from the repository root. The result must not differ from
+# the committed models; a diff means that a spec, the generator version or a
+# patch changed.
 #
-# Replace <api_name> with the name of the API, <url> with the URL to the OpenAPI specification,
-# and <destination_directory> with the path to the directory where the models should be generated.
-#
-# Example of adding a new entry:
-# SPECS["newapi"]="https://example.com/path/to/newapi.yaml lib/src/clients/newapi/"
+# Each SPECS entry is "<api_name>|<spec_url>|<destination_dir>|<generator_args>".
+# Pin every spec to a tag. Hand edits of the generated models go into
+# utils/patches/<api_name>.patch, which build_models.sh applies after
+# generation. Hand-written types don't go into `models/`, because that folder
+# is replaced on every run.
 
+set -euo pipefail
 
-# Directory of the build script
+RAW=https://raw.githubusercontent.com
+SPECS=(
+    "serviceinfo|$RAW/ga4gh-discovery/ga4gh-service-info/v1.0.0/service-info.yaml|lib/src/clients/serviceinfo/|"
+    "tes|$RAW/ga4gh/task-execution-schemas/v1.1/openapi/task_execution_service.openapi.yaml|lib/src/clients/tes/|"
+    "drs|$RAW/ga4gh/data-repository-service-schemas/drs-1.4.0/openapi/data_repository_service.openapi.yaml|lib/src/clients/drs/|--skip-validate-spec"
+    "trs|$RAW/ga4gh/tool-registry-service-schemas/2.0.1/openapi/openapi.yaml|lib/src/clients/trs/|"
+    "wes|$RAW/ga4gh/workflow-execution-service-schemas/1.1.0/openapi/workflow_execution_service.openapi.yaml|lib/src/clients/wes/|"
+)
+
 BUILD_SCRIPT="./utils/build_models.sh"
+PATCH_DIR="./utils/patches"
 
-# Iterate over the specifications and call the build script for each
-for API_NAME in "${!SPECS[@]}"; do
-    SPEC_URL=$(echo ${SPECS[$API_NAME]} | awk '{print $1}')
-    DESTINATION_DIR=$(echo ${SPECS[$API_NAME]} | awk '{print $2}')
+selected() {
+    local api="$1"
+    shift
+    if [ "$#" -eq 0 ]; then
+        return 0
+    fi
+    local name
+    for name in "$@"; do
+        if [ "$name" = "$api" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
 
+for name in "$@"; do
+    found=false
+    for entry in "${SPECS[@]}"; do
+        if [ "${entry%%|*}" = "$name" ]; then
+            found=true
+        fi
+    done
+    if [ "$found" = false ]; then
+        echo "Error: unknown API: $name" >&2
+        exit 1
+    fi
+done
+
+for entry in "${SPECS[@]}"; do
+    IFS='|' read -r API_NAME SPEC_URL DESTINATION_DIR GENERATOR_ARGS <<< "$entry"
+    if ! selected "$API_NAME" "$@"; then
+        continue
+    fi
+    OPTIONS=()
+    if [ -f "$PATCH_DIR/$API_NAME.patch" ]; then
+        OPTIONS+=(-p "$PATCH_DIR/$API_NAME.patch")
+    fi
+    EXTRA=()
+    if [ -n "$GENERATOR_ARGS" ]; then
+        read -r -a EXTRA <<< "$GENERATOR_ARGS"
+    fi
     echo "Generating models for $API_NAME from $SPEC_URL into $DESTINATION_DIR"
-    $BUILD_SCRIPT "$SPEC_URL" "$API_NAME" "$DESTINATION_DIR"
+    "$BUILD_SCRIPT" ${OPTIONS[@]+"${OPTIONS[@]}"} "$SPEC_URL" "$API_NAME" "$DESTINATION_DIR" \
+        -- ${EXTRA[@]+"${EXTRA[@]}"}
 done

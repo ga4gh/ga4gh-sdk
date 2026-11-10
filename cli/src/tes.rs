@@ -1,5 +1,5 @@
 use crate::CommandOutput;
-use clap::{arg, ArgMatches, Command};
+use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
 use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
 use ga4gh_sdk::clients::tes::models::TesState;
@@ -9,6 +9,7 @@ use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use log::debug;
 use std::path::Path;
+use tokio::io::AsyncReadExt;
 
 /// Build the TES command and its subcommands.
 pub fn command() -> Command {
@@ -19,7 +20,7 @@ pub fn command() -> Command {
         .subcommand(
             Command::new("create")
                 .about("Create a task")
-                .arg(arg!(<TASK_FILE> "The task file to create"))
+                .arg(arg!(<TASK_FILE> "Task file, inline JSON, or - for stdin"))
                 // .arg(arg!(--url <URL> "The URL for the task"))
                 .arg_required_else_help(true),
         )
@@ -28,11 +29,40 @@ pub fn command() -> Command {
                 .about("list all tasks")
                 .arg(arg!(-n --name_prefix [NAME_PREFIX] "The name prefix to filter tasks"))
                 .arg(arg!(-s --state [STATE] "The state to filter tasks"))
-                .arg(arg!(-k --tag_key [TAG_KEY] "The tag key to filter tasks"))
-                .arg(arg!(-v --tag_value [TAG_VALUE] "The tag value to filter tasks"))
+                .arg(
+                    arg!(-k --tag_key [TAG_KEY] "The tag key to filter tasks")
+                        .action(ArgAction::Append)
+                        .num_args(1),
+                )
+                .arg(
+                    arg!(-v --tag_value [TAG_VALUE] "The tag value to filter tasks")
+                        .action(ArgAction::Append)
+                        .num_args(1),
+                )
                 .arg(arg!(-p --page_size [PAGE_SIZE] "The page size for pagination"))
                 .arg(arg!(-t --page_token [PAGE_TOKEN] "The page token for pagination"))
-                .arg(arg!(-w --view [VIEW] "The view for the tasks")),
+                .arg(arg!(-w --view [VIEW] "The view for the tasks"))
+                .arg(
+                    arg!(--all "Fetch pages lazily and stream JSONL")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    clap::Arg::new("format")
+                        .long("format")
+                        .value_parser(["table", "jsonl"])
+                        .default_value("table"),
+                )
+                .arg(
+                    clap::Arg::new("max-pages")
+                        .long("max-pages")
+                        .value_parser(clap::value_parser!(usize))
+                        .default_value("1000"),
+                )
+                .arg(
+                    clap::Arg::new("max-items")
+                        .long("max-items")
+                        .value_parser(clap::value_parser!(usize)),
+                ),
         )
         .subcommand(
             Command::new("get")
@@ -64,15 +94,20 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         let task_file = sub
             .get_one::<String>("TASK_FILE")
             .ok_or_else(|| anyhow::anyhow!("TASK_FILE argument is required"))?;
-        let path = Path::new(task_file);
-        if !path.exists() {
+        let task_json = if task_file == "-" {
+            let mut input = String::new();
+            tokio::io::stdin().read_to_string(&mut input).await?;
+            input
+        } else if Path::new(task_file).exists() {
+            std::fs::read_to_string(task_file)
+                .map_err(|error| anyhow::anyhow!("Failed to read file: {error}"))?
+        } else if task_file.trim_start().starts_with('{') {
+            task_file.clone()
+        } else {
             return Ok(CommandOutput::failure(format!(
-                "File does not exist: {}",
-                path.display()
+                "File does not exist: {task_file}"
             )));
-        }
-        let task_json = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read file: {e}"))?;
+        };
         let testask: TesTask = serde_json::from_str(&task_json)
             .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {e}"))?;
 
@@ -87,13 +122,29 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     }
 
     if let Some(("list", sub)) = sub.subcommand() {
+        if sub.get_flag("all") {
+            anyhow::bail!("--all needs the streaming dispatch_to/dispatch_with_config_to API");
+        }
+        if sub.get_one::<String>("format").map(String::as_str) == Some("jsonl") {
+            anyhow::bail!("--format jsonl requires --all");
+        }
         let name_prefix = sub.get_one::<String>("name_prefix").cloned();
         let state = sub
             .get_one::<String>("state")
             .map(|s| parse_state(s))
             .transpose()?;
-        let _tag_key = sub.get_one::<String>("tag_key").cloned();
-        let _tag_value = sub.get_one::<String>("tag_value").cloned();
+        let tag_key = sub
+            .get_many::<String>("tag_key")
+            .map(|values| values.cloned().collect::<Vec<_>>());
+        let tag_value = sub
+            .get_many::<String>("tag_value")
+            .map(|values| values.cloned().collect::<Vec<_>>());
+        if tag_value
+            .as_ref()
+            .is_some_and(|values| values.len() > tag_key.as_ref().map_or(0, Vec::len))
+        {
+            anyhow::bail!("Each tag_value needs a corresponding tag_key");
+        }
         let page_size = sub
             .get_one::<String>("page_size")
             .map(|value| {
@@ -108,8 +159,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         let parameters = ListTasksParams {
             name_prefix,
             state,
-            tag_key: None,   // Example does not cover parsing Vec<String>
-            tag_value: None, // Example does not cover parsing Vec<String>
+            tag_key,
+            tag_value,
             page_size,
             page_token,
             view,
@@ -239,7 +290,110 @@ fn format_tasks_response(response: &TesListTasksResponse) -> String {
     for task in &response.tasks {
         table.push_str(&format_task(task));
     }
+    if let Some(token) = response
+        .next_page_token
+        .as_deref()
+        .filter(|token| !token.is_empty())
+    {
+        table.push_str(&format!("Next page token: {token}\n"));
+    }
     table
+}
+
+/// Stream JSONL a page at a time. Diagnostics and resume data go only to stderr.
+pub async fn export_all(
+    sub: &ArgMatches,
+    config: &Configuration,
+    stdout: &mut dyn std::io::Write,
+    stderr: &mut dyn std::io::Write,
+) -> anyhow::Result<std::process::ExitCode> {
+    use ga4gh_sdk::clients::{pagination::PagingOptions, wait::ServiceKind};
+    if sub.get_one::<String>("format").map(String::as_str) != Some("jsonl") {
+        anyhow::bail!("--all requires --format jsonl");
+    }
+    let mut query = serde_json::Map::new();
+    for key in ["name_prefix", "page_token", "view"] {
+        if let Some(value) = sub.get_one::<String>(key) {
+            query.insert(key.into(), serde_json::json!(value));
+        }
+    }
+    if let Some(value) = sub.get_one::<String>("state") {
+        query.insert("state".into(), serde_json::to_value(parse_state(value)?)?);
+    }
+    if let Some(value) = sub.get_one::<String>("page_size") {
+        let size: i32 = value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("page_size must be an integer"))?;
+        if !(1..2048).contains(&size) {
+            anyhow::bail!("page_size must be 1..2047");
+        }
+        query.insert("page_size".into(), serde_json::json!(size));
+    }
+    for key in ["tag_key", "tag_value"] {
+        if let Some(values) = sub.get_many::<String>(key) {
+            query.insert(key.into(), serde_json::json!(values.collect::<Vec<_>>()));
+        }
+    }
+    let keys = query
+        .get("tag_key")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    if query
+        .get("tag_value")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|v| v.len() > keys)
+    {
+        anyhow::bail!("Each tag_value needs a corresponding tag_key");
+    }
+    let mut options = PagingOptions::new(std::time::Duration::from_secs(300));
+    options.max_requests = *sub.get_one::<usize>("max-pages").unwrap();
+    options.max_items = sub.get_one::<usize>("max-items").copied();
+    let tes = match TES::new(config).await {
+        Ok(tes) => tes,
+        Err(error) => {
+            writeln!(stderr, "{error}")?;
+            return Ok(std::process::ExitCode::FAILURE);
+        }
+    };
+    let mut pager = ga4gh_sdk::clients::pagination::Pager::new(
+        &tes.transport,
+        ServiceKind::Tes,
+        query.into(),
+        options,
+    )
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    loop {
+        match pager.next_page().await {
+            Ok(Some(page)) => {
+                for record in page.items {
+                    serde_json::to_writer(&mut *stdout, &record)?;
+                    writeln!(stdout)?;
+                }
+                stdout.flush()?;
+            }
+            Ok(None) => {
+                let checkpoint = pager.checkpoint();
+                if !checkpoint.finished {
+                    writeln!(
+                        stderr,
+                        "Listing stopped at configured limit; resume checkpoint: {}",
+                        serde_json::to_string(&checkpoint)?
+                    )?;
+                    return Ok(std::process::ExitCode::FAILURE);
+                }
+                return Ok(std::process::ExitCode::SUCCESS);
+            }
+            Err(error) => {
+                writeln!(stderr, "{error}")?;
+                writeln!(
+                    stderr,
+                    "Resume checkpoint: {}",
+                    serde_json::to_string(&error.checkpoint)?
+                )?;
+                return Ok(std::process::ExitCode::FAILURE);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
