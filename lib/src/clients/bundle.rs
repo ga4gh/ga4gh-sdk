@@ -29,8 +29,12 @@ pub struct BundleRequest {
 }
 #[derive(Clone, Debug)]
 pub struct PreparationOptions {
+    /// Maximum number of entries in the TRS file listing.
     pub max_files: usize,
+    /// Maximum decoded bytes staged for one file; TRS wrapper responses have
+    /// the transport's separate response limit.
     pub max_file_bytes: usize,
+    /// Maximum sum of decoded bytes staged across files.
     pub max_total_bytes: usize,
     pub allow_unsupported_checksums: bool,
 }
@@ -73,7 +77,8 @@ pub struct BundleManifest {
     pub execution: Option<ExecutionRecord>,
 }
 
-/// Fetching wrapper URLs is opt-in. Implementations own origin/credential policy.
+/// Fetching wrapper URLs is opt-in. Implementations own origin/credential policy,
+/// must enforce `limit` while reading, and should omit signed URLs from errors.
 #[async_trait(?Send)]
 pub trait DescriptorFetcher {
     async fn fetch(
@@ -85,9 +90,16 @@ pub trait DescriptorFetcher {
 }
 /// Explicit anonymous allowlist. Never reuses a registry's authenticated client,
 /// never follows redirects, and never stores signed URL queries in provenance.
+/// Network errors omit the requested URL so signed queries are not logged by callers.
 pub struct AnonymousFetcher {
     origins: BTreeSet<String>,
     client: reqwest::Client,
+}
+fn without_descriptor_url(error: Box<dyn Error>) -> Box<dyn Error> {
+    match error.downcast::<reqwest::Error>() {
+        Ok(error) => Box::new(error.without_url()),
+        Err(error) => error,
+    }
 }
 impl AnonymousFetcher {
     /// Accept only bare HTTP(S) origins; a path or query would otherwise be
@@ -134,11 +146,19 @@ impl DescriptorFetcher for AnonymousFetcher {
         }
         operation
             .run(async {
-                let response = self.client.get(url.clone()).send().await?;
+                let response = self
+                    .client
+                    .get(url.clone())
+                    .send()
+                    .await
+                    .map_err(reqwest::Error::without_url)?;
                 if !response.status().is_success() {
                     return Err(format!("descriptor fetch HTTP {}", response.status()).into());
                 }
-                Ok(read_bounded(response, limit).await?.body)
+                Ok(read_bounded(response, limit)
+                    .await
+                    .map_err(without_descriptor_url)?
+                    .body)
             })
             .await?
     }
@@ -510,6 +530,8 @@ impl PreparedBundle {
         })
     }
     /// Explicit submission uploads the same immutable Arc bytes that were hashed.
+    /// Each call may create a separate WES run. Reconcile an ambiguous response
+    /// before calling this method again.
     pub async fn submit(
         &self,
         wes: &WES,
