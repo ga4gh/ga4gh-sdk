@@ -212,6 +212,7 @@ fn invalid_responses_and_unreachable_registries_fail() {
 fn server_text_is_escaped_in_get_and_errors() {
     let mut body = service("org.example.tes", "tes");
     body["name"] = json!("a\u{9b}2K\u{1b}b");
+    body["description"] = json!("right\u{202e}left\u{2028}next");
     let _get = mock("GET", "/escape/services/ok")
         .with_status(200)
         .with_body(body.to_string())
@@ -226,12 +227,16 @@ fn server_text_is_escaped_in_get_and_errors() {
     assert!(output.status.success(), "{}", stderr(&output));
     let text = stdout(&output);
     assert!(
-        !text.contains('\u{9b}') && !text.contains('\u{1b}'),
+        !text.contains('\u{9b}')
+            && !text.contains('\u{1b}')
+            && !text.contains('\u{202e}')
+            && !text.contains('\u{2028}'),
         "{text}"
     );
     assert!(text.contains(r"a\u009b2K\u001bb"), "{text}");
+    assert!(text.contains(r"right\u202eleft\u2028next"), "{text}");
     let parsed: Value = serde_json::from_str(&text).expect("valid JSON");
-    assert_eq!(parsed["name"], "a\u{9b}2K\u{1b}b");
+    assert_eq!(parsed, body);
 
     let output = run(&base_path, &["registry", "list"]);
     assert_eq!(output.status.code(), Some(1));

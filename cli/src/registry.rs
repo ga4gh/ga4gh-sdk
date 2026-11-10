@@ -130,7 +130,7 @@ fn json_printable(json: &str) -> String {
 
 fn needs_escape(c: char) -> bool {
     c.is_control()
-        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 fn type_label(service_type: &ServiceType) -> String {
