@@ -57,7 +57,25 @@ fn parse_model<T: DeserializeOwned>(raw: &Value) -> Result<T, String> {
     if !raw.is_object() {
         return Err("not a JSON object".to_owned());
     }
-    serde_json::from_value(raw.clone()).map_err(|error| error.to_string())
+    serde_json::from_value(raw.clone()).map_err(|error| model_error(&error))
+}
+
+/// Describes a model mismatch without quoting the server's values, which may be
+/// credentials such as a signed URL or a bearer token in an access URL.
+fn model_error(error: &serde_json::Error) -> String {
+    let message = error.to_string();
+    if message.starts_with("missing field") {
+        message
+    } else {
+        "a field has the wrong type or value".to_owned()
+    }
+}
+
+/// Converts a Python `int` to a count; negative values raise `ValueError`, not the
+/// `OverflowError` of a direct conversion.
+fn count(value: i64, what: &str) -> PyResult<usize> {
+    usize::try_from(value)
+        .map_err(|_| PyValueError::new_err(format!("{what} must not be negative")))
 }
 
 /// Parses a server's JSON text. Errors are `RuntimeError`s.
@@ -115,13 +133,13 @@ fn budget(timeout: f64) -> PyResult<Operation> {
 }
 
 /// Checks the number of attempts of a waiting call, as `resolve_until` does.
-fn require_attempts(max_attempts: usize) -> PyResult<()> {
+fn require_attempts(max_attempts: i64) -> PyResult<usize> {
     if !(1..=10_000).contains(&max_attempts) {
         return Err(PyValueError::new_err(
             "max_attempts must be between 1 and 10000",
         ));
     }
-    Ok(())
+    count(max_attempts, "max_attempts")
 }
 
 /// A duration in seconds, for `BulkPolicy`.
@@ -391,7 +409,8 @@ impl PyPendingResolution {
         self.inner.reference.api_root.clone()
     }
 
-    /// The endpoint to ask again, below `api_root`.
+    /// The endpoint to ask again, below `api_root`. For a bulk call, it is `objects` or
+    /// `objects/access`; call `get_bulk_objects()` or `get_bulk_access_urls()` again.
     #[getter]
     fn endpoint(&self) -> String {
         self.inner.reference.endpoint.clone()
@@ -453,24 +472,26 @@ impl PyBulkPolicy {
     ))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        chunk_size: usize,
-        advertised_limit: Option<usize>,
-        concurrency: usize,
-        max_requests: usize,
-        max_split_depth: usize,
-        max_attempts: usize,
+        chunk_size: i64,
+        advertised_limit: Option<i64>,
+        concurrency: i64,
+        max_requests: i64,
+        max_split_depth: i64,
+        max_attempts: i64,
         initial_delay: f64,
         max_delay: f64,
     ) -> PyResult<Self> {
         Ok(PyBulkPolicy {
             inner: BulkPolicy {
-                chunk_size,
-                advertised_limit,
-                concurrency,
-                max_requests,
-                max_split_depth,
+                chunk_size: count(chunk_size, "chunk_size")?,
+                advertised_limit: advertised_limit
+                    .map(|limit| count(limit, "advertised_limit"))
+                    .transpose()?,
+                concurrency: count(concurrency, "concurrency")?,
+                max_requests: count(max_requests, "max_requests")?,
+                max_split_depth: count(max_split_depth, "max_split_depth")?,
                 retry: RetryPolicy {
-                    max_attempts,
+                    max_attempts: count(max_attempts, "max_attempts")?,
                     initial_delay: seconds(initial_delay, "initial_delay")?,
                     max_delay: seconds(max_delay, "max_delay")?,
                 },
@@ -527,11 +548,13 @@ impl PyBulkPolicy {
         self.inner.retry.max_attempts
     }
 
+    /// The delay before the first retry, in seconds; it doubles up to `max_delay`.
     #[getter]
     fn initial_delay(&self) -> f64 {
         self.inner.retry.initial_delay.as_secs_f64()
     }
 
+    /// The longest delay between retries, in seconds.
     #[getter]
     fn max_delay(&self) -> f64 {
         self.inner.retry.max_delay.as_secs_f64()
@@ -563,6 +586,8 @@ impl PyBulkOutcome {
         outcome: ObjectOutcome<Value>,
         parse: impl Fn(Value) -> Result<T, String>,
     ) -> Self {
+        // Rebuilt with the entries that fit the model (as placeholders), so that
+        // `is_success` is the lib's own `ObjectOutcome::is_success`.
         let mut checked = ObjectOutcome {
             failure_codes: outcome.failure_codes,
             pending: outcome.pending,
@@ -790,10 +815,10 @@ impl PyDRS {
         py: Python<'_>,
         endpoint: String,
         timeout: f64,
-        max_attempts: usize,
+        max_attempts: i64,
         what: &str,
     ) -> PyResult<Value> {
-        require_attempts(max_attempts)?;
+        let max_attempts = require_attempts(max_attempts)?;
         let operation = budget(timeout)?;
         let reference = self.inner.resolution_reference(endpoint);
         let body = io(py, |rt| {
@@ -910,7 +935,7 @@ impl PyDRS {
         py: Python<'_>,
         object_id: &str,
         timeout: f64,
-        max_attempts: usize,
+        max_attempts: i64,
     ) -> PyResult<PyDrsObject> {
         let endpoint = object_endpoint(object_id)?;
         let raw = self.wait(py, endpoint, timeout, max_attempts, "DRS object")?;
@@ -954,7 +979,7 @@ impl PyDRS {
         object_id: &str,
         access_id: &str,
         timeout: f64,
-        max_attempts: usize,
+        max_attempts: i64,
     ) -> PyResult<PyAccessURL> {
         let endpoint = access_endpoint(object_id, access_id)?;
         let raw = self.wait(py, endpoint, timeout, max_attempts, "access URL")?;
@@ -1096,7 +1121,8 @@ impl PyAccessPlan {
         self.inner.url.to_string()
     }
 
-    /// The headers to send with a request to `url`, as `(name, value)` pairs.
+    /// The headers to send with a request to `url`, as `(name, value)` pairs (unlike the
+    /// `"Name: value"` strings of `AccessURL`).
     #[getter]
     fn headers(&self) -> Vec<(String, String)> {
         self.inner
@@ -1152,7 +1178,7 @@ impl PyDrsResolver {
     fn preferences(
         protocols: Option<Vec<String>>,
         regions: Option<Vec<String>>,
-        method_index: Option<usize>,
+        method_index: Option<i64>,
     ) -> PyResult<AccessPreferences> {
         Ok(AccessPreferences {
             protocols: protocols
@@ -1161,7 +1187,9 @@ impl PyDrsResolver {
                 .map(|name| parse_access_type(name))
                 .collect::<PyResult<_>>()?,
             regions: regions.unwrap_or_default(),
-            method_index,
+            method_index: method_index
+                .map(|index| count(index, "method_index"))
+                .transpose()?,
         })
     }
 }
@@ -1193,7 +1221,10 @@ impl PyDrsResolver {
         parse_uri(&format!("drs://{authority}/placeholder"))
             .map_err(|_| PyValueError::new_err(format!("Invalid DRS host: {authority:?}")))?;
         {
-            let mut resolver = slf.borrow_mut();
+            // A call on another thread holds the resolver while it waits for the network.
+            let mut resolver = slf
+                .try_borrow_mut()
+                .map_err(|_| PyRuntimeError::new_err("The resolver is in use by another thread"))?;
             let inner = std::mem::take(&mut resolver.inner);
             resolver.inner = inner
                 .with_service(authority, transport.inner.clone())
@@ -1215,7 +1246,7 @@ impl PyDrsResolver {
         uri: &str,
         protocols: Option<Vec<String>>,
         regions: Option<Vec<String>>,
-        method_index: Option<usize>,
+        method_index: Option<i64>,
         timeout: f64,
     ) -> PyResult<PyObject> {
         parse_uri(uri)?;
@@ -1244,12 +1275,12 @@ impl PyDrsResolver {
         uri: &str,
         protocols: Option<Vec<String>>,
         regions: Option<Vec<String>>,
-        method_index: Option<usize>,
+        method_index: Option<i64>,
         timeout: f64,
-        max_attempts: usize,
+        max_attempts: i64,
     ) -> PyResult<PyAccessPlan> {
         parse_uri(uri)?;
-        require_attempts(max_attempts)?;
+        let max_attempts = require_attempts(max_attempts)?;
         let preferences = Self::preferences(protocols, regions, method_index)?;
         let operation = budget(timeout)?;
         io(py, |rt| {

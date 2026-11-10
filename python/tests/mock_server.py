@@ -96,6 +96,10 @@ ROUTES.update(
         ("GET", "/drs/objects/no-retry"): (202, {}),
         ("GET", "/drs/objects/bad"): (200, {"id": "bad"}),
         ("GET", "/drs/objects/obj-1/access/bad"): (200, ["not", "an", "object"]),
+        ("GET", "/drs/objects/obj-1/access/wrong-type"): (
+            200,
+            {"url": "https://store.example/x", "headers": "Authorization: Bearer SECRET"},
+        ),
         ("POST", "/drs/objects"): (
             200,
             {

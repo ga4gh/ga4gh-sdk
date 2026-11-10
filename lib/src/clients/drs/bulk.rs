@@ -141,6 +141,20 @@ impl BulkPolicy {
             .min(self.advertised_limit.unwrap_or(self.chunk_size)))
     }
 }
+fn object_keys(ids: &[String]) -> Vec<BulkKey> {
+    ids.iter()
+        .map(|id| BulkKey {
+            object_id: id.clone(),
+            access_id: None,
+        })
+        .collect()
+}
+fn require_access_ids(keys: &[BulkKey]) -> Result<(), Box<dyn Error>> {
+    if keys.iter().any(|k| k.access_id.is_none()) {
+        return Err("bulk access lookup requires an access ID for each object".into());
+    }
+    Ok(())
+}
 fn request_body(keys: &[BulkKey], passports: &[String], access: bool) -> Value {
     let mut body = if access {
         json!({"bulk_object_access_ids":keys.iter().map(|k|json!({"bulk_object_id":k.object_id,"bulk_access_ids":[k.access_id.as_ref().unwrap()]})).collect::<Vec<_>>()})
@@ -472,19 +486,8 @@ impl DRS {
         policy: &BulkPolicy,
         operation: &Operation,
     ) -> Result<BulkReport<DrsObject>, Box<dyn Error>> {
-        self.bulk(
-            ids.iter()
-                .map(|id| BulkKey {
-                    object_id: id.clone(),
-                    access_id: None,
-                })
-                .collect(),
-            passports,
-            false,
-            policy,
-            operation,
-        )
-        .await
+        self.bulk(object_keys(ids), passports, false, policy, operation)
+            .await
     }
     /// Like [`DRS::get_bulk_objects`], but keeps each resolved object's JSON, including
     /// fields that the SDK models don't know. Resolved entries are not checked against
@@ -496,19 +499,8 @@ impl DRS {
         policy: &BulkPolicy,
         operation: &Operation,
     ) -> Result<BulkReport<Value>, Box<dyn Error>> {
-        self.bulk(
-            ids.iter()
-                .map(|id| BulkKey {
-                    object_id: id.clone(),
-                    access_id: None,
-                })
-                .collect(),
-            passports,
-            false,
-            policy,
-            operation,
-        )
-        .await
+        self.bulk(object_keys(ids), passports, false, policy, operation)
+            .await
     }
     /// Returned access URLs and headers may be credentials. The report's Debug
     /// output omits them; logging a raw generated `BulkAccessUrl` does not.
@@ -519,9 +511,7 @@ impl DRS {
         policy: &BulkPolicy,
         operation: &Operation,
     ) -> Result<BulkReport<BulkAccessUrl>, Box<dyn Error>> {
-        if keys.iter().any(|k| k.access_id.is_none()) {
-            return Err("bulk access lookup requires an access ID for each object".into());
-        }
+        require_access_ids(keys)?;
         self.bulk(keys.to_vec(), passports, true, policy, operation)
             .await
     }
@@ -535,9 +525,7 @@ impl DRS {
         policy: &BulkPolicy,
         operation: &Operation,
     ) -> Result<BulkReport<Value>, Box<dyn Error>> {
-        if keys.iter().any(|k| k.access_id.is_none()) {
-            return Err("bulk access lookup requires an access ID for each object".into());
-        }
+        require_access_ids(keys)?;
         self.bulk(keys.to_vec(), passports, true, policy, operation)
             .await
     }

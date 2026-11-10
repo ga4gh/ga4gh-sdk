@@ -276,7 +276,8 @@ urls = drs.get_bulk_access_urls({"id-1": "my-access-id"})
   `BulkAccessURL`s that the server returned for the ID), `failure_codes` (such as
   `[404]`), `pending` (a `PendingResolution` if the server is still preparing the
   answer), `errors` and `is_success` (exactly one result and nothing else). Failures of
-  single IDs and of requests are reported in the outcomes, not raised.
+  single IDs and of requests are reported in the outcomes, not raised. For a pending
+  outcome, call the bulk method again for its IDs; its `endpoint` is the bulk endpoint.
 - `BulkPolicy(chunk_size=100, advertised_limit=None, concurrency=4, max_requests=1000,
   max_split_depth=8, max_attempts=1, initial_delay=0.2, max_delay=10.0)` limits a bulk
   call: IDs per request, parallel requests, requests in all, halvings of a request that
@@ -285,13 +286,14 @@ urls = drs.get_bulk_access_urls({"id-1": "my-access-id"})
   service info, for example `json.loads(drs.transport.get("service-info"))`.
 - Errors: invalid IDs (empty, `.` or `..`), timeouts, attempt counts, bulk inputs and
   policies raise `ValueError` before a request. Failed requests and responses that don't
-  fit the DRS models raise `RuntimeError`.
+  fit the DRS models raise `RuntimeError`; its message names a missing field, but quotes
+  no values from the response, as they may be credentials.
 - The waiting calls block for up to `timeout` seconds without the GIL; Ctrl+C takes
   effect after they return.
 
 `DrsResolver` turns hostname-based DRS URIs (`drs://<host>/<object-id>`) into an
 `AccessPlan`: the access method to use, its `url` and `headers` (a list of `(name,
-value)` pairs), and its `region`:
+value)` pairs, unlike the `"Name: value"` strings of `AccessURL`), and its `region`:
 
 ```python
 from GA4GH import Configuration, DrsResolver, DrsUri, Transport
@@ -309,6 +311,8 @@ print(uri.authority, uri.object_id, uri.default_api_root())
 - `with_service(authority, transport)` asks the DRS service of `transport` for URIs with
   that host, using the transport's API root and settings. Other hosts are asked
   anonymously at `https://<host>/ga4gh/drs/v1`; settings are never sent to them.
+  Add services before sharing a resolver between threads: while another thread plans
+  access with it, `with_service()` raises `RuntimeError`.
 - `access_plan(uri, protocols=None, regions=None, method_index=None, timeout=60.0,
   max_attempts=5)` reads the object, picks an available access method (by `protocols`
   and `regions`, in order of preference, or the one at `method_index`), and reads its
@@ -350,10 +354,12 @@ without arguments. For `TES`, service-info discovery happens before the
 subclass's `__init__`, so those extra arguments cannot change its first
 request. A subclass without its own `__init__` accepts only the base arguments.
 
-`DRS`, `DrsObject`, `AccessURL`, `BulkAccessURL`, `PendingResolution`, `BulkPolicy`,
-`BulkOutcome`, `BulkReport`, `DrsUri`, `DrsResolver` and `AccessPlan` can be subclassed
-too. Like `TES`, `DRS` reads the service info before a subclass's `__init__` runs.
-`DrsResolver.with_service()` returns the resolver itself, so it keeps its subclass.
+`DRS`, `DrsResolver`, `BulkPolicy` and `DrsUri` can be subclassed too. Like `TES`,
+`DRS` reads the service info before a subclass's `__init__` runs.
+`DrsResolver.with_service()` returns the resolver itself, so it keeps its subclass. The
+result classes (`DrsObject`, `AccessURL`, `BulkAccessURL`, `PendingResolution`,
+`BulkOutcome`, `BulkReport` and `AccessPlan`) allow subclasses as well, for Rust crates
+that extend them, but the clients return instances of the base classes.
 
 ### Further endpoints
 

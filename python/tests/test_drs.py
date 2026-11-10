@@ -110,6 +110,15 @@ def test_invalid_responses_raise_runtime_error(drs):
         drs.get_access_url("obj-1", "bad")
     with pytest.raises(RuntimeError, match="404"):
         drs.get_object("unknown")
+    with pytest.raises(RuntimeError, match="Invalid DRS response: missing field `self_uri`"):
+        drs.get_object("bad")
+
+
+def test_model_errors_quote_no_response_values(drs):
+    with pytest.raises(RuntimeError) as error:
+        drs.get_access_url("obj-1", "wrong-type")
+    assert "SECRET" not in str(error.value)
+    assert "wrong type" in str(error.value)
 
 
 def test_pending_answers(server, drs):
@@ -163,6 +172,7 @@ def test_resolve_gives_up(drs):
         ({"timeout": 1e300}, "timeout"),
         ({"max_attempts": 0}, "max_attempts"),
         ({"max_attempts": 10_001}, "max_attempts"),
+        ({"max_attempts": -1}, "max_attempts"),
     ],
 )
 def test_resolve_checks_its_limits_before_a_request(server, drs, kwargs, message):
@@ -283,6 +293,10 @@ def test_bulk_policy():
         policy.with_service_info({"maxBulkRequestLength": 0})
     with pytest.raises(ValueError, match="initial_delay"):
         BulkPolicy(initial_delay=-1)
+    for name in ["chunk_size", "advertised_limit", "concurrency", "max_requests",
+                 "max_split_depth", "max_attempts"]:
+        with pytest.raises(ValueError, match=f"{name} must not be negative"):
+            BulkPolicy(**{name: -1})
 
 
 def recorded_bodies(server, path):
@@ -352,11 +366,33 @@ def test_access_plan_pending_and_failures(server, resolver):
         resolver.access_plan_once("drs://prefix:accession")
     with pytest.raises(ValueError, match="max_attempts"):
         resolver.access_plan("drs://drs.example/obj-1", max_attempts=0)
+    with pytest.raises(ValueError, match="method_index must not be negative"):
+        resolver.access_plan_once("drs://drs.example/obj-1", method_index=-1)
     assert server.last() == before
     with pytest.raises(ValueError, match="Invalid DRS host"):
         resolver.with_service("host:8080", Transport(Configuration(server.base)))
     # A failed `with_service` keeps the services added before.
     assert resolver.access_plan_once("drs://drs.example/obj-1").method == "s3"
+
+
+def test_with_service_while_the_resolver_is_in_use(drs_config, resolver):
+    errors = []
+
+    def plan():
+        # Waits about a second for the pending object, without the GIL.
+        try:
+            resolver.access_plan("drs://drs.example/pending", max_attempts=2)
+        except RuntimeError as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=plan)
+    thread.start()
+    time.sleep(0.3)
+    with pytest.raises(RuntimeError, match="in use by another thread"):
+        resolver.with_service("other.example", Transport(drs_config))
+    thread.join(timeout=10)
+    assert [str(e).split(":")[0] for e in errors] == ["Failed to plan DRS access"]
+    assert resolver.with_service("other.example", Transport(drs_config)) is resolver
 
 
 def test_unmapped_hosts_are_asked_anonymously_over_https():
@@ -398,6 +434,15 @@ def test_client_can_be_used_from_several_threads(drs):
 def test_classes_can_be_subclassed(cls):
     subclass = type(f"My{cls.__name__}", (cls,), {})
     assert issubclass(subclass, cls)
+
+
+def test_subclasses_can_be_built(drs_config):
+    policy = type("MyPolicy", (BulkPolicy,), {})(chunk_size=5)
+    assert (type(policy).__name__, policy.chunk_size) == ("MyPolicy", 5)
+    uri = type("MyUri", (DrsUri,), {})("drs://drs.example/a")
+    assert (type(uri).__name__, uri.object_id) == ("MyUri", "a")
+    drs = type("MyDRS", (DRS,), {})(drs_config)
+    assert drs.get_object("obj-1").id == "obj-1"
 
 
 class ObjectCountingDRS(DRS):
