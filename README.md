@@ -41,7 +41,8 @@ required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
 now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
 items are `RunListResponseRunsInner` and deprecated task log items are
 `RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
-endpoints.
+endpoints. As for `TES`, the error type of `WES::service` is now
+`Box<dyn Error + Send + Sync>`, so a `WES` client can move between threads.
 
 ## Installation
 

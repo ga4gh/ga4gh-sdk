@@ -12,7 +12,7 @@ the [README](../README.md#installation).
 | Service Info | `ServiceInfo` | No direct command | `ServiceInfo` |
 | TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES |
 | DRS | Objects and access URLs | `drs get`, `access` | Not yet |
-| WES | Runs and attachments | Not yet ([#105](https://github.com/ga4gh/ga4gh-sdk/issues/105)) | Not yet |
+| WES | Runs and attachments | Not yet ([#105](https://github.com/ga4gh/ga4gh-sdk/issues/105)) | `WES`, `Run` |
 | TRS | Tools and descriptors | Not yet ([#115](https://github.com/ga4gh/ga4gh-sdk/issues/115)) | Not yet |
 | Service Registry | `ServiceRegistry` | `registry list`, `get`, `types` | Not yet |
 
