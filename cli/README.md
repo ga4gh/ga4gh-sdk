@@ -1,10 +1,9 @@
 # GA4GH-CLI
 
 The `ga4gh-cli` uses the GA4GH SDK to work with GA4GH API services. It
-currently provides TES and DRS commands. The Rust library also provides `WES`,
-`TRS`, and `ServiceInfo` clients (see the [usage guide](../docs/usage.md)). Support
-for the separate GA4GH Service Registry is planned in
-[#89](https://github.com/ga4gh/ga4gh-sdk/issues/89).
+currently provides TES, DRS and Service Registry commands. The Rust library
+also provides `WES`, `TRS`, and `ServiceInfo` clients (see the
+[usage guide](../docs/usage.md)).
 
 ## Installation
 
@@ -19,7 +18,7 @@ ga4gh-cli --help
 
 The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file. 
 
-The file and the section for the selected service (`TES` or `DRS`) must exist;
+The file and the section for the selected service (`TES`, `DRS` or `REGISTRY`) must exist;
 the CLI reports an error instead of silently using `http://localhost` when
 either is missing. Only `base_path` is required. `basic_auth` may omit
 `password`, in which case no password is set.
@@ -226,7 +225,8 @@ and filters them in the CLI.
 The commands print only the fields of the Service Registry specification;
 fields that a registry adds are ignored. Control and bidirectional formatting
 characters from the registry, in values and in error messages, are printed
-escaped, such as `\n` or `\u{1b}`. The commands exit with code 0 on
+escaped, such as `\n` or `\u{1b}`; `get` uses JSON escapes such as `\u001b`,
+so its output stays valid JSON. The commands exit with code 0 on
 success and code 1 on request or server errors. A 404 from `list` or `types`
 adds a hint to check `base_path`; from `get`, a 404 means that no service has
 that ID.
