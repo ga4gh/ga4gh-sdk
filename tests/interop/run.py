@@ -280,14 +280,14 @@ def nf_suite(profile, dest):
     checks.append(item('shared_storage_directory_glob_output', 'passed' if correct else 'observed_failure',
                        'Verify staged seed and nested directory/glob output bytes in the shared work path'))
     checks.append(item('log_selection', 'passed' if any(p.read_text().strip() == 'profile-stdout' for p in work.glob('**/.command.out')) and any(p.read_text().strip() == 'profile-stderr' for p in work.glob('**/.command.err')) else 'observed_failure',
-                       'Select stdout and stderr command files separately; upstream issue #7'))
+                       'Select stdout and stderr command files separately in one attempt; this does not exercise last-attempt log selection (#6)'))
     match = re.search(r'Created task with ID: ([^,\s]+)', run.stdout+run.stderr)
     if match:
         task = nf_api(endpoint, token, 'tasks/'+match.group(1)+'?view=FULL')
         mappings = task.get('outputs', [])
         prefixes = [o.get('path_prefix') for o in mappings if '*' in o.get('path','') or '?' in o.get('path','')]
         checks.append(item('path_prefix', 'passed' if prefixes and all(prefixes) and correct else 'observed_failure',
-                           'Inspect submitted glob path_prefix and verify nested relative output destination; upstream issue #12',
+                           'Inspect submitted glob path_prefix and verify nested relative output destination; scoped valid fixture for #7/#11, not an upstream fix',
                            observed={'glob_mappings':len(prefixes),'nonempty_prefixes':sum(bool(p) for p in prefixes),
                                      'directory_mappings':sum(o.get('type') == 'DIRECTORY' for o in mappings)}))
     else:
@@ -300,6 +300,9 @@ def nf_suite(profile, dest):
                                'Cancellation observation failed; private work and known IDs remain for operator cleanup'))
     else:
         checks.append(item('nextflow_cancellation', 'not_run', 'Fix the completion fixture before submitting a separate cancellation task'))
+    checks.append(item('nonshared_object_storage', 'unsupported', 'Shared filesystem profile does not cover object/nonshared storage; nf-ga4gh #2'))
+    checks.append(item('last_attempt_log_selection', 'not_run', 'Single attempt does not verify authoritative LAST TesTaskLog selection; nf-ga4gh #6'))
+    checks.append(item('tes_ids_in_wes_tasklog', 'not_run', 'Direct Nextflow-to-TES profile does not expose TES IDs as WES TaskLog entries; nf-ga4gh #12'))
     checks.append(item('physical_worker_cleanup', 'unsupported', 'Requires independent backend worker observation'))
     return checks
 

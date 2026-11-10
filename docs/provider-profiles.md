@@ -158,6 +158,12 @@ The nf-ga4gh coverage gaps and regressions belong with existing issues
 [#11](https://github.com/nextflow-io/nf-ga4gh/issues/11) and
 [#12](https://github.com/nextflow-io/nf-ga4gh/issues/12). This profile does not open
 replacement bug scopes.
+Coverage is deliberately narrower than those issue scopes: #2 nonshared/object
+storage is unsupported by this shared-filesystem fixture; #6 authoritative last
+`TesTaskLog` selection across attempts is not run; #12 TES IDs exposed as WES
+`TaskLog` is not run. The valid directory/glob fixture inspects the submitted
+mapping and actual output bytes relevant to #7/#11; it neither exercises all
+null/type/path mismatches nor claims an upstream issue fix.
 
 ## Native Seqera WES
 
