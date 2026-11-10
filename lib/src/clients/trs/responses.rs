@@ -54,7 +54,11 @@ pub async fn next_tools_page(
     next_page: &str,
     limits: BodyLimits,
 ) -> Result<ToolPage, Box<dyn Error>> {
-    let tools = transport.endpoint("tools")?;
+    let mut tools = transport.endpoint("tools")?;
+    // Resolve links against a credential-free base. Relative links must not
+    // inherit URL userinfo and then look like credential-bearing foreign links.
+    let _ = tools.set_username("");
+    let _ = tools.set_password(None);
     let next = tools.join(next_page)?;
     if next.origin() != tools.origin()
         || next.path() != tools.path()
