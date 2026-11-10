@@ -7,7 +7,7 @@ virtual environment active.
 
 ## Prerequisites
 
-- Python 3.12 or newer
+- CPython 3.11 or newer (PyPy and free-threaded builds are not supported)
 - The [Rust toolchain](../README.md#installation)
 
 ## Installation
@@ -17,14 +17,14 @@ the import:
 
 ```sh
 cd python
-python3.12 -m venv .venv
+python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install 'maturin>=1.7,<2'
 maturin develop --locked
 python -c 'from GA4GH import TES; print(TES.__name__)'
 ```
 
-Use another Python 3.12+ executable if `python3.12` is unavailable. The
+Use a Python 3.11+ executable if `python3` points to an older version. The
 distribution is named `GA4GH-SDK`; the import name is `GA4GH`.
 
 ## Build a wheel
@@ -34,6 +34,9 @@ Build the Python library wheel:
 ```bash
 maturin build --locked
 ```
+
+The bindings use Python's stable ABI (`abi3`), so a `cp311-abi3` wheel can be
+installed on CPython 3.11 and newer on the same platform.
 
 ## Running Tests
 
@@ -151,7 +154,8 @@ for listed in page.tasks:
   fields that the TES models don't know, and returns a `Task`.
 - `Task` addresses a task on the server by its `id`. `Task.status()` returns the current
   state as a `TesState`; `Task.cancel()` cancels the task and returns `None`.
-- `TES.get(view, id)` returns a `TesTask`; `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
+- `TES.get(view, id)` returns a `TesTask`; `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`
+  (case-insensitive). Invalid views raise `ValueError` before a request.
 - `TES.list(params=None)` returns a `ListTasksResponse` with `tasks` (a list of
   `TesTask`) and `next_page_token`; see [Listing tasks](#listing-tasks).
 - Errors: invalid tasks and arguments raise `ValueError`, a missing task file
@@ -347,6 +351,8 @@ next_page = tes.list(ListTasksParams(page_token=page.next_page_token))
 
 `state` accepts a `TesState` or any TES state name in any case, and raises `ValueError`
 for others; the `state` property returns a `TesState`.
+`view` accepts `"MINIMAL"`, `"BASIC"` or `"FULL"` in any case; the property and
+request use the uppercase TES spelling. Invalid views raise `ValueError` before a request.
 
 ### Rust crates
 

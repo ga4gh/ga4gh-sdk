@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 ga4gh-lib = { path = "../lib" }
-pyo3 = { version = "0.22.5", features = ["experimental-async"]  }
+pyo3 = { version = "0.22.5", features = ["abi3-py311", "experimental-async"] }
 pyo3-async-runtimes = { version = "0.22.0", features = ["tokio-runtime"] }
 reqwest = { version = "0.11", default-features = false, features = ["multipart"] }
 serde = "1.0.213"

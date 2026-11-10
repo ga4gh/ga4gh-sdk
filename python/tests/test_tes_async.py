@@ -210,6 +210,23 @@ def test_get_returns_a_typed_task(server: MockServer, config: Configuration) -> 
     assert server.last()["query"] == {"view": ["FULL"]}
 
 
+def test_get_takes_views_in_any_case_and_rejects_others_when_called(
+    server: MockServer, config: Configuration
+) -> None:
+    """`get()` parses the view as `TES.get()` does, before anything is sent."""
+
+    async def main() -> None:
+        tes = AsyncTES(config)
+        await tes.get("basic", "task-1")
+        assert server.last()["query"] == {"view": ["BASIC"]}
+        before = len(server.paths())
+        with pytest.raises(ValueError):
+            tes.get("EVERYTHING", "task-1")
+        assert len(server.paths()) == before
+
+    run(main)
+
+
 def test_list_sends_the_filters(server: MockServer, config: Configuration) -> None:
     """`list()` repeats list filters and returns a `ListTasksResponse`."""
 

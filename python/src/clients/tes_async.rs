@@ -7,8 +7,8 @@
 //! is called, results when the request is done, with the same functions as the sync classes.
 
 use crate::clients::tes::{
-    cancel_task, connect, create_task, get_task, list_endpoint, list_tasks, state_to_python,
-    task_status, task_to_create, PyListTasksParams,
+    cancel_task, connect, create_task, get_task, list_endpoint, list_tasks, parse_view,
+    state_to_python, task_status, task_to_create, PyListTasksParams,
 };
 use crate::utils::convert::check_extra_args;
 // Public, so that Rust extensions can add async methods the same way.
@@ -137,17 +137,19 @@ impl PyAsyncTES {
         })
     }
 
-    /// Gets a task; gives a `TesTask`. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
+    /// Gets a task; gives a `TesTask`. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`, in any
+    /// case; others raise `ValueError` when the method is called.
     pub fn get<'py>(
         &self,
         py: Python<'py>,
         view: String,
         id: String,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let view = parse_view(&view)?;
         let (tes, config) = (self.inner.clone(), self.config.clone());
         future_into_py(py, async move {
             spawn_io(
-                move || async move { get_task(connected(&tes, &config).await?, &view, &id).await },
+                move || async move { get_task(connected(&tes, &config).await?, view, &id).await },
             )
             .await
             .map_err(PyRuntimeError::new_err)

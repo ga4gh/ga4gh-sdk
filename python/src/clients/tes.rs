@@ -7,6 +7,7 @@ use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
 use ga4gh_sdk::clients::tes::models::TesState;
 use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::Task;
+use ga4gh_sdk::clients::tes::TesView;
 use ga4gh_sdk::clients::tes::TES;
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::Transport;
@@ -23,6 +24,12 @@ fn invalid_response_text(error: impl std::fmt::Display) -> String {
 
 fn invalid_response(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(invalid_response_text(error))
+}
+
+/// Parses a TES view name, in any case; raises `ValueError` for others.
+pub fn parse_view(view: &str) -> PyResult<TesView> {
+    view.parse::<TesView>()
+        .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 /// Python source of the `TesState` enum. Its members must match the variants of `TesState`.
@@ -136,8 +143,8 @@ pub async fn create_task(tes: &TES, task: Value) -> Result<Task, String> {
         .map_err(|error| format!("Failed to create task: {error}"))
 }
 
-/// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
-pub async fn get_task(tes: &TES, view: &str, id: &str) -> Result<PyTesTask, String> {
+/// Gets a task in a view parsed by [`parse_view`].
+pub async fn get_task(tes: &TES, view: TesView, id: &str) -> Result<PyTesTask, String> {
     let response = tes
         .get_raw(view, id)
         .await
@@ -457,7 +464,7 @@ pub struct PyListTasksParams {
 
 #[pymethods]
 impl PyListTasksParams {
-    /// All arguments are optional. `state` is a `TesState` or a state name in any case.
+    /// All arguments are optional. `state` and `view` names are case-insensitive.
     #[new]
     #[pyo3(signature = (
         name_prefix=None, state=None, tag_key=None, tag_value=None,
@@ -474,6 +481,7 @@ impl PyListTasksParams {
         view: Option<String>,
     ) -> PyResult<Self> {
         let state = state.as_deref().map(parse_state).transpose()?;
+        let view = view.as_deref().map(parse_view).transpose()?;
         Ok(PyListTasksParams {
             inner: ListTasksParams {
                 name_prefix,
@@ -523,7 +531,7 @@ impl PyListTasksParams {
 
     #[getter]
     fn view(&self) -> Option<String> {
-        self.inner.view.clone()
+        self.inner.view.map(|view| view.as_str().to_owned())
     }
 }
 
@@ -646,8 +654,9 @@ impl PyTES {
         io(py, |rt| rt.block_on(create_task(&self.inner, task))).map(|inner| PyTask { inner })
     }
 
-    /// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
+    /// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case.
     pub fn get(&self, py: Python<'_>, view: &str, id: &str) -> PyResult<PyTesTask> {
+        let view = parse_view(view)?;
         io(py, |rt| rt.block_on(get_task(&self.inner, view, id)))
     }
 
