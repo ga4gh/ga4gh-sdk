@@ -204,13 +204,32 @@ class Provider:
             raise Rejection(403, "; ".join(candidate["reasons"]))
         return plan
 
-    def stage(self, input_id, destination, principal, constraints=None, db=None):
+    def stage(self, input_id, destination, principal, constraints=None, db=None, plan_id=None, task=None):
         if input_id != INPUT_ID or destination not in {"alpha", "beta"}:
             raise Rejection(422, "unsupported managed object or destination")
         if db is None:
             with connect(self.root) as transaction:
                 transaction.execute("BEGIN IMMEDIATE")
-                return self.stage(input_id, destination, principal, constraints, db=transaction)
+                return self.stage(input_id, destination, principal, constraints, db=transaction,
+                                  plan_id=plan_id, task=task)
+        # Validate only after acquiring the lock that serializes the actual copy and
+        # policy updates. A request may have waited here until its plan expired.
+        if plan_id:
+            row = db.execute("SELECT data FROM plans WHERE id=?", (plan_id,)).fetchone()
+            if not row:
+                raise Rejection(404, "unknown plan")
+            plan = json.loads(row[0])
+            if plan["principal"] != principal:
+                raise Rejection(403, "plan access denied")
+            if plan["expires_at"] <= time.time() or plan["policy_version"] != policy(db)["version"]:
+                raise Rejection(409, "expired or changed plan")
+            if task is not None and plan["task_fingerprint"] != fingerprint(task):
+                raise Rejection(409, "task fingerprint mismatch")
+            if destination != plan["selected_backend"]:
+                raise Rejection(403, "staging destination differs from approved backend")
+            if not any(item["id"] == input_id and item["sha256"] == INPUT_DIGEST for item in plan["inputs"]):
+                raise Rejection(403, "staged input differs from plan identity")
+            constraints = plan["constraints"]
         current = policy(db)
         constraints = constraints or current
         if destination not in current["allowed_storage_domains"] or destination not in constraints["allowed_storage_domains"]:
@@ -238,7 +257,18 @@ class Provider:
         db.execute("INSERT INTO tasks VALUES (?, ?, ?, ?)", (task_id, self.name, principal, json.dumps(task)))
         return task
 
-    def existing_intent(self, db, intent, spec, principal):
+    def dispatch_binding(self, db, spec, operation, plan_id=None, receipt_id=None):
+        binding = {"operation": operation, "task_fingerprint": fingerprint(spec), "plan_id": plan_id}
+        if operation == "application-continuation":
+            binding["receipt_id"] = receipt_id
+            row = db.execute("SELECT data FROM receipts WHERE id=?", (receipt_id,)).fetchone()
+            if row:
+                receipt = json.loads(row[0])
+                binding.update(source_lineage=receipt["lineage"], source_execution=receipt["source_execution"],
+                               source_epoch=receipt["ownership_epoch"], checkpoint_sha256=receipt["sha256"])
+        return binding
+
+    def existing_intent(self, db, intent, spec, principal, binding):
         if not self.reconcile or not intent:
             return None
         row = db.execute("SELECT * FROM intents WHERE provider=? AND principal=? AND intent=?",
@@ -246,22 +276,27 @@ class Provider:
         if row:
             if row["fingerprint"] != fingerprint(spec):
                 raise Rejection(409, "intent already bound to another task fingerprint")
+            if not row["binding"]:
+                raise Rejection(409, "legacy intent lacks full dispatch binding; explicit resolution required")
+            if json.loads(row["binding"]) != binding:
+                raise Rejection(409, "intent already bound to another dispatch operation, checkpoint or admission plan")
             return row["task_id"]
         return None
 
-    def register_intent(self, db, intent, spec, principal, task_id):
+    def register_intent(self, db, intent, spec, principal, task_id, binding):
         if self.reconcile and intent:
-            db.execute("INSERT INTO intents VALUES (?, ?, ?, ?, ?)",
-                       (self.name, principal, intent, fingerprint(spec), task_id))
+            db.execute("INSERT INTO intents (provider, principal, intent, fingerprint, task_id, binding) VALUES (?, ?, ?, ?, ?, ?)",
+                       (self.name, principal, intent, fingerprint(spec), task_id, json.dumps(binding)))
 
     def submit(self, spec, principal, plan_id=None):
         if not self.available:
             raise Rejection(503, "backend unavailable; no automatic fallback")
         spec, rec = canonical(spec), recipe(spec)
         intent = (spec.get("tags") or {}).get("h3.intent")
-        # Stage before dispatch; validation and intent+ownership commit occur atomically below.
         with connect(self.root) as db:
-            existing = self.existing_intent(db, intent, spec, principal)
+            db.execute("BEGIN IMMEDIATE")
+            binding = self.dispatch_binding(db, spec, "tes-submission", plan_id=plan_id)
+            existing = self.existing_intent(db, intent, spec, principal, binding)
             if existing:
                 return {"id": existing}
             if plan_id:
@@ -271,23 +306,13 @@ class Provider:
                 candidate = next(x for x in self.candidates(spec, constraints) if x["backend"] == self.name)
                 if not candidate["eligible"]:
                     raise Rejection(403, "; ".join(candidate["reasons"]))
-        staged = self.stage(rec["input_id"], self.name, principal, constraints)
-        with connect(self.root) as db:
-            db.execute("BEGIN IMMEDIATE")
-            existing = self.existing_intent(db, intent, spec, principal)
-            if existing:
-                return {"id": existing}
-            if plan_id:
-                self.validate_plan(db, plan_id, spec, principal)
-            else:
-                candidate = next(x for x in self.candidates(spec, self.constraints(db)) if x["backend"] == self.name)
-                if not candidate["eligible"]:
-                    raise Rejection(403, "; ".join(candidate["reasons"]))
+            staged = self.stage(rec["input_id"], self.name, principal, constraints, db=db,
+                                plan_id=plan_id, task=spec)
             task = self.new_task(db, spec, principal, rec)
             task["staging_observed"] = staged
             save_task(db, task)
             db.execute("INSERT INTO ownership VALUES (?, ?, 0, NULL)", (task["lineage"], task["id"]))
-            self.register_intent(db, intent, spec, principal, task["id"])
+            self.register_intent(db, intent, spec, principal, task["id"], binding)
         self.launch(task)
         return {"id": task["id"]}
 
@@ -344,7 +369,9 @@ class Provider:
         intent = body.get("intent")
         with connect(self.root) as db:
             db.execute("BEGIN IMMEDIATE")
-            existing = self.existing_intent(db, intent, spec, principal)
+            binding = self.dispatch_binding(db, spec, "application-continuation", plan_id=body["plan_id"],
+                                            receipt_id=body["receipt_id"])
+            existing = self.existing_intent(db, intent, spec, principal, binding)
             if existing:
                 return {"id": existing}
             plan = self.validate_plan(db, body["plan_id"], spec, principal)
@@ -352,7 +379,10 @@ class Provider:
             owner = db.execute("SELECT * FROM ownership WHERE lineage=?", (receipt["lineage"],)).fetchone()
             if owner["writer"] != receipt["source_execution"] or owner["epoch"] != receipt["ownership_epoch"] or owner["result"]:
                 raise Rejection(409, "checkpoint source no longer owns an unfinished lineage")
-            self.stage(rec["input_id"], self.name, principal, plan["constraints"], db=db)
+            self.stage(rec["input_id"], self.name, principal, plan["constraints"], db=db,
+                       plan_id=body["plan_id"], task=spec)
+            if receipt["expires_at"] <= time.time():
+                raise Rejection(410, "checkpoint expired before restoration")
             task = self.new_task(db, spec, principal, rec, receipt["lineage"], owner["epoch"] + 1, restored, receipt)
             source = load_task(db, receipt["source_execution"])
             task["source_progress_at_transfer"] = source["progress"]
@@ -360,7 +390,7 @@ class Provider:
             save_task(db, task)
             db.execute("UPDATE ownership SET writer=?, epoch=? WHERE lineage=? AND writer=? AND epoch=?",
                        (task["id"], task["epoch"], task["lineage"], receipt["source_execution"], owner["epoch"]))
-            self.register_intent(db, intent, spec, principal, task["id"])
+            self.register_intent(db, intent, spec, principal, task["id"], binding)
         self.launch(task)
         return {"id": task["id"]}
 
@@ -392,15 +422,29 @@ class Provider:
         watcher.start()
 
     def stop(self, task_id, principal, preempt=False):
-        task = self.get_task(task_id, principal)
-        if task["state"] in TERMINAL:
-            return {}
+        self.get_task(task_id, principal)  # Validate access; this snapshot is not a state-transition guard.
         with self.process_lock:
             process = self.processes.get(task_id)
-        if not process:
-            raise Rejection(409, "process status unknown; cancellation unresolved")
-        update_task(self.root, task_id, state="PREEMPTED" if preempt else "CANCELING", preemption_requested=preempt)
-        process.terminate()
+        with connect(self.root) as db:
+            db.execute("BEGIN IMMEDIATE")
+            task = load_task(db, task_id)
+            if task["state"] in TERMINAL:
+                return {}
+            if not process:
+                raise Rejection(409, "process status unknown; cancellation unresolved")
+            task.update(state="PREEMPTED" if preempt else "CANCELING", preemption_requested=preempt)
+            # Completion/result publication and the watcher use this same transaction lock.
+            # A completed protocol outcome can never be overwritten by a stale stop request.
+            try:
+                if process.poll() is None:
+                    process.terminate()
+            except ProcessLookupError:
+                pass  # poll below determines whether physical exit was actually observed.
+            if process.poll() is not None:
+                task.update(physical_status="EXITED", returncode=process.returncode, ended_at=time.time())
+                if not preempt:
+                    task["state"] = "CANCELED"
+            save_task(db, task)
         return {}
 
     def evidence(self, task):
@@ -454,8 +498,11 @@ class Provider:
                 row = db.execute("SELECT * FROM intents WHERE provider=? AND principal=? AND intent=?", (self.name, principal, intent)).fetchone()
             if row is None:
                 raise Rejection(404, "no durable intent binding; absence is not physical non-execution proof")
+            if not row["binding"]:
+                raise Rejection(409, "legacy intent lacks full dispatch binding; explicit resolution required")
             return {"provider": row["provider"], "principal": principal, "intent": row["intent"],
                     "task_fingerprint": row["fingerprint"], "task_id": row["task_id"],
+                    "dispatch_binding": json.loads(row["binding"]) if row["binding"] else None,
                     "evidence": "durable unique provider intent binding"}
         if path == "/control/v1/plans" and method == "POST":
             return self.plan(body, principal)
@@ -464,21 +511,8 @@ class Provider:
         if path == "/control/v1/continue" and method == "POST":
             return self.continue_task(body, principal)
         if path == "/control/v1/stage" and method == "POST":
-            constraints = None
-            if body.get("plan_id"):
-                with connect(self.root) as db:
-                    row = db.execute("SELECT data FROM plans WHERE id=?", (body["plan_id"],)).fetchone()
-                    if not row:
-                        raise Rejection(404, "unknown plan")
-                    plan = json.loads(row[0])
-                    if plan["principal"] != principal:
-                        raise Rejection(403, "plan access denied")
-                    if plan["expires_at"] <= time.time() or plan["policy_version"] != policy(db)["version"]:
-                        raise Rejection(409, "expired or changed plan")
-                    if body["destination"] != plan["selected_backend"]:
-                        raise Rejection(403, "staging destination differs from approved backend")
-                    constraints = plan["constraints"]
-            return self.stage(body["input_id"], body["destination"], principal, constraints)
+            return self.stage(body["input_id"], body["destination"], principal,
+                              plan_id=body.get("plan_id"), task=body.get("task"))
         if path == "/control/v1/policy" and method == "POST":
             if principal != "demo":
                 raise Rejection(403, "test operator only")

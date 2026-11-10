@@ -51,7 +51,13 @@ performed work. `GET /control/v1/intents/{intent}` returns a provider-backed
 binding `{intent, task_fingerprint, task_id, provider}` on alpha; beta responds
 501. It is scoped to the demo principal and fingerprint and is a durable unique
 intent mapping. Duplicate alpha creates with the same intent and task return the
-original ID; changed task conflicts. Tags on beta are descriptive only: repeated
+original ID; changed task or dispatch context conflicts. The durable binding
+includes operation kind and admission plan ID; continuation also binds receipt,
+source lineage/execution/epoch and checkpoint digest. Evidence includes this
+`dispatch_binding`. An identical acknowledged dispatch may be adopted after plan
+expiry without staging or relaunch. Reusing the intent with another plan,
+receipt or operation is HTTP 409. Legacy records lacking this complete binding
+are not silently adopted. Tags on beta are descriptive only: repeated
 POSTs can start duplicate tasks. A lost response must remain unresolved there;
 an empty list is not proof of non-execution. A campaign may inject acceptance /
 client-persistence failure itself after a successful create to exercise recovery.
@@ -62,7 +68,12 @@ client-persistence failure itself after a successful create to exercise recovery
 not authentication. `POST /control/v1/plans` accepts `{task, policy, ttl_seconds}`;
 `POST /control/v1/submit` accepts `{task, plan_id}` on the selected backend.
 Plans bind the canonical TES request, principal, policy version, backend, input
-identity, executable, expiry and managed staging constraints. Ordinary TES
+identity, executable, expiry and managed staging constraints. Staging acquires its
+write lock before validating plan principal, object identity, task fingerprint
+(when supplied), destination, current policy version and expiry; the same
+transaction authorizes the actual copy. Plan expiry governs new admission and
+staging, not already admitted execution. Current storage policy and writer
+ownership are rechecked atomically at checkpoint/result commits. Ordinary TES
 create uses server-owned default policy and evaluates it before staging.
 `POST /control/v1/stage` accepts `{input_id, destination}` and rechecks current
 server policy; arbitrary URLs/file paths are rejected. The one public object is

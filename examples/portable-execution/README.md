@@ -54,20 +54,20 @@ user-selected directory, not in Git.
 
 | Behavior | Evidence |
 | --- | --- |
-| Real asynchronous task create/get/list/cancel | Separate PID, loopback HTTP, terminal protocol state and observed child exit |
+| Real asynchronous task create/get/list/cancel | Separate PID, loopback HTTP, terminal protocol state and observed child exit; late cancel/preempt cannot reverse completion |
 | Durable app checkpoints without a connected client | Client closes, worker continues and publishes committed receipts |
 | Correct continuation | Final checksum and all typed metrics equal the uninterrupted run; restored progress > 0 |
 | Competing requests | Atomic coordinator ownership CAS; one new writer; loser 409 |
 | Stale live source | Still physically running after transfer; final result commit rejected; PREEMPTED |
 | Invalid restore data | Truncated bytes, wrong digest, input/executable mismatch, format/runtime incompatibility and parameter change rejected before new task |
 | Access and retention | Other principal denied; expired checkpoint 410; expired plan 409 |
-| Submission binding | Other principal/task/backend, changed policy and expired plan rejected |
+| Submission binding | Other principal/task/backend, changed policy and expired plan rejected; queued staging validates after acquiring the copy lock |
 | Placement tradeoff | More expensive alpha compute wins on total for short tasks; cheap beta total wins for long tasks until no-export excludes it |
 | Managed transfer enforcement | HTTP staging request to forbidden domain rejected before directory/data creation |
 | Policy during execution | Changed storage policy prevents result publication |
 | Unknown data metadata | Strict plan rejects unknown size/location; non-strict plan returns null cost and explicit uncertainty |
 | Failure/fallback | Unavailable allowed site does not authorize forbidden fallback |
-| Lost acknowledgement | Alpha unique durable intent mapping supports adoption; beta reports 501 and the client leaves the outcome unresolved |
+| Lost acknowledgement | Alpha intent binds task, operation, plan and continuation source; exact acknowledgment replay adopts while changed dispatch conflicts; beta reports 501 and the client leaves the outcome unresolved |
 
 ## Boundaries
 
@@ -87,7 +87,9 @@ formerly active child status becomes `UNKNOWN_AFTER_RESTART`; persisted intent
 records can identify a task, but PID reuse is never used as termination proof.
 
 Managed input copies and result publication are rechecked under the current
-server policy. These controls do not constrain arbitrary application network
+server policy. Plan expiry applies to new admission/staging; already running
+tasks continue under current storage policy, and exact acknowledgment replay
+never causes a new copy or launch. These controls do not constrain arbitrary application network
 traffic, establish physical/geographic residency, reserve capacity, enforce a
 memory/currency quota, or cap an invoice. Supporting arbitrary applications with
 a no-export guarantee requires operator network and storage isolation. Estimate

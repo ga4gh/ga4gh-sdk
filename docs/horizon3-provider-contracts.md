@@ -23,7 +23,9 @@ arbitrary providers. This experiment uses application state, not CRIU, GPU
 state, transparent process migration or a Fusion implementation.
 
 TES already defines asynchronous execution, ordinary task states and provider
-responsibility for authorization. Those states remain intact here; checkpoint
+responsibility for authorization. Cancellation/preemption re-read state and
+conditionally transition under the completion lock; a late stop request cannot
+reverse an already committed terminal outcome. Those states remain intact here; checkpoint
 availability, preemption reason, linked attempt and physical process evidence
 are separate records. See the [TES specification](https://ga4gh.github.io/task-execution-schemas/docs/).
 [TES #121](https://github.com/ga4gh/task-execution-schemas/issues/121) and
@@ -93,8 +95,12 @@ A shared SQLite file is not a production distributed consensus service.
 
 Submission outcome can still be uncertain after target acceptance and before
 the client persists its ID. Alpha opts into a unique durable
-`(provider, principal, intent) -> (fingerprint, task ID)` binding. Identical
-retries adopt the bound task; a changed request conflicts. The fingerprint
+`(provider, principal, intent) -> (dispatch binding, task ID)` mapping. The binding
+includes operation kind, task fingerprint and admission plan ID. Continuation
+also binds receipt ID, source lineage/execution/epoch and checkpoint digest.
+Identical acknowledged retries adopt the bound task even after admission expiry,
+without staging or launching; a changed plan/receipt/task or operation conflicts.
+Legacy mappings without a complete binding require explicit resolution. The fingerprint
 ignores optional JSON nulls and TES server-owned fields so the existing SDK's
 serialization preserves identity. Beta deliberately lacks that contract and
 returns 501 for intent reconciliation. On beta, tags, a local dispatch ledger
@@ -139,7 +145,12 @@ an unknown object.
 
 The provider checks the envelope again at submission. Reusing it for a different
 principal/task/backend, after expiry or after a policy change fails before
-execution. A requested policy can tighten the server's policy, never loosen it.
+execution. Managed staging validates the plan after acquiring the same write
+transaction that authorizes the copy, so queued requests cannot use a plan that
+expired or changed while waiting. Submission stages and persists dispatch under
+that lock. Expiry is an admission bound, not a running task lease: current
+storage policy and writer ownership, rather than elapsed admission TTL, govern
+checkpoint/result publication under their commit transaction. A requested policy can tighten the server's policy, never loosen it.
 A failed selected backend produces an explicit error; fallback requires a new
 eligible decision under the same constraints. Ordinary TES submission also
 applies the server's current policy before managed staging and dispatch. It does

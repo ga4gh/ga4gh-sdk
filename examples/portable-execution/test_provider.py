@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
 from urllib.error import HTTPError
@@ -251,6 +252,156 @@ class Providers(unittest.TestCase):
         self.assertEqual(binding["task_id"], created["id"])
         self.assertEqual(request(self.a, "/v1/tasks", task)[1], created)
         self.assertEqual(len(request(self.a, "/v1/tasks")[1]["tasks"]), 1)
+
+    def test_stop_does_not_replace_a_result_that_committed_after_initial_read(self):
+        for preempt in (False, True):
+            with self.subTest(preempt=preempt):
+                task_id = self.create(self.a, steps=30, delay_ms=5)
+                original = self.a.get_task
+                read, release = threading.Event(), threading.Event()
+                errors = []
+
+                def paused_read(task_id, principal):
+                    task = original(task_id, principal)
+                    if threading.current_thread().name == "paused-stop":
+                        read.set()
+                        if not release.wait(10):
+                            raise AssertionError("stop barrier timed out")
+                    return task
+
+                self.a.get_task = paused_read
+
+                def stop():
+                    try:
+                        self.a.stop(task_id, "demo", preempt=preempt)
+                    except Exception as error:
+                        errors.append(error)
+
+                thread = threading.Thread(target=stop, name="paused-stop")
+                thread.start()
+                try:
+                    self.assertTrue(read.wait(10))
+                    complete = wait_for(self.a, task_id, lambda x: x["physical_status"] == "EXITED")
+                    self.assertEqual(complete["state"], "COMPLETE")
+                finally:
+                    release.set()
+                    thread.join(10)
+                    self.a.get_task = original
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(errors, [])
+                after = request(self.a, f"/control/v1/tasks/{task_id}/evidence")[1]
+                self.assertEqual(after["state"], "COMPLETE")
+                self.assertEqual(after["physical_status"], "EXITED")
+
+    def test_staging_rechecks_plan_after_waiting_for_the_copy_lock(self):
+        task = provider.make_task(steps=1000, delay_ms=0)
+        _, plan = request(self.a, "/control/v1/plans", {"task": task, "backend": "beta", "ttl_seconds": .2})
+        entered = threading.Event()
+        original = self.a.stage
+        results = []
+
+        def stage(*args, **kwargs):
+            if kwargs.get("db") is None:
+                entered.set()
+            return original(*args, **kwargs)
+
+        self.a.stage = stage
+        with provider.connect(self.temp.name) as db:
+            db.execute("BEGIN IMMEDIATE")
+            thread = threading.Thread(target=lambda: results.append(request(self.a, "/control/v1/stage", {
+                "input_id": "public-numbers-v1", "destination": "beta", "plan_id": plan["id"]})))
+            thread.start()
+            self.assertTrue(entered.wait(10))
+            time.sleep(max(0, plan["expires_at"] - time.time()) + .03)
+        thread.join(10)
+        self.a.stage = original
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results[0][0], 409, results)
+        self.assertFalse((Path(self.temp.name) / "staging" / "beta" / "public-numbers-v1").exists())
+
+    def test_staging_rechecks_plan_identity_and_policy_under_copy_lock(self):
+        task = provider.make_task(steps=1000, delay_ms=0)
+        _, plan = request(self.a, "/control/v1/plans", {"task": task, "backend": "beta"})
+        body = {"input_id": "public-numbers-v1", "destination": "beta", "plan_id": plan["id"]}
+        changed_task = provider.make_task(steps=1000, delay_ms=0, parameter=4)
+        self.assertEqual(request(self.a, "/control/v1/stage", body | {"task": changed_task})[0], 409)
+        self.assertEqual(request(self.a, "/control/v1/stage", body, principal="mallory")[0], 403)
+        # Keep the same allowed domains, but change policy version while the request
+        # is queued. Old code would copy despite its plan's policy binding being stale.
+        entered, results = threading.Event(), []
+        original = self.a.stage
+
+        def stage(*args, **kwargs):
+            if kwargs.get("db") is None:
+                entered.set()
+            return original(*args, **kwargs)
+
+        self.a.stage = stage
+        with provider.connect(self.temp.name) as db:
+            db.execute("BEGIN IMMEDIATE")
+            thread = threading.Thread(target=lambda: results.append(request(self.a, "/control/v1/stage", body)))
+            thread.start()
+            self.assertTrue(entered.wait(10))
+            active = provider.policy(db)
+            active["version"] = "policy-updated-while-staging-waited"
+            db.execute("UPDATE config SET data=? WHERE key='policy'", (json.dumps(active),))
+        thread.join(10)
+        self.a.stage = original
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results[0][0], 409)
+        self.assertFalse((Path(self.temp.name) / "staging" / "beta" / "public-numbers-v1").exists())
+
+    def test_plan_expiry_is_admission_only_for_already_running_task(self):
+        task = provider.make_task(steps=30, delay_ms=10, intent="short-admission")
+        _, plan = request(self.a, "/control/v1/plans", {"task": task, "backend": "alpha", "ttl_seconds": .2})
+        status, created = request(self.a, "/control/v1/submit", {"task": task, "plan_id": plan["id"]})
+        self.assertEqual(status, 200, created)
+        done = wait_for(self.a, created["id"], lambda x: x["physical_status"] == "EXITED")
+        self.assertGreater(time.time(), plan["expires_at"])
+        self.assertEqual(done["state"], "COMPLETE")
+        # This is acknowledgment adoption, not a new admission or a new copy.
+        self.assertEqual(request(self.a, "/control/v1/submit", {"task": task, "plan_id": plan["id"]})[1], created)
+        _, replacement = request(self.a, "/control/v1/plans", {"task": task, "backend": "alpha"})
+        self.assertEqual(request(self.a, "/control/v1/submit", {"task": task, "plan_id": replacement["id"]})[0], 409)
+
+    def test_legacy_task_only_mapping_is_not_full_dispatch_proof(self):
+        task = provider.make_task(steps=10, delay_ms=0, intent="legacy-binding")
+        _, accepted = request(self.a, "/v1/tasks", task)
+        wait_for(self.a, accepted["id"], lambda x: x["physical_status"] == "EXITED")
+        with provider.connect(self.temp.name) as db:
+            db.execute("UPDATE intents SET binding=NULL WHERE intent='legacy-binding'")
+        self.assertEqual(request(self.a, "/v1/tasks", task)[0], 409)
+        self.assertEqual(request(self.a, "/control/v1/intents/legacy-binding")[0], 409)
+        self.assertEqual(len(request(self.a, "/v1/tasks")[1]["tasks"]), 1)
+
+    def test_continuation_intent_binds_operation_receipt_and_plan(self):
+        self.b.reconcile = True
+        source = self.create(self.a, steps=50, delay_ms=10, intent="binding-source")
+        wait_for(self.a, source, lambda x: x["checkpoint_count"] >= 2)
+        request(self.a, f"/control/v1/tasks/{source}/preempt", {})
+        wait_for(self.a, source, lambda x: x["physical_status"] == "EXITED")
+        receipts = request(self.a, f"/control/v1/tasks/{source}/checkpoints")[1]["receipts"]
+        task = provider.make_task(steps=50, delay_ms=10, intent="bound-continuation")
+        _, plan = request(self.b, "/control/v1/plans", {"task": task, "backend": "beta", "ttl_seconds": .2})
+        body = {"task": task, "receipt_id": receipts[-1]["id"], "plan_id": plan["id"], "intent": "bound-continuation"}
+        status, accepted = request(self.b, "/control/v1/continue", body)
+        self.assertEqual(status, 200, accepted)
+        self.assertEqual(request(self.b, "/control/v1/continue", body)[1], accepted)
+        for changed in (body | {"receipt_id": receipts[-2]["id"]},
+                        body | {"receipt_id": "nonexistent-receipt"},
+                        body | {"plan_id": "nonexistent-plan"}):
+            self.assertEqual(request(self.b, "/control/v1/continue", changed)[0], 409)
+        _, replacement = request(self.b, "/control/v1/plans", {"task": task, "backend": "beta"})
+        self.assertEqual(request(self.b, "/control/v1/continue", body | {"plan_id": replacement["id"]})[0], 409)
+        self.assertEqual(request(self.b, "/v1/tasks", task)[0], 409)
+        self.assertEqual(request(self.b, "/control/v1/submit", {"task": task, "plan_id": plan["id"]})[0], 409)
+        time.sleep(max(0, plan["expires_at"] - time.time()) + .03)
+        self.assertEqual(request(self.b, "/control/v1/continue", body)[1], accepted)
+        binding = request(self.b, "/control/v1/intents/bound-continuation")[1]
+        self.assertEqual(binding["dispatch_binding"]["operation"], "application-continuation")
+        self.assertEqual(binding["dispatch_binding"]["receipt_id"], receipts[-1]["id"])
+        self.assertEqual(binding["dispatch_binding"]["source_lineage"], source)
+        self.assertEqual(len(request(self.b, "/v1/tasks")[1]["tasks"]), 1)
 
     def test_without_dedup_lost_ack_has_no_reconciliation_proof(self):
         import http.client

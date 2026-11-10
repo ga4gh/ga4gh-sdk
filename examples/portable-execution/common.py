@@ -114,11 +114,13 @@ def initialize(root):
         CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, provider TEXT, principal TEXT, data TEXT);
         CREATE TABLE IF NOT EXISTS ownership(lineage TEXT PRIMARY KEY, writer TEXT, epoch INTEGER, result TEXT);
         CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY, task_id TEXT, principal TEXT, data TEXT);
-        CREATE TABLE IF NOT EXISTS intents(provider TEXT, principal TEXT, intent TEXT, fingerprint TEXT, task_id TEXT,
+        CREATE TABLE IF NOT EXISTS intents(provider TEXT, principal TEXT, intent TEXT, fingerprint TEXT, task_id TEXT, binding TEXT,
           PRIMARY KEY(provider, principal, intent));
         CREATE TABLE IF NOT EXISTS plans(id TEXT PRIMARY KEY, data TEXT);
         CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY, data TEXT);
         """)
+        if "binding" not in {row[1] for row in db.execute("PRAGMA table_info(intents)")}:
+            db.execute("ALTER TABLE intents ADD COLUMN binding TEXT")
         db.execute("INSERT OR IGNORE INTO config VALUES ('policy', ?)", (json.dumps(DEFAULT_POLICY),))
     return root
 
