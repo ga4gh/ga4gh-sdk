@@ -130,6 +130,7 @@ experiment. None needs cloud credentials for its local checks.
 | Actual container reuse | `python3 examples/result-reuse/run.py` | Docker with the pinned image cached and checkout shared into its VM; explicit `GA4GH_REUSE_DOCKER_CONTEXT` where needed, one A execution and zero B submissions |
 | Shared scenario API | `python3 tests/run-h3-scenarios.py` | Rust, Python, Node 22+ and npm; HTTP isolation/replay tests plus actual SDK and maintained RestWesProvider histories |
 | Deployed scenario API | `python3 tests/run-h3-scenarios.py --url http://127.0.0.1:8815` | An already running source or imported OCI deployment; exercises the supplied URL rather than starting another service |
+| Direct SDK real TES profile | `cargo test -p ga4gh-lib --test provider_profiles -- --ignored` | Explicit `TES_PROFILE_API_ROOT` for an operator-owned disposable TES; preferably invoke through the profile wrapper below |
 | Provider profile classifications | `python3 -m unittest discover -s tests/interop -p 'test_*.py'` | Python; verifies distinct passed/not-run/unsupported/failure classifications |
 | Seqera multipart fixture | `python3 tests/interop/run.py --profile seqera-native-wes --offline-seqera --out tests/interop/reports/seqera-offline` | Rust and Python, real MIME parsing on loopback; simulated protocol only |
 

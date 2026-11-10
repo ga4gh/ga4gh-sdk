@@ -1,0 +1,232 @@
+{
+  "schema": "ga4gh-sdk-horizon3-evidence/v1",
+  "scope": "optional downstream prototypes and named interoperability profiles",
+  "coordination": "https://github.com/ga4gh/ga4gh-sdk/issues/148",
+  "foundation": {
+    "phase1_prs": [
+      137,
+      138,
+      139,
+      140,
+      141,
+      142
+    ],
+    "phase2_pr": 149,
+    "phase2_code": "00ce96e869940ffdfa5f07a66052d69a0af9670e"
+  },
+  "pull_requests": {
+    "H3-01": 157,
+    "H3-02": 155,
+    "H3-03": 155,
+    "H3-04": 156,
+    "H3-05": 153,
+    "H3-06": 158
+  },
+  "tasks": {
+    "H3-01": {
+      "status": "bounded_local_prototype_validated",
+      "evidence": "real_execution",
+      "runtime": {
+        "temporal_python": "1.20.0",
+        "policy": "integer-neighbors/v1"
+      },
+      "accepted_jobs": 6,
+      "valid_unique_results": 5,
+      "retained_unknown": 1,
+      "peak_reservations": 2,
+      "checks": [
+        "known-run restart retained acknowledged IDs",
+        "six intents, six accepted jobs, no duplicate submissions",
+        "five unique scored results across both providers",
+        "saved decision and result prefixes unchanged",
+        "beta unknown reservation retained through deadline",
+        "two campaign reservations maximum",
+        "bounded-restart-demo: deterministic history replay",
+        "alpha adopts lost acknowledgement only from matching provider receipt",
+        "receipt-recovery-demo: deterministic history replay",
+        "deadline stops new trials; cancellation slots released only after terminal CANCELED",
+        "deadline-demo: deterministic history replay"
+      ],
+      "history_replays": 3,
+      "controller_interruptions": [
+        -9,
+        86
+      ],
+      "limits": [
+        "Two cooperating endpoints share a host/coordinator.",
+        "Public deterministic hash/LCG toy objective; no scientific performance claim.",
+        "Unknown reservations are retained without blind resubmission; no exactly-once physical execution or invoice cap."
+      ]
+    },
+    "H3-02": {
+      "status": "bounded_local_prototype_validated",
+      "evidence": "real_execution",
+      "checkpoint_bytes": 380,
+      "restored_progress": 20,
+      "remaining_steps_performed": 80,
+      "repeated_source_steps": 1,
+      "outputs_match": true,
+      "continuation_race_statuses": [
+        200,
+        409
+      ],
+      "limits": [
+        "Application-aware CPU checkpoint; shared durable coordinator.",
+        "Writer fencing prevents competing result commit; physical computation may overlap."
+      ]
+    },
+    "H3-03": {
+      "status": "bounded_local_prototype_validated",
+      "evidence": "real_execution",
+      "behavior_regressions": 15,
+      "checks": [
+        "Actual managed input copies and policy-denied staging/submission.",
+        "Admission binds principal, task, backend, policy version and expiry under the copy transaction.",
+        "Continuation intents bind operation, plan and source checkpoint.",
+        "Unknown location/size remain explicit; no forbidden automatic fallback."
+      ],
+      "limits": [
+        "Cost/rate estimates are synthetic.",
+        "Managed copies/result publication are enforced; arbitrary network egress, geographic residency, resource reservations and billing caps are outside this example."
+      ]
+    },
+    "H3-04": {
+      "status": "exact_reuse_validated",
+      "evidence": "real_local_single_container_tes",
+      "image": "python@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91",
+      "runtime": {
+        "architecture": "aarch64",
+        "os": "linux",
+        "runtime": "CPython-3.13"
+      },
+      "provider_a": {
+        "accepted_tasks": 1,
+        "artifact_payload_bytes_sent": 342,
+        "container_executions": 1,
+        "container_launch_attempts": 1,
+        "mode": "available"
+      },
+      "provider_b": {
+        "accepted_tasks": 0,
+        "artifact_payload_bytes_sent": 0,
+        "container_executions": 0,
+        "container_launch_attempts": 0,
+        "mode": "available"
+      },
+      "executions_avoided": 1,
+      "successful_reuse_bytes": 114,
+      "rejection_cases": {
+        "changed_parameter": {
+          "status": "INELIGIBLE",
+          "reasons": [
+            "recipe_changed"
+          ]
+        },
+        "revoked_access": {
+          "status": "INELIGIBLE",
+          "reasons": [
+            "artifact_access_denied"
+          ]
+        },
+        "corrupt_artifact": {
+          "status": "INELIGIBLE",
+          "reasons": [
+            "artifact_digest_mismatch"
+          ]
+        },
+        "deleted_artifact": {
+          "status": "INELIGIBLE",
+          "reasons": [
+            "artifact_missing"
+          ]
+        },
+        "untrusted_source": {
+          "status": "INELIGIBLE",
+          "reasons": [
+            "source_untrusted"
+          ]
+        }
+      },
+      "focused_tests": 8,
+      "limits": [
+        "Explicit author-declared determinism and independent receipt trust are caller requirements.",
+        "Fresh artifact verification is current access evidence, not a future retention lease."
+      ]
+    },
+    "H3-05": {
+      "status": "public_oci_and_cross_client_validation_complete_hosting_pending",
+      "evidence": "simulated_protocol",
+      "release": "https://github.com/superbsky/ga4gh-sdk/releases/tag/horizon3-scenario-api-v0.1.0",
+      "oci_manifest": "sha256:8ca416a8a1ed149b0312db5ce742bb7b804558cc6eddb3a949332747359c5663",
+      "platform": "linux/arm64",
+      "published_download_sha256_verified": true,
+      "python_http_tests": 9,
+      "shared_wes_scenarios": 7,
+      "accepted_wes_runs_including_lost_ack": 3,
+      "maintained_client_revision": "44c6f96fbfbeff6892ba0ca3836a7bcbd7c9069a",
+      "checks": [
+        "Source, actual imported OCI image in a fresh Docker VM, and actual LAN URL all exercised.",
+        "SDK and maintained RestWesProvider WES histories match.",
+        "Typed SDK DRS access retrieves264 binary bytes and observes expiry 403; TRS returns96 CWL bytes.",
+        "Versioned pack includes exact upstream schema hashes and complete referenced DRS dependencies."
+      ],
+      "limits": [
+        "Simulator executes no submitted workloads or arbitrary URLs.",
+        "Node fetch/FormData/File exercise maintained client APIs, not browser DOM/CORS.",
+        "Hosted Reference Cloud/TLS/production operator integration remains a separate operator stage."
+      ]
+    },
+    "H3-06": {
+      "status": "partially_demonstrated_profiles_published",
+      "evidence": [
+        "simulated_protocol",
+        "real_service",
+        "real_execution"
+      ],
+      "reports": "horizon3-interop/",
+      "limits": [
+        "API cancellation and independently observed container termination are separate checks.",
+        "Final nf-ga4gh run observed an owned container still running after a 15-second observation budget despite API CANCELED.",
+        "Nonshared/object storage unsupported; authoritative last multi-attempt log and TES IDs as WES TaskLog not exercised.",
+        "Seqera discovery passed; exactly one explicitly approved native multipart POST returned HTTP 400 without acknowledged run ID. No retry; accepted live status/log/cancel remain unexercised; cause unknown."
+      ],
+      "report_index": "horizon3-interop/index.json",
+      "native_live_http_status": 400,
+      "native_posts": 1,
+      "accepted_native_lifecycle_demonstrated": false,
+      "nf_physical_cleanup_passed": false,
+      "nf_physical_observation_seconds": 15.149
+    }
+  },
+  "retained_private_evidence_sha256": {
+    "campaign_summary": "bba5ec104c623eaf0dba4c6784d69a16cfa124d7c6bc73e4b94d22bb6af8938a",
+    "provider_demo": "2ccbf480eeeb18c59feb1364c5ec8a20535c9e836f288cac87fb49086a2ae693",
+    "reuse_demo": "dae31fa3a1fd000e645b71ba570c466c253b865d40b4a5ecf21ecb0bbe16e3b9"
+  },
+  "independent_review": "Scoped reviews and final independent code/evidence review cleared after regression fixes; no unresolved P1/P2 implementation findings. H3-06 acceptance remains partial.",
+  "standard_checks": {
+    "source_commit": "56fa5ab275c9a6101c1bdfa9a1fe3f6de7ef94d7",
+    "checks": [
+      {
+        "command": "cargo fmt --all --check",
+        "exit_code": 0,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "command": "cargo clippy --workspace --all-targets",
+        "exit_code": 0,
+        "log_sha256": "965b535fac83421a20610749045c1e71d1c8c3eef8cadce4f1d6d29ea4fb5b82"
+      },
+      {
+        "command": "cargo build --workspace",
+        "exit_code": 0,
+        "log_sha256": "dabf928a2db79d3ef7b20e9b8ba88082b254d07b67ebd2cdc12fda95999073ba"
+      },
+      {
+        "command": "cargo test --workspace",
+        "exit_code": 0,
+        "log_sha256": "2d7c52d4517391d03deed7f7ff680b2a47f4d4c16dac5c56195bf664a18cf1d0"
+      }
+    ]
+  }
+}
