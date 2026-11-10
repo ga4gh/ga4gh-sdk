@@ -18,6 +18,28 @@ different directory is shown.
 - When changing a public Rust, CLI, or Python API, consider the downstream
   extension use cases in [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78).
 
+## Before opening a pull request
+
+Before creating a PR, including a draft, review the complete diff against its
+intended base using [the reviewer framework](docs/reviewer_framework.md). Check
+the linked issue, affected contracts, tests, documentation, and the actual CI
+coverage. Run the relevant local checks first; CI results arrive after the PR
+is opened.
+
+Report the pre-PR review result in the chat. If it finds required work, explain
+the findings, fix them, and repeat the affected checks and review. Do not open
+the PR while a blocking defect, required verification, or material design
+question remains unresolved. If the work cannot be resolved, report what is
+left and stop before creating the PR. Nonblocking follow-ups do not prevent
+publication; identify them separately.
+
+Keep PR descriptions focused on the change and evidence specific to the issue.
+Report routine check results in the chat review; list them in the PR only when
+they add context that CI does not show. Do not list unrelated opt-in suites as
+limitations. When updating someone else's PR, preserve accurate validation
+evidence they supplied. Correct stale claims without replacing that evidence
+with a generic list of workspace commands.
+
 ## Standard Rust checks
 
 Install a stable Rust toolchain with `rustfmt` and `clippy`. Run all four checks
