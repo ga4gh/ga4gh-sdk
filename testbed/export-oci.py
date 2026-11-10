@@ -22,7 +22,7 @@ def main():
    layers.append(descriptor(data,'application/vnd.oci.image.layer.v1.tar'+('+gzip'if compressed else '')))
   if actual!=config['rootfs']['diff_ids']:raise ValueError('uncompressed layer diff_ids mismatch')
   manifest=descriptor(encoded({'schemaVersion':2,'mediaType':'application/vnd.oci.image.manifest.v1+json','config':config_ref,'layers':layers}),'application/vnd.oci.image.manifest.v1+json')
-  manifest['annotations']={'org.opencontainers.image.ref.name':'0.1.0'}
+  manifest['annotations']={'org.opencontainers.image.ref.name':record.get('RepoTags',['ga4gh-scenario-api:0.1.0'])[0]}
   manifest['platform']={'architecture':config['architecture'],'os':config['os']}
   blobs['index.json']=encoded({'schemaVersion':2,'manifests':[manifest]})
   blobs['oci-layout']=encoded({'imageLayoutVersion':'1.0.0'})
