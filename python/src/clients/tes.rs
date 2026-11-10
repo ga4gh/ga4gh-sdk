@@ -7,6 +7,7 @@ use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
 use ga4gh_sdk::clients::tes::models::TesState;
 use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::Task;
+use ga4gh_sdk::clients::tes::TesView;
 use ga4gh_sdk::clients::tes::TES;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -17,6 +18,11 @@ use std::path::{Path, PathBuf};
 
 fn invalid_response(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(format!("Invalid TES response: {error}"))
+}
+
+fn parse_view(view: &str) -> PyResult<TesView> {
+    view.parse::<TesView>()
+        .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 /// Python source of the `TesState` enum. Its members must match the variants of `TesState`.
@@ -366,7 +372,7 @@ pub struct PyListTasksParams {
 
 #[pymethods]
 impl PyListTasksParams {
-    /// All arguments are optional. `state` is a `TesState` or a state name in any case.
+    /// All arguments are optional. `state` and `view` names are case-insensitive.
     #[new]
     #[pyo3(signature = (
         name_prefix=None, state=None, tag_key=None, tag_value=None,
@@ -383,6 +389,7 @@ impl PyListTasksParams {
         view: Option<String>,
     ) -> PyResult<Self> {
         let state = state.as_deref().map(parse_state).transpose()?;
+        let view = view.as_deref().map(parse_view).transpose()?;
         Ok(PyListTasksParams {
             inner: ListTasksParams {
                 name_prefix,
@@ -432,7 +439,7 @@ impl PyListTasksParams {
 
     #[getter]
     fn view(&self) -> Option<String> {
-        self.inner.view.clone()
+        self.inner.view.map(|view| view.as_str().to_owned())
     }
 }
 
@@ -570,12 +577,12 @@ impl PyTES {
         })
     }
 
-    /// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
+    /// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case.
     pub fn get(&self, py: Python<'_>, view: &str, id: &str) -> PyResult<PyTesTask> {
-        let view = view.to_owned();
+        let view = parse_view(view)?;
         let id = id.to_owned();
         let response = io(py, |rt| {
-            rt.block_on(self.inner.get_raw(&view, &id))
+            rt.block_on(self.inner.get_raw(view, &id))
                 .map_err(|error| format!("Failed to get task: {error}"))
         })?;
         PyTesTask::from_json(serde_json::from_str(&response).map_err(invalid_response)?)

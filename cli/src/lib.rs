@@ -23,6 +23,7 @@
 //! ```
 
 pub mod drs;
+pub mod registry;
 pub mod tes;
 pub mod trs;
 
@@ -67,6 +68,7 @@ pub fn command() -> Command {
         .subcommand(drs::command())
         .subcommand(tes::command())
         .subcommand(trs::command())
+        .subcommand(registry::command())
 }
 
 /// Run a built-in command using its service section in the config file.
@@ -79,6 +81,7 @@ pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutp
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
         Some(("trs", _)) => ServiceType::TRS,
+        Some(("registry", _)) => ServiceType::REGISTRY,
         _ => return Ok(None),
     };
     let config = Configuration::from_file(service_type)
@@ -86,7 +89,7 @@ pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutp
     dispatch_with_config(matches, &config).await
 }
 
-/// Run a built-in command with a caller-supplied service configuration.
+/// Run a built-in command with a caller-supplied configuration for its service.
 ///
 /// Returns `None` for commands not owned by this crate. The caller can inspect
 /// or reformat both output streams without changing process-global state.
@@ -98,6 +101,7 @@ pub async fn dispatch_with_config(
         Some(("drs", sub)) => drs::run(sub, config).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
         Some(("trs", sub)) => trs::run(sub, config).await.map(Some),
+        Some(("registry", sub)) => registry::run(sub, config).await.map(Some),
         _ => Ok(None),
     }
 }
@@ -113,6 +117,7 @@ pub async fn dispatch_to(
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
         Some(("trs", _)) => ServiceType::TRS,
+        Some(("registry", _)) => ServiceType::REGISTRY,
         _ => return Ok(None),
     };
     let config = Configuration::from_file(service_type)
