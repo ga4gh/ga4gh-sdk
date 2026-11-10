@@ -135,6 +135,34 @@ fn bounded_shape(value: &Value, max_nodes: usize) -> bool {
     }
     true
 }
+fn canonical(value: &Value) -> Option<String> {
+    Some(match value {
+        Value::Number(n) => format!("N({})", decimal(&n.to_string())?),
+        Value::String(_) => format!("S{}", serde_json::to_string(value).ok()?),
+        Value::Bool(b) => format!("B{b}"),
+        Value::Null => "Z".into(),
+        Value::Array(a) => format!(
+            "A[{}]",
+            a.iter()
+                .map(canonical)
+                .collect::<Option<Vec<_>>>()?
+                .join(",")
+        ),
+        Value::Object(o) => {
+            let mut keys = o.keys().collect::<Vec<_>>();
+            keys.sort();
+            let mut members = vec![];
+            for key in keys {
+                members.push(format!(
+                    "{}:{}",
+                    serde_json::to_string(key).ok()?,
+                    canonical(&o[key])?
+                ));
+            }
+            format!("O{{{}}}", members.join(","))
+        }
+    })
+}
 fn metrics(
     a: &Value,
     b: &Value,
@@ -179,8 +207,8 @@ fn metrics(
             let mut a = a.iter().collect::<Vec<_>>();
             let mut b = b.iter().collect::<Vec<_>>();
             if *unordered {
-                a.sort_by_cached_key(|v| v.to_string());
-                b.sort_by_cached_key(|v| v.to_string());
+                a.sort_by_cached_key(|v| canonical(v));
+                b.sort_by_cached_key(|v| canonical(v));
             }
             let mut result = true;
             for (index, (a, b)) in a.iter().zip(&b).enumerate() {
