@@ -387,10 +387,18 @@ def main():
                 result['runtime_images'] = images
                 snapshot = command(['docker','--context',docker_context,'ps','-q','--filter',
                                     'label=ga4gh-h3-interop=task'], timeout=15)
-                result['checks'].append(item('operator_running_container_snapshot',
+                initial_count = len(snapshot.stdout.split()) if snapshot.returncode == 0 else None
+                started = time.monotonic()
+                while snapshot.returncode == 0 and snapshot.stdout.strip() and time.monotonic()-started < 15:
+                    time.sleep(0.5)
+                    snapshot = command(['docker','--context',docker_context,'ps','-q','--filter',
+                                        'label=ga4gh-h3-interop=task'], timeout=15)
+                result['checks'].append(item('operator_container_termination',
                     'harness_error' if snapshot.returncode else 'passed' if not snapshot.stdout.strip() else 'observed_failure',
-                    'Independent Docker snapshot of this disposable stack: no task-labelled containers running at suite end; point-in-time container evidence only',
-                    observed={'running_task_containers':len(snapshot.stdout.split()) if snapshot.returncode == 0 else None}))
+                    'Independent bounded Docker observation after API checks; container stop may lag CANCELED; no whole-worker cleanup guarantee',
+                    observed={'initial_running_task_containers':initial_count,
+                              'final_running_task_containers':len(snapshot.stdout.split()) if snapshot.returncode == 0 else None,
+                              'observation_seconds':round(time.monotonic()-started,3)}))
             provider_checks = [c for c in result['checks'] if c['id'] != 'fixtures']
             if provider_checks and all(c['outcome'] in {'not_run', 'unsupported'} for c in provider_checks):
                 result['evidence'] = 'not_run'

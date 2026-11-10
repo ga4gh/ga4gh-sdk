@@ -138,9 +138,12 @@ does not provide storage access. The workflow copies a verified seed into a
 nested directory and declares both a directory output and a glob output.
 
 Set `INTEROP_DOCKER_CONTEXT` to the same disposable context to add a separate
-point-in-time Docker observation after each local suite. It counts only running
-containers with this stack's `ga4gh-h3-interop=task` label. This does not turn a
-TES cancellation acknowledgement into a physical cleanup guarantee.
+bounded Docker observation after each local suite. It records the initial count,
+waits up to 15 seconds for task containers to stop, and reports the observation
+duration. It counts only running
+containers with this stack's `ga4gh-h3-interop=task` label. A task container can still be running immediately after API `CANCELED`; that
+initial count is retained. This does not turn a TES cancellation acknowledgement
+into a whole-worker cleanup guarantee.
 
 After recording operator-level container observations, remove only this stack:
 
