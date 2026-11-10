@@ -1,0 +1,659 @@
+{
+  "format_version": 1,
+  "scope": "Phase two reviewer handoff; author-recorded local evidence, not independent review or CI attestation",
+  "code_snapshots": {
+    "sdk": "00ce96e869940ffdfa5f07a66052d69a0af9670e",
+    "companion": "2eeaefd938e04c763623bdd9ab7592b9cdd3b7f2",
+    "rfcs": "7e489d59b7a8a0f8461fc7dca4dc77af3131e2c5"
+  },
+  "base_main": "c24cc01b37b1be4bc809addaa3a37a04a3f8ef0f",
+  "source_files": {
+    "sdk": {
+      "Cargo.lock": "663a1fb0e016fccbedcf6c791420a54a77f26ee5c6233b825207719d4abe7e99",
+      "README.md": "a541649dd97c31f1b48f457b5303b0a983bd90777e8f29ed67bc107c981cf163",
+      "cli/Cargo.toml": "dbe8d10b4295afb4db371965c97ec03f0dd820e5da1c246fbf6ff5defa20a26c",
+      "cli/src/lib.rs": "88e03db1fe8219e30a26aad32724665a79fa0cf7badca49489ca9a7a0cf47783",
+      "cli/src/workflow.rs": "a504f6cb44b17d11d01bc97cbb75f6b9f3f538a68bcce20148da9238c0e30d78",
+      "cli/tests/workflow.rs": "15307113665035f39231a73e16d8fdb66ec4fa1af4f9335f4bc8a9f03eb39911",
+      "docs/workflow-contracts.md": "93676b8d1e05dda295038a9f1dae0449fc9659f16c8158a95f52c6889041b2b1",
+      "examples/qc-demo/invalid-request.json": "59abef00d1630db7f65832105ee7ce226f98aac981fe64c5ce31c5f159257aed",
+      "examples/qc-demo/main.cwl": "2eef0d0f062aece39e7aff371fb2cb4aba1b746d4e20fdeadfd15006b13f3227",
+      "examples/qc-demo/policy.json": "07fcd33e82744b20ee355147069713fe0629860d095cdaf80050002efceba2b8",
+      "examples/qc-demo/profile.json": "5bac09c12bd412e55a1e6580d2a2fc4494f0c57276e4917a4ca7a4b32a62b618",
+      "examples/qc-demo/request.json": "49309f00c06f6ef70962ee0ee3eb7e2ca5d80d9321c4e772075518d96a333f45",
+      "examples/qc-demo/view_report.py": "5f13ee95bdac10da05055ac5f506c0216f809ffc4af6040afacc44ea6c03787a",
+      "lib/Cargo.toml": "e8685d010c024c0d7f6cf6fc376655cb8778114b0e9b9878005854666bff7a65",
+      "lib/src/clients/capabilities.rs": "26c6d87cda1adb217fa2aee83692934ec352dfc7575a5f331df8d8e4fd17f1cc",
+      "lib/src/clients/wes/mod.rs": "ed974462a01072624d8d4d0f79105c384911e94bf5cccc934e5cdc6402dbdb35",
+      "lib/src/lib.rs": "f4958a9c83e8ea43cb1814d5a34f1d0e676d8172f2bc18d3132b5e30d7ac594b",
+      "lib/src/workflow/compare.rs": "b03c6b25fa6f1cb24cc75b6352ea03f5c039e81108acb944058c670c60576fbf",
+      "lib/src/workflow/mod.rs": "a5e28f8f71609cc8cfcf3caba4622f4a9094601527b22560c03fb3ec2ed09c04",
+      "lib/src/workflow/results.rs": "b6977a73f0b89b642b79424113cb7d3e1f277ee241427266668b5367d0abf58c",
+      "lib/src/workflow/schemas/README.md": "403bb86049c80fbf71d52300714a33bcb22820220ebb3f0e1c4032ca3d623d3a",
+      "lib/src/workflow/schemas/ga4gh-io-profile.schema.json": "9ba7bad2a4a5388110331a00641ca410264c71c369b8a8cb9f3dd2b8b3a42ba0",
+      "lib/src/workflow/schemas/ui-widgets.schema.json": "c5ede316274c17f9467043f1d9f3983612f5481746340853a60c35e642329b96",
+      "lib/tests/qc_workflow.rs": "ee599c12184db699fe7e36872b49ed17992214aa26931341dde596cb47584b56",
+      "lib/tests/wes_native_discovery.rs": "b82d1ad10d1a9e27d0f46e34753dd442a918558e00aa0904efc39ad82739c2ea",
+      "lib/tests/workflow_contracts.rs": "6b8d61d718b66b3790ed43d6927380f6efe69601b4e601d32dbc59768d27d7ed",
+      "tests/README.md": "8bbaec2f2c43aa5479247c4b78719d26f6d837d14d33470afb4ac376e1bb00b0",
+      "tests/fixtures/io-profile/example_tool.schema.json": "0713d70b03ccc43131428132e6309a49bb756e16e1496bfadcbfbf0584147c48",
+      "tests/fixtures/io-profile/example_tool.schema.json.license": "cefbd08cfa756992b0397a22d66f6bd20040f36f4f23777682c13cdd3c3028c3",
+      "tests/fixtures/io-profile/example_workflow.schema.json": "c24771cca6d3de3d6e419e5e40a52a334b3449ccefbadd4ebf4225dcaebd12cf",
+      "tests/fixtures/io-profile/example_workflow.schema.json.license": "cefbd08cfa756992b0397a22d66f6bd20040f36f4f23777682c13cdd3c3028c3",
+      "tests/fixtures/io-profile/invalid.schema.json": "943e9ee63b9b0fb852e4305337ce70dea17875a08c60b3d053a619a7fc00080b",
+      "tests/fixtures/io-profile/invalid.schema.json.license": "cefbd08cfa756992b0397a22d66f6bd20040f36f4f23777682c13cdd3c3028c3",
+      "tests/fixtures/io-profile/valid.schema.json": "d414e27e9f83799301f481874665355c55c895c4b2abad206ffc8c12dcd2af37",
+      "tests/fixtures/io-profile/valid.schema.json.license": "cefbd08cfa756992b0397a22d66f6bd20040f36f4f23777682c13cdd3c3028c3",
+      "tests/run-phase2-qc.py": "9d10dae012433098634c1abf1bb363402896db7ed4c63c025583302771662876"
+    },
+    "companion": {
+      "examples/protes-companion/Cargo.lock": "152d4a5bfbf91a84214e1448b69d34360c3b44fca41a7ead2cf0822790d7b86c",
+      "examples/protes-companion/Cargo.toml": "0649b676583dbf364ebf4c92f6e999677e75b19458a122adebcd8bd3a2fdd14e",
+      "examples/protes-companion/README.md": "2319ff3afc18e8012e78b17238f2bb24823f21297a5b581168b8874ae2e432cf",
+      "examples/protes-companion/fixtures/choices.json": "0d03bb68df60a9c76d1ffe79359756995ec180e313c1dbf6c5454dce9da99304",
+      "examples/protes-companion/fixtures/original-task.json": "573b861a51c127651be44ff951c59715b0970457a3ffbfd35b5d16780ae32796",
+      "examples/protes-companion/fixtures/provenance.json": "d2b2e780f408d58a72da520375dcacd59c4090d728d55a8d276f9ca7292fe1ac",
+      "examples/protes-companion/src/lib.rs": "49e80b14b588e6fdf4e330dd37955c1419299af4d95c6374a5dae2ca985cc97e",
+      "examples/protes-companion/src/main.rs": "f75e627c2382b367ce984e792a8ef26ee84c9df89322f31727e887ccf6141912",
+      "examples/protes-companion/tests/consumer.rs": "91fe709fcdf488ca8a151e9d80551a02affdef356d18b34c59b43cd61b6293fd",
+      "tests/README.md": "ca1f4cf8bef8a658b67f373693f68dd21036096980a11be3eb1fdb92b5347590"
+    },
+    "rfcs": {
+      "docs/rfcs/leased-sessions.md": "0d1b854921c83a47e16a2d2b1a7bcb3b27f1f836983f31f27c2bd0a050199ec2",
+      "docs/rfcs/workload-secrets.md": "be984a9a06fce61cfa34e6fa6ab14582fc1841e8e595dd611d2bc483c253a271",
+      "examples/provider-contracts/README.md": "a2b07d8ea37a198c221e9c96ca43c661173446ae92933c594d1c4422b4b70af7",
+      "examples/provider-contracts/openbao_feasibility.py": "8918bd28912e3dd1e22deacd0c2b14411fc1607592653a9b25c4c2d6200afe8f",
+      "examples/provider-contracts/session_feasibility.py": "df8f73beddf93f56493ec3711375cae33084e03e3b9be4252965f1ed1a37ca32"
+    }
+  },
+  "historical_logs": {
+    "release-clippy.log": {
+      "original_sha256": "049213d24ceca00a1b2a3aea50a9c44582dcdc2585aa5958cdfe607dde23a925",
+      "source_sha_embedded_in_original": false
+    },
+    "release-build.log": {
+      "original_sha256": "00701ec6531b175e5db586a03ffc4557f0526bf78a605bba2df4a471b4a696c8",
+      "source_sha_embedded_in_original": false
+    },
+    "release-tests.log": {
+      "original_sha256": "f037e0c30c30a59eddb4215fa75b82ddc79e0ff8cf27c534d90eb108ca6bddcd",
+      "source_sha_embedded_in_original": false,
+      "suites": [
+        {
+          "suite": "Running unittests src/lib.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running unittests src/lib.rs",
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running unittests src/main.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/downstream_cli.rs",
+          "result": "ok",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/input_errors.rs",
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/output.rs",
+          "result": "ok",
+          "passed": 11,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/workflow.rs",
+          "result": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running unittests src/lib.rs",
+          "result": "ok",
+          "passed": 86,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/capabilities.rs",
+          "result": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/drs_bulk.rs",
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/drs_resolution.rs",
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/drs_uri.rs",
+          "result": "ok",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/execution_acknowledgements.rs",
+          "result": "ok",
+          "passed": 5,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/funnel_service_info.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/funnel_tes.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/operation_policy.rs",
+          "result": "ok",
+          "passed": 8,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/pagination.rs",
+          "result": "ok",
+          "passed": 5,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/qc_workflow.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 1
+        },
+        {
+          "suite": "Running tests/response_transport.rs",
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/trs_public_registries.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 2
+        },
+        {
+          "suite": "Running tests/verified_bundle.rs",
+          "result": "ok",
+          "passed": 5,
+          "failed": 0,
+          "ignored": 1
+        },
+        {
+          "suite": "Running tests/waiters.rs",
+          "result": "ok",
+          "passed": 5,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/wes_models.rs",
+          "result": "ok",
+          "passed": 17,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/wes_native_discovery.rs",
+          "result": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/wes_starter_kit_docker.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/wes_streaming.rs",
+          "result": "ok",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/workflow_contracts.rs",
+          "result": "ok",
+          "passed": 17,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Doc-tests ga4gh_cli",
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Doc-tests ga4gh_sdk",
+          "result": "ok",
+          "passed": 8,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "totals": {
+        "passed": 213,
+        "failed": 0,
+        "ignored": 4
+      }
+    },
+    "metadata-context-clippy.log": {
+      "original_sha256": "93e8d3a3a8989c5c534317a46f361abad4748ed32497dd18ddeadad84ca35da9",
+      "source_sha_embedded_in_original": false
+    },
+    "metadata-context-tests.log": {
+      "original_sha256": "92cee4778d574b701914eee103850e1dcf43b7d5e600387e63bd29e020c9f6ed",
+      "source_sha_embedded_in_original": false,
+      "suites": [
+        {
+          "suite": "Running tests/workflow_contracts.rs",
+          "result": "ok",
+          "passed": 18,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "totals": {
+        "passed": 18,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "metadata-cli-tests.log": {
+      "original_sha256": "74a172a1a2862cd33def399b6fb98b4eae4e02f399bded1295d0c6efcd5e1971",
+      "source_sha_embedded_in_original": false,
+      "suites": [
+        {
+          "suite": "Running tests/workflow.rs",
+          "result": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "totals": {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "base-clippy.log": {
+      "original_sha256": "c5e8f3cee759b8477eb9dc0c2901b3478bbaaa8547f7d282c1a9862cccd725b1",
+      "source_sha_embedded_in_original": false
+    },
+    "base-build.log": {
+      "original_sha256": "34b8bb289630a8c946d9fbe5529cf0d8ee3812a515d6d977bc177781a6730480",
+      "source_sha_embedded_in_original": false
+    },
+    "base-tests.log": {
+      "original_sha256": "a16b3de6f5059c438840b2762716640ac025e0acbe3847ce8faf51891ecfe447",
+      "source_sha_embedded_in_original": false,
+      "suites": [
+        {
+          "suite": "Running unittests src/lib.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running unittests src/lib.rs",
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running unittests src/main.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/downstream_cli.rs",
+          "result": "ok",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/input_errors.rs",
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/output.rs",
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running unittests src/lib.rs",
+          "result": "ok",
+          "passed": 51,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/funnel_service_info.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/funnel_tes.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/wes_starter_kit_docker.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Doc-tests ga4gh_cli",
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Doc-tests ga4gh_sdk",
+          "result": "ok",
+          "passed": 7,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "totals": {
+        "passed": 76,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "companion-release-clippy.log": {
+      "original_sha256": "8a72433b4a7de5dd7c105dffe98252771fd1fac2e7fc975ed566285522e33368",
+      "source_sha_embedded_in_original": false
+    },
+    "companion-release-build.log": {
+      "original_sha256": "5e457401777cea451d7bdc87b90247407b22e9687a2fbd35bdfe66720ce46eab",
+      "source_sha_embedded_in_original": false
+    },
+    "companion-release-tests.log": {
+      "original_sha256": "adc3e524884c331d45ed502c4317348d176043058f2a9860f04f20c960f54886",
+      "source_sha_embedded_in_original": false,
+      "suites": [
+        {
+          "suite": "Running unittests src/lib.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running unittests src/main.rs",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Running tests/consumer.rs",
+          "result": "ok",
+          "passed": 5,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "suite": "Doc-tests protes_companion",
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "totals": {
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "optional-disabled.log": {
+      "original_sha256": "c97ca7f557804950dc32b79b9ac144a11ef499de279d39389be8493b66411108",
+      "source_sha_embedded_in_original": false
+    },
+    "package-files.log": {
+      "original_sha256": "603054fe4b65939f882e1498dd479aad65c96a69ef89b3b7fb80e6c731bc7b8d",
+      "source_sha_embedded_in_original": false
+    },
+    "qc-final-e2e.log": {
+      "original_sha256": "1b019fffeb3be83f903c6387799cac660c606e4ac017647ccb41d7494beb0b0d",
+      "source_sha_embedded_in_original": false,
+      "suites": [
+        {
+          "suite": "Running tests/qc_workflow.rs",
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "totals": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    }
+  },
+  "live_observations": {
+    "qc": {
+      "original_sha256": "e6e463e4ce48345e870889745442173d84cf634eba7888ccfd9d3888832ac48b",
+      "environment": "two independent local Toil WES 9.3.0 processes; Docker execution; IPython 9.6.0",
+      "runs": [
+        {
+          "state": "COMPLETE",
+          "metrics": {
+            "mean_length": 4,
+            "sequence_count": 3,
+            "total_length": 12
+          },
+          "report_integrity": [
+            "verified"
+          ]
+        },
+        {
+          "state": "COMPLETE",
+          "metrics": {
+            "mean_length": 4,
+            "sequence_count": 3,
+            "total_length": 12
+          },
+          "report_integrity": [
+            "verified"
+          ]
+        }
+      ],
+      "outcome": "equivalent_under_policy",
+      "changed_identity_outcome": "inconclusive",
+      "limits": "Historical run precedes final auth/comparison/root-annotation fixes. Not two external nodes; not final-head end-to-end acceptance."
+    },
+    "protes": {
+      "api_revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+      "source_logs_sha256": {
+        "protes-live-evidence.json": "eafb8a4ac4d2e9a2b3bb8e115e099269869e9d0c0317a42a2e71336b00d84492",
+        "protes-unknown-evidence.json": "f57f86af156b449b168ad86389b2b6911bcfbb3b8c916c1d305d13fa765e5068",
+        "protes-exact-json-evidence.json": "509f4deba27db2285a80ef63ec361156aeecf7fac4b9e0ea6b86294435f85669"
+      },
+      "known_rejection_attempts": [
+        {
+          "number": 1,
+          "outcome": "not_accepted",
+          "reason": "http_400"
+        },
+        {
+          "number": 2,
+          "outcome": "accepted",
+          "reason": null
+        }
+      ],
+      "changed_paths": [
+        [
+          "/payload/tags/smoke.plugin"
+        ],
+        []
+      ],
+      "pipeline_hash": "sha256:78cc14708db2e72b80b52c484e4b396b935460ed31ffc30e7cfb91d962d8a0b6",
+      "unknown_outcome_attempts": [
+        {
+          "number": 1,
+          "outcome": "unknown",
+          "reason": "http_503"
+        }
+      ],
+      "controlled_backend_records_reconciled_no_execution": true,
+      "automatic_replay": false,
+      "exact_json_plan_ignore_error": true,
+      "limits": "Real gateway/plugin/persistence; controlled TES fixture. FULL-view ignore_error assertion was observed in the live runner, not stored in this JSON. Local live orchestration was temporary and is not a turnkey committed suite."
+    },
+    "sessions": {
+      "original_sha256": "8fbe42038b7c4dd593d810485e51fbf5a04d5765253a65aebad3b02d5ca7bb77",
+      "observations": {
+        "format_version": 1,
+        "task_running_before_readiness": true,
+        "owner_checks": true,
+        "authenticated_proxy_delivered_report": true,
+        "reconnect_without_second_process": true,
+        "renew": true,
+        "expiry_after_client_exit": true,
+        "route_invalidated_before_compute_stop": true,
+        "explicit_stop": true,
+        "limitations": [
+          "Local subprocess controller, not an integrated TES backend",
+          "Static test bearer auth, not production identity/proxy federation",
+          "Provider restart recovery and termination-failure retry require the backend implementation"
+        ]
+      }
+    },
+    "openbao": {
+      "original_sha256": "4daf22f3d841ad46d6217126d3261386bac2275899e703e14e6328e3d36f0c36",
+      "observations": {
+        "format_version": 1,
+        "openbao_image": "openbao/openbao@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f",
+        "secret_engine": "kv-v2 static fixture",
+        "identity": "operator test RSA issuer, subject + audience + requester + intent + reference bound by JWT role",
+        "authorized_workload": true,
+        "different_workload_denied": 400,
+        "different_intent_denied": 400,
+        "expired_assertion_denied": 400,
+        "expired_access_token_denied": 403,
+        "revoked_access_token_denied": 403,
+        "public_fixture_records_credential_free": true,
+        "limitations": [
+          "No production runner attestation or requester authorization integration",
+          "Record inspection covers local fixtures, not deployed TES persistence",
+          "KV read revocation cannot revoke a value already disclosed; no dynamic-credential revocation claim"
+        ]
+      }
+    }
+  },
+  "evidence_limits": [
+    "Historical original logs do not embed source SHA; commit coverage is described from the implementation record, not cryptographically attested.",
+    "Source-file hashes identify reviewed committed bytes, not historical execution environments.",
+    "Private paths, transient IDs, endpoint addresses, credentials and raw operational records are excluded.",
+    "Current PR status and dependency heads can change; the guide records the handoff observation."
+  ],
+  "github_status_observed_date_utc": "2026-11-10",
+  "pull_requests": {
+    "149": {
+      "code_snapshot": "00ce96e869940ffdfa5f07a66052d69a0af9670e",
+      "base": "main",
+      "draft": true,
+      "mergeable": "MERGEABLE",
+      "review_decision": "REVIEW_REQUIRED",
+      "ci_conclusion": "action_required"
+    },
+    "150": {
+      "code_snapshot": "2eeaefd938e04c763623bdd9ab7592b9cdd3b7f2",
+      "base": "main",
+      "draft": true,
+      "mergeable": "MERGEABLE",
+      "review_decision": "REVIEW_REQUIRED",
+      "ci_conclusion": "action_required"
+    },
+    "151": {
+      "code_snapshot": "7e489d59b7a8a0f8461fc7dca4dc77af3131e2c5",
+      "base": "main",
+      "draft": true,
+      "mergeable": "MERGEABLE",
+      "review_decision": "REVIEW_REQUIRED",
+      "ci_conclusion": "action_required"
+    }
+  },
+  "known_missing_dependency": {
+    "pr": 138,
+    "commit": "aff99993498d09fb5ec9d9e084dfa56add97d94d",
+    "subject": "fix(python): own string inputs before releasing the GIL",
+    "gate": "Synchronize before merging SDK phase two and validate the integrated tree."
+  }
+}
