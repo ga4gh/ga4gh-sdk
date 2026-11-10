@@ -8,7 +8,7 @@ import threading
 
 
 class Fixture:
-    def __init__(self, workflow):
+    def __init__(self, workflow, public_hello=False):
         self.workflow = workflow
         self.state = 'QUEUED'
         self.requests = []
@@ -82,9 +82,14 @@ class Fixture:
                         'workspaceId': 'synthetic-workspace', 'computeEnvId': 'synthetic-compute'}
                     assert parts['workflow_type'] == 'NFL'
                     assert parts['workflow_type_version'] == 'DSL2'
-                    assert parts['workflow_url'] == 'seqera.nf'
-                    assert attachment == fixture.workflow
-                    assert json.loads(parts['workflow_params']) == {'delay': 30}
+                    if public_hello:
+                        assert parts['workflow_url'] == 'https://github.com/nextflow-io/hello'
+                        assert attachment is None
+                        assert json.loads(parts['workflow_params']) == {}
+                    else:
+                        assert parts['workflow_url'] == 'seqera.nf'
+                        assert attachment == fixture.workflow
+                        assert json.loads(parts['workflow_params']) == {'delay': 30}
                     fixture.accepted += 1
                     self.reply({'run_id': 'synthetic-run'})
                 except (AssertionError, KeyError, ValueError) as exc:

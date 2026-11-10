@@ -69,7 +69,7 @@ def seqera(profile, dest, offline, launch):
         token = dest/'synthetic-token'
         token.write_text('synthetic-profile-token\n')
         token.chmod(0o600)
-        with Fixture((dest/'seqera.nf').read_bytes()) as fixture:
+        with Fixture((dest/'seqera.nf').read_bytes(), public_hello=env.get('SEQERA_PROFILE_WORKFLOW_MODE') == 'public-hello') as fixture:
             env.update(SEQERA_PROFILE_API_ROOT=fixture.url,
                        SEQERA_PROFILE_TOKEN_FILE=str(token),
                        SEQERA_PROFILE_ACTION='launch-cancel',

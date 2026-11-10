@@ -175,8 +175,11 @@ async fn profile(checks: &mut Vec<Value>) -> Result<(), Error> {
         .await
     {
         Ok(run) => run,
-        Err(_) => {
-            checks.push(check("launch", "observed_failure", "Submission not acknowledged; ledger remains SUBMISSION_OUTCOME_UNKNOWN; never retry automatically"));
+        Err(error) => {
+            let http_status = error
+                .downcast_ref::<ga4gh_sdk::utils::transport::HttpStatusError>()
+                .map(|error| error.status.as_u16());
+            checks.push(json!({"id":"launch", "outcome":"observed_failure", "detail":"Submission not acknowledged; ledger remains SUBMISSION_OUTCOME_UNKNOWN; never retry automatically", "observed":{"http_status":http_status}}));
             return Ok(());
         }
     };
