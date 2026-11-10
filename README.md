@@ -45,7 +45,74 @@ endpoints.
 
 ## Installation
 
-TBA
+These instructions install the SDK from this source repository.
+
+**Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) via
+`rustup` and Git. The repository pins its toolchain in
+[`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs that version
+on the first build.
+
+Install the command-line tool `ga4gh-cli` into `~/.cargo/bin`:
+
+```sh
+git clone https://github.com/ga4gh/ga4gh-sdk.git
+cd ga4gh-sdk
+cargo install --path cli --locked
+ga4gh-cli --help
+```
+
+To use the Rust library in your own project, add it as a Git dependency
+(package `ga4gh-lib`, crate `ga4gh_sdk`):
+
+```toml
+[dependencies]
+ga4gh-lib = { git = "https://github.com/ga4gh/ga4gh-sdk" }
+```
+
+For the Python bindings (built with [maturin](https://www.maturin.rs/)), see
+the [Python README](python/README.md).
+
+## Quick start
+
+Install [Funnel](https://ohsu-comp-bio.github.io/funnel/download/) and Docker,
+then start a local TES server in another terminal. The repository's integration
+suite uses Funnel v0.11.14; Docker is needed to execute tasks.
+
+```sh
+funnel server run --Server.HTTPPort=8000
+```
+
+Point the CLI at that service by writing `~/.ga4gh-cli/config.json`.
+`base_path` is the API root, including the service's path prefix:
+
+```sh
+mkdir -p ~/.ga4gh-cli
+cat > ~/.ga4gh-cli/config.json <<'JSON'
+{
+  "TES": {
+    "base_path": "http://localhost:8000/ga4gh/tes/v1"
+  }
+}
+JSON
+```
+
+Submit the checked-in [task file](examples/tes-hello.json), which runs a
+greeting in an Alpine container without external storage. Then check its status
+and list tasks:
+
+```sh
+task_id=$(ga4gh-cli tes create examples/tes-hello.json)
+ga4gh-cli tes status "$task_id"
+ga4gh-cli tes list
+```
+
+Docker may download the Alpine image on the first run.
+
+The [CLI README](cli/README.md) describes all CLI commands. The
+[usage guide](docs/usage.md) covers configuration, authentication, and the
+Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, and `TRS` clients. Support
+for the separate GA4GH Service Registry is planned in
+[#89](https://github.com/ga4gh/ga4gh-sdk/issues/89).
 
 ## Advanced transport
 
@@ -130,8 +197,8 @@ that submission may have been accepted. The existing bytes API remains usable.
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).
 
 To build the project:
-```
-cargo build
+```sh
+cargo build --workspace --locked
 ```
 
 ## TRS client
@@ -181,9 +248,10 @@ no TRS commands yet.
 ## Testing
 Unit tests run by default. Integration suites are opt-in.
 
-To run the unit tests, which are being tested with mock servers, you can simply run
-```
-cargo test
+To run the workspace's unit and documentation tests, use:
+
+```sh
+cargo test --workspace --locked
 ```
 
 For opt-in integration suites, see the [integration test guide](tests/README.md)
@@ -205,13 +273,13 @@ including breaking changes, may occur at any time without further notice.
 
 This project is a community effort and lives off your contributions, be it in
 the form of bug reports, feature requests, discussions, ideas, fixes, or other
-code changes. Please read [these guidelines][docs-contributing] if you want to
-contribute. And please mind the [code of conduct][docs-coc] for all
+code changes. Please read [these guidelines][contributing] if you want to
+contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
 
 ## License
 
-This project is covered by the [Apache License 2.0](badge-url-license) also
+This project is covered by the [Apache License 2.0][badge-license-url] also
 [shipped with this repository][license].
 
 ## Contact
@@ -240,6 +308,7 @@ To get in touch with us, please use one of the following routes:
 [elixir-compute]: https://elixir-europe.org/platforms/compute
 [email]: mailto:cloud-service@elixir-europe.org
 [ga4gh]: https://ga4gh.org/
+[issue-tracker]: https://github.com/ga4gh/ga4gh-sdk/issues
 [license]: LICENSE
 [logo-elixir]: ./images/logo-elixir.svg
 [logo-elixir-cloud-aai]: ./images/logo-elixir-cloud-aai.svg

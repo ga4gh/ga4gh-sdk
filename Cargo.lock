@@ -542,6 +542,7 @@ dependencies = [
  "ga4gh-lib",
  "pyo3",
  "pyo3-build-config",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
