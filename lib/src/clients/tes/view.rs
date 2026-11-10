@@ -44,7 +44,7 @@ impl fmt::Display for ParseTesViewError {
         write!(
             f,
             "Invalid view '{}': expected MINIMAL, BASIC, or FULL",
-            self.0
+            self.0.escape_debug()
         )
     }
 }
@@ -98,5 +98,13 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn test_invalid_view_error_escapes_terminal_controls() {
+        let message = "FULL\n\x1b[31m".parse::<TesView>().unwrap_err().to_string();
+        assert!(!message.contains('\n'));
+        assert!(!message.contains('\x1b'));
+        assert!(message.contains("\\n"));
     }
 }

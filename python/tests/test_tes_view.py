@@ -1,60 +1,40 @@
-"""TES views are validated before a request, and sent with their TES spelling."""
-import json
-import subprocess
-import sys
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+"""TES views are validated before a request and sent with their TES spelling."""
+
+import pytest
+
+from GA4GH import ListTasksParams, TES
 
 
-def test_get_validates_and_sends_the_view():
-    gets = []
+@pytest.mark.parametrize(
+    ("view", "expected"),
+    [("MINIMAL", "MINIMAL"), ("basic", "BASIC"), (" Full ", "FULL")],
+)
+def test_get_sends_valid_view(server, config, view, expected):
+    task = TES(config).get(view, "task-1")
+    assert task.id == "task-1"
+    assert server.last()["query"] == {"view": [expected]}
 
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
 
-        def send(self, body, status=200):
-            encoded = body.encode()
-            self.send_response(status)
-            self.send_header('Content-Length', str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
+@pytest.mark.parametrize("view", ["EVERYTHING", "", "FULL VIEW"])
+def test_get_rejects_invalid_view_without_request(server, config, view):
+    client = TES(config)
+    discovery = server.last()
+    with pytest.raises(ValueError, match="MINIMAL, BASIC, or FULL"):
+        client.get(view, "task-1")
+    assert server.last() == discovery
 
-        def do_GET(self):
-            gets.append(self.path)
-            if self.path == '/service-info':
-                self.send(json.dumps({'id': 'test', 'name': 'test', 'version': '1',
-                    'organization': {'name': 'test', 'url': 'https://example.org'},
-                    'type': {'group': 'org.ga4gh', 'artifact': 'tes', 'version': '1.1'}}))
-            elif self.path.startswith('/tasks/task-1?view='):
-                self.send('{"id":"task-1","executors":[]}')
-            else:
-                self.send('{}', 400)
 
-    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    server.daemon_threads = True
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    code = r'''
-import sys
-from GA4GH import Configuration, TES
-client = TES(Configuration(sys.argv[1]))
-for view in ['EVERYTHING', '', 'FULL VIEW']:
-    try:
-        client.get(view, 'task-1')
-        raise AssertionError(f'accepted view {view!r}')
-    except ValueError as error:
-        assert 'MINIMAL, BASIC, or FULL' in str(error), str(error)
-for view in ['MINIMAL', 'basic', ' Full ']:
-    assert client.get(view, 'task-1').id == 'task-1'
-'''
-    try:
-        result = subprocess.run([sys.executable, '-c', code, f'http://127.0.0.1:{server.server_port}'],
-                                capture_output=True, text=True, timeout=15)
-        assert result.returncode == 0, result.stdout + result.stderr
-        # Invalid views never reach the server.
-        assert gets == ['/service-info'] + [f'/tasks/task-1?view={v}' for v in ['MINIMAL', 'BASIC', 'FULL']]
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+def test_list_rejects_invalid_views_before_request_and_sends_valid_values(server, config):
+    client = TES(config)
+    discovery = server.last()
+
+    for view in ("EVERYTHING", "", "FULL VIEW"):
+        with pytest.raises(ValueError, match="MINIMAL, BASIC, or FULL"):
+            ListTasksParams(view=view)
+        assert server.last() == discovery
+
+    for view, expected in (("MINIMAL", "MINIMAL"), ("basic", "BASIC"), (" Full ", "FULL")):
+        params = ListTasksParams(view=view)
+        assert params.view == expected
+        client.list(params)
+        assert server.last()["query"] == {"view": [expected]}

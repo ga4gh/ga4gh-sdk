@@ -316,10 +316,13 @@ pub async fn export_all(
         anyhow::bail!("--all requires --format jsonl");
     }
     let mut query = serde_json::Map::new();
-    for key in ["name_prefix", "page_token", "view"] {
+    for key in ["name_prefix", "page_token"] {
         if let Some(value) = sub.get_one::<String>(key) {
             query.insert(key.into(), serde_json::json!(value));
         }
+    }
+    if let Some(value) = sub.get_one::<String>("view") {
+        query.insert("view".into(), serde_json::json!(value.parse::<TesView>()?));
     }
     if let Some(value) = sub.get_one::<String>("state") {
         query.insert("state".into(), serde_json::to_value(parse_state(value)?)?);

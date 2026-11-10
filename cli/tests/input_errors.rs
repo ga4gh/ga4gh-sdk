@@ -68,10 +68,22 @@ fn incomplete_configuration_is_an_error() {
 #[test]
 fn invalid_list_arguments_are_errors() {
     let home = home_with_config(json!({"TES": {"base_path": mockito::server_url()}}));
-    let cases: [(&[&str], &str); 5] = [
+    let cases: [(&[&str], &str); 6] = [
         (&["tes", "list", "-s", "NOT_A_STATE"], "Invalid state"),
         (
             &["tes", "list", "-w", "EVERYTHING"],
+            "Invalid view 'EVERYTHING'",
+        ),
+        (
+            &[
+                "tes",
+                "list",
+                "--all",
+                "--format",
+                "jsonl",
+                "-w",
+                "EVERYTHING",
+            ],
             "Invalid view 'EVERYTHING'",
         ),
         (
@@ -91,6 +103,16 @@ fn invalid_list_arguments_are_errors() {
         &run(&home, &["tes", "list", "-v", "orphan"]),
         "Each tag_value needs a corresponding tag_key",
     );
+}
+
+#[test]
+fn invalid_view_error_escapes_terminal_controls() {
+    let home = home_with_config(json!({"TES": {"base_path": mockito::server_url()}}));
+    let output = run(&home, &["tes", "get", "t1", "FULL\n\x1b[31m"]);
+    assert_input_error(&output, "Invalid view");
+    let message = stderr(&output);
+    assert!(message.contains("\\n"), "{message}");
+    assert!(!message.contains('\x1b'), "{message}");
 }
 
 #[test]
