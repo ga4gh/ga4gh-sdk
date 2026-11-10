@@ -4,8 +4,8 @@
 //!
 //! Object lookups also read one documented non-standard reply shape: Gen3
 //! (indexd) names the resolved array `resolved_drs_objects` instead of
-//! `resolved_drs_object`. [`BulkReport::dialects`] records which shape each
-//! reply used. Requests are always standard, and no other dialect is inferred.
+//! `resolved_drs_object`. [`BulkReport::dialects`] records the shapes seen in
+//! a call. Requests are always standard, and no other dialect is inferred.
 use super::{
     models::{BulkAccessUrl, DrsObject},
     resolution::deferred_delay,
@@ -81,8 +81,8 @@ impl<T> ObjectOutcome<T> {
             && self.errors.is_empty()
     }
 }
-/// Reply shape of a bulk response body.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+/// Reply shape of a bulk response body, as recorded in [`BulkReport::dialects`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[non_exhaustive]
 pub enum BulkDialect {
     /// Field names of the published DRS 1.4 and 1.5 schemas.
@@ -93,12 +93,17 @@ pub enum BulkDialect {
     /// [`DRS::get_bulk_objects_raw`].
     Gen3,
 }
+/// Result of one bulk call. Fields may be added; build it with `Default`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct BulkReport<T> {
+    /// One outcome per distinct requested key.
     pub outcomes: BTreeMap<BulkKey, ObjectOutcome<T>>,
+    /// Reply problems that cannot be attributed to one requested key.
     pub diagnostics: Vec<String>,
-    /// Reply shapes seen in this call's response bodies. Empty when no body
-    /// contained a resolved array, e.g. after HTTP failures only.
+    /// Reply shapes seen across all response bodies of this call, merged over
+    /// chunks and 413 splits. Empty when no body had a resolved array, e.g.
+    /// after HTTP failures only, or when a reply had unsupported fields.
     pub dialects: BTreeSet<BulkDialect>,
 }
 impl<T> Default for BulkReport<T> {
@@ -199,23 +204,35 @@ fn correlate<T: DeserializeOwned>(keys: &[BulkKey], body: Value, access: bool) -
     } else {
         "resolved_drs_object"
     };
-    let resolved = match (body.get(field), access) {
-        (Some(values), _) => {
-            if !access && body.get(GEN3_FIELD).is_some() {
+    // A null field counts as absent, so it cannot hide the other array.
+    let present = |name: &str| body.get(name).filter(|value| !value.is_null());
+    let gen3 = if access { None } else { present(GEN3_FIELD) };
+    let resolved = match (present(field), gen3) {
+        (Some(values), gen3) => {
+            if gen3.is_some() {
                 report.diagnostics.push(format!(
                     "response contains both {field} and {GEN3_FIELD}; {GEN3_FIELD} was ignored"
                 ));
             }
-            report.dialects.insert(BulkDialect::Standard);
-            Some(values)
+            Some((values, BulkDialect::Standard))
         }
-        (None, false) => body.get(GEN3_FIELD).inspect(|_| {
-            report.dialects.insert(BulkDialect::Gen3);
-        }),
-        (None, true) => None,
+        (None, Some(values)) => Some((values, BulkDialect::Gen3)),
+        (None, None) => None,
     };
-    if let Some(values) = resolved {
+    // Starter Kit 1.3.0experimental reports failures in this map; it is not
+    // interpreted, and the reply is not attributed to any dialect.
+    let unsupported = !access && body.get("unresolved_drs_object").is_some();
+    if unsupported {
+        report.diagnostics.push(
+            "response contains unresolved_drs_object, which is not a DRS field; it was ignored"
+                .into(),
+        );
+    }
+    if let Some((values, dialect)) = resolved {
         if let Some(values) = values.as_array() {
+            if !unsupported {
+                report.dialects.insert(dialect);
+            }
             for value in values {
                 let object_id = value
                     .get(if access { "drs_object_id" } else { "id" })
@@ -539,6 +556,7 @@ impl DRS {
     /// Like [`DRS::get_bulk_objects`], but returns each resolved entry as
     /// JSON, correlated by its `id`, without schema validation. Fields the SDK
     /// model omits or cannot represent, e.g. `created_time: null`, are kept.
+    /// Identity checks, diagnostics and dialect recording are the same.
     pub async fn get_bulk_objects_raw(
         &self,
         ids: &[String],

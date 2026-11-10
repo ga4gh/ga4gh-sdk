@@ -307,6 +307,7 @@ const GEN3_REPLY: &str = include_str!("../../tests/fixtures/drs/gen3-caninedc-bu
 
 #[tokio::test]
 async fn gen3_reply_is_correlated_without_fabricating_created_time() {
+    // Request IDs are sent in sorted order, not in input order.
     let request = mock("POST", "/gen3/objects")
         .match_body(Matcher::Json(
             json!({"bulk_object_ids":[GEN3_MISSING, GEN3_FOUND]}),
@@ -399,5 +400,89 @@ async fn starter_kit_experimental_reply_is_not_interpreted() {
         "{:?}",
         outcome.errors
     );
+    assert!(report.dialects.is_empty());
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.contains("unresolved_drs_object,")));
+    request.assert();
+
+    // Its bulk access reply is a bare array without object or access IDs.
+    let access = BulkKey {
+        object_id: "a".into(),
+        access_id: Some("x".into()),
+    };
+    let request = mock("POST", "/starter-kit-access/objects/access")
+        .with_body(json!([{"url":"https://store.example/a"}]).to_string())
+        .expect(1)
+        .create();
+    let report = client("/starter-kit-access")
+        .get_bulk_access_urls(
+            std::slice::from_ref(&access),
+            &[],
+            &BulkPolicy::default(),
+            &budget(),
+        )
+        .await
+        .unwrap();
+    assert!(report.outcomes[&access].resolved.is_empty());
+    assert!(report.outcomes[&access].errors[0].contains("must be an object"));
+    assert!(report.dialects.is_empty());
+    request.assert();
+}
+
+#[tokio::test]
+async fn gen3_field_is_read_only_for_object_lookups_with_an_array() {
+    let access = BulkKey {
+        object_id: "a".into(),
+        access_id: Some("x".into()),
+    };
+    let request = mock("POST", "/gen3-access/objects/access")
+        .with_body(
+            json!({"resolved_drs_objects":[
+                {"drs_object_id":"a","drs_access_id":"x","url":"https://store/a"}
+            ]})
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let report = client("/gen3-access")
+        .get_bulk_access_urls(
+            std::slice::from_ref(&access),
+            &[],
+            &BulkPolicy::default(),
+            &budget(),
+        )
+        .await
+        .unwrap();
+    assert!(report.outcomes[&access].resolved.is_empty());
+    assert!(report.outcomes[&access].errors[0].contains("omitted"));
+    assert!(report.dialects.is_empty());
+    request.assert();
+
+    let request = mock("POST", "/gen3-shape/objects")
+        .with_body(json!({"resolved_drs_objects":{"id":"a"}}).to_string())
+        .expect(1)
+        .create();
+    let report = client("/gen3-shape")
+        .get_bulk_objects(&["a".into()], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    assert!(report.dialects.is_empty());
+    assert!(report.diagnostics.iter().any(|d| d.contains("array")));
+    request.assert();
+
+    let request = mock("POST", "/gen3-null/objects")
+        .with_body(
+            json!({"resolved_drs_object":null,"resolved_drs_objects":[object("a")]}).to_string(),
+        )
+        .expect(1)
+        .create();
+    let report = client("/gen3-null")
+        .get_bulk_objects(&["a".into()], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    assert!(report.outcomes[&key("a")].is_success());
+    assert_eq!(report.dialects, BTreeSet::from([BulkDialect::Gen3]));
     request.assert();
 }
