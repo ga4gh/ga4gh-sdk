@@ -327,6 +327,17 @@ def junit(report):
     return ET.tostring(root, encoding='unicode')+'\n'
 
 
+def evidence_level(requested, provider_checks):
+    if provider_checks and all(c['outcome'] in {'not_run', 'unsupported'} for c in provider_checks):
+        return 'not_run'
+    if requested == 'real_execution':
+        execution_checks = {'direct_sdk_complete_failure_cancel', 'upstream_real_backend_suite',
+                            'nextflow_protes_execution', 'execution_observed'}
+        if not any(c['id'] in execution_checks and c['outcome'] == 'passed' for c in provider_checks):
+            return 'real_service'
+    return requested
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', default='all')
@@ -403,13 +414,7 @@ def main():
                               'final_running_task_containers':len(snapshot.stdout.split()) if snapshot.returncode == 0 else None,
                               'observation_seconds':round(time.monotonic()-started,3)}))
             provider_checks = [c for c in result['checks'] if c['id'] != 'fixtures']
-            if provider_checks and all(c['outcome'] in {'not_run', 'unsupported'} for c in provider_checks):
-                result['evidence'] = 'not_run'
-            if result['evidence'] == 'real_execution':
-                execution_checks = {'direct_sdk_complete_failure_cancel', 'upstream_real_backend_suite',
-                                    'nextflow_protes_execution', 'multipart_launch'}
-                if not any(c['id'] in execution_checks and c['outcome'] == 'passed' for c in provider_checks):
-                    result['evidence'] = 'real_service'
+            result['evidence'] = evidence_level(result['evidence'], provider_checks)
             report['profiles'].append(result)
     (args.out/'report.json').write_text(json.dumps(report, indent=2)+'\n')
     (args.out/'junit.xml').write_text(junit(report))

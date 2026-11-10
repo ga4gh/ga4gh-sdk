@@ -214,6 +214,7 @@ async fn profile(checks: &mut Vec<Value>) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     checks.push(json!({"id":"status","outcome":if observed.is_some(){"passed"}else{"observed_failure"},"detail":"SDK status observation", "observed":{"state":observed.map(|s|s.to_string())}}));
+    checks.push(json!({"id":"execution_observed", "outcome":if matches!(observed, Some(State::Running | State::Complete)) {"passed"} else {"not_run"}, "detail":"Native WES execution state is separate from acceptance/status/cancellation; this is not physical worker proof", "observed":{"state":observed.map(|s|s.to_string())}}));
     match run.log().await {
         Ok(log) => {
             let identity_matches = log.run_id.as_deref() == Some(run.id.as_str());

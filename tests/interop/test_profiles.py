@@ -39,6 +39,17 @@ class Reports(unittest.TestCase):
         with self.assertRaises(ValueError):
             run.item('x','certified-compatible','x')
 
+    def test_acknowledged_queued_then_canceled_is_service_evidence(self):
+        checks = [run.item('multipart_launch', 'passed', 'accepted'),
+                  run.item('status', 'passed', 'observed', observed={'state':'QUEUED'}),
+                  run.item('execution_observed', 'not_run', 'never ran'),
+                  run.item('cancel_request', 'passed', 'accepted'),
+                  run.item('cancel_terminal', 'passed', 'canceled')]
+        self.assertEqual(run.evidence_level('real_execution', checks), 'real_service')
+        checks[2] = run.item('execution_observed', 'passed', 'running', observed={'state':'RUNNING'})
+        self.assertEqual(run.evidence_level('real_execution', checks), 'real_execution')
+        self.assertEqual(run.evidence_level('simulated_protocol', checks), 'simulated_protocol')
+
     def test_profiles_have_pins_and_private_context_is_absent(self):
         for path in (run.ROOT/'profiles').glob('*.json'):
             profile = json.loads(path.read_text())
