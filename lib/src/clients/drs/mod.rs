@@ -79,9 +79,7 @@ impl DRS {
         &self,
         object_id: &str,
     ) -> Result<DrsObject, Box<dyn std::error::Error>> {
-        let object_id = urlencode(object_id);
-        let url = format!("objects/{}", object_id);
-        let response = self.transport.get(&url, None).await;
+        let response = self.get_object_raw(object_id).await;
 
         match response {
             Ok(resp_str) => {
@@ -98,6 +96,15 @@ impl DRS {
         }
     }
 
+    /// Retrieves an object's JSON without discarding fields unknown to the SDK model.
+    pub async fn get_object_raw(
+        &self,
+        object_id: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let url = format!("objects/{}", urlencode(object_id));
+        self.transport.get(&url, None).await
+    }
+
     /// Retrieves an access URL for a specific DRS object.
     ///
     /// # Arguments
@@ -112,10 +119,7 @@ impl DRS {
         object_id: &str,
         access_id: &str,
     ) -> Result<AccessUrl, Box<dyn std::error::Error>> {
-        let object_id = urlencode(object_id);
-        let access_id = urlencode(access_id);
-        let url = format!("objects/{}/access/{}", object_id, access_id);
-        let response = self.transport.get(&url, None).await;
+        let response = self.get_access_url_raw(object_id, access_id).await;
 
         match response {
             Ok(resp_str) => {
@@ -130,6 +134,20 @@ impl DRS {
                 )))
             }
         }
+    }
+
+    /// Retrieves access URL JSON without discarding fields unknown to the SDK model.
+    pub async fn get_access_url_raw(
+        &self,
+        object_id: &str,
+        access_id: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let url = format!(
+            "objects/{}/access/{}",
+            urlencode(object_id),
+            urlencode(access_id)
+        );
+        self.transport.get(&url, None).await
     }
 }
 
