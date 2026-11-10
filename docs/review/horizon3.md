@@ -1,5 +1,29 @@
 # Horizon three: reviewer handoff
 
+## Upstream reconciliation: 2026-11-10
+
+All five H3 branches now incorporate upstream main `a1876a9` through their
+phase-one/phase-two prerequisites. Merged PRs #137–#140 and #113/#117/#123 are
+included with their final maintainer corrections. The remaining prerequisite
+PRs are #141/#142 and #149; campaign #157 also carries provider #155.
+Generated model files are identical to main.
+
+On the reconciled profile branch all four workspace Rust checks passed:
+220 tests passed, none failed, 6 explicitly ignored. Current native diagnostic
+regressions passed (three tests); the native offline multipart profile passed
+10 checks with one unsupported item. Provider classification tests also passed.
+Scenario API sources and SDK scenario tests match reconciled #153, whose actual
+SDK/RestWesProvider comparison passed. The provider branch repeated 15 contracts
+and the real CPU continuation/race demonstration; reuse repeated eight contracts
+and one real A container with zero B submissions. Campaign contracts passed all
+seven tests, including the installed Temporal adapter. Its Rust sources match
+the tested provider branch, so those unchanged checks are reused.
+
+The historical pinned reports below remain historical evidence. No new cloud
+POST was sent. Accepted Seqera execution and bounded Nextflow container cleanup
+remain unverified/failed as recorded; operator integration gates remain open.
+
+
 Six issue scopes are implemented in five stacked PRs ready for review. The local prototype
 and published scenario-service deliverables are validated. Native Seqera accepted
 execution and the final Nextflow physical-container cleanup check remain gaps;
