@@ -7,6 +7,10 @@
 //! - `Configuration`: the API root and settings for connecting to a GA4GH service.
 //! - `ServiceInfo`: reads a service's service info.
 //! - `Transport`: sends requests below the API root (GET, POST, PUT, DELETE, multipart).
+//! - `DRS`: a DRS client for objects and access URLs, one at a time or in bulk;
+//!   `DrsResolver` turns `drs://` URIs into `AccessPlan`s. `DrsObject`, `AccessURL` and
+//!   `BulkAccessURL` are results with their full JSON; `PendingResolution`, `BulkPolicy`,
+//!   `BulkReport`, `BulkOutcome` and `DrsUri` go with them.
 //! - `TES`: a TES client; `Task`: a TES task addressed by its ID.
 //! - `TesTask`: a task to create or as returned by the server, with its full JSON
 //!   (`PyTesTask` is an alias).
@@ -85,5 +89,6 @@ fn GA4GH(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTesListTasksResponse>()?;
     m.add_class::<PyTask>()?;
     m.add("TesState", tes_state_type(py)?)?;
+    clients::drs::register(py, m)?;
     Ok(())
 }
