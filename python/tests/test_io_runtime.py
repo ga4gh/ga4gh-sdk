@@ -99,6 +99,20 @@ def exercise(scenario):
             assert Task('task-1', transport).status() == 'Complete'
             assert tes.get('FULL', 'task-1').id == 'task-1'
             assert tes.list().tasks == []
+            # A client created on one Python thread remains usable on another.
+            cross_thread = []
+
+            def list_from_other_thread():
+                try:
+                    cross_thread.append(tes.list().tasks)
+                except BaseException as error:
+                    cross_thread.append(error)
+
+            worker = threading.Thread(target=list_from_other_thread)
+            worker.start()
+            worker.join(timeout=2)
+            assert not worker.is_alive()
+            assert cross_thread == [[]], cross_thread
             assert requests.count(('POST', '/tasks')) == 1
             # TES create/get/list and its Task share their live transport pool.
             assert len(set(ports[2:5] + ports[6:8])) == 1, ports

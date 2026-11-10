@@ -172,7 +172,7 @@ impl Task {
 pub struct TES {
     #[allow(dead_code)]
     pub config: Configuration, // not used yet
-    pub service: Result<Service, Box<dyn std::error::Error>>,
+    pub service: Result<Service, Box<dyn std::error::Error + Send + Sync>>,
     pub transport: Transport,
 }
 

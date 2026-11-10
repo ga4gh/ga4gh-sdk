@@ -4,48 +4,35 @@
 //!
 //! # Classes
 //!
-//! - `Task`: Represents a task in the GA4GH TES service.
-//! - `TES`: Represents the GA4GH TES service.
-//! - `Configuration`: Represents the configuration for connecting to GA4GH services.
-//! - `ServiceInfo`: Provides information about the GA4GH service.
-//! - `Transport`: Handles HTTP transport for GA4GH services.
-//! - `PyTesTask`: Represents a TES task.
-//! - `ListTasksParams`: Represents parameters for listing TES tasks.
+//! - `Configuration`: the API root and settings for connecting to a GA4GH service.
+//! - `ServiceInfo`: reads a service's service info.
+//! - `Transport`: sends requests below the API root (GET, POST, PUT, DELETE, multipart).
+//! - `TES`: a TES client; `Task`: a TES task addressed by its ID.
+//! - `TesTask`: a task as returned by the server, with its full JSON (`PyTesTask` is an alias).
+//! - `ListTasksParams` and `ListTasksResponse`: filters and results of `TES.list()`.
+//!
+//! All classes can be subclassed in Python. Rust crates can depend on this crate (`rlib`) to
+//! build further bindings on these classes; their `inner` fields hold the library types.
 //!
 //! # Example
 //!
 //! ```python
-//! from ga4gh import Configuration, TES, Task, ServiceInfo, Transport
+//! from GA4GH import Configuration, ListTasksParams, TES, Transport
 //!
-//! # Create a configuration
-//! config = Configuration("http://example.com")
-//!
-//! # Create a TES instance
+//! config = Configuration("http://localhost:8000/ga4gh/tes/v1")
 //! tes = TES(config)
+//! task = tes.get("FULL", "task-id")
+//! print(task.status, task.to_dict())
+//! for task in tes.list(ListTasksParams(state="RUNNING")).tasks:
+//!     print(task.id)
 //!
-//! # Create a task
-//! task = Task("task_id", transport)
-//!
-//! # Get task status
-//! status = task.status()
-//!
-//! # Cancel a task
-//! task.cancel()
-//!
-//! # Get service info
-//! service_info = ServiceInfo(config)
-//! info = service_info.get_service_info()
-//!
-//! # Perform HTTP GET request
-//! transport = Transport(config)
-//! response = transport.get("/endpoint", None)
+//! response = Transport(config).get("tasks", {"view": "MINIMAL"})
 //! ```
 //!
 //! # Notes
 //!
 //! - Synchronous network calls release the GIL and share a persistent Tokio runtime.
-//! - Error handling is done using `PyResult` and `pyo3::exceptions::PyRuntimeError`.
-//! - The `#[pymodule]` attribute is used to define the Python module initialization function.
+//! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`.
 
 use ga4gh_sdk::clients::ServiceType;
 use pyo3::prelude::*;
@@ -53,7 +40,7 @@ use pyo3::prelude::*;
 pub mod clients;
 pub mod utils;
 use crate::clients::serviceinfo::PyServiceInfo;
-use crate::clients::tes::{PyTES, PyTask, PyTesTask};
+use crate::clients::tes::{PyListTasksParams, PyTES, PyTask, PyTesListTasksResponse, PyTesTask};
 use crate::utils::configuration::PyConfiguration;
 use crate::utils::transport::PyTransport;
 
@@ -85,6 +72,10 @@ fn GA4GH(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTransport>()?;
     m.add_class::<PyTES>()?;
     m.add_class::<PyTesTask>()?;
+    // Previous name of `TesTask`.
+    m.add("PyTesTask", m.getattr("TesTask")?)?;
+    m.add_class::<PyListTasksParams>()?;
+    m.add_class::<PyTesListTasksResponse>()?;
     m.add_class::<PyTask>()?;
     Ok(())
 }
