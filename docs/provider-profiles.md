@@ -88,6 +88,42 @@ loaded. The Funnel binary is downloaded from the official v0.12.3 release and
 verified against its pinned SHA-256. This reference snapshot uses Linux arm64
 Funnel/Python with amd64 proTES/MongoDB/RabbitMQ under emulation.
 
+The custom proTES snapshot can be rebuilt from public source. This is the actual
+source/build workflow used for the recorded image (Docker Buildx and amd64
+emulation are prerequisites on an arm64 daemon):
+
+```sh
+export DOCKER_CONTEXT=your-disposable-context
+mkdir -p tests/interop/.local/protes-source
+curl -fL https://api.github.com/repos/elixir-cloud-aai/proTES/tarball/55c4d1591cd3be883ad0b4fd2da01d49976414cb \
+  -o tests/interop/.local/protes-source.tar.gz
+tar -xzf tests/interop/.local/protes-source.tar.gz --strip-components=1 \
+  -C tests/interop/.local/protes-source
+docker buildx build --platform linux/amd64 --load \
+  -t h3-protes:55c4d15 \
+  --label org.opencontainers.image.revision=55c4d1591cd3be883ad0b4fd2da01d49976414cb \
+  --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+h3.55c4d15 \
+  tests/interop/.local/protes-source
+docker image inspect h3-protes:55c4d15 --format '{{json .RepoDigests}}'
+```
+
+That source Dockerfile pins FOCA
+`elixircloud/foca:0.22.0-py3.13@sha256:bf02db1195d60940dd3b29e53ce4757854155e258f35199e28d778cbf6128f9a`
+and uv
+`ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490`.
+Its clean source directory and pinned `.dockerignore` form the build context;
+never add operator credentials. Load/pull the other exact public image digests
+listed in `local_stack.py` before starting the helper.
+
+A rebuild may produce a different OCI digest, including build metadata. Do not
+claim the recorded digest is reproducible bit for bit. Copy the existing proTES
+profile to a new JSON file, assign a new `id`, and set `implementation.image` to
+the exact inspected digest. Start with
+`local_stack.py up --protes-image <name@sha256:digest>` and the pinned source
+checkout; run the wrapper with that new profile ID. Retain the new source/image
+identity and observations as a separate combination. The recorded default still
+requires its exact original image.
+
 ```sh
 export DOCKER_CONTEXT=your-disposable-context
 export PROTES_SOURCE=/path/to/pinned/proTES

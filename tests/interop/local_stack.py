@@ -28,6 +28,7 @@ def main():
     parser.add_argument('action', choices=['up','down'])
     parser.add_argument('--context', required=True, help='explicit operator-owned Docker context')
     parser.add_argument('--protes-source', type=Path)
+    parser.add_argument('--protes-image', default=IMAGES[1], help='exact preloaded image digest; create a separate profile when overriding the recorded snapshot')
     parser.add_argument('--docker-cli-vm', default='/usr/bin/docker', help='Linux Docker CLI path on daemon host')
     args = parser.parse_args()
     docker = ['docker', '--context', args.context]
@@ -41,7 +42,7 @@ def main():
     LOCAL.mkdir(exist_ok=True)
     (LOCAL/'bin').mkdir(exist_ok=True)
     (LOCAL/'funnel-work').mkdir(exist_ok=True)
-    for image in IMAGES:
+    for image in [args.protes_image if image == IMAGES[1] else image for image in IMAGES]:
         subprocess.run(docker+['image','inspect',image], stdout=subprocess.DEVNULL,check=True)
     archive = LOCAL/'funnel-linux.tar.gz'
     if not archive.exists():
@@ -59,7 +60,7 @@ def main():
     (LOCAL/'integration-idp/fake_tes.py').write_bytes(idp.read_bytes())
     for name in ['compose.yaml','funnel.yaml','protes.yaml']:
         text = (ROOT/(name+'.template')).read_text()
-        text = text.replace('{{LOCAL}}',str(LOCAL)).replace('{{DOCKER_CLI_VM}}',args.docker_cli_vm)
+        text = text.replace('{{LOCAL}}',str(LOCAL)).replace('{{DOCKER_CLI_VM}}',args.docker_cli_vm).replace(IMAGES[1],args.protes_image)
         (LOCAL/name).write_text(text)
     subprocess.run(compose+['up','-d','--wait','--wait-timeout','120'], check=True)
     print('Funnel: http://127.0.0.1:18910/ga4gh/tes/v1')
