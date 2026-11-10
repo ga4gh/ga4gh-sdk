@@ -1,5 +1,5 @@
 #![cfg(feature = "workflow-contracts")]
-use ga4gh_sdk::clients::wes::models::WesRunRequest;
+use ga4gh_sdk::clients::wes::models::RunRequest;
 use ga4gh_sdk::workflow::{InvocationIdentity, Pins, Profile};
 use serde_json::{json, Value};
 fn schema() -> Value {
@@ -18,10 +18,10 @@ fn validates_root_refs_and_preserves_values_without_defaults() {
         .iter()
         .any(|e| e.instance_location == "/mode" && e.schema_location.contains("enum")));
     assert!(errors.iter().any(|e| e.instance_location == "/nested/n"));
-    let req = WesRunRequest {
-        workflow_url: Some("workflow.cwl".into()),
-        workflow_type: Some("CWL".into()),
-        workflow_type_version: Some("v1.2".into()),
+    let req = RunRequest {
+        workflow_url: "workflow.cwl".into(),
+        workflow_type: "CWL".into(),
+        workflow_type_version: "v1.2".into(),
         workflow_params: Some(params.clone()),
         ..Default::default()
     };
@@ -397,5 +397,123 @@ fn digest_comparison_requires_consistent_expected_evidence() {
     assert_eq!(
         policy.compare(&a, &b).unwrap().outcome,
         Outcome::Inconclusive
+    );
+}
+
+#[tokio::test]
+async fn selected_drs_verification_uses_owning_resolver_and_only_object_headers() {
+    use ga4gh_sdk::{
+        clients::drs::uri::{AccessPreferences, DrsResolver},
+        utils::{configuration::Configuration, operation::Operation, transport::Transport},
+    };
+    let store = mockito::mock("GET", "/selected-store")
+        .match_header("authorization", "Bearer object-only")
+        .with_body("report")
+        .expect(1)
+        .create();
+    let metadata=mockito::mock("GET","/selected-drs/objects/report").match_header("authorization","Bearer resolver-only").with_body(json!({"id":"report","self_uri":"drs://drs.example/report","size":6,"created_time":"2026-01-01T00:00:00Z","checksums":[],"access_methods":[{"type":"https","access_url":{"url":format!("{}/selected-store",mockito::server_url()),"headers":["Authorization: Bearer object-only"]}}]}).to_string()).expect(1).create();
+    let mut config = Configuration::new(
+        url::Url::parse(&format!("{}/selected-drs", mockito::server_url())).unwrap(),
+    );
+    config.bearer_access_token = Some("resolver-only".into());
+    let resolver = DrsResolver::default()
+        .with_service(
+            "drs.example",
+            Transport::with_client(
+                &config,
+                ga4gh_sdk::reqwest::Client::builder()
+                    .default_headers(ga4gh_sdk::reqwest::header::HeaderMap::from_iter([(
+                        ga4gh_sdk::reqwest::header::AUTHORIZATION,
+                        "Bearer resolver-only".parse().unwrap(),
+                    )]))
+                    .build()
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    let p = profile(schema());
+    let mut r = p
+        .project_results(
+            "run",
+            "COMPLETE",
+            &json!({"count":1,"report":"drs://drs.example/report"}),
+        )
+        .unwrap();
+    r.verify_drs(
+        "/report",
+        &resolver,
+        &AccessPreferences::default(),
+        None,
+        &Operation::new(std::time::Duration::from_secs(3)),
+        2,
+        1024,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r.artifacts["/report"].access_status,
+        AccessStatus::Available
+    );
+    assert_eq!(
+        r.artifacts["/report"].integrity_status,
+        IntegrityStatus::Unverified
+    );
+    let durable = serde_json::to_string(&r).unwrap();
+    assert!(!durable.contains("resolver-only"));
+    assert!(!durable.contains("object-only"));
+    metadata.assert();
+    store.assert();
+}
+
+#[test]
+fn literal_schema_shaped_values_are_not_required_vocabularies() {
+    let literal = json!({"$vocabulary":{"https://data.example/literal":true}});
+    let mut s = schema();
+    s["properties"]["inputs"] = json!({"const":literal});
+    let p = profile(s);
+    assert!(p.validate_inputs(&literal).is_empty());
+}
+#[test]
+fn output_keys_keep_json_pointer_and_uri_fragment_escaping() {
+    let key = "slash/key#percent%é";
+    let mut s = schema();
+    s["properties"]["outputs"] =
+        json!({"type":"object","properties":{key:{"type":"integer"}},"required":[key]});
+    let p = profile(s);
+    let r = p
+        .project_results("one", "COMPLETE", &json!({key:4}))
+        .unwrap();
+    assert_eq!(r.outputs[key].contract_status, ContractStatus::Conformant);
+}
+#[test]
+fn unordered_numeric_objects_ignore_json_number_representation() {
+    let mut s = schema();
+    s["properties"]["outputs"]["properties"]["count"] = json!({"type":"array"});
+    let p = profile(s);
+    let a = p
+        .project_results(
+            "a",
+            "COMPLETE",
+            &json!({"count":[{"n":1,"x":1},{"n":1.0,"x":2}],"report":"https://example.org"}),
+        )
+        .unwrap();
+    let b = p
+        .project_results(
+            "b",
+            "COMPLETE",
+            &json!({"count":[{"n":1.0,"x":1},{"n":1,"x":2}],"report":"https://example.org"}),
+        )
+        .unwrap();
+    let mut policy = policy(0., 0.);
+    policy.required_context.clear();
+    if let Comparator::JsonMetrics {
+        unordered_arrays, ..
+    } = policy.outputs.get_mut("/count").unwrap()
+    {
+        *unordered_arrays = true;
+    }
+    assert_eq!(
+        policy.compare(&a, &b).unwrap().outcome,
+        Outcome::EquivalentUnderPolicy
     );
 }

@@ -2,7 +2,7 @@
 use ga4gh_sdk::{
     clients::{
         wait::{WaitOptions, WaitOutcome},
-        wes::{models::WesRunRequest, WorkflowAttachment, WES},
+        wes::{models::RunRequest, WorkflowAttachment, WES},
     },
     utils::configuration::Configuration,
     workflow::{
@@ -28,7 +28,7 @@ async fn real_qc_on_two_wes_instances() {
     for (index, endpoint) in endpoints.iter().enumerate() {
         let config = Configuration::new(url::Url::parse(endpoint).unwrap());
         let wes = WES::new(&config).await.unwrap();
-        let request: WesRunRequest =
+        let request: RunRequest =
             serde_json::from_slice(include_bytes!("../../examples/qc-demo/request.json")).unwrap();
         let input_digest = digest(&serde_json::to_vec(&request.workflow_params).unwrap());
         let prepared = p

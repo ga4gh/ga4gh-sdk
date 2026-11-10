@@ -1,7 +1,7 @@
 //! Optional, revisioned workflow contracts. Preparation and comparison never execute jobs.
 pub mod compare;
 pub mod results;
-use crate::clients::wes::{models::WesRunRequest, Run, WorkflowAttachment, WES};
+use crate::clients::wes::{models::RunRequest, Run, WorkflowAttachment, WES};
 use jsonschema::{Draft, Retrieve, Uri, Validator};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -9,6 +9,16 @@ use sha2::{Digest, Sha256};
 use std::{collections::HashMap, error::Error};
 pub type ContractError = Box<dyn Error>;
 pub const PROFILE_REVISION: &str = "45d41324353cb4900fdd999c307c2e36a3f2a410";
+const FRAGMENT: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b' ')
+    .add(b'%')
+    .add(b'#')
+    .add(b'?')
+    .add(b'"')
+    .add(b'<')
+    .add(b'>')
+    .add(b'`')
+    .add(b'\\');
 const DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
 const PROFILE_URI: &str = "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/ga4gh-io-profile.schema.json";
 const WIDGET_URI: &str = "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/vocabularies/ui-widgets.schema.json";
@@ -44,41 +54,66 @@ impl Retrieve for LocalResources {
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn vocabulary_check(v: &Value) -> Result<(), ContractError> {
-    match v {
-        Value::Object(o) => {
-            if let Some(vocab) = o.get("$vocabulary").and_then(Value::as_object) {
-                for (uri, required) in vocab {
-                    if required == true
-                        && ![
-                            "core",
-                            "applicator",
-                            "unevaluated",
-                            "validation",
-                            "meta-data",
-                            "format-annotation",
-                            "format-assertion",
-                            "content",
-                        ]
-                        .iter()
-                        .any(|name| {
-                            uri == &format!("https://json-schema.org/draft/2020-12/vocab/{name}")
-                        })
-                    {
-                        return Err(format!("unsupported required vocabulary: {uri}").into());
-                    }
-                }
-            }
-            for value in o.values() {
-                vocabulary_check(value)?;
+fn vocabulary_check(value: &Value) -> Result<(), ContractError> {
+    let Some(object) = value.as_object() else {
+        return Ok(());
+    };
+    if let Some(vocab) = object.get("$vocabulary").and_then(Value::as_object) {
+        for (uri, required) in vocab {
+            if required == true
+                && ![
+                    "core",
+                    "applicator",
+                    "unevaluated",
+                    "validation",
+                    "meta-data",
+                    "format-annotation",
+                    "format-assertion",
+                    "content",
+                ]
+                .iter()
+                .any(|name| uri == &format!("https://json-schema.org/draft/2020-12/vocab/{name}"))
+            {
+                return Err(format!("unsupported required vocabulary: {uri}").into());
             }
         }
-        Value::Array(a) => {
-            for value in a {
-                vocabulary_check(value)?;
+    }
+    // Traverse schema-bearing keywords only: const/default/examples are data.
+    for key in [
+        "additionalProperties",
+        "contains",
+        "not",
+        "if",
+        "then",
+        "else",
+        "propertyNames",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "items",
+        "contentSchema",
+    ] {
+        if let Some(schema) = object.get(key) {
+            vocabulary_check(schema)?;
+        }
+    }
+    for key in ["allOf", "anyOf", "oneOf", "prefixItems"] {
+        if let Some(schemas) = object.get(key).and_then(Value::as_array) {
+            for schema in schemas {
+                vocabulary_check(schema)?;
             }
         }
-        _ => (),
+    }
+    for key in [
+        "properties",
+        "patternProperties",
+        "$defs",
+        "dependentSchemas",
+    ] {
+        if let Some(schemas) = object.get(key).and_then(Value::as_object) {
+            for schema in schemas.values() {
+                vocabulary_check(schema)?;
+            }
+        }
     }
     Ok(())
 }
@@ -194,7 +229,7 @@ impl Profile {
     }
     pub fn prepare(
         &self,
-        request: WesRunRequest,
+        request: RunRequest,
         identity: InvocationIdentity,
     ) -> Result<PreparedInvocation, ContractError> {
         if identity.workflow.trim().is_empty() {
@@ -205,7 +240,7 @@ impl Profile {
             &request.workflow_type,
             &request.workflow_type_version,
         ] {
-            if field.as_deref().is_none_or(|s| s.trim().is_empty()) {
+            if field.trim().is_empty() {
                 return Err(
                     "request requires workflow_url, workflow_type and workflow_type_version".into(),
                 );
@@ -242,7 +277,7 @@ impl Profile {
             .with_draft(Draft::Draft202012)
             .should_validate_formats(true)
             .with_retriever(self.resources.clone())
-            .build(&json!({"$schema":DRAFT,"$ref":format!("{}#{}",self.root_uri,pointer)}))
+            .build(&json!({"$schema":DRAFT,"$ref":format!("{}#{}",self.root_uri,percent_encoding::utf8_percent_encode(pointer,FRAGMENT))}))
             .map_err(|e| e.to_string())?;
         Ok(diagnostics(&validator, value))
     }
@@ -269,13 +304,13 @@ pub struct PreparedInvocation {
     identity: InvocationIdentity,
     pins: Pins,
     schema_digest: String,
-    request: WesRunRequest,
+    request: RunRequest,
     expected_outputs: Option<Value>,
     profile_document: Value,
     fingerprint: String,
 }
 impl PreparedInvocation {
-    pub fn request(&self) -> &WesRunRequest {
+    pub fn request(&self) -> &RunRequest {
         &self.request
     }
     pub fn fingerprint(&self) -> &str {
@@ -294,7 +329,7 @@ impl PreparedInvocation {
                 .ok_or("descriptor digest must use sha256:")?;
             let primary = attachments
                 .iter()
-                .find(|a| Some(&a.filename) == self.request.workflow_url.as_ref())
+                .find(|a| a.filename == self.request.workflow_url)
                 .ok_or("primary descriptor attachment missing")?;
             if !digest(&primary.content).eq_ignore_ascii_case(expected) {
                 return Err("primary descriptor digest mismatch; prepare a new invocation".into());

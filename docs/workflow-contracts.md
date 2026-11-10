@@ -38,7 +38,11 @@ against the uploaded bytes. Multiple-file dependency verification can compose
 with `clients::bundle::PreparedBundle`. A checksum supplied as context does not
 prove which bytes an engine fetches later from a mutable remote URL.
 
-Explicit CLI submission uses the `WES` section of `~/.ga4gh-cli/config.json`:
+Explicit CLI submission uses the `WES` section of `~/.ga4gh-cli/config.json`.
+For OAuth, set `oauth_access_token` to the current token. The CLI injects a
+sensitive bearer header into the shared transport; it does not implement login
+or token refresh. Other schemes use `WES::from_transport` with a caller-owned
+authenticated client (the broader configuration/auth work remains #31):
 
 ```sh
 cargo run -p ga4gh-cli -- workflow submit \
