@@ -1,12 +1,7 @@
 use crate::PyConfiguration;
 use ga4gh_sdk::utils::transport::Transport;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-
-fn runtime() -> PyResult<tokio::runtime::Runtime> {
-    tokio::runtime::Runtime::new()
-        .map_err(|error| PyRuntimeError::new_err(format!("Cannot start async runtime: {error}")))
-}
 
 #[pyclass(name = "Transport", module = "GA4GH")]
 pub struct PyTransport {
@@ -22,70 +17,51 @@ impl PyTransport {
     }
 
     #[pyo3(signature = (endpoint, params=None))]
-    pub fn get(&self, endpoint: String, params: Option<String>) -> PyResult<String> {
+    pub fn get(
+        &self,
+        py: Python<'_>,
+        endpoint: String,
+        params: Option<String>,
+    ) -> PyResult<String> {
         let params_value = params
             .map(|params| {
                 serde_json::from_str(&params)
                     .map_err(|error| PyValueError::new_err(format!("Invalid params JSON: {error}")))
             })
             .transpose()?;
-        let rt = runtime()?;
-        let result = rt.block_on(self.inner.get(&endpoint, params_value));
-
-        match result {
-            Ok(response) => Ok(response),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "GET request failed: {}",
-                e
-            ))),
-        }
+        crate::utils::runtime::io(py, |rt| {
+            rt.block_on(self.inner.get(&endpoint, params_value))
+                .map_err(|e| format!("GET request failed: {e}"))
+        })
     }
 
     #[pyo3(signature = (endpoint, data=None))]
-    pub fn post(&self, endpoint: String, data: Option<String>) -> PyResult<String> {
+    pub fn post(&self, py: Python<'_>, endpoint: String, data: Option<String>) -> PyResult<String> {
         let data_value = data
             .map(|data| {
                 serde_json::from_str(&data)
                     .map_err(|error| PyValueError::new_err(format!("Invalid data JSON: {error}")))
             })
             .transpose()?;
-        let rt = runtime()?;
-        let result = rt.block_on(self.inner.post(&endpoint, data_value));
-
-        match result {
-            Ok(response) => Ok(response),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "POST request failed: {}",
-                e
-            ))),
-        }
+        crate::utils::runtime::io(py, |rt| {
+            rt.block_on(self.inner.post(&endpoint, data_value))
+                .map_err(|e| format!("POST request failed: {e}"))
+        })
     }
 
-    pub fn put(&self, endpoint: String, data: String) -> PyResult<String> {
+    pub fn put(&self, py: Python<'_>, endpoint: String, data: String) -> PyResult<String> {
         let data_value = serde_json::from_str(&data)
             .map_err(|error| PyValueError::new_err(format!("Invalid data JSON: {error}")))?;
-        let rt = runtime()?;
-        let result = rt.block_on(self.inner.put(&endpoint, data_value));
-
-        match result {
-            Ok(response) => Ok(response),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "PUT request failed: {}",
-                e
-            ))),
-        }
+        crate::utils::runtime::io(py, |rt| {
+            rt.block_on(self.inner.put(&endpoint, data_value))
+                .map_err(|e| format!("PUT request failed: {e}"))
+        })
     }
 
-    pub fn delete(&self, endpoint: String) -> PyResult<String> {
-        let rt = runtime()?;
-        let result = rt.block_on(self.inner.delete(&endpoint));
-
-        match result {
-            Ok(response) => Ok(response),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "DELETE request failed: {}",
-                e
-            ))),
-        }
+    pub fn delete(&self, py: Python<'_>, endpoint: String) -> PyResult<String> {
+        crate::utils::runtime::io(py, |rt| {
+            rt.block_on(self.inner.delete(&endpoint))
+                .map_err(|e| format!("DELETE request failed: {e}"))
+        })
     }
 }
