@@ -24,6 +24,9 @@ async-trait = "0.1.81"
 dirs = "5.0.1"
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 httpdate = "1"
+sha2 = "0.10"
+serde_yaml = "0.9"
+percent-encoding = "2"
 
 [dependencies.reqwest]
 version = "^0.11"

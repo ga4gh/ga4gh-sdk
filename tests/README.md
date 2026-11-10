@@ -46,6 +46,36 @@ a remote project. This server returns a fixed run list instead of recently
 submitted runs, and its cancellation endpoint does not stop a run. The test
 accounts for both limitations and does not claim that a run was canceled.
 
+## Verified TRS CWL bundle with Toil WES
+
+The bundle unit tests use a local TRS fixture and a capturing mock WES to compare
+every staged/uploaded byte and nested relative filename. They also cover missing
+imports, external/dynamic dependencies, unsafe/colliding paths, checksum mismatch,
+explicit URL fetch policy and content changing behind the same TRS version.
+
+For a real execution, use Python 3.12+ and Rust on PATH, with network access to
+install the pinned Toil 9.3.0 test environment:
+
+```sh
+tests/run-toil-bundle-integration.sh
+```
+
+The script creates/reuses `target/toil-bundle-venv`, installs
+`toil[server,cwl,aws]==9.3.0` (the server imports its AWS helpers even for local
+execution), and starts a loopback-only WES with `--bypass_celery --no-container`.
+It prepares the checked-in CWL workflow and nested echo tool through the TRS
+fixture, submits their verified staged bytes to the real WES/Toil engine, waits
+for COMPLETE and verifies the output file contains `verified hello\n`. It records
+the run/manifest in `target/toil-bundle-evidence.json` and stops its server on exit.
+Set `GA4GH_TOIL_ENV_DIR` to reuse another prepared virtual environment.
+
+This is a named local backend check, not a claim of compatibility with every
+WES deployment. Toil 9.3.0 advertises WES 1.0.0 and omits generic GA4GH identity
+fields from service-info; the test uses explicitly supplied backend identity
+instead of the SDK's generic discovery constructor. TRS is a controlled fixture;
+WES, the CWL engine and output verification are real. Starter Kit's disabled
+attachment handling remains unsupported for this bundle scenario.
+
 ## Test fixtures
 
 - [`sample.tes`](sample.tes) comes from the Funnel task examples and is used by

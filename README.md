@@ -112,6 +112,24 @@ operation budget covers preparation, upload and response. A consumed source
 is never replayed; cancellation or a lost response after transmission reports
 that submission may have been accepted. The existing bytes API remains usable.
 
+`clients::bundle::PreparedBundle::prepare` stages a CWL workflow and its declared
+TRS descriptors without submitting it. It validates paths/collisions and the
+static `run`, `$import` and `$include` dependency graph, verifies advertised
+SHA-256 digests, and computes local digests over original staged bytes. Version
+metadata (`is_production`, `meta_version`) and retrieved digests are preserved;
+an explicit TRS version is not assumed immutable. Unsupported checksums fail by
+default; explicit opt-in records them as unverified. The small MVP supports a
+primary Workflow in CWL v1.0/v1.1/v1.2; packed/fragment, external and dynamic
+dependencies are rejected before submission.
+
+Preparation exposes a reviewable request plan and a credential-free provenance
+manifest. Wrapper URLs require an explicit `DescriptorFetcher`; the provided
+anonymous allowlist never reuses registry credentials or follows redirects.
+`submit` is a separate explicit call and uploads the same immutable staged bytes
+that were hashed, returning a run plus manifest/execution linkage. Workflow
+parameters, bearer tokens and signed descriptor URLs are excluded from provenance.
+See the [named Toil integration check](tests/README.md) for an actual CWL execution.
+
 ## Installation
 
 TBA

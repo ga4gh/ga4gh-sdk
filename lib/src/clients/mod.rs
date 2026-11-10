@@ -1,3 +1,4 @@
+pub mod bundle;
 pub mod capabilities;
 pub mod drs;
 pub mod pagination;
