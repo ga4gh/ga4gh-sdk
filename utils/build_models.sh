@@ -28,8 +28,12 @@
 #
 # Environment:
 # - OPENAPI_GENERATOR_VERSION: generator version (default: 7.9.0). If
-#   `openapi-generator-cli` is on the PATH, it is used and must report this
-#   version; otherwise the script runs the generator's Docker image.
+#   `openapi-generator-cli` is on the PATH, it is used (the npm wrapper is
+#   pinned to this version) and must report it; otherwise the script runs the
+#   generator's Docker image.
+#
+# `rustfmt` runs in the current directory, so from the repository root it
+# uses the toolchain pinned in rust-toolchain.toml.
 #
 # Steps: generate, fix the `use` statements, apply the patch, format with
 # `rustfmt` (if installed), replace `<DESTINATION_DIR>/models`.
@@ -90,15 +94,24 @@ trap 'rm -rf "$TEMP_OUTPUT_DIR"' EXIT
 run_generator() {
     local spec="$OPENAPI_SPEC_PATH"
     if command -v openapi-generator-cli >/dev/null 2>&1; then
+        # The npm wrapper (@openapitools/openapi-generator-cli) reads the
+        # generator version from openapitools.json in its working directory.
+        local cli_dir="$TEMP_OUTPUT_DIR/cli"
+        mkdir -p "$cli_dir"
+        printf '{"generator-cli": {"version": "%s"}}\n' "$OPENAPI_GENERATOR_VERSION" \
+            > "$cli_dir/openapitools.json"
+        if [ -f "$spec" ]; then
+            spec="$(cd "$(dirname "$spec")" && pwd)/$(basename "$spec")"
+        fi
         local version
-        version=$(openapi-generator-cli version | tail -n 1)
+        version=$(cd "$cli_dir" && openapi-generator-cli version | tail -n 1)
         if [ "$version" != "$OPENAPI_GENERATOR_VERSION" ]; then
             echo "Error: openapi-generator-cli is $version, expected $OPENAPI_GENERATOR_VERSION" >&2
             exit 1
         fi
-        openapi-generator-cli generate -g rust -i "$spec" -o "$TEMP_OUTPUT_DIR" \
+        (cd "$cli_dir" && openapi-generator-cli generate -g rust -i "$spec" -o "$TEMP_OUTPUT_DIR" \
             --additional-properties=useSingleRequestParameter=true \
-            ${GENERATOR_ARGS[@]+"${GENERATOR_ARGS[@]}"}
+            ${GENERATOR_ARGS[@]+"${GENERATOR_ARGS[@]}"})
     elif command -v docker >/dev/null 2>&1; then
         local mounts=(-v "$TEMP_OUTPUT_DIR:/out")
         if [ -f "$spec" ]; then

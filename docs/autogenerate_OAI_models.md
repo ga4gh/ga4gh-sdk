@@ -48,16 +48,25 @@ instead.
   - [Docker](https://docs.docker.com/get-docker/): the script then runs the
     `openapitools/openapi-generator-cli:v7.9.0` image.
   - [OpenAPI Generator CLI](https://openapi-generator.tech/docs/installation/)
-    7.9.0 as `openapi-generator-cli` on the `PATH`, with a Java runtime. The
-    script checks the version.
+    as `openapi-generator-cli` on the `PATH`, with a Java runtime. The npm
+    wrapper (`@openapitools/openapi-generator-cli`) is pinned to 7.9.0 by the
+    script; other installations must be 7.9.0. The script checks the version.
 - `rustfmt` (from `rustup component add rustfmt`). Without it, the models are
   left unformatted and the script prints a warning; run `cargo fmt --all`
-  afterwards.
-  The committed models are formatted with the stable `rustfmt` defaults.
+  afterwards. Run the scripts from the repository root, so that `rustfmt` uses
+  the toolchain pinned in `rust-toolchain.toml`.
 
 With Docker installed, no other setup is needed: the script pulls the pinned
-generator image. `Dockerfile-autogen-models` installs an unpinned generator
-CLI, which fails the version check, so don't run the wrapper in it.
+generator image. Alternatively, run the scripts in the image built from
+`Dockerfile-autogen-models`, which has the npm wrapper, Java and the pinned
+Rust toolchain:
+
+```sh
+# From the root of the repository
+docker build -t ga4gh-sdk-autogen-models -f Dockerfile-autogen-models .
+docker run -it --rm -v "$(pwd):/app" -w /app ga4gh-sdk-autogen-models \
+    bash ./utils/build_models_wrapper.sh
+```
 
 ## Usage
 

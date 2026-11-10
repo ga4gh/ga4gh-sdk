@@ -52,12 +52,9 @@ After `maturin develop`, run the Python binding tests with:
 pytest
 ```
 
-## Current standalone build limitation
-
-`maturin develop` and `maturin build` currently fail because `ga4gh-lib` does
-not enable `serde`'s derive feature when built on its own. This is tracked in
-[#79](https://github.com/ga4gh/ga4gh-sdk/issues/79). A successful
-`cargo build --workspace` does not establish that a Python wheel builds.
+`Configuration.from_file()` raises `FileNotFoundError` when the config file is
+missing and `ValueError` when its contents are malformed. Invalid URLs and JSON
+arguments also raise `ValueError`.
 
 ## Example 
 
