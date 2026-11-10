@@ -56,6 +56,18 @@ they build with the other tests but only run on request:
 cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
 ```
 
+## Public Service Registry
+
+This read-only smoke test needs network access. It reads `service-info`,
+`services/types` and `services` from a public registry without a token, and
+gets each listed service by its ID. It uses
+`https://elixir-on.cloud/ga4gh/registry/v1` unless `GA4GH_REGISTRY_URL` names
+another registry API root.
+
+```sh
+cargo test -p ga4gh-lib --test registry_public -- --ignored
+```
+
 ## Test fixtures
 
 - [`sample.tes`](sample.tes) comes from the Funnel task examples and is used by

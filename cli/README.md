@@ -174,6 +174,57 @@ Both commands print the server's JSON unchanged. The `access` result may
 contain headers needed to fetch the bytes. Service failures print an error to
 stderr and exit with code 1; missing arguments use exit code 2.
 
+## Service Registry commands
+
+The `registry` commands read a [GA4GH Service Registry](https://github.com/ga4gh-discovery/ga4gh-service-registry),
+such as a [cloud-registry](https://github.com/elixir-cloud-aai/cloud-registry)
+deployment, to find the base URLs of TES, WES and other services. They use the
+`REGISTRY` section of `~/.ga4gh-cli/config.json`, which needs only `base_path`,
+the registry's API root:
+
+```json
+{
+    "REGISTRY": {
+        "base_path": "https://elixir-on.cloud/ga4gh/registry/v1"
+    }
+}
+```
+
+The CLI requests `services`, `services/{id}` and `services/types` below this
+path. Reads need no token.
+
+1. To list the services, optionally only those of one type artifact (case
+   ignored), run `registry list`:
+
+```sh
+ga4gh-cli registry list --type tes
+```
+
+Example output:
+
+```sh
+ID               TYPE                 URL
+org.example.tes  org.ga4gh:tes:1.1.0  https://example.org/ga4gh/tes/v1
+```
+
+2. To get one service as JSON, run `registry get` with its ID:
+
+```sh
+ga4gh-cli registry get org.example.tes
+```
+
+3. To list the service types in the registry, one `group:artifact:version` per
+   line, run `registry types`:
+
+```sh
+ga4gh-cli registry types
+```
+
+The commands print only the fields of the Service Registry specification;
+fields that a registry adds are ignored. They exit with code 0 on success and
+code 1 on request or server errors. A 404 from `list` or `types` adds a hint to
+check `base_path`.
+
 ## Extending the CLI in Rust
 
 The `ga4gh-cli` package also exposes a Rust library. A downstream binary can
