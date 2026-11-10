@@ -60,9 +60,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             match registry.get_service(id).await {
                 Ok(service) => {
                     let json = serde_json::to_string_pretty(&service)?;
-                    // JSON escapes C0 controls only; escape the rest line by line.
-                    let lines: Vec<_> = json.lines().map(printable).collect();
-                    CommandOutput::success(format!("{}\n", lines.join("\n")))
+                    CommandOutput::success(format!("{}\n", json_printable(&json)))
                 }
                 // A 404 means an unknown ID here, so no base_path hint.
                 Err(error) => CommandOutput::failure(printable(&error.to_string())),
@@ -104,15 +102,35 @@ fn printable(value: &str) -> String {
     value
         .chars()
         .map(|c| {
-            if c.is_control()
-                || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
-            {
+            if needs_escape(c) {
                 c.escape_default().collect()
             } else {
                 c.to_string()
             }
         })
         .collect()
+}
+
+/// Escapes the same characters as [`printable`] in serialised JSON, as JSON
+/// `\uXXXX` escapes, so that the output stays valid JSON. Serde escapes C0
+/// controls in strings already; the remaining ones are all in the Basic
+/// Multilingual Plane and can only occur inside strings.
+fn json_printable(json: &str) -> String {
+    json.chars()
+        .map(|c| {
+            // Raw newlines are the layout of pretty JSON; serde escapes the rest.
+            if c != '\n' && needs_escape(c) {
+                format!("\\u{:04x}", u32::from(c))
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+fn needs_escape(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 fn type_label(service_type: &ServiceType) -> String {

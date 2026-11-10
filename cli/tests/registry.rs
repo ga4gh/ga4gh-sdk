@@ -229,7 +229,9 @@ fn server_text_is_escaped_in_get_and_errors() {
         !text.contains('\u{9b}') && !text.contains('\u{1b}'),
         "{text}"
     );
-    assert!(text.contains(r"a\u{9b}2K\u001bb"), "{text}");
+    assert!(text.contains(r"a\u009b2K\u001bb"), "{text}");
+    let parsed: Value = serde_json::from_str(&text).expect("valid JSON");
+    assert_eq!(parsed["name"], "a\u{9b}2K\u{1b}b");
 
     let output = run(&base_path, &["registry", "list"]);
     assert_eq!(output.status.code(), Some(1));
