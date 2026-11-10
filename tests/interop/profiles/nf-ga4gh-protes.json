@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "fixtures": "../fixtures/manifest.json",
+  "advertised_spec": "observed in report; never inferred from the endpoint path",
+  "authentication": {
+    "kind": "synthetic OIDC for disposable local stack; bearer via environment/file",
+    "secrets_in_profile": false
+  },
+  "storage": {
+    "shared_work": "same absolute path on Nextflow host, Funnel and Docker VM",
+    "private_backend": "loopback published API, internal database/broker"
+  },
+  "upstream_suites": [
+    {
+      "repository": "https://github.com/elixir-cloud-aai/proTES",
+      "revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+      "path": "tests/integration/check.sh"
+    },
+    {
+      "repository": "https://github.com/ga4gh/openapi-test-runner",
+      "revision": "bc3eb911e877521409348e0225852d072d4de196",
+      "use": "optional existing schema suite; not replaced by this harness"
+    },
+    {
+      "repository": "https://github.com/ga4gh/drs-compliance-suite",
+      "use": "seed deployment-owned DRS objects before that existing suite; not run by TES-only profile"
+    }
+  ],
+  "id": "nf-ga4gh-protes",
+  "kind": "nf",
+  "api_root": {
+    "environment": "NEXTFLOW_PROFILE_ENDPOINT",
+    "convention": "Plugin appends /v1/tasks; use proTES /ga4gh/tes, with no trailing slash"
+  },
+  "spec": {
+    "protocol": "TES",
+    "tested": "1.1.0"
+  },
+  "implementation": {
+    "name": "Nextflow/nf-ga4gh through proTES/Funnel",
+    "task_image": "python@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c",
+    "plugin_version": "1.5.0",
+    "nextflow_version": "26.10.5",
+    "nextflow_dist_sha256": "b030030c06040bf5f13ac423c318d146c95e8d1d82f5022799dcb24738bccf3e",
+    "plugin_documentation_revision": "00c313135a88eca3a4b0de1bfa6475eb5a63f8fe",
+    "plugin_release_revision": "23bcecd673dffcf5706b324494ab89ac1efd170c",
+    "plugin_tree_sha256": "9468cd66d5a07a67865fa74e430f9f4b30cd0ad6ab502b1fcf7c40c40ec9d92b",
+    "java_runtime": {
+      "name": "Temurin",
+      "version": "21.0.13+9 JRE",
+      "darwin_arm64_archive_sha256": "225bab0a09491ef06835488cd942f5d2befa9a0410a2484f0c8bbcf7506ec09a"
+    }
+  },
+  "client": {
+    "name": "Nextflow",
+    "suite_sha256": "7e8664a6b03ddde30cc079fba8642d9af6903a317257da8b27a538c23dd917b7"
+  },
+  "features": [
+    "shared work directory",
+    "directory and glob outputs",
+    "log selection",
+    "path prefix and cancellation coverage gaps"
+  ],
+  "upstream_issues": [
+    "https://github.com/nextflow-io/nf-ga4gh/issues/2",
+    "https://github.com/nextflow-io/nf-ga4gh/issues/6",
+    "https://github.com/nextflow-io/nf-ga4gh/issues/7",
+    "https://github.com/nextflow-io/nf-ga4gh/issues/11",
+    "https://github.com/nextflow-io/nf-ga4gh/issues/12"
+  ]
+}
