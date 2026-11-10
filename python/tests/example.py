@@ -1,18 +1,55 @@
-"""Submit the checked-in TES task to a local Funnel server."""
+"""Create, poll, and inspect a TES task with Python objects.
+
+Run from ``python/`` with Funnel and Docker, or set ``GA4GH_TES_URL`` to
+another TES API root.
+"""
 
 import os
-from pathlib import Path
+import time
 
-from GA4GH import Configuration, TES
+from GA4GH import Configuration, ListTasksParams, TES, TesState
+
+TERMINAL_STATES = {
+    TesState.COMPLETE,
+    TesState.EXECUTOR_ERROR,
+    TesState.SYSTEM_ERROR,
+    TesState.CANCELED,
+    TesState.PREEMPTED,
+}
 
 
-config = Configuration(os.environ.get("GA4GH_TES_URL", "http://localhost:8000/ga4gh/tes/v1"))
-tes = TES(config)
+def main() -> None:
+    config = Configuration(
+        os.environ.get("GA4GH_TES_URL", "http://localhost:8000/ga4gh/tes/v1")
+    )
+    tes = TES(config)
+    task = tes.create(
+        {
+            "name": "hello",
+            "executors": [{"image": "alpine", "command": ["echo", "hello"]}],
+        }
+    )
+    print("TASK ID:", task.id)
 
-task_file = Path(__file__).resolve().parents[2] / "examples" / "tes-hello.json"
-task = tes.create(str(task_file))
-print(f"Created task {task.id}: {task.status()}")
+    state = task.status()
+    for _ in range(5):
+        print("STATE:  ", state)
+        if state in TERMINAL_STATES:
+            break
+        time.sleep(1)
+        state = task.status()
 
-print("Tasks:")
-for listed_task in tes.list().tasks:
-    print(f"{listed_task.id}: {listed_task.status}")
+    if state not in TERMINAL_STATES:
+        print("Canceling task...")
+        task.cancel()
+
+    details = tes.get("FULL", task.id)
+    print("TASK:   ", details.to_dict())
+
+    print(f"\n{'TASK ID':<25} {'STATE':<15}")
+    for listed in tes.list(ListTasksParams(page_size=10)).tasks:
+        print(f"{listed.id or '':<25} {listed.state:<15}")
+
+
+if __name__ == "__main__":
+    main()

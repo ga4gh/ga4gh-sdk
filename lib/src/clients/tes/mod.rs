@@ -234,6 +234,14 @@ impl TES {
         &self,
         task: TesTask, /*, params: models::TesTask*/
     ) -> Result<Task, Box<dyn std::error::Error>> {
+        self.create_value(serde_json::to_value(task)?).await
+    }
+
+    /// Creates a task from a JSON value, preserving fields unknown to the
+    /// current TES models while applying the same submission and acknowledgement
+    /// checks as [`Self::create`].
+    pub async fn create_value(&self, task: Value) -> Result<Task, Box<dyn std::error::Error>> {
+        let _: TesTask = serde_json::from_value(task.clone())?;
         // First, check if the service is of TES class
         self.check().map_err(|e| {
             log::error!("Service check failed: {}", e);

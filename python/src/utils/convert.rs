@@ -1,10 +1,11 @@
 //! Conversions between Python objects, JSON values and query strings.
 
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyOSError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 use pyo3::PyTypeInfo;
 use serde_json::Value;
+use std::path::Path;
 
 /// Lets subclasses take further constructor arguments.
 ///
@@ -29,6 +30,27 @@ pub fn check_extra_args<T: PyTypeInfo>(
         )));
     }
     Ok(())
+}
+
+/// Reads a UTF-8 text file.
+///
+/// Failures to read raise the matching `OSError` subclass (such as `FileNotFoundError`) with
+/// the system's message and the path; text that isn't UTF-8 raises `ValueError`.
+pub fn read_file(py: Python<'_>, path: &Path) -> PyResult<String> {
+    let filename = path.to_string_lossy().into_owned();
+    let bytes = std::fs::read(path).map_err(|error| match error.raw_os_error() {
+        Some(errno) => match py
+            .import_bound("os")
+            .and_then(|os| os.call_method1("strerror", (errno,)))
+            .and_then(|message| message.extract::<String>())
+        {
+            Ok(message) => PyOSError::new_err((errno, message, filename.clone())),
+            Err(error) => error,
+        },
+        None => PyErr::from(error),
+    })?;
+    String::from_utf8(bytes)
+        .map_err(|_| PyValueError::new_err(format!("Invalid file {filename}: not UTF-8 text")))
 }
 
 /// Converts a Python argument to JSON.
