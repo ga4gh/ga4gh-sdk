@@ -86,7 +86,7 @@ and leaves MongoDB/RabbitMQ internal. It never creates, resizes or removes a VM.
 The local snapshot needs the exact images listed in `local_stack.py` already
 loaded. The Funnel binary is downloaded from the official v0.12.3 release and
 verified against its pinned SHA-256. This reference snapshot uses Linux arm64
-Funnel/Python with amd64 proTES/MongoDB/RabbitMQ under emulation.
+Funnel/Python/MongoDB/RabbitMQ with amd64 proTES under emulation.
 
 The custom proTES snapshot can be rebuilt from public source. This is the actual
 source/build workflow used for the recorded image (Docker Buildx and amd64

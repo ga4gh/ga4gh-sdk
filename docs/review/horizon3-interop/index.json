@@ -133,5 +133,12 @@
     "local_profile_tests": 6,
     "post_dependency_merge": "Native example rebuilt; both offline variants rerun; no cloud replay"
   },
-  "lifecycle": "cleanup.json"
+  "lifecycle": "cleanup.json",
+  "runtime_platforms": {
+    "funnel": "linux/arm64 official binary in arm64 Python image",
+    "protes": "linux/amd64 under registered qemu emulation",
+    "mongodb": "linux/arm64",
+    "rabbitmq": "linux/arm64",
+    "nextflow_java_client": "darwin/arm64"
+  }
 }
