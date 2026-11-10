@@ -1,27 +1,31 @@
 ## GA4GH-SDK Python Bindings
 
-This repository provides Python bindings for the GA4GH-SDK using [PyO3](https://docs.rs/pyo3/latest/pyo3).
+This directory provides Python bindings for the GA4GH SDK using [PyO3](https://docs.rs/pyo3/latest/pyo3).
+Start setup from the repository root; after `cd python`, run later commands
+from `python/` with the virtual environment active.
 
 ## Prerequisites
 
-- Python 3.12
+- Python 3.12 or newer
 - [Maturin](https://github.com/PyO3/maturin)
 - [PyTest](https://docs.pytest.org/en/stable/)
 
 ## Installation
 
-1. **Create a virtual environment:**
+1. **Enter the Python package and create a virtual environment:**
 
     ```bash
+    cd python
     python3 -m venv .venv
-    source .venv/bin/activate
+    . .venv/bin/activate
     ```
+
+    Use a Python 3.12+ executable if `python3` points to an older version.
 
 2. **Install dependencies:**
 
     ```bash
-    pip install maturin[patchelf]
-    pip install pytest 
+    python -m pip install 'maturin>=1.7,<2' pytest
     ```
 
 ## Development
@@ -42,11 +46,15 @@ maturin build
 
 ## Running Tests
 
-To run the lib tests, use:
+After `maturin develop`, run the Python binding tests with:
 
 ```bash
 pytest
 ```
+
+`Configuration.from_file()` raises `FileNotFoundError` when the config file is
+missing and `ValueError` when its contents are malformed. Invalid URLs and JSON
+arguments also raise `ValueError`.
 
 ## Example 
 

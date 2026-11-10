@@ -1,8 +1,8 @@
-use url::Url;
-use serde_json::Value;
 use crate::clients::ServiceType;
-use log::warn;
+use serde_json::Value;
 use std::fmt;
+use std::path::Path;
+use url::Url;
 
 /// Printed in `Debug` output in place of a value that is set but not meant to be shown.
 struct Redacted;
@@ -40,7 +40,8 @@ fn display_url(url: &Url) -> String {
 /// It provides methods for making constructing new configuration, changing the base url, and specifying a default configuration.
 #[derive(Clone)]
 pub struct Configuration {
-    /// The base path for API requests.
+    /// The API root; endpoint paths are resolved below it, with or without a trailing slash.
+    /// Query strings and fragments are not supported in the API root.
     pub base_path: Url,
     /// The user agent to be used in API requests.
     pub user_agent: Option<String>,
@@ -122,7 +123,8 @@ impl Configuration {
     ///
     /// # Arguments
     ///
-    /// * `base_path` - The base path for API requests.
+    /// * `base_path` - The API root for requests, such as `https://host/ga4gh/tes/v1`,
+    ///   without a query string or fragment.
     /// * `user_agent` - The user agent to be used in API requests.
     /// * `basic_auth` - The basic authentication credentials.
     /// * `oauth_access_token` - The OAuth access token for authentication.
@@ -130,9 +132,7 @@ impl Configuration {
     /// # Returns
     ///
     /// A new instance of Configuration.
-    pub fn new(
-        base_path: Url,
-    ) -> Self {
+    pub fn new(base_path: Url) -> Self {
         Configuration {
             base_path,
             user_agent: Some("GA4GH SDK".to_owned()),
@@ -143,11 +143,11 @@ impl Configuration {
         }
     }
 
-    /// Sets the base path for API requests.
+    /// Sets the API root for requests.
     ///
     /// # Arguments
     ///
-    /// * `base_path` - The base path for API requests.
+    /// * `base_path` - The API root, with or without a trailing slash.
     ///
     /// # Returns
     ///
@@ -156,7 +156,7 @@ impl Configuration {
         self.base_path = base_path;
         self
     }
-    
+
     /// Sets the user agent for API requests.
     ///
     /// # Arguments
@@ -208,39 +208,85 @@ impl Configuration {
     /// # Errors
     ///
     /// This function will return an error if the configuration file is missing or malformed.
+    pub fn from_file(service_type: ServiceType) -> Result<Self, Box<dyn std::error::Error>> {
+        let path = dirs::home_dir()
+            .ok_or("Home directory not found")?
+            .join(".ga4gh-cli/config.json");
+        Self::from_path(path, service_type.as_str())
+    }
 
-    pub fn from_file(service_type: ServiceType)-> Result<Self, Box<dyn std::error::Error>> {
-        let config_file_path = dirs::home_dir().ok_or("Home directory not found")?.join(".ga4gh-cli/config.json");
-        if config_file_path.exists() {
-            let contents = std::fs::read_to_string(config_file_path)?;
-            let config_json: Value = serde_json::from_str(&contents)?;
-            if !config_json.is_object() {
-                return Err("Configuration file must be a JSON object".into());
-            }
-            if !config_json[service_type.as_str()].is_object() {
-                return Err("Configuration file must contain the requested `{service_type}` configuration".into());
-            }
-            let config_json = config_json[service_type.as_str()].as_object().unwrap();
-            if !config_json["base_path"].is_string() {
-                return Err("Configuration file must contain a 'base_path' string".into());
-            }
-            let base_path = Url::parse(config_json["base_path"].as_str().unwrap_or_default())?;
-            let mut config = Configuration::new(base_path);
-            if config_json["basic_auth"].is_object() {
-                let basic_auth = BasicAuth {
-                    username: config_json["basic_auth"]["username"].as_str().unwrap_or_default().to_string(),
-                    password: Some(config_json["basic_auth"]["password"].as_str().unwrap_or_default().to_string()),
+    /// Load one named section from a JSON configuration file.
+    ///
+    /// Only `base_path` is required; authentication fields are optional.
+    /// A missing file is an I/O error; malformed content is an input error.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ga4gh_sdk::utils::configuration::Configuration;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = Configuration::from_path("config.json", "TES")?;
+    /// # let _ = config;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_path(
+        path: impl AsRef<Path>,
+        section: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let path = path.as_ref();
+        let contents = std::fs::read_to_string(path).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("Cannot read configuration file {}: {error}", path.display()),
+            )
+        })?;
+        let document: Value = serde_json::from_str(&contents).map_err(|error| {
+            format!(
+                "Invalid JSON in configuration file {}: {error}",
+                path.display()
+            )
+        })?;
+        let root = document
+            .as_object()
+            .ok_or("Configuration file must be a JSON object")?;
+        let fields = root
+            .get(section)
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("Configuration file must contain a '{section}' object"))?;
+        let base_path = fields
+            .get("base_path")
+            .and_then(Value::as_str)
+            .ok_or("Configuration section must contain a 'base_path' string")?;
+        let base_path = Url::parse(base_path)
+            .map_err(|error| format!("Invalid base_path in '{section}' configuration: {error}"))?;
+        let mut config = Configuration::new(base_path);
+
+        match fields.get("basic_auth") {
+            None | Some(Value::Null) => {}
+            Some(Value::Object(auth)) => {
+                let username = auth
+                    .get("username")
+                    .and_then(Value::as_str)
+                    .ok_or("basic_auth.username must be a string")?;
+                let password = match auth.get("password") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(password)) => Some(password.clone()),
+                    _ => return Err("basic_auth.password must be a string".into()),
                 };
-                config = config.with_basic_auth(basic_auth);
+                config.basic_auth = Some(BasicAuth {
+                    username: username.to_owned(),
+                    password,
+                });
             }
-            if config_json["oauth_access_token"].is_string() {
-                let oauth_access_token = config_json["oauth_access_token"].as_str().unwrap_or_default().to_string();
-                config = config.with_oauth_access_token(oauth_access_token);
-            }
-            return Ok(config);
+            _ => return Err("basic_auth must be an object".into()),
         }
-        warn!("Configuration file not found at {:?}, using empy defualt configuration", config_file_path);
-        Ok(Configuration::default())
+        match fields.get("oauth_access_token") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(token)) => config.oauth_access_token = Some(token.clone()),
+            _ => return Err("oauth_access_token must be a string".into()),
+        }
+        Ok(config)
     }
 }
 
@@ -285,6 +331,71 @@ pub(crate) fn config_with_markers() -> Configuration {
 mod tests {
     use super::*;
     use url::Url;
+
+    #[test]
+    fn test_from_path_minimal_and_optional_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org/tes/v1"}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(config.base_path.as_str(), "https://example.org/tes/v1");
+        assert!(config.basic_auth.is_none());
+        assert!(config.oauth_access_token.is_none());
+
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org/tes/v1","basic_auth":{"username":"alice"},"oauth_access_token":"token"}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(config.basic_auth.as_ref().unwrap().username, "alice");
+        assert_eq!(config.basic_auth.as_ref().unwrap().password, None);
+        assert_eq!(config.oauth_access_token.as_deref(), Some("token"));
+    }
+
+    #[test]
+    fn test_from_path_invalid_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let cases = [
+            ("not JSON", "Invalid JSON"),
+            ("[]", "JSON object"),
+            ("{}", "'custom' object"),
+            (r#"{"custom":{}}"#, "base_path"),
+            (
+                r#"{"custom":{"base_path":"not a url"}}"#,
+                "Invalid base_path",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","basic_auth":{}}}"#,
+                "basic_auth.username",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","oauth_access_token":3}}"#,
+                "oauth_access_token",
+            ),
+        ];
+        for (document, expected_message) in cases {
+            std::fs::write(&path, document).unwrap();
+            let error = Configuration::from_path(&path, "custom").unwrap_err();
+            assert!(
+                error.to_string().contains(expected_message),
+                "{document}: {error}"
+            );
+        }
+
+        let missing = dir.path().join("missing.json");
+        let error = Configuration::from_path(&missing, "custom").unwrap_err();
+        assert!(error.to_string().contains("missing.json"), "{error}");
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
+    }
 
     #[test]
     fn test_debug_output_basic_auth() {
@@ -371,15 +482,13 @@ mod tests {
 
     #[test]
     fn test_new_configuration() {
-        let config = Configuration::new(
-    Url::parse("https://api.example.com").unwrap(),
-        )
-        .with_user_agent("My User Agent".to_owned())
-        .with_basic_auth(BasicAuth {
-            username: "admin".to_owned(),
-            password: Some("password".to_owned()),
-        })
-        .with_oauth_access_token("my_oauth_token".to_owned());
+        let config = Configuration::new(Url::parse("https://api.example.com").unwrap())
+            .with_user_agent("My User Agent".to_owned())
+            .with_basic_auth(BasicAuth {
+                username: "admin".to_owned(),
+                password: Some("password".to_owned()),
+            })
+            .with_oauth_access_token("my_oauth_token".to_owned());
 
         assert_eq!(config.base_path.as_str(), "https://api.example.com/");
         assert_eq!(config.user_agent, Some("My User Agent".to_owned()));

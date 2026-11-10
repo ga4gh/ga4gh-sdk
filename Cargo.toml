@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 members = [
     "lib",
     "cli",
@@ -11,4 +12,4 @@ authors = ["Aarav Mehta <aarav05mehta@gmail.com>", "Pavel Nikonorov <pavel@genxt
 edition = "2021"
 readme = "./README.md"
 license-file = "LICENSE"
-repository = "https://github.com/elixir-cloud-aai/ga4gh-sdk.git"
+repository = "https://github.com/ga4gh/ga4gh-sdk"

@@ -3,7 +3,7 @@ name = "ga4gh-lib"
 description = """
 Generic SDK and CLI for GA4GH API services
 """
-repository = "https://github.com/elixir-cloud-aai/ga4gh-sdk/tree/main/lib"
+repository = "https://github.com/ga4gh/ga4gh-sdk/tree/main/lib"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -12,7 +12,7 @@ license-file.workspace = true
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-serde = "^1.0"
+serde = { version = "^1.0", features = ["derive"] }
 serde_derive = "^1.0"
 serde_json = "^1.0"
 uuid = { version = "^1.0", features = ["serde", "v4"] }
@@ -30,7 +30,7 @@ features = ["json", "multipart"]
 [dev-dependencies]
 mockito = "0.31"
 mockall = "0.10.2"
-cargo-nextest = "0.9.30"  
+tempfile = "3.2"
 
 [lib]
 name = "ga4gh_sdk"
