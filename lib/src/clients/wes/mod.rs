@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod models;
 
 use crate::clients::serviceinfo::models::Service;

@@ -34,7 +34,7 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
-## Installation
+## Advanced transport
 Advanced transport callers can use `request_response` for status and headers
 before parsing, then consume `reqwest::Response::chunk()` incrementally or call
 `utils::transport::read_bounded` for lossless bytes. Dropping the response stops
@@ -69,6 +69,50 @@ absolute `Operation` budget, cancellation and an attempt bound; failures retain
 the reference and last pending state. Zero delay becomes one second; missing,
 malformed, overflow or greater-than-one-hour delays are protocol errors.
 Authentication and malformed 200 responses remain errors, without pending retries.
+
+## Service composition
+
+`TES::discover` and `WES::discover` return a `Discovered<T>` wrapper with a
+cached `CapabilitySnapshot`. One service-info request supplies both the client
+and the snapshot; typed/raw accessors make no requests and `refresh()` is
+explicit. Raw extensions are preserved. Preflight diagnostics distinguish
+supported, unsupported and unknown/stale metadata. `create_validated` and
+`run_validated` accept an explicit strict flag; ordinary submission stays
+advisory. TES backend keys are case insensitive and storage is nonexhaustive.
+
+`Task::wait` and `Run::wait` accept `WaitOptions` with an operation budget, local
+cancellation and polling/retry settings. The result distinguishes successful
+completion, executor/system failures, preemption, cancellation, polling failure
+and observation interruption, retaining the last state and a credential-free
+`RemoteHandle`. Rebuild observation with caller-supplied configuration. Dropping
+or canceling observation never cancels remote work; `cancel_and_wait` is an
+explicit separate action. Optional failure logs are fetched once.
+
+TES/WES `pages` return a lazy `Pager` with `next_page` and `next_item` methods.
+It preserves filters/view and opaque tokens, continues past empty intermediate
+pages, detects token cycles, and bounds requests/items. Memory holds one page
+plus token history bounded by `max_requests` (default 1000). Checkpoints bind
+service, API root and query; a failed request retains the valid continuation.
+At a partially consumed or truncated page, a checkpoint replays that page.
+Mutable listings provide neither snapshot isolation nor exactly-once processing;
+callers reconcile replays. Credentials are supplied separately when resuming.
+
+The CLI streams `tes list --all --format jsonl` through caller-owned writers,
+with one JSON object per stdout line. `--max-pages` and `--max-items` bound work;
+limits or later failures preserve emitted records, report a resume checkpoint on
+stderr and return a nonzero exit code. Reusable CLIs use `dispatch_to` or
+`dispatch_with_config_to`; existing buffered dispatch remains available for
+ordinary commands.
+
+`WES::run_workflow_streaming` accepts `StreamingAttachment` sources as bytes,
+files or owned async readers, with optional known lengths. Multipart content
+follows backpressure and shares the normal transport header policy. Paths are
+validated before I/O, nested relative filenames stay intact, and one absolute
+operation budget covers preparation, upload and response. A consumed source
+is never replayed; cancellation or a lost response after transmission reports
+that submission may have been accepted. The existing bytes API remains usable.
+
+## Installation
 
 TBA
 

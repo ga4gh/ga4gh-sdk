@@ -283,3 +283,67 @@ fn test_output_with_invalid_base_path() {
         }
     }
 }
+
+#[test]
+fn all_jsonl_streams_records_and_reports_a_failed_later_page_on_stderr() {
+    let _service = service_info_mock("/service-info");
+    let first = mock("GET", "/tasks")
+        .with_body(r#"{"tasks":[{"id":"one","custom":true}],"next_page_token":"a+/ %"}"#)
+        .expect(1)
+        .create();
+    let second = mock("GET", "/tasks")
+        .match_query(Matcher::UrlEncoded("page_token".into(), "a+/ %".into()))
+        .with_status(503)
+        .expect(1)
+        .create();
+    let home = Home::new(&config_with_fields(&mockito::server_url()));
+    let output = home.run(&["tes", "list", "--all", "--format", "jsonl"], None);
+    assert!(!output.status.success());
+    let lines = stdout(&output);
+    let records = lines
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["id"], "one");
+    assert_eq!(records[0]["custom"], true);
+    let diagnostics = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostics.contains("Resume checkpoint"));
+    assert!(diagnostics.contains("a+/ %"));
+    first.assert();
+    second.assert();
+}
+
+#[test]
+fn all_jsonl_exports_complete_pages_without_table_or_diagnostics() {
+    let _service = service_info_mock("/export/service-info");
+    let first = mock("GET", "/export/tasks")
+        .with_body(r#"{"tasks":[{"id":"one"}],"next_page_token":"next"}"#)
+        .expect(1)
+        .create();
+    let second = mock("GET", "/export/tasks")
+        .match_query(Matcher::UrlEncoded("page_token".into(), "next".into()))
+        .with_body(r#"{"tasks":[{"id":"two"}]}"#)
+        .expect(1)
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/export",
+        mockito::server_url()
+    )));
+    let output = home.run(&["tes", "list", "--all", "--format", "jsonl"], None);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let records = stdout(&output)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["id"], "one");
+    assert_eq!(records[1]["id"], "two");
+    first.assert();
+    second.assert();
+}
