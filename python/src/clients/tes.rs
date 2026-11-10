@@ -261,10 +261,15 @@ impl PyTesTask {
         cls.call1((to_python(cls.py(), &task.raw)?,))
     }
 
-    /// Lets `pickle` and `copy` rebuild the task, as `type(task)(task.to_dict())`.
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<(Bound<'py, PyType>, (PyObject,))> {
+    /// Lets `pickle` and `copy` rebuild the task as `type(task)(task.to_dict())`, with the
+    /// attributes that a subclass instance holds in `__dict__`.
+    #[allow(clippy::type_complexity)]
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyType>, (PyObject,), Option<Bound<'py, PyAny>>)> {
         let raw = to_python(slf.py(), &slf.borrow().raw)?;
-        Ok((slf.get_type(), (raw,)))
+        let state = slf.getattr("__dict__").ok();
+        Ok((slf.get_type(), (raw,), state))
     }
 
     #[getter]
@@ -544,10 +549,12 @@ impl PyTES {
     /// the TES models don't know.
     pub fn create(&self, py: Python<'_>, task: &Bound<'_, PyAny>) -> PyResult<PyTask> {
         if let Ok(text) = task.downcast::<PyString>() {
-            if text.to_cow()?.trim_start().starts_with('{') {
+            // Lossy, so that paths with surrogate escapes (non-UTF-8 file names) pass.
+            if text.to_string_lossy().trim_start().starts_with('{') {
                 return Err(PyValueError::new_err(
                     "TES.create() takes a str as a file path; pass JSON text as \
-                     TesTask.from_json(text)",
+                     TesTask.from_json(text), or a path that starts with '{' as a \
+                     pathlib.Path",
                 ));
             }
         }

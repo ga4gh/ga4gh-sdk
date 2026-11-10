@@ -144,7 +144,8 @@ for listed in page.tasks:
 
 - `TES.create(task)` takes a `dict` (or other mapping), a `TesTask`, or the path of a JSON
   file (`str` or `os.PathLike`). A `str` is always a path, unlike for `TesTask(task)`; pass
-  JSON text as `TesTask.from_json(text)`. It sends the task's JSON as given, including
+  JSON text as `TesTask.from_json(text)`. A `str` that starts with `{` raises `ValueError`;
+  pass such a path as a `pathlib.Path`. It sends the task's JSON as given, including
   fields that the TES models don't know, and returns a `Task`.
 - `Task` addresses a task on the server by its `id`. `Task.status()` returns the current
   state as a `TesState`; `Task.cancel()` cancels the task and returns `None`.
@@ -162,7 +163,7 @@ for listed in page.tasks:
 `TesTask.from_json(text)` or `TesTask.from_file(path)`; all of them check the task
 against the TES models and raise `ValueError` if it doesn't fit. The classmethods call
 `cls(task)`, so further constructor arguments of a subclass need defaults. Tasks can be
-pickled and copied.
+pickled and copied, including the attributes of subclass instances.
 
 Its fields are properties: `id`, `state`, `name`, `description`, `creation_time`,
 `inputs`, `outputs`, `resources`, `executors`, `volumes`, `tags` and `logs`. Missing

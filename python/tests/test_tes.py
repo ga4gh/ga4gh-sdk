@@ -7,6 +7,7 @@ import json
 import os
 import pickle
 import sys
+from pathlib import Path
 from types import MappingProxyType
 
 import pytest
@@ -66,7 +67,7 @@ def test_state_enum_members_are_strings():
 def test_state_enum_leaves_the_package_alone():
     assert GA4GH.__file__.endswith("__init__.py")
     assert not hasattr(GA4GH, "enum")
-    assert "GA4GH._tes_state" not in sys.modules
+    assert sys.modules["GA4GH"] is GA4GH
 
 
 def test_state_enum_rejects_unknown_names():
@@ -106,6 +107,20 @@ def test_create_takes_str_as_path_not_json_text(config):
         TES(config).create(json.dumps(NEW_TASK))
 
 
+def test_create_takes_paths_with_surrogate_escapes(config, tmp_path):
+    path = os.fsdecode(os.fsencode(str(tmp_path)) + b"/t\xff.json")
+    with pytest.raises(FileNotFoundError):
+        TES(config).create(path)
+
+
+def test_create_takes_path_objects_that_start_with_a_brace(server, config, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Path("{dir}").mkdir()
+    Path("{dir}/task.json").write_text(json.dumps(NEW_TASK))
+    TES(config).create(Path("{dir}/task.json"))
+    assert json.loads(server.last()["body"]) == NEW_TASK
+
+
 def test_missing_file_has_system_message(tmp_path):
     with pytest.raises(FileNotFoundError) as error:
         TesTask.from_file(tmp_path / "missing.json")
@@ -129,6 +144,13 @@ def test_task_can_be_pickled_and_copied():
         for clone in (pickle.loads(pickle.dumps(task)), copy.copy(task), copy.deepcopy(task)):
             assert type(clone) is type(task)
             assert clone.to_dict() == NEW_TASK
+
+
+def test_copies_keep_subclass_attributes():
+    task = PicklableTask(NEW_TASK)
+    task.note = "kept"
+    for clone in (pickle.loads(pickle.dumps(task)), copy.copy(task), copy.deepcopy(task)):
+        assert clone.note == "kept"
 
 
 def test_create_from_missing_file_raises_os_error(config, tmp_path):
