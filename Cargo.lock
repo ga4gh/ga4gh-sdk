@@ -572,6 +572,7 @@ dependencies = [
  "async-trait",
  "dirs",
  "env_logger 0.9.3",
+ "futures-util",
  "httpdate",
  "log",
  "mockall",
