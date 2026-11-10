@@ -192,9 +192,10 @@ In its [`develop` branch at `2b76a63`](https://github.com/ga4gh/ga4gh-starter-ki
 (read on 2026-11-10, not run), they expect `selection` instead of
 `bulk_object_ids`, report failures in an `unresolved_drs_object` map, and
 return bulk access URLs as a bare array without object or access IDs, which
-cannot be correlated safely. The SDK sends only standard requests and does not
-interpret these replies: requested IDs are reported as omitted, a diagnostic
-names the `unresolved_drs_object` map, and no dialect is recorded.
+cannot be correlated safely. The SDK sends only standard requests. In a reply,
+it ignores the `unresolved_drs_object` map, adds a diagnostic and records no
+dialect. Because the Starter Kit does not read `bulk_object_ids`, its resolved
+array stays empty and the requested IDs are reported as omitted.
 
 ## Service composition
 
