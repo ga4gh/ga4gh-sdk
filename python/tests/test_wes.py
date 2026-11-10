@@ -4,6 +4,7 @@ import base64
 import copy
 import enum
 import json
+import os
 import pickle
 import subprocess
 import sys
@@ -29,7 +30,7 @@ from GA4GH import (
     WesState,
 )
 
-from .mock_server import RUN_LOG, RUN_REQUEST, RUN_SUMMARY, TASK_LOG
+from .mock_server import BAD_ACKNOWLEDGEMENTS, RUN_LOG, RUN_REQUEST, RUN_SUMMARY, TASK_LOG
 
 STATES = [
     "UNKNOWN",
@@ -114,6 +115,32 @@ def test_service_type_has_wes():
 def test_client_checks_service_type(server, config):
     with pytest.raises(RuntimeError, match="not an instance of WES"):
         WES(config)
+
+
+def test_client_hints_at_the_api_root_on_404(server):
+    with pytest.raises(RuntimeError, match="Check that base_path is the WES API root"):
+        WES(Configuration(f"{server.root}/missing"))
+
+
+def test_client_reports_unreachable_service():
+    with pytest.raises(RuntimeError, match="Failed to create WES instance"):
+        WES(Configuration("http://127.0.0.1:1/wes"))
+
+
+def requests_received(server):
+    """All requests that the mock server received so far."""
+    with urllib.request.urlopen(f"{server.root}/__requests__", timeout=10) as response:
+        return json.load(response)
+
+
+@pytest.mark.parametrize("root", sorted(BAD_ACKNOWLEDGEMENTS))
+def test_failed_or_malformed_acknowledgements_raise_once(server, root):
+    wes = WES(Configuration(f"{server.root}/{root}"))
+    before = len(requests_received(server))
+    with pytest.raises(RuntimeError, match="Failed to run workflow"):
+        wes.run(RUN_REQUEST)
+    posts = [(r["method"], r["path"]) for r in requests_received(server)[before:]]
+    assert posts == [("POST", f"/{root}/runs")]
 
 
 def test_client_getters(server, wes_config):
@@ -286,9 +313,28 @@ def test_get_rejects_empty_id(server, wes_config):
     assert server.last() == before
 
 
-def test_invalid_run_log_raises_runtime_error(wes_config):
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda wes, transport: wes.get("bad"),
+        lambda wes, transport: Run("bad", transport).log(),
+        lambda wes, transport: Run("bad", transport).tasks(),
+        lambda wes, transport: Run("bad", transport).task("t"),
+    ],
+)
+def test_invalid_responses_raise_runtime_error(wes_config, call):
     with pytest.raises(RuntimeError, match="Invalid WES response"):
-        WES(wes_config).get("bad")
+        call(WES(wes_config), Transport(wes_config))
+
+
+def test_unknown_run_state_raises_runtime_error(wes_config):
+    with pytest.raises(RuntimeError, match="run status"):
+        Run("bad", Transport(wes_config)).status()
+
+
+def test_invalid_run_list_raises_runtime_error(server):
+    with pytest.raises(RuntimeError, match="Invalid WES response"):
+        WES(Configuration(f"{server.root}/wes-bad-list")).list()
 
 
 def test_run_log_without_state_is_unknown(wes_config):
@@ -352,9 +398,30 @@ def test_run_tasks_return_typed_task_logs(server, wes_config):
     assert server.last()["path"] == "/wes/runs/run-1/tasks/task-1"
 
 
-def test_run_rejects_empty_id(wes_config):
+@pytest.mark.parametrize("run_id", ["", ".", ".."])
+def test_run_rejects_ids_that_are_no_path_segment(server, wes_config, run_id):
+    wes = WES(wes_config)
+    before = server.last()
     with pytest.raises(ValueError, match="run ID"):
-        Run("", Transport(wes_config))
+        Run(run_id, Transport(wes_config))
+    with pytest.raises(ValueError, match="run ID"):
+        wes.get(run_id)
+    with pytest.raises(ValueError, match="task ID"):
+        Run("run-1", Transport(wes_config)).task(run_id)
+    assert server.last() == before
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs file permissions")
+def test_run_with_unreadable_attachment_raises_permission_error(server, wes_config, tmp_path):
+    path = tmp_path / "main.cwl"
+    path.write_bytes(b"x")
+    path.chmod(0)
+    wes = WES(wes_config)
+    before = server.last()
+    with pytest.raises(PermissionError) as error:
+        wes.run(RUN_REQUEST, {"main.cwl": path})
+    assert error.value.filename == str(path)
+    assert server.last() == before
 
 
 def test_run_task_rejects_empty_id(wes_config):

@@ -93,9 +93,13 @@ fn paged(endpoint: &str, page_size: Option<i64>, page_token: Option<String>) -> 
     )
 }
 
+/// Rejects IDs that can't be a path segment: empty, `.` or `..`.
 fn require_id(id: &str, what: &str) -> PyResult<()> {
     if id.is_empty() {
         return Err(PyValueError::new_err(format!("{what} must not be empty")));
+    }
+    if matches!(id, "." | "..") {
+        return Err(PyValueError::new_err(format!("{what} must not be {id:?}")));
     }
     Ok(())
 }
@@ -692,6 +696,7 @@ pub struct PyRun {
 }
 
 impl PyRun {
+    /// Addresses the run `id` with `transport`; an empty ID raises `ValueError`.
     pub fn new(id: String, transport: &PyTransport) -> PyResult<Self> {
         require_id(&id, "run ID")?;
         Ok(PyRun {
@@ -800,15 +805,24 @@ fn attachment_source(
         return Ok(AttachmentSource::Bytes(bytes.into_owned()));
     }
     if !content.is_instance_of::<PyString>() && content.hasattr("__fspath__")? {
+        // Opened here, so that errors are `OSError`s with the path, and the file that was
+        // checked is the one that is sent.
         let path: PathBuf = content.extract()?;
-        let metadata = std::fs::metadata(&path).map_err(|error| os_error(py, error, &path))?;
+        let file = std::fs::File::open(&path).map_err(|error| os_error(py, error, &path))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| os_error(py, error, &path))?;
         if !metadata.is_file() {
             return Err(PyValueError::new_err(format!(
                 "Invalid attachment {filename}: {} is not a file",
                 path.display()
             )));
         }
-        return Ok(AttachmentSource::File(path));
+        // `tokio::fs` is enabled by `ga4gh-lib`, which depends on Tokio with all features.
+        return Ok(AttachmentSource::Reader {
+            reader: Box::pin(tokio::fs::File::from_std(file)),
+            length: Some(metadata.len()),
+        });
     }
     Err(PyValueError::new_err(format!(
         "Invalid attachment {filename}: content must be bytes or an os.PathLike, not {}",

@@ -262,15 +262,16 @@ print(run.task(tasks.task_logs[0].id).stderr)
 - `WES.list(page_size=None, page_token=None)` returns a `RunListResponse` with `runs` (a
   list of `RunSummary`) and `next_page_token`. A bare array of runs, as WES 0.2.0 servers
   (such as the GA4GH Starter Kit) send it, becomes a page without a token.
-- Errors: invalid requests, attachments and arguments (such as an empty ID) raise
-  `ValueError`, missing request or attachment files `FileNotFoundError` (an `OSError`).
-  Failed requests and responses that don't fit the WES models raise `RuntimeError`. If
+- Errors: invalid requests, attachments and arguments (such as an empty ID, `.` or
+  `..`) raise `ValueError`; request or attachment files that are missing or unreadable
+  raise an `OSError` with the path, such as `FileNotFoundError`. Failed requests and responses that don't fit the WES models raise `RuntimeError`. If
   starting a run fails after submission, the error may mean the server started the run
   but its acknowledgement was lost or malformed; do not retry automatically.
 
 `RunRequest` holds a run request, like `TesTask` holds a task: build one with
 `RunRequest(request)` from a `dict` or JSON text, or with `RunRequest.from_dict(d)`,
-`RunRequest.from_json(text)` or `RunRequest.from_file(path)`. Its fields are properties:
+`RunRequest.from_json(text)` or `RunRequest.from_file(path)`. Unlike `WES.run()`, which
+reads a `str` as a path, `RunRequest(text)` parses a `str` as JSON. Its fields are properties:
 `workflow_type`, `workflow_type_version`, `workflow_url`, `workflow_params`, `tags`,
 `workflow_engine`, `workflow_engine_version` and `workflow_engine_parameters`. Requests
 can be pickled and copied.

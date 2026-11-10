@@ -136,8 +136,27 @@ ROUTES.update(
         # A WES 0.2.0 server (GA4GH Starter Kit) lists runs as a bare array.
         ("GET", "/starter-kit/service-info"): (200, WES_SERVICE_INFO),
         ("GET", "/starter-kit/runs"): (200, [RUN_SUMMARY]),
+        # Responses that don't fit the WES models.
+        ("GET", "/wes/runs/bad/status"): (200, {"run_id": "bad", "state": "NOT_A_STATE"}),
+        ("GET", "/wes/runs/bad/tasks"): (200, {"task_logs": [{"id": 1}]}),
+        ("GET", "/wes/runs/bad/tasks/t"): (200, ["not", "an", "object"]),
+        ("GET", "/wes-bad-list/service-info"): (200, WES_SERVICE_INFO),
+        ("GET", "/wes-bad-list/runs"): (200, {"runs": [{"state": "COMPLETE"}]}),
     }
 )
+
+# WES roots whose `POST runs` answers with a failure or a malformed acknowledgement.
+BAD_ACKNOWLEDGEMENTS = {
+    "ack-status": (500, {"msg": "failed"}),
+    "ack-empty": (200, {}),
+    "ack-null": (200, {"run_id": None}),
+    "ack-number": (200, {"run_id": 4}),
+    "ack-blank": (200, {"run_id": ""}),
+    "ack-text": (200, "not an object"),
+}
+for root, reply in BAD_ACKNOWLEDGEMENTS.items():
+    ROUTES[("GET", f"/{root}/service-info")] = (200, WES_SERVICE_INFO)
+    ROUTES[("POST", f"/{root}/runs")] = reply
 
 if __name__ == "__main__":
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

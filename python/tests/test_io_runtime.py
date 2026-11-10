@@ -21,6 +21,7 @@ def test_synchronous_io(scenario):
 
 def wes_body(command, path):
     """The answer of the mock WES below `/wes`; starting a run takes 0.2 s."""
+    # Inline rather than imported from mock_server.py: this child runs on its own.
     if path == '/wes/service-info':
         return {'id': 'test', 'name': 'Test WES', 'type': {
             'group': 'org.ga4gh', 'artifact': 'wes', 'version': '1.1.0'},

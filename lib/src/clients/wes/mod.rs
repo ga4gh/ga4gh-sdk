@@ -192,6 +192,7 @@ impl WES {
         match resp.as_ref() {
             Ok(service) if service.r#type.artifact == "wes" => Ok(()),
             Ok(_) => Err("The endpoint is not an instance of WES".into()),
+            // `WES::new` stores only `Ok`; an `Err` comes from a client built by hand.
             Err(error) => Err(access_error(error.as_ref())),
         }
     }
