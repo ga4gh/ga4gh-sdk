@@ -158,3 +158,30 @@ fn service_failures_have_nonzero_exit_codes() {
     object.assert();
     access.assert();
 }
+
+#[test]
+fn pending_drs_responses_have_nonzero_exit_codes() {
+    let service = service_info();
+    let object = mock("GET", "/ga4gh/drs/v1/objects/pending")
+        .with_status(202)
+        .with_header("retry-after", "2")
+        .create();
+    let access = mock("GET", "/ga4gh/drs/v1/objects/known/access/pending")
+        .with_status(202)
+        .with_header("retry-after", "2")
+        .create();
+    let home = home_with_drs_config(&format!("{}/ga4gh/drs/v1", mockito::server_url()));
+
+    for args in [
+        vec!["drs", "get", "pending"],
+        vec!["drs", "access", "known", "pending"],
+    ] {
+        let output = run(&home, &args);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("retry after 2 seconds"));
+    }
+    service.assert();
+    object.assert();
+    access.assert();
+}

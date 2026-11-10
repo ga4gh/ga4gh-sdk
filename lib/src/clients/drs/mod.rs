@@ -89,8 +89,11 @@ impl DRS {
         &self,
         object_id: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let url = format!("objects/{}", urlencode(object_id));
-        self.transport.get(&url, None).await
+        let reference = self.resolution_reference(format!("objects/{}", urlencode(object_id)));
+        match self.resolve_reference_raw(&reference).await? {
+            resolution::Resolution::Ready(body) => Ok(body),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+        }
     }
 
     /// Retrieves an access URL for a specific DRS object.
@@ -119,12 +122,15 @@ impl DRS {
         object_id: &str,
         access_id: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let url = format!(
+        let reference = self.resolution_reference(format!(
             "objects/{}/access/{}",
             urlencode(object_id),
             urlencode(access_id)
-        );
-        self.transport.get(&url, None).await
+        ));
+        match self.resolve_reference_raw(&reference).await? {
+            resolution::Resolution::Ready(body) => Ok(body),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+        }
     }
 }
 

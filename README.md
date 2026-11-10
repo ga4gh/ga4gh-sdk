@@ -44,6 +44,10 @@ items are `RunListResponseRunsInner` and deprecated task log items are
 endpoints.
 
 ## Installation
+TBA
+
+## Advanced transport
+
 Advanced transport callers can use `request_response` for status and headers
 before parsing, then consume `reqwest::Response::chunk()` incrementally or call
 `utils::transport::read_bounded` for lossless bytes. Dropping the response stops
@@ -78,8 +82,6 @@ absolute `Operation` budget, cancellation and an attempt bound; failures retain
 the reference and last pending state. Zero delay becomes one second; missing,
 malformed, overflow or greater-than-one-hour delays are protocol errors.
 Authentication and malformed 200 responses remain errors, without pending retries.
-
-TBA
 
 ## Building
 
