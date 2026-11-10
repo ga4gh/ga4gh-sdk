@@ -8,6 +8,8 @@ use ga4gh_sdk::clients::tes::models::TesState;
 use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::Task;
 use ga4gh_sdk::clients::tes::TES;
+use ga4gh_sdk::utils::configuration::Configuration;
+use ga4gh_sdk::utils::transport::Transport;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
@@ -15,8 +17,12 @@ use pyo3::types::{PyDict, PyMapping, PyString, PyTuple, PyType};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+fn invalid_response_text(error: impl std::fmt::Display) -> String {
+    format!("Invalid TES response: {error}")
+}
+
 fn invalid_response(error: impl std::fmt::Display) -> PyErr {
-    PyRuntimeError::new_err(format!("Invalid TES response: {error}"))
+    PyRuntimeError::new_err(invalid_response_text(error))
 }
 
 /// Python source of the `TesState` enum. Its members must match the variants of `TesState`.
@@ -86,6 +92,98 @@ fn parse_state(state: &str) -> PyResult<TesState> {
         .map_err(|_| PyValueError::new_err(format!("Invalid TES state: {state}")))
 }
 
+// The TES calls, shared by the sync classes (`TES`, `Task`) and the async ones (`AsyncTES`,
+// `AsyncTask`). The plain functions need the GIL and only prepare a request. The `async`
+// ones send it and convert the result without the GIL; they hold only owned, `Send` data
+// and give errors as text (the SDK's boxed errors are not `Send`), which the callers raise
+// as `RuntimeError`.
+
+/// Connects to a TES service: reads its service info and checks that it is a TES.
+pub async fn connect(config: &Configuration) -> Result<TES, String> {
+    TES::new(config)
+        .await
+        .map_err(|error| format!("Failed to create TES instance: {error}"))
+}
+
+/// The JSON of a task to create, from the argument of `create()`.
+///
+/// `task` is a `TesTask`, a `dict` (or other JSON-serialisable object), or the path of a
+/// JSON file as `str` or `os.PathLike`. A `str` is always a path. `method` names the
+/// caller in errors, for example `"TES.create()"`.
+pub fn task_to_create(task: &Bound<'_, PyAny>, method: &str) -> PyResult<Value> {
+    if let Ok(text) = task.downcast::<PyString>() {
+        // Lossy, so that paths with surrogate escapes (non-UTF-8 file names) pass.
+        if text.to_string_lossy().trim_start().starts_with('{') {
+            return Err(PyValueError::new_err(format!(
+                "{method} takes a str as a file path; pass JSON text as \
+                 TesTask.from_json(text), or a path that starts with '{{' as a \
+                 pathlib.Path"
+            )));
+        }
+    }
+    let task = if task.is_instance_of::<PyString>() || task.hasattr("__fspath__")? {
+        PyTesTask::from_path(task.py(), &task.extract::<PathBuf>()?)?
+    } else {
+        PyTesTask::from_python(task)?
+    };
+    Ok(task.raw)
+}
+
+/// Creates a task from its JSON, sent as given.
+pub async fn create_task(tes: &TES, task: Value) -> Result<Task, String> {
+    tes.create_value(task)
+        .await
+        .map_err(|error| format!("Failed to create task: {error}"))
+}
+
+/// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
+pub async fn get_task(tes: &TES, view: &str, id: &str) -> Result<PyTesTask, String> {
+    let response = tes
+        .get_raw(view, id)
+        .await
+        .map_err(|error| format!("Failed to get task: {error}"))?;
+    let raw = serde_json::from_str(&response).map_err(invalid_response_text)?;
+    PyTesTask::parse(raw).map_err(invalid_response_text)
+}
+
+/// The endpoint that lists tasks with `params`.
+pub fn list_endpoint(params: Option<PyListTasksParams>) -> PyResult<String> {
+    // Not `TES::list_tasks`: reqwest's query encoder cannot repeat tag lists.
+    let params = params
+        .map(|params| serde_json::to_value(params.inner))
+        .transpose()
+        .map_err(|error| PyValueError::new_err(format!("Invalid params: {error}")))?;
+    with_query("tasks", params)
+}
+
+/// Lists tasks from an endpoint made by [`list_endpoint`].
+pub async fn list_tasks(
+    transport: &Transport,
+    endpoint: &str,
+) -> Result<PyTesListTasksResponse, String> {
+    let response = transport
+        .get(endpoint, None)
+        .await
+        .map_err(|error| format!("Failed to list tasks: {error}"))?;
+    let raw = serde_json::from_str(&response).map_err(invalid_response_text)?;
+    PyTesListTasksResponse::parse(raw).map_err(invalid_response_text)
+}
+
+/// The task's current state.
+pub async fn task_status(task: &Task) -> Result<TesState, String> {
+    task.status()
+        .await
+        .map_err(|e| format!("Failed to get task status: {e}"))
+}
+
+/// Asks the server to cancel the task.
+pub async fn cancel_task(task: &Task) -> Result<(), String> {
+    task.cancel()
+        .await
+        .map(drop)
+        .map_err(|e| format!("Failed to cancel task: {e}"))
+}
+
 /// A TES task on the server, addressed by its ID.
 #[pyclass(name = "Task", module = "GA4GH", subclass)]
 pub struct PyTask {
@@ -131,20 +229,13 @@ impl PyTask {
 
     /// The task's current state, as a `TesState`.
     pub fn status(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let state = io(py, |rt| {
-            rt.block_on(self.inner.status())
-                .map_err(|e| format!("Failed to get task status: {e}"))
-        })?;
+        let state = io(py, |rt| rt.block_on(task_status(&self.inner)))?;
         state_to_python(py, state)
     }
 
     /// Asks the server to cancel the task. Returns `None`.
     pub fn cancel(&self, py: Python<'_>) -> PyResult<()> {
-        io(py, |rt| {
-            rt.block_on(self.inner.cancel())
-                .map(|_| ())
-                .map_err(|e| format!("Failed to cancel task: {e}"))
-        })
+        io(py, |rt| rt.block_on(cancel_task(&self.inner)))
     }
 }
 
@@ -447,19 +538,23 @@ pub struct PyTesListTasksResponse {
 }
 
 impl PyTesListTasksResponse {
-    /// Builds a response from a server's JSON, keeping the JSON.
-    pub fn from_json(raw: Value) -> PyResult<Self> {
+    fn parse(raw: Value) -> Result<Self, String> {
         let inner: TesListTasksResponse =
-            serde_json::from_value(raw.clone()).map_err(invalid_response)?;
+            serde_json::from_value(raw.clone()).map_err(|e| e.to_string())?;
         let tasks = match raw.get("tasks") {
             Some(Value::Array(tasks)) => tasks
                 .iter()
                 .cloned()
-                .map(PyTesTask::from_json)
-                .collect::<PyResult<_>>()?,
+                .map(PyTesTask::parse)
+                .collect::<Result<_, _>>()?,
             _ => Vec::new(),
         };
         Ok(PyTesListTasksResponse { inner, tasks, raw })
+    }
+
+    /// Builds a response from a server's JSON, keeping the JSON.
+    pub fn from_json(raw: Value) -> PyResult<Self> {
+        Self::parse(raw).map_err(invalid_response)
     }
 }
 
@@ -503,9 +598,8 @@ impl PyTES {
 
     fn new_with_gil(py: Python<'_>, config: &PyConfiguration) -> PyResult<Self> {
         io(py, |rt| {
-            rt.block_on(TES::new(&config.inner))
+            rt.block_on(connect(&config.inner))
                 .map(|inner| Self { inner })
-                .map_err(|error| format!("Failed to create TES instance: {error}"))
         })
     }
 }
@@ -548,37 +642,13 @@ impl PyTES {
     /// `TesTask.from_json(text)`. The task's JSON is sent as given, including fields that
     /// the TES models don't know.
     pub fn create(&self, py: Python<'_>, task: &Bound<'_, PyAny>) -> PyResult<PyTask> {
-        if let Ok(text) = task.downcast::<PyString>() {
-            // Lossy, so that paths with surrogate escapes (non-UTF-8 file names) pass.
-            if text.to_string_lossy().trim_start().starts_with('{') {
-                return Err(PyValueError::new_err(
-                    "TES.create() takes a str as a file path; pass JSON text as \
-                     TesTask.from_json(text), or a path that starts with '{' as a \
-                     pathlib.Path",
-                ));
-            }
-        }
-        let task = if task.is_instance_of::<PyString>() || task.hasattr("__fspath__")? {
-            PyTesTask::from_path(task.py(), &task.extract::<PathBuf>()?)?
-        } else {
-            PyTesTask::from_python(task)?
-        };
-        io(py, |rt| {
-            rt.block_on(self.inner.create_value(task.raw))
-                .map(|inner| PyTask { inner })
-                .map_err(|error| format!("Failed to create task: {error}"))
-        })
+        let task = task_to_create(task, "TES.create()")?;
+        io(py, |rt| rt.block_on(create_task(&self.inner, task))).map(|inner| PyTask { inner })
     }
 
     /// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`.
     pub fn get(&self, py: Python<'_>, view: &str, id: &str) -> PyResult<PyTesTask> {
-        let view = view.to_owned();
-        let id = id.to_owned();
-        let response = io(py, |rt| {
-            rt.block_on(self.inner.get_raw(&view, &id))
-                .map_err(|error| format!("Failed to get task: {error}"))
-        })?;
-        PyTesTask::from_json(serde_json::from_str(&response).map_err(invalid_response)?)
+        io(py, |rt| rt.block_on(get_task(&self.inner, view, id)))
     }
 
     /// Lists tasks, one page at a time.
@@ -588,19 +658,9 @@ impl PyTES {
         py: Python<'_>,
         params: Option<PyListTasksParams>,
     ) -> PyResult<PyTesListTasksResponse> {
-        // Not `TES::list_tasks`: reqwest's query encoder cannot repeat tag lists.
-        let params = params
-            .map(|params| serde_json::to_value(params.inner))
-            .transpose()
-            .map_err(|error| PyValueError::new_err(format!("Invalid params: {error}")))?;
-        let endpoint = with_query("tasks", params)?;
-        let transport = self.inner.transport.clone();
-        let response = io(py, move |rt| {
-            rt.block_on(transport.get(&endpoint, None))
-                .map_err(|error| format!("Failed to list tasks: {error}"))
-        })?;
-        PyTesListTasksResponse::from_json(
-            serde_json::from_str(&response).map_err(invalid_response)?,
-        )
+        let endpoint = list_endpoint(params)?;
+        io(py, |rt| {
+            rt.block_on(list_tasks(&self.inner.transport, &endpoint))
+        })
     }
 }
