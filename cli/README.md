@@ -78,6 +78,13 @@ Then pass the file to the CLI:
 ga4gh-cli tes create ./tests/sample.tes
 ```
 
+You can also pass the task JSON directly or read it from standard input:
+
+```sh
+ga4gh-cli tes create '{"executors":[{"image":"alpine","command":["true"]}]}'
+cat task.json | ga4gh-cli tes create -
+```
+
 The command prints only the new task ID. If the service rejects it, the CLI
 prints the HTTP status and server message to stderr and exits with code 1.
 
@@ -85,6 +92,15 @@ prints the HTTP status and server message to stderr and exits with code 1.
 
 ```sh
 ga4gh-cli tes list
+```
+
+Repeat `-k` and `-v` to filter by several tags. Values match keys in the
+same order. When the response includes a next page token, the CLI prints it
+after the task table; pass it to `-t` to fetch the next page:
+
+```sh
+ga4gh-cli tes list -k project -v analysis -k owner -v alice
+ga4gh-cli tes list -t 'next page token'
 ```
 
 Example output:

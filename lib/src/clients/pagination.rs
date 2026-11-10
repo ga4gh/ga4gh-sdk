@@ -150,7 +150,7 @@ impl Pager {
     pub fn checkpoint(&self) -> PageCheckpoint {
         self.partial_page
             .as_ref()
-            .or_else(|| {
+            .or({
                 if self.buffer.is_empty() {
                     None
                 } else {

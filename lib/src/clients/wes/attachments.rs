@@ -1,5 +1,5 @@
 //! Streaming WES attachment sources. No request replay and no eager reader buffering.
-use super::{models::WesRunRequest, Run, WES};
+use super::{models::RunRequest, Run, WES};
 use crate::utils::{operation::Operation, transport::BodyLimits};
 use reqwest::multipart::{Form, Part};
 use std::{collections::HashSet, error::Error, path::PathBuf, pin::Pin};
@@ -48,48 +48,49 @@ pub fn validate_filename(filename: &str) -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
-fn workflow_form(request: WesRunRequest) -> Result<Form, Box<dyn Error>> {
-    let workflow_type = request
-        .workflow_type
-        .filter(|v| !v.is_empty())
-        .ok_or("workflow_type is required")?;
-    let version = request
-        .workflow_type_version
-        .filter(|v| !v.is_empty())
-        .ok_or("workflow_type_version is required")?;
-    let url = request
-        .workflow_url
-        .filter(|v| !v.is_empty())
-        .ok_or("workflow_url is required")?;
-    let params = request
-        .workflow_params
-        .ok_or("workflow_params is required")?;
+fn workflow_form(request: RunRequest) -> Result<Form, Box<dyn Error>> {
+    let value = serde_json::to_value(request)?;
+    let required = |field: &str| -> Result<String, Box<dyn Error>> {
+        value
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("{field} is required").into())
+    };
     let mut form = Form::new()
-        .text("workflow_type", workflow_type)
-        .text("workflow_type_version", version)
-        .text("workflow_url", url)
-        .text("workflow_params", serde_json::to_string(&params)?);
-    if let Some(value) = request.tags {
-        form = form.text("tags", serde_json::to_string(&value)?);
+        .text("workflow_type", required("workflow_type")?)
+        .text("workflow_type_version", required("workflow_type_version")?)
+        .text("workflow_url", required("workflow_url")?)
+        .text(
+            "workflow_params",
+            serde_json::to_string(
+                value
+                    .get("workflow_params")
+                    .filter(|v| !v.is_null())
+                    .ok_or("workflow_params is required")?,
+            )?,
+        );
+    for field in ["tags", "workflow_engine_parameters"] {
+        if let Some(value) = value.get(field).filter(|v| !v.is_null()) {
+            form = form.text(field, serde_json::to_string(value)?);
+        }
     }
-    if let Some(value) = request.workflow_engine_parameters {
-        form = form.text("workflow_engine_parameters", serde_json::to_string(&value)?);
-    }
-    if let Some(value) = request.workflow_engine {
-        form = form.text("workflow_engine", value);
-    }
-    if let Some(value) = request.workflow_engine_version {
-        form = form.text("workflow_engine_version", value);
+    for field in ["workflow_engine", "workflow_engine_version"] {
+        if let Some(value) = value.get(field).and_then(serde_json::Value::as_str) {
+            form = form.text(field, value.to_owned());
+        }
     }
     Ok(form)
 }
+
 impl WES {
     /// Validate all paths before I/O; stream with reqwest backpressure. File handles
     /// are opened once for this attempt. A consumed source is never reopened/replayed.
     /// The Operation includes preparation, upload and response-body consumption.
     pub async fn run_workflow_streaming(
         &self,
-        request: WesRunRequest,
+        request: RunRequest,
         attachments: Vec<StreamingAttachment>,
         operation: &Operation,
     ) -> Result<Run, Box<dyn Error>> {
@@ -136,16 +137,8 @@ impl WES {
             .transport
             .send_once(request, operation, BodyLimits::default())
             .await?;
-        let value: serde_json::Value = serde_json::from_str(&body).map_err(|_| {
-            "invalid WES acknowledgement; submission may have succeeded; reconcile before retrying"
-        })?;
-        let id = value
-            .get("run_id")
-            .and_then(serde_json::Value::as_str)
-            .filter(|v| !v.is_empty())
-            .ok_or(
-                "invalid WES run_id; submission may have succeeded; reconcile before retrying",
-            )?;
-        Ok(Run::new(id.into(), self.transport.clone()))
+        let id =
+            crate::utils::acknowledgement::execution_id(&body, "run_id", "WES creation", None)?;
+        Ok(Run::new(id, self.transport.clone()))
     }
 }
