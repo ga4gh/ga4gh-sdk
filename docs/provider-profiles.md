@@ -104,7 +104,7 @@ docker buildx build --platform linux/amd64 --load \
   --label org.opencontainers.image.revision=55c4d1591cd3be883ad0b4fd2da01d49976414cb \
   --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+h3.55c4d15 \
   tests/interop/.local/protes-source
-docker image inspect h3-protes:55c4d15 --format '{{json .RepoDigests}}'
+docker image inspect h3-protes:55c4d15 --format '{{json .RepoDigests}} {{.Id}}'
 ```
 
 That source Dockerfile pins FOCA
@@ -114,6 +114,14 @@ and uv
 Its clean source directory and pinned `.dockerignore` form the build context;
 never add operator credentials. Load/pull the other exact public image digests
 listed in `local_stack.py` before starting the helper.
+
+`buildx --load` may produce a local tag with no `RepoDigests`. In that case use
+the inspected `.Id` (for example `sha256:<local-image-id>`) as the exact preloaded
+identity accepted by `--protes-image`, and record it as a local Docker image ID.
+That ID may identify image configuration/engine state; do not call it an OCI
+manifest or repository digest. If `RepoDigests` is populated, record its exact
+`name@sha256:...` separately. The recorded snapshot above includes an OCI index;
+these identity kinds are not interchangeable.
 
 A rebuild may produce a different OCI digest, including build metadata. Do not
 claim the recorded digest is reproducible bit for bit. Copy the existing proTES
