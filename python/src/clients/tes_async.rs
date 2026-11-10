@@ -20,18 +20,49 @@ use ga4gh_sdk::utils::transport::Transport;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
-use std::sync::Arc;
-use tokio::sync::OnceCell;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Mutex;
 
 /// The library client of an `AsyncTES`, connected by the first call that needs it.
-pub type LazyTES = Arc<OnceCell<TES>>;
+pub type LazyTES = Arc<Connection>;
+
+/// The connection of an `AsyncTES` to its service; see [`connected`].
+#[derive(Default)]
+pub struct Connection {
+    /// The library client, once connected.
+    client: OnceLock<Arc<TES>>,
+    /// How many attempts to connect have failed so far.
+    failures: AtomicU64,
+    /// Held while connecting, with the error of the last failed attempt.
+    attempt: Mutex<String>,
+}
 
 /// Gives the connected library client, connecting first if no call did yet.
 ///
-/// Like `TES(config)`, connecting reads the service info and checks that it is a TES. If
-/// that fails, the next call tries again.
-pub async fn connected<'a>(tes: &'a LazyTES, config: &Configuration) -> Result<&'a TES, String> {
-    tes.get_or_try_init(|| connect(config)).await
+/// Like `TES(config)`, connecting reads the service info and checks that it is a TES. One
+/// call connects at a time. If an attempt fails, the calls that waited for it fail with its
+/// error, and a later call tries again.
+pub async fn connected(tes: &LazyTES, config: &Configuration) -> Result<Arc<TES>, String> {
+    if let Some(client) = tes.client.get() {
+        return Ok(client.clone());
+    }
+    let failures = tes.failures.load(Ordering::Acquire);
+    let mut last_error = tes.attempt.lock().await;
+    if let Some(client) = tes.client.get() {
+        return Ok(client.clone());
+    }
+    if tes.failures.load(Ordering::Acquire) != failures {
+        return Err(last_error.clone()); // An attempt failed while this call waited.
+    }
+    match connect(config).await {
+        Ok(client) => Ok(tes.client.get_or_init(|| Arc::new(client)).clone()),
+        Err(error) => {
+            last_error.clone_from(&error);
+            tes.failures.fetch_add(1, Ordering::AcqRel);
+            Err(error)
+        }
+    }
 }
 
 /// A TES client for `asyncio`: `create`, `get` and `list` return awaitables.
@@ -129,7 +160,7 @@ impl PyAsyncTES {
         let (tes, config) = (self.inner.clone(), self.config.clone());
         future_into_py(py, async move {
             let inner = spawn_io(move || async move {
-                create_task(connected(&tes, &config).await?, task).await
+                create_task(&*connected(&tes, &config).await?, task).await
             })
             .await
             .map_err(PyRuntimeError::new_err)?;
@@ -149,7 +180,7 @@ impl PyAsyncTES {
         let (tes, config) = (self.inner.clone(), self.config.clone());
         future_into_py(py, async move {
             spawn_io(
-                move || async move { get_task(connected(&tes, &config).await?, view, &id).await },
+                move || async move { get_task(&*connected(&tes, &config).await?, view, &id).await },
             )
             .await
             .map_err(PyRuntimeError::new_err)

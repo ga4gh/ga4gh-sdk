@@ -5,7 +5,8 @@ the requests received so far. The process keeps tests isolated from Python
 runtime and GIL changes in the bindings. ``GET /api/tasks/slow-<seconds>``
 answers with a running task of that ID after the given delay, for tests of
 concurrent and cancelled calls, as does ``GET /slow-<seconds>/service-info``
-with the service info; if the client closes the connection before,
+with the service info (``GET /failing-<seconds>/service-info`` with a 503); if the
+client closes the connection before,
 ``GET /__disconnects__`` lists the request's path.
 """
 
@@ -89,6 +90,10 @@ class Handler(BaseHTTPRequestHandler):
                 DISCONNECTS.append(url.path)
                 return
             self._reply(200, {**TASK, "id": task_id, "state": "RUNNING"})
+            return
+        if url.path.startswith("/failing-") and url.path.endswith("/service-info"):
+            time.sleep(float(url.path.split("/")[1].removeprefix("failing-")))
+            self._reply(503, {"msg": "unavailable"})
             return
         if url.path.startswith("/slow-") and url.path.endswith("/service-info"):
             if self._client_left_within(float(url.path.split("/")[1].removeprefix("slow-"))):

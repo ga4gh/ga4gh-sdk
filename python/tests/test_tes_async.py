@@ -129,6 +129,24 @@ def test_first_call_fails_for_a_root_without_tes(server: MockServer) -> None:
     run(main)
 
 
+def test_calls_waiting_for_a_failed_check_share_its_error(server: MockServer) -> None:
+    """Concurrent first calls make one check; if it fails, all fail at once, not in turn."""
+    path = "/failing-0.5/service-info"
+
+    async def main() -> tuple[list[BaseException | Any], float]:
+        tes = AsyncTES(Configuration(f"{server.root}/failing-0.5"))
+        start = time.monotonic()
+        results = await asyncio.gather(*(tes.list() for _ in range(5)), return_exceptions=True)
+        return results, time.monotonic() - start
+
+    before = server.paths().count(path)
+    results, elapsed = run(main)
+    assert all(isinstance(result, RuntimeError) for result in results)
+    assert all("Failed to create TES instance" in str(result) for result in results)
+    assert server.paths().count(path) - before == 1
+    assert elapsed < 2  # One attempt after the other would take 2.5 s.
+
+
 def test_methods_return_futures_of_the_results(config: Configuration) -> None:
     """Every method returns an `asyncio.Future` of the sync method's type of result."""
 

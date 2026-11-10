@@ -42,12 +42,37 @@ pub fn io<T: Send>(
         .map_err(PyRuntimeError::new_err)
 }
 
+/// How many async calls run at once; further calls wait for a thread.
+pub const ASYNC_CALL_THREADS: usize = 256;
+
+/// The name of the threads that run async calls.
+const ASYNC_CALL_THREAD_NAME: &str = "ga4gh-async-call";
+
+/// The pool of threads for [`spawn_io`]: the blocking pool of a runtime of its own.
+///
+/// It is separate from the blocking pool of [`runtime`], which the SDK's requests need
+/// themselves, for example for DNS lookups: calls that wait there can't starve them.
+fn call_threads() -> Result<&'static Runtime, String> {
+    static CALLS: OnceLock<Result<Runtime, std::io::Error>> = OnceLock::new();
+    CALLS
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .max_blocking_threads(ASYNC_CALL_THREADS)
+                .thread_name(ASYNC_CALL_THREAD_NAME)
+                .build()
+        })
+        .as_ref()
+        .map_err(|e| format!("Cannot start async call threads: {e}"))
+}
+
 /// Runs the future that `make` creates on the runtime and gives its result.
 ///
 /// The SDK's futures are not `Send` (they hold boxed errors across awaits), so they can't
-/// be spawned as tasks. Each one runs in a thread of the runtime's blocking pool instead,
-/// which blocks on it there. The future that this function returns is `Send`; dropping it
-/// drops the SDK's future, which cancels its request.
+/// be spawned as tasks. Each one runs in a thread of its own pool instead (up to
+/// [`ASYNC_CALL_THREADS`] at once), which blocks on it on the runtime. The future that this
+/// function returns is `Send`; dropping it drops the SDK's future, which cancels its
+/// request, or skips the call if it hasn't started yet.
 pub async fn spawn_io<F, Fut, T>(make: F) -> Result<T, String>
 where
     F: FnOnce() -> Fut + Send + 'static,
@@ -57,11 +82,14 @@ where
     let runtime = runtime()?;
     // Dropped with the returned future, which ends the `select!` below.
     let (_cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
-    let task = runtime.spawn_blocking(move || {
-        tokio::runtime::Handle::current().block_on(async move {
+    let task = call_threads()?.spawn_blocking(move || {
+        runtime.block_on(async move {
             tokio::select! {
-                result = make() => Some(result),
+                // Checked first, so that a call cancelled while waiting for a thread
+                // doesn't start its request.
+                biased;
                 _ = cancelled => None,
+                result = make() => Some(result),
             }
         })
     });
@@ -101,6 +129,22 @@ mod tests {
             Ok(*value)
         }));
         assert_eq!(result, Ok(5));
+    }
+
+    #[test]
+    fn spawn_io_leaves_the_blocking_pool_of_the_runtime_to_requests() {
+        let names = runtime().unwrap().block_on(spawn_io(|| async {
+            let call = std::thread::current().name().map(str::to_owned);
+            // Such as the DNS lookups of the SDK's requests.
+            let request =
+                tokio::task::spawn_blocking(|| std::thread::current().name().map(str::to_owned))
+                    .await
+                    .map_err(|e| e.to_string())?;
+            Ok((call, request))
+        }));
+        let (call, request) = names.unwrap();
+        assert_eq!(call.as_deref(), Some(ASYNC_CALL_THREAD_NAME));
+        assert_ne!(request.as_deref(), Some(ASYNC_CALL_THREAD_NAME));
     }
 
     #[test]

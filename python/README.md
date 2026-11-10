@@ -218,15 +218,17 @@ asyncio.run(main())
 
 - Like `TES(config)`, an `AsyncTES` reads the service info and checks that the service
   is a TES before its first request. `AsyncTES(config)` doesn't contact the server: its
-  first call checks the service (and raises `RuntimeError` if the check fails; a later
-  call tries again). `await AsyncTES.connect(config)` checks it right away and gives the
+  first call checks the service, once for concurrent calls. If the check fails, the
+  calls that waited for it raise its `RuntimeError`, and a later call tries again.
+  `await AsyncTES.connect(config)` checks it right away and gives the
   client. On a subclass, `connect()` builds `cls(config, *args, **kwargs)` at once, in
   the caller's thread and context, and gives it once the check is done.
 - `AsyncTES.create()` gives an `AsyncTask`; `AsyncTask(id, transport)` addresses an
   existing task, like `Task`. `config`, `transport` and `id` are plain properties.
 - The requests run on the runtime of the sync API without the GIL, so they don't block
-  the event loop, and several of them run at the same time. Each pending request takes
-  a thread of the runtime's blocking pool, because the SDK's futures aren't `Send` yet.
+  the event loop, and several of them run at the same time. Because the SDK's futures
+  aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256
+  calls run at once, and further ones wait for a thread (cancelled ones never start).
 - The methods return `asyncio.Future`s of the running event loop, so call them from a
   coroutine or a callback of the loop; outside of one, they raise `RuntimeError`.
 - Cancelling an awaitable, for example with `asyncio.wait_for()` or
