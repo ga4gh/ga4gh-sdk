@@ -73,12 +73,12 @@ impl Run {
         let response = self.transport.post(&url, None).await;
         match response {
             Ok(resp_str) => {
-                if resp_str.trim().is_empty() || resp_str.trim() == "null" {
-                    return Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "WES server returned no cancellation result; cancellation cannot be confirmed",
-                    )));
-                }
+                crate::utils::acknowledgement::execution_id(
+                    &resp_str,
+                    "run_id",
+                    "WES cancellation",
+                    Some(&self.id),
+                )?;
                 let run_id: WesRunId = from_str(&resp_str)?;
                 Ok(run_id)
             }
@@ -229,11 +229,12 @@ impl WES {
 
         match response {
             Ok(response_body) => {
-                let v: WesRunId = serde_json::from_str(&response_body)?;
-                let run_id = v
-                    .run_id
-                    .filter(|id| !id.is_empty())
-                    .ok_or("WES response is missing run_id")?;
+                let run_id = crate::utils::acknowledgement::execution_id(
+                    &response_body,
+                    "run_id",
+                    "WES creation",
+                    None,
+                )?;
 
                 let run = Run {
                     id: run_id,
