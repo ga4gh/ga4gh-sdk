@@ -195,7 +195,10 @@
       "native_posts": 1,
       "accepted_native_lifecycle_demonstrated": false,
       "nf_physical_cleanup_passed": false,
-      "nf_physical_observation_seconds": 15.149
+      "nf_physical_observation_seconds": 15.149,
+      "native_diagnostic_regressions": 3,
+      "native_diagnostics_independent_review": "passed",
+      "additional_cloud_attempt_approval": "pending; none executed"
     }
   },
   "retained_private_evidence_sha256": {
@@ -205,7 +208,7 @@
   },
   "independent_review": "Scoped reviews and final independent code/evidence review cleared after regression fixes; no unresolved P1/P2 implementation findings. H3-06 acceptance remains partial.",
   "standard_checks": {
-    "source_commit": "56fa5ab275c9a6101c1bdfa9a1fe3f6de7ef94d7",
+    "source_commit": "a76fac1d20f14be97eef137ad12e8e0ac91d7c16",
     "checks": [
       {
         "command": "cargo fmt --all --check",
@@ -215,17 +218,17 @@
       {
         "command": "cargo clippy --workspace --all-targets",
         "exit_code": 0,
-        "log_sha256": "965b535fac83421a20610749045c1e71d1c8c3eef8cadce4f1d6d29ea4fb5b82"
+        "log_sha256": "d66dbbbb9bb903dc89fe1fd8745efdf5c13b4a3a45c4b5ae6c4ebfc7edb8c10d"
       },
       {
         "command": "cargo build --workspace",
         "exit_code": 0,
-        "log_sha256": "dabf928a2db79d3ef7b20e9b8ba88082b254d07b67ebd2cdc12fda95999073ba"
+        "log_sha256": "d9ff6d14f13e7ec8b9a5da0509f6b4dd9eea3ceb92668f78d81cf534ac6eb447"
       },
       {
         "command": "cargo test --workspace",
         "exit_code": 0,
-        "log_sha256": "2d7c52d4517391d03deed7f7ff680b2a47f4d4c16dac5c56195bf664a18cf1d0"
+        "log_sha256": "05988f8d87e0685f0700ebdca509479deeecb5686f7a83d01181889e4118a79c"
       }
     ]
   }

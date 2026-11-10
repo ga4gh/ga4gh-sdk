@@ -22,7 +22,7 @@ links all six original issue bodies. Existing upstream scopes remain open.
 
 ## Validation and review
 
-The final composed code at `56fa5ab275c9a6101c1bdfa9a1fe3f6de7ef94d7` passed
+The final composed code at `a76fac1d20f14be97eef137ad12e8e0ac91d7c16` passed
 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets`,
 `cargo build --workspace` and `cargo test --workspace`: 222 passed, 0 failed,
 7 ignored default tests. Separate opt-in demonstrations are identified above;
@@ -68,13 +68,16 @@ separate evidence of eventual stop after 1.044 seconds. Neither proves terminati
 of every worker process. Nonshared/object storage, authoritative last multi-attempt
 log selection and TES IDs exposed as WES TaskLog remain unsupported/not run.
 
-The old Seqera credential was found and authenticated successfully. The sole
+Native Seqera authentication succeeded. The sole
 explicitly approved native SDK multipart launch returned HTTP 400, without a run
 ID. No second POST was sent. Its private intent ledger retains uncertainty;
 live accepted-run status/log/cancellation were not demonstrated. The response
 body/request ID were not retained, so the cause cannot be attributed to the
-SDK, requested descriptor, account context or provider. Future diagnosis needs
-retained bounded private diagnostics and a separately authorized attempt.
+SDK, requested descriptor, account context or provider. The example now retains bounded private diagnostics (4,096 body bytes and up to
+256 request-ID bytes from the body) in its existing 0600 intent ledger, with
+status-only public output. Three actual-SDK loopback regressions passed an
+independent review. A further cloud attempt is prepared and awaits separate
+permission; no additional POST has been made.
 
 The CPU providers cooperate on one host and share a durable coordinator. Their
 fencing covers authorized result publication, with physical work overlap visible.
