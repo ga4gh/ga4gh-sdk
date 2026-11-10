@@ -38,7 +38,11 @@ against the uploaded bytes. Multiple-file dependency verification can compose
 with `clients::bundle::PreparedBundle`. A checksum supplied as context does not
 prove which bytes an engine fetches later from a mutable remote URL.
 
-Explicit CLI submission uses the `WES` section of `~/.ga4gh-cli/config.json`:
+Explicit CLI submission uses the `WES` section of `~/.ga4gh-cli/config.json`.
+For OAuth, set `oauth_access_token` to the current token. The CLI injects a
+sensitive bearer header into the shared transport; it does not implement login
+or token refresh. Other schemes use `WES::from_transport` with a caller-owned
+authenticated client (the broader configuration/auth work remains #31):
 
 ```sh
 cargo run -p ga4gh-cli -- workflow submit \
@@ -65,6 +69,10 @@ cargo run -p ga4gh-cli -- workflow verify result.json /report/location report.ht
 `Profile::project_results` matches declared output properties and preserves their
 nested data and schema annotations. An output contract must expose named
 `properties`; schemas which describe only opaque output data fail explicitly.
+The durable `contract_document` preserves root scope for referenced scientific
+and viewer annotations; consumers can resolve those references without fetching
+a schema. The small viewer helper recognizes inline hints, while a richer viewer
+owns reference/conditional hint interpretation.
 Overall schema diagnostics cover cross-property constraints as well as per-output
 status. Viewers should require both a conformant output and an acceptable overall
 contract result. Optional absent outputs are conformant absent values; required
