@@ -150,6 +150,29 @@ the reference and last pending state. Zero delay becomes one second; missing,
 malformed, overflow or greater-than-one-hour delays are protocol errors.
 Authentication and malformed 200 responses remain errors, without pending retries.
 
+`clients::drs::uri::DrsResolver` accepts hostname-based `drs://host/encoded-id`
+references, decodes IDs once, and returns an explicit access plan (URL and
+object-store headers). Configure an authority-to-`Transport` mapping for gateways
+and per-service credentials; unmapped authorities get a fresh anonymous HTTPS
+transport. Protocol/region preferences and an explicit method index control
+selection. Direct URLs and access-ID negotiation share deferred resolution;
+pending, unsupported/unavailable methods and local interruption stay distinct.
+Compact identifier forms are explicitly unsupported in this MVP. It never
+downloads object bytes or copies DRS credentials into an object-store request.
+
+DRS `get_bulk_objects` and `get_bulk_access_urls` accept optional Passports and
+one service/credential context per call. `BulkPolicy` bounds chunk size,
+concurrency, total HTTP attempts and 413 split depth; an advertised
+`maxBulkRequestLength` can lower the caller-selected chunk size. Missing metadata
+stays unknown. Replies are correlated by object/access identity rather than
+position, with successful siblings, grouped failures, duplicate/omitted identity
+diagnostics and pending outcomes retained. Duplicate inputs collapse. The MVP
+requires one access ID per object per call, so object-only grouped errors never
+receive fabricated per-access attribution. A 202 retains pending keys and delay;
+resume through the same bulk API with caller-supplied credentials/Passports.
+There is no singular or anonymous fallback. Compatibility is verified against
+protocol fixtures, without a claim of broad real-service interoperability.
+
 ## Service composition
 
 `TES::discover` and `WES::discover` return a `Discovered<T>` wrapper with a
@@ -191,6 +214,25 @@ validated before I/O, nested relative filenames stay intact, and one absolute
 operation budget covers preparation, upload and response. A consumed source
 is never replayed; cancellation or a lost response after transmission reports
 that submission may have been accepted. The existing bytes API remains usable.
+`clients::bundle::PreparedBundle::prepare` stages a CWL workflow and its declared
+TRS descriptors without submitting it. It validates paths/collisions and the
+static `run`, `$import` and `$include` dependency graph, verifies advertised
+SHA-256 digests, and computes local digests over original staged bytes. Version
+metadata (`is_production`, `meta_version`) and retrieved digests are preserved;
+an explicit TRS version is not assumed immutable. Unsupported checksums fail by
+default; explicit opt-in records them as unverified. The small MVP supports a
+primary Workflow in CWL v1.0/v1.1/v1.2; packed/fragment, external and dynamic
+dependencies are rejected before submission.
+
+Preparation exposes a reviewable request plan and a credential-free provenance
+manifest. Wrapper URLs require an explicit `DescriptorFetcher`; the provided
+anonymous allowlist accepts only bare HTTP(S) origins, never reuses registry
+credentials, and never follows redirects.
+`submit` is a separate explicit call and uploads the same immutable staged bytes
+that were hashed, returning a run plus manifest/execution linkage. Workflow
+parameters, bearer tokens and signed descriptor URLs are excluded from provenance.
+See the [named Toil integration check](tests/README.md) for an actual CWL execution.
+
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).
