@@ -382,3 +382,22 @@ fn test_output_with_invalid_base_path() {
         }
     }
 }
+
+#[test]
+fn malformed_creation_acknowledgements_fail_once_with_empty_stdout() {
+    let _service = service_info_mock("/service-info");
+    let home = Home::new(&config_with_fields(&mockito::server_url()));
+    let task = home.path().join("task.json");
+    for body in ["{}", r#"{"id":null}"#, r#"{"id":4}"#, r#"{"id":""}"#] {
+        let request = mock("POST", "/tasks")
+            .with_status(200)
+            .with_body(body)
+            .expect(1)
+            .create();
+        let output = home.run(&["tes", "create", task.to_str().unwrap()], None);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("may have succeeded"));
+        request.assert();
+    }
+}
