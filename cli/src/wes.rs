@@ -29,9 +29,9 @@ pub fn command() -> Command {
             Command::new("run")
                 .about("Submit a workflow run")
                 .arg(arg!(<WORKFLOW_URL> "The workflow URL, or the path of an attached workflow file"))
-                .arg(arg!(-t --type <TYPE> "The workflow type, such as CWL, WDL or NFL").required(true))
-                .arg(arg!(-V --type_version <VERSION> "The version of the workflow type, such as v1.2").required(true))
-                .arg(arg!(-p --params [PARAMS] "Workflow parameters: JSON file, inline JSON object, or - for stdin"))
+                .arg(arg!(--type <TYPE> "The workflow type, such as CWL, WDL or NFL").required(true))
+                .arg(arg!(--type_version <VERSION> "The version of the workflow type, such as v1.2").required(true))
+                .arg(arg!(--params [PARAMS] "Workflow parameters: JSON file, inline JSON object, or - for stdin"))
                 .arg(
                     arg!(-a --attachment [PATH] "A file to upload, at the relative path the run sees")
                         .action(ArgAction::Append)
@@ -79,19 +79,28 @@ pub fn command() -> Command {
         .subcommand(
             Command::new("get")
                 .about("Get the details and logs of a run")
-                .arg(arg!(<id> "The ID of the run"))
+                .arg(
+                    arg!(<id> "The ID of the run")
+                        .value_parser(clap::builder::NonEmptyStringValueParser::new()),
+                )
                 .arg_required_else_help(true),
         )
         .subcommand(
             Command::new("status")
                 .about("Get the state of a run")
-                .arg(arg!(<id> "The ID of the run"))
+                .arg(
+                    arg!(<id> "The ID of the run")
+                        .value_parser(clap::builder::NonEmptyStringValueParser::new()),
+                )
                 .arg_required_else_help(true),
         )
         .subcommand(
             Command::new("cancel")
                 .about("Cancel a run")
-                .arg(arg!(<id> "The ID of the run"))
+                .arg(
+                    arg!(<id> "The ID of the run")
+                        .value_parser(clap::builder::NonEmptyStringValueParser::new()),
+                )
                 .arg_required_else_help(true),
         )
 }
@@ -110,6 +119,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                 Ok(wes) => wes,
                 Err(error) => return Ok(failure(error)),
             };
+            // Not Run::log: the server's JSON is printed unchanged, with
+            // fields that the SDK models lack.
             let path = format!("runs/{}", urlencode(id));
             Ok(match wes.transport.get(&path, None).await {
                 Ok(log) => CommandOutput::success(log),

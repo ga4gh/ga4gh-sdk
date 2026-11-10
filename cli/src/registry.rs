@@ -115,7 +115,7 @@ pub(crate) fn printable(value: &str) -> String {
 /// `\uXXXX` escapes, so that the output stays valid JSON. Serde escapes C0
 /// controls in strings already; the remaining ones are all in the Basic
 /// Multilingual Plane and can only occur inside strings.
-fn json_printable(json: &str) -> String {
+pub(crate) fn json_printable(json: &str) -> String {
     json.chars()
         .map(|c| {
             // Raw newlines are the layout of pretty JSON; serde escapes the rest.

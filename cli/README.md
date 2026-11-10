@@ -49,8 +49,9 @@ Each `base_path` is the service's API root, with or without a trailing slash.
 The CLI requests `service-info` and other endpoints below it. Do not include
 a query string or fragment. Configs that previously contained only the host
 must add the deployed service prefix, such as `/ga4gh/tes/v1`,
-`/ga4gh/wes/v1` or `/ga4gh/drs/v1` in the example above. A service behind a gateway keeps its
-whole prefix, for example `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+`/ga4gh/wes/v1` or `/ga4gh/drs/v1` in the example above. A service behind a
+gateway keeps its whole prefix, for example
+`https://gateway.example.org/my-tes/ga4gh/tes/v1`.
 
 ### Authentication
 
@@ -200,8 +201,9 @@ printf '%s\n' "$run_id"
 Repeat `--attachment` (`-a`) to upload workflow files with the request. Each
 file is uploaded under the relative path given, so run the command from the
 directory that the paths are relative to; absolute paths and `..` are
-rejected. `WORKFLOW_URL` can then name an attached file, if the service
-supports attachments:
+rejected. Symbolic links are followed, so check the files of a repository
+that you don't trust before you attach them. `WORKFLOW_URL` can then name an
+attached file, if the service supports attachments:
 
 ```sh
 ga4gh-cli wes run main.cwl --type CWL --type_version v1.2 \
@@ -253,8 +255,11 @@ ga4gh-cli wes cancel "$run_id"
 ```
 
 All five WES commands exit with code 0 on success and code 1 on request or
-server errors; missing commands or arguments use exit code 2. Run IDs and
-error messages from the server are printed with control characters escaped.
+server errors; missing commands or arguments use exit code 2. In the table,
+the printed run IDs and the error messages, control and bidirectional
+formatting characters from the server are escaped, such as `\u{1b}`; JSONL
+records use JSON escapes such as `\u001b`. Like `tes get` and `drs get`,
+`wes get` prints the server's JSON as received.
 
 ## Service Registry commands
 

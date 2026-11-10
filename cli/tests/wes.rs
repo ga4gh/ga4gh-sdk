@@ -185,13 +185,13 @@ fn run_reads_params_inline_from_stdin_or_defaults_to_an_empty_object() {
     let home = home_with_wes_config(prefix);
 
     let mut inline = RUN_ARGS.to_vec();
-    inline.extend(["v1.2", "-p", r#"{"n": 1}"#]);
+    inline.extend(["v1.2", "--params", r#"{"n": 1}"#]);
     let output = run(&home, &inline);
     assert_success(&output);
     assert_eq!(stdout(&output), "with-params\n");
 
     let mut piped = RUN_ARGS.to_vec();
-    piped.extend(["v1.2", "-p", "-"]);
+    piped.extend(["v1.2", "--params", "-"]);
     let output = run_with_stdin(&home, &piped, r#"{"n": 1}"#);
     assert_success(&output);
     assert_eq!(stdout(&output), "with-params\n");
@@ -218,10 +218,10 @@ fn run_input_errors_are_reported_before_any_request() {
         args
     };
     let cases: Vec<(Vec<&str>, &str)> = vec![
-        (with(&["-p", "broken.json"]), "Failed to parse JSON"),
-        (with(&["-p", "list.json"]), "must be a JSON object"),
+        (with(&["--params", "broken.json"]), "Failed to parse JSON"),
+        (with(&["--params", "list.json"]), "must be a JSON object"),
         (
-            with(&["-p", "missing.json"]),
+            with(&["--params", "missing.json"]),
             "File does not exist: missing.json",
         ),
         (
@@ -505,5 +505,53 @@ fn service_failures_have_nonzero_exit_codes() {
             "{args:?}: {}",
             stderr(&output)
         );
+    }
+}
+
+#[test]
+fn list_all_escapes_server_text_in_records_and_errors() {
+    let prefix = "/export-escape/ga4gh/wes/v1";
+    let _service = service_info(prefix);
+    let first = mock("GET", format!("{prefix}/runs").as_str())
+        .match_query(Matcher::Missing)
+        .with_body(
+            json!({"runs": [{"run_id": "a\u{202E}b\u{9b}c"}], "next_page_token": "next"})
+                .to_string(),
+        )
+        .expect(1)
+        .create();
+    let second = mock("GET", format!("{prefix}/runs").as_str())
+        .match_query(Matcher::UrlEncoded("page_token".into(), "next".into()))
+        .with_status(503)
+        .with_body("down\u{1b}]0;title\u{7}")
+        .expect(1)
+        .create();
+    let home = home_with_wes_config(prefix);
+    let output = run(&home, &["wes", "list", "--all", "--format", "jsonl"]);
+    assert_eq!(output.status.code(), Some(1));
+    let records = stdout(&output);
+    assert!(
+        !records.contains('\u{202E}') && !records.contains('\u{9b}'),
+        "{records}"
+    );
+    let record: Value = serde_json::from_str(records.trim()).unwrap();
+    assert_eq!(record["run_id"], "a\u{202E}b\u{9b}c");
+    let diagnostics = stderr(&output);
+    assert!(
+        diagnostics.contains(r"down\u{1b}]0;title\u{7}"),
+        "{diagnostics}"
+    );
+    assert!(!diagnostics.contains('\u{1b}'), "{diagnostics}");
+    first.assert();
+    second.assert();
+}
+
+#[test]
+fn empty_run_ids_are_usage_errors() {
+    let home = home_with_wes_config("/empty-id/ga4gh/wes/v1");
+    for command in ["get", "status", "cancel"] {
+        let output = run(&home, &["wes", command, ""]);
+        assert_eq!(output.status.code(), Some(2), "{command}");
+        assert!(output.stdout.is_empty(), "{command}");
     }
 }

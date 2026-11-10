@@ -383,7 +383,8 @@ pub(crate) async fn write_jsonl(
         match pager.next_page().await {
             Ok(Some(page)) => {
                 for record in page.items {
-                    serde_json::to_writer(&mut *stdout, &record)?;
+                    let line = serde_json::to_string(&record)?;
+                    stdout.write_all(crate::registry::json_printable(&line).as_bytes())?;
                     writeln!(stdout)?;
                 }
                 stdout.flush()?;
@@ -401,7 +402,7 @@ pub(crate) async fn write_jsonl(
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             Err(error) => {
-                writeln!(stderr, "{error}")?;
+                writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
                 writeln!(
                     stderr,
                     "Resume checkpoint: {}",
