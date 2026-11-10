@@ -206,3 +206,23 @@ async fn dropping_a_response_stops_the_producer() {
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn trs_relative_page_link_keeps_configured_url_auth_scoped_to_the_api() {
+    use ga4gh_sdk::clients::trs::responses::next_tools_page;
+    let base = server_url().replacen("http://", "http://user:pass@", 1);
+    let transport = Transport::new(&Configuration::new(url::Url::parse(&base).unwrap()));
+    let request = mock("GET", "/tools?offset=opaque")
+        .match_header("authorization", "Basic dXNlcjpwYXNz")
+        .with_body("[]")
+        .expect(1)
+        .create();
+    assert!(
+        next_tools_page(&transport, "?offset=opaque", BodyLimits::default())
+            .await
+            .unwrap()
+            .tools
+            .is_empty()
+    );
+    request.assert();
+}
