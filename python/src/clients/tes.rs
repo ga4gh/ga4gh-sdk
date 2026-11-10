@@ -142,8 +142,10 @@ impl PyTES {
     }
 
     pub fn get(&self, py: Python<'_>, view: &str, id: &str) -> PyResult<PyTesTask> {
+        let view = view.to_owned();
+        let id = id.to_owned();
         io(py, |rt| {
-            rt.block_on(self.client().get(view, id))
+            rt.block_on(self.client().get(&view, &id))
                 .map(|task| PyTesTask { inner: task })
                 .map_err(|e| format!("Failed to get task: {e}"))
         })
