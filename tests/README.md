@@ -46,6 +46,16 @@ a remote project. This server returns a fixed run list instead of recently
 submitted runs, and its cancellation endpoint does not stop a run. The test
 accounts for both limitations and does not claim that a run was canceled.
 
+## TRS public registries
+
+These smoke tests call WorkflowHub and Dockstore, so they need network
+access. They are marked `#[ignore]` rather than gated by a Cargo feature, so
+they build with the other tests but only run on request:
+
+```sh
+cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
+```
+
 ## Test fixtures
 
 - [`sample.tes`](sample.tes) comes from the Funnel task examples and is used by

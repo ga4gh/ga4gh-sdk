@@ -22,6 +22,7 @@
 //! # }
 //! ```
 
+pub mod drs;
 pub mod tes;
 
 use clap::{ArgMatches, Command};
@@ -59,29 +60,30 @@ pub fn command() -> Command {
     Command::new("ga4gh-cli")
         .bin_name("ga4gh-cli")
         .version(env!("CARGO_PKG_VERSION"))
-        .about("CLI to manage tasks")
+        .about("CLI for GA4GH services")
         .subcommand_required(true)
         .arg_required_else_help(true)
+        .subcommand(drs::command())
         .subcommand(tes::command())
 }
 
-/// Run a built-in command using the usual TES config file.
+/// Run a built-in command using its service section in the config file.
 ///
 /// `None` leaves an added command to its caller without reading the config file.
-/// Config and input errors are returned as `Err`. TES request failures return
+/// Config and input errors are returned as `Err`. Service request failures return
 /// a `CommandOutput` with an error message and a failure exit code.
 pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
-    match matches.subcommand() {
-        Some(("tes", _)) => {
-            let config = Configuration::from_file(ServiceType::TES)
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            dispatch_with_config(matches, &config).await
-        }
-        _ => Ok(None),
-    }
+    let service_type = match matches.subcommand() {
+        Some(("drs", _)) => ServiceType::DRS,
+        Some(("tes", _)) => ServiceType::TES,
+        _ => return Ok(None),
+    };
+    let config = Configuration::from_file(service_type)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    dispatch_with_config(matches, &config).await
 }
 
-/// Run a built-in command with a caller-supplied TES configuration.
+/// Run a built-in command with a caller-supplied service configuration.
 ///
 /// Returns `None` for commands not owned by this crate. The caller can inspect
 /// or reformat both output streams without changing process-global state.
@@ -90,7 +92,51 @@ pub async fn dispatch_with_config(
     config: &Configuration,
 ) -> anyhow::Result<Option<CommandOutput>> {
     match matches.subcommand() {
+        Some(("drs", sub)) => drs::run(sub, config).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
         _ => Ok(None),
+    }
+}
+
+/// Built-in streaming dispatcher. Writes incrementally to caller-owned sinks.
+/// Added downstream commands return None before reading configuration.
+pub async fn dispatch_to(
+    matches: &ArgMatches,
+    stdout: &mut dyn std::io::Write,
+    stderr: &mut dyn std::io::Write,
+) -> anyhow::Result<Option<ExitCode>> {
+    let service_type = match matches.subcommand() {
+        Some(("drs", _)) => ServiceType::DRS,
+        Some(("tes", _)) => ServiceType::TES,
+        _ => return Ok(None),
+    };
+    let config = Configuration::from_file(service_type)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    dispatch_with_config_to(matches, &config, stdout, stderr).await
+}
+
+/// Streaming counterpart of dispatch_with_config, including bounded JSONL export.
+pub async fn dispatch_with_config_to(
+    matches: &ArgMatches,
+    config: &Configuration,
+    stdout: &mut dyn std::io::Write,
+    stderr: &mut dyn std::io::Write,
+) -> anyhow::Result<Option<ExitCode>> {
+    if let Some(("tes", sub)) = matches.subcommand() {
+        if let Some(("list", list)) = sub.subcommand() {
+            if list.get_flag("all") {
+                return tes::export_all(list, config, stdout, stderr)
+                    .await
+                    .map(Some);
+            }
+        }
+    }
+    match dispatch_with_config(matches, config).await? {
+        Some(output) => {
+            stdout.write_all(output.stdout.as_bytes())?;
+            stderr.write_all(output.stderr.as_bytes())?;
+            Ok(Some(output.exit_code))
+        }
+        None => Ok(None),
     }
 }

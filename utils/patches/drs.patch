@@ -1,0 +1,26 @@
+Hand edits of the DRS 1.4.0 models, applied by utils/build_models.sh.
+
+- `AccessMethod.available`: the committed models were generated from a
+  development version of the spec that had it. The `drs-1.4.0` tag doesn't
+  define it; DRS 1.5.0 does.
+
+--- a/models/access_method.rs
++++ b/models/access_method.rs
+@@ -26,6 +26,9 @@
+     /// Name of the region in the cloud service provider that the object belongs to.
+     #[serde(rename = "region", skip_serializing_if = "Option::is_none")]
+     pub region: Option<String>,
++    /// Availablity of file in the cloud. This label defines if this file is immediately accessible via DRS. Any delay or requirement of thawing mechanism if the file is in offline/archival storage is classified as 0 or unavailable.
++    #[serde(rename = "available", skip_serializing_if = "Option::is_none")]
++    pub available: Option<bool>,
+     #[serde(rename = "authorizations", skip_serializing_if = "Option::is_none")]
+     pub authorizations: Option<Box<models::AccessMethodAuthorizations>>,
+ }
+@@ -37,6 +40,7 @@
+             access_url: None,
+             access_id: None,
+             region: None,
++            available: None,
+             authorizations: None,
+         }
+     }

@@ -1,7 +1,10 @@
+pub mod capabilities;
 pub mod drs;
+pub mod pagination;
 pub mod serviceinfo;
 pub mod tes;
 pub mod trs;
+pub mod wait;
 pub mod wes;
 
 #[derive(Debug)]

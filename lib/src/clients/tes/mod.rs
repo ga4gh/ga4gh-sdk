@@ -1,3 +1,4 @@
+mod list_tasks_params;
 /// This module provides a client for interacting with the TES (Task Execution Service) API.
 ///
 /// The `TES` struct represents a TES client and provides methods for creating tasks, retrieving task status, canceling tasks, and listing tasks.
@@ -238,16 +239,21 @@ impl TES {
             log::error!("Service check failed: {}", e);
             e
         })?;
-        let response_body = self.transport.post("tasks", Some(json!(task))).await?;
-        let v: serde_json::Value = serde_json::from_str(&response_body)?;
-
-        // Access the `id` field
-        let task_id = v
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .trim_matches('"')
-            .to_string();
+        let operation = crate::utils::operation::Operation::new(std::time::Duration::from_secs(60));
+        let request = self
+            .transport
+            .request_builder(reqwest::Method::POST, "tasks")?
+            .json(&task);
+        let response_body = self
+            .transport
+            .send_once(request, &operation, Default::default())
+            .await?;
+        let task_id = crate::utils::acknowledgement::execution_id(
+            &response_body,
+            "id",
+            "TES creation",
+            None,
+        )?;
 
         Ok(Task {
             id: task_id,
@@ -438,6 +444,37 @@ mod tests {
         let result = tes.list_tasks(None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tes_list_tasks_with_repeated_tags() {
+        let _request = mock("GET", "/tasks")
+            .match_query(mockito::Matcher::Exact(
+                "tag_key=first&tag_key=second&tag_value=one&tag_value=two".to_owned(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"tasks":[],"next_page_token":"page-2"}"#)
+            .create();
+        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let tes = TES {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service::default()),
+        };
+        let result = tes
+            .list_tasks(Some(ListTasksParams {
+                name_prefix: None,
+                state: None,
+                tag_key: Some(vec!["first".into(), "second".into()]),
+                tag_value: Some(vec!["one".into(), "two".into()]),
+                page_size: None,
+                page_token: None,
+                view: None,
+            }))
+            .await
+            .unwrap();
+        assert!(result.tasks.is_empty());
+        assert_eq!(result.next_page_token.as_deref(), Some("page-2"));
     }
 
     #[tokio::test]
