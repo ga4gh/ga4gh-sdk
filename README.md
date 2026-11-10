@@ -46,6 +46,43 @@ endpoints.
 ## Installation
 TBA
 
+## Advanced transport
+
+Advanced transport callers can use `request_response` for status and headers
+before parsing, then consume `reqwest::Response::chunk()` incrementally or call
+`utils::transport::read_bounded` for lossless bytes. Dropping the response stops
+consumption. The existing text helpers remain available and now bound success
+bodies to 8 MiB and error bodies to 16 KiB while reading, including chunked bodies.
+Use `request_text` with explicit `BodyLimits` for different bounds. A
+`BodyLimitError` retains HTTP status even for an oversized error response.
+`Transport::with_client` and `request_builder` support custom client budgets and
+headers; HTTP types are re-exported as `ga4gh_sdk::reqwest`.
+
+`clients::trs::responses` offers tools pages with all pagination headers, follows
+the server's `next_page` URL within the same tools API root, and returns an
+opaque `files_zip` response without extraction or text conversion. These helpers
+compose with a configured `Transport` independently of the basic TRS client.
+
+The default client uses a 10-second connection budget and 60-second request
+budget. Use `with_timeouts` or inject a client to change them. For a multi-attempt
+operation, `RequestOptions` holds one absolute deadline, a local cancellation
+token, body bounds and an explicit replay classification. Retries are opt-in,
+capped at 32 attempts, and use exponential backoff with jitter; 429/503 honor
+delta/date `Retry-After` within that same deadline. Mark only protocol-defined
+reads as `ReadOnly` (including appropriate lookup POSTs). A non-replayable
+operation gets one attempt and reports lost-response ambiguity for reconciliation.
+`send_once` also covers multipart headers/body and permits an explicit larger
+upload budget. Dropping a future or canceling its token stops local I/O.
+
+DRS `get_object_once` and `get_access_url_once` return `Resolution::Ready` or
+`Pending` with a credential-free resume reference. The immediate convenience
+methods return a downcastable `PendingResolution` error on 202. Opt-in
+`resolve_object`/`resolve_access_url` honor integral-second `Retry-After`, one
+absolute `Operation` budget, cancellation and an attempt bound; failures retain
+the reference and last pending state. Zero delay becomes one second; missing,
+malformed, overflow or greater-than-one-hour delays are protocol errors.
+Authentication and malformed 200 responses remain errors, without pending retries.
+
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).
@@ -92,9 +129,10 @@ types, the bare file is returned as a `FileWrapper` with only `content` set;
 the registry sends a JSON array of them). Dockstore sends the
 service-info timestamps `createdAt` and `updatedAt` as numbers; the client
 drops such non-string values instead of failing.
-Not supported yet: the `format=zip` download of `files`, and the paging
-headers of `tools` (`next_page` and others); page with `offset` and `limit`
-instead. Authentication isn't supported yet: the SDK's transport doesn't send
+The basic `list_tools` method returns a page without headers. Use
+`clients::trs::responses` with the client's transport for server-provided paging
+URLs and opaque `format=zip` downloads (see the advanced transport API above).
+Authentication isn't supported yet: the SDK's transport doesn't send
 the configured tokens, so only public registries and tools work. The CLI has
 no TRS commands yet.
 

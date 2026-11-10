@@ -39,6 +39,7 @@
 //! ```
 
 pub mod models;
+pub mod responses;
 
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::trs::models::{

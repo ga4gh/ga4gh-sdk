@@ -1,4 +1,5 @@
 pub mod models;
+pub mod resolution;
 
 use crate::clients::drs::models::AccessUrl;
 use crate::clients::drs::models::DrsObject;
@@ -6,8 +7,6 @@ use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::ServiceInfo;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::{urlencode, HttpStatusError, Transport};
-use log::error;
-use serde_json::from_str;
 
 /// The main struct for interacting with a DRS service.
 #[derive(Debug)]
@@ -79,20 +78,9 @@ impl DRS {
         &self,
         object_id: &str,
     ) -> Result<DrsObject, Box<dyn std::error::Error>> {
-        let response = self.get_object_raw(object_id).await;
-
-        match response {
-            Ok(resp_str) => {
-                let object: DrsObject = from_str(&resp_str)?;
-                Ok(object)
-            }
-            Err(e) => {
-                error!("HTTP request failed: {:?}", e);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("HTTP request failed: {:?}", e),
-                )))
-            }
+        match self.get_object_once(object_id).await? {
+            resolution::Resolution::Ready(value) => Ok(value),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
         }
     }
 
@@ -101,8 +89,11 @@ impl DRS {
         &self,
         object_id: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let url = format!("objects/{}", urlencode(object_id));
-        self.transport.get(&url, None).await
+        let reference = self.resolution_reference(format!("objects/{}", urlencode(object_id)));
+        match self.resolve_reference_raw(&reference).await? {
+            resolution::Resolution::Ready(body) => Ok(body),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+        }
     }
 
     /// Retrieves an access URL for a specific DRS object.
@@ -119,20 +110,9 @@ impl DRS {
         object_id: &str,
         access_id: &str,
     ) -> Result<AccessUrl, Box<dyn std::error::Error>> {
-        let response = self.get_access_url_raw(object_id, access_id).await;
-
-        match response {
-            Ok(resp_str) => {
-                let access_url: AccessUrl = from_str(&resp_str)?;
-                Ok(access_url)
-            }
-            Err(e) => {
-                error!("HTTP request failed: {:?}", e);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("HTTP request failed: {:?}", e),
-                )))
-            }
+        match self.get_access_url_once(object_id, access_id).await? {
+            resolution::Resolution::Ready(value) => Ok(value),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
         }
     }
 
@@ -142,12 +122,15 @@ impl DRS {
         object_id: &str,
         access_id: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let url = format!(
+        let reference = self.resolution_reference(format!(
             "objects/{}/access/{}",
             urlencode(object_id),
             urlencode(access_id)
-        );
-        self.transport.get(&url, None).await
+        ));
+        match self.resolve_reference_raw(&reference).await? {
+            resolution::Resolution::Ready(body) => Ok(body),
+            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+        }
     }
 }
 

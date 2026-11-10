@@ -22,15 +22,18 @@ once_cell = "1.8.0"
 url = "2.5.2"
 async-trait = "0.1.81"
 dirs = "5.0.1"
+tokio-util = { version = "0.7", features = ["rt", "io"] }
+httpdate = "1"
 
 [dependencies.reqwest]
 version = "^0.11"
-features = ["json", "multipart"]
+features = ["json", "multipart", "stream"]
 
 [dev-dependencies]
 mockito = "0.31"
 mockall = "0.10.2"
 tempfile = "3.2"
+tokio = { version = "1", features = ["test-util"] }
 
 [lib]
 name = "ga4gh_sdk"
