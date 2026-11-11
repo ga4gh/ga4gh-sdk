@@ -31,4 +31,3 @@ done
 echo 'Funnel is healthy.'
 
 RUST_BACKTRACE=1 RUST_LOG=debug cargo test --locked -p ga4gh-lib --features integration_tests
-
