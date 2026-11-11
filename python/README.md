@@ -422,8 +422,9 @@ The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=
 - `params` holds query parameters, as a `dict` or a JSON object string. Values are
   strings, numbers, booleans or lists of these; a list repeats the parameter
   (`{"tag_key": ["a", "b"]}` gives `tag_key=a&tag_key=b`), and `None` or an empty
-  list leaves it out. Keys and values are form encoded (a space becomes `+`), as in
-  the Rust SDK, and are appended after a query already in `endpoint`.
+  list leaves it out. Keys are sorted. Keys and values are form encoded (a space
+  becomes `+`), as in the Rust SDK, and are appended after a query already in
+  `endpoint`.
   - Other values, such as a `dict`, a nested list or `None` inside a list, raise
     `ValueError` before a request is sent.
   - **Behavior change:** earlier versions left out `None` list items. Remove them

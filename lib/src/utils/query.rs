@@ -16,8 +16,8 @@
 //! and `null` inside a list. TES matches `tag_key` and `tag_value` by
 //! position, so leaving out a `null` item would pair the wrong keys and values.
 //!
-//! Pairs follow the order of the object's keys (sorted, as `serde_json` keeps
-//! them). Keys and values are encoded as
+//! Pairs follow sorted key order, independent of `serde_json`'s
+//! `preserve_order` feature. Keys and values are encoded as
 //! `application/x-www-form-urlencoded`: a space becomes `+`, and every byte
 //! except ASCII letters, digits and `*-._` is percent-encoded as UTF-8.
 use serde_json::Value;
@@ -75,7 +75,9 @@ fn scalar(value: &Value) -> Option<String> {
 pub fn query_pairs(params: &Value) -> Result<Vec<(String, String)>, QueryError> {
     let object = params.as_object().ok_or(QueryError::NotAnObject)?;
     let mut pairs = Vec::new();
-    for (key, value) in object {
+    let mut entries: Vec<_> = object.iter().collect();
+    entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    for (key, value) in entries {
         let items = match value {
             Value::Null => continue,
             Value::Array(items) => items.as_slice(),
@@ -126,6 +128,11 @@ mod tests {
             "a+b=c&f=-1.5&q=x%26y%3Dz%2F%C3%A9%2B%25%3F%23*-._%7E&s=&t=true&t=1&t=x"
         );
         assert_eq!(encode_query(&json!({"n": null})).unwrap(), "");
+
+        // A downstream crate may enable serde_json/preserve_order, so input
+        // insertion order must not change the wire format.
+        let reverse: Value = serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap();
+        assert_eq!(encode_query(&reverse).unwrap(), "a=2&z=1");
     }
 
     #[test]

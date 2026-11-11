@@ -211,10 +211,10 @@ Query parameters are a JSON object. `Transport`, `Pager` and the Python
 bindings encode them with one policy, documented in `utils::query`: a string,
 number or boolean gives one parameter, `null` leaves the parameter out, and a
 list of strings, numbers and booleans repeats it once per item, in order
-(`tag_key=a&tag_key=b`; an empty list sends nothing). Keys and values are form
-encoded, so a space becomes `+`. Objects, nested lists and `null` inside a list
-are rejected before a request is sent, because TES pairs `tag_key` and
-`tag_value` items by position.
+(`tag_key=a&tag_key=b`; an empty list sends nothing). Keys are sorted. Keys and
+values are form encoded, so a space becomes `+`. Objects, nested lists and
+`null` inside a list are rejected before a request is sent, because TES pairs
+`tag_key` and `tag_value` items by position.
 
 **Behavior change:** `Pager` used to send objects and nested lists as JSON text,
 and `Pager` and the Python `Transport` left out `null` list items.
