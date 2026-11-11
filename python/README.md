@@ -55,7 +55,8 @@ pytest
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
-| DRS, WES, TRS, Service Registry | Available in the Rust SDK, not yet as Python client classes. |
+| `WES`, `Run`, `RunRequest` | Start runs (with workflow attachments), list, inspect, poll, and cancel WES runs, and read their tasks; read full JSON including unknown fields. See [Using WES](#using-wes). |
+| DRS, TRS, Service Registry | Available in the Rust SDK, not yet as Python client classes. |
 
 The Python API is maintained by hand; a new Rust SDK method or model does not
 appear in Python automatically. For each SDK change, decide whether to expose
@@ -196,6 +197,114 @@ The package ships type stubs (`GA4GH.pyi`, with a `py.typed` marker), so editors
 type checkers such as mypy see every class and method. `tests/test_stubs.py` checks that
 the stubs declare every class and member of the module.
 
+## Using WES
+
+`WES` is a client for a Workflow Execution Service (WES 1.1). Like `TES`, it takes run
+requests as `dict`s, and workflow files as `bytes` or paths:
+
+```python
+from pathlib import Path
+from GA4GH import Configuration, WES, WesState
+
+wes = WES(Configuration("https://your-wes.example/ga4gh/wes/v1"))
+
+run = wes.run(
+    {
+        "workflow_type": "CWL",
+        "workflow_type_version": "v1.2",
+        "workflow_url": "main.cwl",
+        "workflow_params": {"message": "hello"},
+        "tags": {"project": "demo"},
+    },
+    attachments={"main.cwl": Path("main.cwl"), "tools/echo.cwl": b"cwlVersion: v1.2\n..."},
+)
+print(run.id)
+
+if run.status() is WesState.RUNNING:
+    run.cancel()
+
+details = wes.get(run.id)  # or run.log()
+print(details.state, details.outputs, details.to_dict())
+
+page = wes.list(page_size=50)
+for summary in page.runs:
+    print(summary.run_id, summary.state)
+more = wes.list(page_token=page.next_page_token)
+
+tasks = run.tasks(page_size=10)
+for task in tasks.task_logs:
+    print(task.id, task.name, task.exit_code)
+print(run.task(tasks.task_logs[0].id).stderr)
+```
+
+- `WES(config)` reads the service info and raises `RuntimeError` if the service isn't
+  reachable or isn't a WES.
+- `WES.run(request, attachments=None)` starts a run and returns a `Run`. `request` is a
+  `dict` (or other mapping), a `RunRequest`, or the path of a JSON file (`str` or
+  `os.PathLike`); as for `TES.create()`, a `str` is always a path, so pass JSON text as
+  `RunRequest.from_json(text)`. `workflow_type`, `workflow_type_version`, `workflow_url`
+  and `workflow_params` are required; `workflow_params` must be a JSON object.
+  The request goes to the server as the fields of
+  the WES `RunRequest` form; fields that the WES models don't know are kept in the
+  `RunRequest` but not sent.
+- `attachments` maps filenames to contents, as `bytes` (or `bytearray`) or as the path of
+  a file (`os.PathLike`, such as `pathlib.Path`), which is streamed rather than read into
+  memory. A list of `(filename, content)` pairs works too. Filenames are relative paths
+  with `/` separators, such as `tools/echo.cwl`; absolute paths, `..`, backslashes,
+  colons and repeated filenames raise `ValueError` before a request. Refer to an
+  attachment in `workflow_url` by its filename. The upload and the server's answer must
+  finish within 60 seconds.
+- `Run` addresses a run on the server by its `id`. `Run.status()` returns a `WesState`,
+  `Run.cancel()` cancels the run and returns `None`, and `Run.log()` returns a `RunLog`.
+  `Run.tasks(page_size=None, page_token=None)` returns a `TaskListResponse` with
+  `task_logs` (a list of `TaskLog`) and `next_page_token`; `Run.task(task_id)` returns one
+  `TaskLog`. The task endpoints are new in WES 1.1.
+- `WES.get(id)` returns a `RunLog`, like `Run(id, wes.transport).log()`.
+- `WES.list(page_size=None, page_token=None)` returns a `RunListResponse` with `runs` (a
+  list of `RunSummary`) and `next_page_token`. A bare array of runs, as WES 0.2.0 servers
+  (such as the GA4GH Starter Kit) send it, becomes a page without a token.
+- Errors: invalid requests, attachments and arguments (such as an empty ID, `.` or
+  `..`) raise `ValueError`; request or attachment files that are missing or unreadable
+  raise an `OSError` with the path, such as `FileNotFoundError`. Failed requests and responses that don't fit the WES models raise `RuntimeError`. If
+  starting a run fails after submission, the error may mean the server started the run
+  but its acknowledgement was lost or malformed; do not retry automatically.
+
+`RunRequest` holds a run request, like `TesTask` holds a task: build one with
+`RunRequest(request)` from a `dict` or JSON text, or with `RunRequest.from_dict(d)`,
+`RunRequest.from_json(text)` or `RunRequest.from_file(path)`. Unlike `WES.run()`, which
+reads a `str` as a path, `RunRequest(text)` parses a `str` as JSON. Its fields are properties:
+`workflow_type`, `workflow_type_version`, `workflow_url`, `workflow_params`, `tags`,
+`workflow_engine`, `workflow_engine_version` and `workflow_engine_parameters`. Requests
+can be pickled and copied.
+
+The results are typed objects with properties, and keep the JSON that the server sent,
+including fields that the WES models don't know: `to_dict()` returns it as a new `dict`
+and `json()` as JSON text.
+
+- `RunLog`: `run_id`, `request` (a `RunRequest`, or `None`), `state`, `run_log`,
+  `task_logs_url`, `task_logs` and `outputs`.
+- `RunSummary`: `run_id`, `state`, `start_time`, `end_time` and `tags`.
+- `TaskLog`: `id`, `name`, `cmd`, `start_time`, `end_time`, `stdout`, `stderr`,
+  `exit_code`, `system_logs` and `tes_uri`.
+
+Missing fields are `None`, except `state`, which is `WesState.UNKNOWN` then. Nested
+values, such as `run_log`, come as `dict`s and `list`s. `WesState` is a `str` enum of the
+WES states (`UNKNOWN`, `QUEUED`, `INITIALIZING`, `RUNNING`, `PAUSED`, `COMPLETE`,
+`EXECUTOR_ERROR`, `SYSTEM_ERROR`, `CANCELED`, `CANCELING`, `PREEMPTED`) that works like
+`TesState`, but is a separate class.
+
+To read a WES section of `~/.ga4gh-cli/config.json`, use
+`config.from_file(ServiceType.WES)`.
+
+The checked-in [WES example](examples/wes_run.py) uploads a workflow file, polls the
+run and prints its details. Run it from `python/` against a WES service:
+
+```sh
+python examples/wes_run.py https://your-wes.example/ga4gh/wes/v1 main.cwl CWL v1.2
+```
+
+The Python test suite runs this same file against a mock service.
+
 ## Runnable example
 
 After installing the bindings with `maturin develop`, run the checked-in
@@ -222,12 +331,14 @@ CI runs this exact script against a mock service and checks the submitted task b
 
 The bindings are meant as a base for clients of services that add endpoints or
 fields to the GA4GH APIs. `Configuration`, `ServiceInfo`, `Transport`, `TES`,
-`Task`, `TesTask`, `ListTasksParams`, and `ListTasksResponse` can be subclassed.
-`ServiceType` and `TesState` are enums and are not subclassable.
+`Task`, `TesTask`, `ListTasksParams`, and `ListTasksResponse` can be subclassed,
+as can `WES`, `Run`, `RunRequest`, `RunLog`, `RunSummary`, `RunListResponse`,
+`TaskLog`, and `TaskListResponse`.
+`ServiceType`, `TesState`, and `WesState` are enums and are not subclassable.
 
 The base classes initialize in `__new__`. A subclass that needs extra
 constructor arguments can define `__init__` and call `super().__init__()`
-without arguments. For `TES`, service-info discovery happens before the
+without arguments. For `TES` and `WES`, service-info discovery happens before the
 subclass's `__init__`, so those extra arguments cannot change its first
 request. A subclass without its own `__init__` accepts only the base arguments.
 
@@ -261,8 +372,8 @@ The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=
 - `fields` is a list of `(name, value)` text parts; `files` is a list of
   `(name, filename, content)` or `(name, filename, content, content_type)` tuples, with
   `content` as `bytes`. Names may repeat, as for WES `workflow_attachment`.
-  This illustrates the multipart API; a real WES run also needs a complete
-  workflow request and an existing `main.cwl` file:
+  This illustrates the multipart API; to start a WES run, use
+  [`WES.run()`](#using-wes) instead:
 
 ```python
 from pathlib import Path
@@ -319,7 +430,9 @@ extension module, and import everything from there. The default
 feature `extension-module` builds the Python module; a dependent crate can turn it off
 with `default-features = false` and enable it in its own features instead.
 
-Further bindings in this crate, such as WES, DRS and TRS, follow the same pattern.
+The WES classes (`PyWES`, `PyRun` and so on, in `clients::wes`) follow the same pattern;
+`clients::wes::register(py, m)` registers all of them, with the `WesState` enum. Further
+bindings, such as DRS and TRS, will too.
 
 ## Documentation
 
