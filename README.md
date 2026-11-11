@@ -34,6 +34,10 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
+As for `TES`, the error type of `DRS::service` is now
+`Box<dyn Error + Send + Sync>`, so a `DRS` client can move between threads;
+`DRS::new` stores only a successful service-info response.
+
 The WES models follow WES 1.1.0 and use the schema names of the spec:
 `WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
 `State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
@@ -41,7 +45,8 @@ required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
 now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
 items are `RunListResponseRunsInner` and deprecated task log items are
 `RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
-endpoints.
+endpoints. As for `TES`, the error type of `WES::service` is now
+`Box<dyn Error + Send + Sync>`, so a `WES` client can move between threads.
 
 All models now keep what their spec doesn't define (see
 [Models](docs/usage.md#models)). This breaks some code:
@@ -135,7 +140,8 @@ Docker may download the Alpine image on the first run.
 The [CLI README](cli/README.md) describes all CLI commands. The
 [usage guide](docs/usage.md) covers configuration, authentication, and the
 Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, `TRS`, and `ServiceRegistry`
-clients. The CLI also has [Service Registry commands](cli/README.md#service-registry-commands).
+clients. The CLI also has [WES commands](cli/README.md#wes-examples) and
+[Service Registry commands](cli/README.md#service-registry-commands).
 
 ## Advanced transport
 
@@ -164,6 +170,11 @@ reads as `ReadOnly` (including appropriate lookup POSTs). A non-replayable
 operation gets one attempt and reports lost-response ambiguity for reconciliation.
 `send_once` also covers multipart headers/body and permits an explicit larger
 upload budget. Dropping a future or canceling its token stops local I/O.
+If cancellation or an expired deadline prevents the send future from being
+polled, submission returns an inspectable `OperationError` and makes no attempt.
+Once the send future is polled, interruption remains an
+`AmbiguousSubmissionError`: the server may have accepted the request, so reconcile
+remote state before resubmitting. Local interruption never cancels a remote job.
 
 DRS `get_object_once` and `get_access_url_once` return `Resolution::Ready` or
 `Pending` with a credential-free resume reference. The immediate convenience
@@ -197,6 +208,30 @@ resume through the same bulk API with caller-supplied credentials/Passports.
 There is no singular or anonymous fallback. Compatibility is verified against
 protocol fixtures, without a claim of broad real-service interoperability.
 
+Bulk requests always use the published DRS 1.4/1.5 shape. For object lookups,
+the SDK also reads one documented Gen3 (indexd) reply difference: resolved
+objects in `resolved_drs_objects` instead of `resolved_drs_object`.
+`BulkReport::dialects` lists the shapes (`Standard`, `Gen3`) seen in a call's
+replies, merged over all chunks. If a reply has both arrays, the standard one
+wins and a diagnostic is added; a `null` array counts as absent.
+Gen3 objects can carry `created_time: null`, which the typed `DrsObject` cannot
+represent. `get_bulk_objects` reports such an entry as an error in its outcome
+and never invents a timestamp; `get_bulk_objects_raw` returns each requested
+resolved entry as JSON, correlated by `id`. Single-object `get_object` has the
+same limit for these objects; use `get_object_raw`. The Gen3 bulk access reply
+is not read in another shape, because it was not verified without credentials.
+Checked against CanineDC on 2026-11-10; see the [opt-in live check](tests/README.md#gen3-drs-caninedc).
+
+The GA4GH Starter Kit DRS bulk routes (`1.3.0experimental`) are not supported.
+In its [`develop` branch at `2b76a63`](https://github.com/ga4gh/ga4gh-starter-kit-drs/blob/2b76a635161daa5bfbed669a9e2755fed31503cd/src/main/java/org/ga4gh/starterkit/drs/controller/Objects.java)
+(read on 2026-11-10, not run), they expect `selection` instead of
+`bulk_object_ids`, report failures in an `unresolved_drs_object` map, and
+return bulk access URLs as a bare array without object or access IDs, which
+cannot be correlated safely. The SDK sends only standard requests. In a reply,
+it ignores the `unresolved_drs_object` map, adds a diagnostic and records no
+dialect. Because the Starter Kit does not read `bulk_object_ids`, its resolved
+array stays empty and the requested IDs are reported as omitted.
+
 ## Service composition
 
 `TES::discover` and `WES::discover` return a `Discovered<T>` wrapper with a
@@ -224,10 +259,11 @@ At a partially consumed or truncated page, a checkpoint replays that page.
 Mutable listings provide neither snapshot isolation nor exactly-once processing;
 callers reconcile replays. Credentials are supplied separately when resuming.
 
-The CLI streams `tes list --all --format jsonl` through caller-owned writers,
-with one JSON object per stdout line. `--max-pages` and `--max-items` bound work;
-limits or later failures preserve emitted records, report a resume checkpoint on
-stderr and return a nonzero exit code. Reusable CLIs use `dispatch_to` or
+The CLI streams `tes list --all --format jsonl` and `wes list --all --format
+jsonl` through caller-owned writers, with one JSON object per stdout line.
+`--max-pages` and `--max-items` bound work; limits or later failures preserve
+emitted records, report a resume checkpoint on stderr and return a nonzero exit
+code. Reusable CLIs use `dispatch_to` or
 `dispatch_with_config_to`; existing buffered dispatch remains available for
 ordinary commands.
 

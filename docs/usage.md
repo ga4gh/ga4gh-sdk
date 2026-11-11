@@ -11,8 +11,8 @@ the [README](../README.md#installation).
 | --- | --- | --- | --- |
 | Service Info | `ServiceInfo` | No direct command | `ServiceInfo` |
 | TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES |
-| DRS | Objects and access URLs | `drs get`, `access` | Not yet |
-| WES | Runs and attachments | Not yet ([#105](https://github.com/ga4gh/ga4gh-sdk/issues/105)) | Not yet |
+| DRS | Objects, access URLs, bulk, and `drs://` URIs | `drs get`, `access` | `DRS`, `DrsResolver` |
+| WES | Runs and attachments | `wes run`, `list`, `get`, `status`, `cancel` | `WES`, `Run` |
 | TRS | Tools and descriptors | Not yet ([#115](https://github.com/ga4gh/ga4gh-sdk/issues/115)) | Not yet |
 | Service Registry | `ServiceRegistry` | `registry list`, `get`, `types` | Not yet |
 
@@ -76,12 +76,12 @@ The file can hold credentials, so keep it private, for example with
 
 ## Command-line tool
 
-The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`), DRS
-commands (`get`, `access`), and Service Registry commands (`list`, `get`,
-`types`). It reads the matching `TES`, `DRS`, or `REGISTRY` configuration
-section. The [CLI README](../cli/README.md) describes each command, its output
-and exit codes. `WES`, `TRS`, and `ServiceInfo` are available from the Rust
-library below.
+The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`), WES
+commands (`run`, `list`, `get`, `status`, `cancel`), DRS commands (`get`,
+`access`), and Service Registry commands (`list`, `get`, `types`). It reads the
+matching `TES`, `WES`, `DRS`, or `REGISTRY` configuration section. The
+[CLI README](../cli/README.md) describes each command, its output and exit
+codes. `TRS` and `ServiceInfo` are available from the Rust library below.
 
 ## Rust library
 
@@ -224,6 +224,15 @@ println!("{} ({} bytes)", object.id, object.size);
 let access = drs.get_access_url("my-object-id", "my-access-id").await?;
 // Use access.url and any access headers to fetch the bytes; do not log signed URLs.
 ```
+
+`get_object_once` and `get_access_url_once` return `Resolution::Pending` while the
+server prepares an answer (`202 Accepted`); `resolve_object` and `resolve_access_url`
+wait for it within an `Operation` budget. `get_bulk_objects` and
+`get_bulk_access_urls` use the DRS 1.4 bulk endpoints and report an outcome per ID
+under a `BulkPolicy`. `uri::DrsResolver` plans access for hostname-based `drs://`
+URIs. The `_raw` variants (`get_object_raw`, `get_access_url_raw`,
+`resolve_reference_raw`, `get_bulk_objects_raw`, `get_bulk_access_urls_raw`) keep the
+server's JSON, including fields that the models don't know.
 
 ### TRS
 
