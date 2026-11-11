@@ -596,3 +596,42 @@ fn empty_run_ids_are_usage_errors() {
         assert!(output.stdout.is_empty(), "{command}");
     }
 }
+
+#[test]
+fn undefined_states_read_as_unknown_except_in_get_and_jsonl() {
+    let prefix = "/undefined-state/ga4gh/wes/v1";
+    let _service = service_info(prefix);
+    let log_body = json!({"run_id": "r1", "state": "SUSPENDED"}).to_string();
+    let _log = mock("GET", format!("{prefix}/runs/r1").as_str())
+        .with_status(200)
+        .with_body(&log_body)
+        .create();
+    let _status = mock("GET", format!("{prefix}/runs/r1/status").as_str())
+        .with_status(200)
+        .with_body(&log_body)
+        .create();
+    let _list = mock("GET", format!("{prefix}/runs").as_str())
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body(json!({"runs": [{"run_id": "r1", "state": "SUSPENDED"}]}).to_string())
+        .create();
+    let home = home_with_wes_config(prefix);
+
+    let state = run(&home, &["wes", "status", "r1"]);
+    assert_success(&state);
+    assert_eq!(stdout(&state), "UNKNOWN\n");
+    let table = run(&home, &["wes", "list"]);
+    assert_success(&table);
+    assert!(
+        stdout(&table).contains("r1      UNKNOWN\n"),
+        "{}",
+        stdout(&table)
+    );
+    let get = run(&home, &["wes", "get", "r1"]);
+    assert_success(&get);
+    assert_eq!(stdout(&get), log_body);
+    let export = run(&home, &["wes", "list", "--all", "--format", "jsonl"]);
+    assert_success(&export);
+    let record: Value = serde_json::from_str(stdout(&export).trim()).unwrap();
+    assert_eq!(record["state"], "SUSPENDED");
+}

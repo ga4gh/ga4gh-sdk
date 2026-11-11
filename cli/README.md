@@ -442,22 +442,24 @@ All commands treat values from a service the same way:
 - `trs descriptor --plain` and `trs tests --plain` print the file content as
   received, since it is meant to be saved as a file.
 
-### Undefined states
-
-A server may report a task or run state that its specification doesn't
-define, such as `SUSPENDED`. The commands that read the state into the SDK
-models show such a state as the specification's `UNKNOWN`: `tes status`, `wes status` and the `wes list` table print
-`UNKNOWN`, and the `tes list` table prints `Unknown`. `tes get` and `wes get`
-show the server's value as it is, and so do the JSONL exports of
-`tes list --all` and `wes list --all`. Use one of those to see which state the
-server actually reported.
-
 Escaping changes only what is printed. The SDK keeps the values it received,
 and commands send the IDs given to them unchanged. For a newly submitted ID,
 use `tes create --format json` or `wes run --format json` and parse the `id`
 or `run_id` field in the calling program. For an ID shown in a table, the
 JSONL exports retain its original value: `tes list --all --format jsonl` and
 `wes list --all --format jsonl`.
+
+### Undefined states
+
+A server may report a task or run state that its specification doesn't
+define, such as `SUSPENDED`. The commands that read the state into the SDK
+models show such a state as the specification's `UNKNOWN`: `tes status`,
+`wes status` and the `wes list` table print `UNKNOWN`, and the `tes list`
+table prints `Unknown`. The `wes list` table also shows a run without a state
+as `UNKNOWN`, while the `tes list` table shows `None`. `tes get` and `wes get`
+show the server's value as it is, and so do the JSONL exports of
+`tes list --all` and `wes list --all`. Use one of those to see which state the
+server actually reported.
 
 ## Extending the CLI in Rust
 
