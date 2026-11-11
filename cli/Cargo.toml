@@ -23,6 +23,10 @@ url = "2.5.2"
 log = "0.4.22"
 env_logger = "0.11.5"
 
+[features]
+# Runs the CLI against Starter Kit WES; see tests/README.md.
+wes_docker_integration_tests = []
+
 [dev-dependencies]
 mockito = "0.31"
 
