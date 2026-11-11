@@ -125,12 +125,24 @@ fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<s
     }
 }
 
+// Describes a failed service-info request, with a hint if the API root seems wrong.
+fn access_error(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = format!("Error accessing WES service: {error}");
+    if error
+        .downcast_ref::<HttpStatusError>()
+        .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
+    {
+        message.push_str(". Check that base_path is the WES API root");
+    }
+    message
+}
+
 /// The main struct for interacting with a WES service.
 #[derive(Debug)]
 pub struct WES {
     #[allow(dead_code)]
     pub config: Configuration,
-    pub service: Result<Service, Box<dyn std::error::Error>>,
+    pub service: Result<Service, Box<dyn std::error::Error + Send + Sync>>,
     pub transport: Transport,
 }
 
@@ -143,13 +155,14 @@ impl WES {
             transport.get("service-info", None),
         )
         .await?;
-        let service: Result<Service, Box<dyn std::error::Error>> =
-            response.and_then(|body| from_str(&body).map_err(Into::into));
+        let service = response
+            .and_then(|body| from_str::<Service>(&body).map_err(Into::into))
+            .map_err(|error| access_error(error.as_ref()))?;
 
         let instance = WES {
             config: config.clone(),
             transport,
-            service,
+            service: Ok(service),
         };
 
         instance.check()?;
@@ -161,16 +174,8 @@ impl WES {
         match resp.as_ref() {
             Ok(service) if service.r#type.artifact == "wes" => Ok(()),
             Ok(_) => Err("The endpoint is not an instance of WES".into()),
-            Err(error) => {
-                let mut message = format!("Error accessing WES service: {error}");
-                if error
-                    .downcast_ref::<HttpStatusError>()
-                    .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
-                {
-                    message.push_str(". Check that base_path is the WES API root");
-                }
-                Err(message)
-            }
+            // `WES::new` stores only `Ok`; an `Err` comes from a client built by hand.
+            Err(error) => Err(access_error(error.as_ref())),
         }
     }
 
@@ -246,6 +251,13 @@ mod tests {
     use mockito::server_url;
     use mockito::{mock, Matcher};
     use url::Url;
+
+    #[test]
+    fn test_clients_can_move_between_threads() {
+        fn send_sync<T: Send + Sync>() {}
+        send_sync::<WES>();
+        send_sync::<Run>();
+    }
 
     #[test]
     fn test_debug_output() {
