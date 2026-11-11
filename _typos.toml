@@ -1,0 +1,6 @@
+# Configuration of the typos spell checker (pre-commit hook); see
+# https://github.com/crate-ci/typos/blob/master/docs/reference.md
+
+[default.extend-words]
+# A task name prefix in python/tests/test_extending.py
+hel = "hel"

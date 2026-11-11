@@ -382,6 +382,8 @@ code changes. Please read [these guidelines][contributing] if you want to
 contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
 
+For local checks, coverage, and hooks, see the [development guide](docs/development.md).
+
 ## License
 
 This project is covered by the [Apache License 2.0][badge-license-url] also

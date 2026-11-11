@@ -16,7 +16,7 @@ ga4gh-cli --help
 
 ## Configuration
 
-The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file. 
+The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file.
 
 The file and the section for the selected service (`TES`, `WES`, `DRS`, `TRS`
 or `REGISTRY`) must exist;
@@ -65,7 +65,7 @@ that allow anonymous access, or a proxy that adds credentials. Keep the file
 private (`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold
 credentials.
 
-## Usage 
+## Usage
 
 ### Basic local setup
 
@@ -137,13 +137,13 @@ checkpoint to stderr; already written JSONL stays on stdout.
 Example output:
 
 ```sh
-TASK ID                   State          
-csei52hrqek3h222k9f0      Complete   
-csei52hrqek3h222k9eg      Initializing   
-csei52hrqek3h222k9e0      Canceled       
-csei52hrqek3h222k9dg      Running 
-csei52hrqek3h222k9df      Queued 
-csei52hrqek3h222k9de      Queued 
+TASK ID                   State
+csei52hrqek3h222k9f0      Complete
+csei52hrqek3h222k9eg      Initializing
+csei52hrqek3h222k9e0      Canceled
+csei52hrqek3h222k9dg      Running
+csei52hrqek3h222k9df      Queued
+csei52hrqek3h222k9de      Queued
 ```
 
 3. To get task details, run the `tes get` command:
