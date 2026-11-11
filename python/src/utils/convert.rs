@@ -1,5 +1,6 @@
 //! Conversions between Python objects, JSON values and query strings.
 
+use ga4gh_sdk::utils::query::encode_query;
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
@@ -110,43 +111,19 @@ pub fn to_python(py: Python<'_>, value: &Value) -> PyResult<PyObject> {
     Ok(json.call_method1("loads", (value.to_string(),))?.unbind())
 }
 
-fn scalar(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => Some(text.clone()),
-        Value::Bool(flag) => Some(flag.to_string()),
-        Value::Number(number) => Some(number.to_string()),
-        _ => None,
-    }
-}
-
 /// Appends query parameters to an endpoint.
 ///
-/// `params` must be a JSON object. Its values may be strings, numbers, booleans, `null`
-/// (skipped) or arrays of these (one parameter per item, as in `tag_key=a&tag_key=b`).
+/// `params` must be a JSON object, encoded by the Rust transport's policy in
+/// [`ga4gh_sdk::utils::query`]: strings, numbers and booleans give one parameter,
+/// `null` none, and a list of strings, numbers and booleans one per item, as in
+/// `tag_key=a&tag_key=b`. Other values, including `null` in a list, raise `ValueError`.
+/// The parameters follow any query already in `endpoint`.
 pub fn with_query(endpoint: &str, params: Option<Value>) -> PyResult<String> {
     let Some(params) = params else {
         return Ok(endpoint.to_owned());
     };
-    let Value::Object(map) = params else {
-        return Err(PyValueError::new_err("params must be a JSON object"));
-    };
-    let mut query = url::form_urlencoded::Serializer::new(String::new());
-    for (key, value) in &map {
-        let items = match value {
-            Value::Null => continue,
-            Value::Array(items) => items.iter().filter(|item| !item.is_null()).collect(),
-            other => vec![other],
-        };
-        for item in items {
-            let text = scalar(item).ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "params value for '{key}' must be a string, number, boolean or a list of these"
-                ))
-            })?;
-            query.append_pair(key, &text);
-        }
-    }
-    let query = query.finish();
+    let query = encode_query(&params)
+        .map_err(|error| PyValueError::new_err(format!("Invalid params: {error}")))?;
     if query.is_empty() {
         return Ok(endpoint.to_owned());
     }

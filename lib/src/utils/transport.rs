@@ -34,6 +34,7 @@
 /// };
 /// ```
 use crate::utils::configuration::Configuration;
+use crate::utils::query::query_pairs;
 use reqwest::multipart::Form;
 use reqwest::Client;
 use serde_json::Value;
@@ -202,36 +203,6 @@ impl Error for HttpError {}
 
 /// Previous name for [`HttpError`], retained for SDK callers.
 pub use HttpError as HttpStatusError;
-
-// reqwest's query serializer cannot encode a JSON array as repeated keys.
-fn query_pairs(params: &Value) -> std::io::Result<Vec<(String, String)>> {
-    let object = params.as_object().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "params must be an object")
-    })?;
-    let mut pairs = Vec::new();
-    for (key, value) in object {
-        let values: &[Value] = match value {
-            Value::Array(values) => values,
-            Value::Null => continue,
-            value => std::slice::from_ref(value),
-        };
-        for value in values {
-            let value = match value {
-                Value::String(value) => value.clone(),
-                Value::Number(value) => value.to_string(),
-                Value::Bool(value) => value.to_string(),
-                _ => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!("query parameter '{key}' must contain scalar values"),
-                    ))
-                }
-            };
-            pairs.push((key.clone(), value));
-        }
-    }
-    Ok(pairs)
-}
 
 /// An endpoint or API root that cannot safely be used for a request.
 #[derive(Debug)]
@@ -535,7 +506,9 @@ impl Transport {
     /// * `method` - The HTTP method for the request.
     /// * `endpoint` - The endpoint for the request.
     /// * `data` - The data to send with the request (optional).
-    /// * `params` - The query parameters for the request (optional).
+    /// * `params` - The query parameters for the request (optional), encoded as
+    ///   described in [`crate::utils::query`]. Unsupported values fail with an
+    ///   [`std::io::ErrorKind::InvalidInput`] error before anything is sent.
     ///
     /// # Returns
     ///
@@ -550,7 +523,7 @@ impl Transport {
         let mut request_builder = self.request_builder(method, endpoint)?;
 
         if let Some(ref params_value) = params {
-            let pairs = query_pairs(params_value)?;
+            let pairs = query_pairs(params_value).map_err(std::io::Error::from)?;
             if !pairs.is_empty() {
                 request_builder = request_builder.query(&pairs);
             }
@@ -600,7 +573,8 @@ impl Transport {
     /// # Arguments
     ///
     /// * `endpoint` - The endpoint for the request.
-    /// * `params` - The query parameters for the request (optional).
+    /// * `params` - The query parameters for the request (optional), see
+    ///   [`Transport::request_response`].
     ///
     /// # Returns
     ///
