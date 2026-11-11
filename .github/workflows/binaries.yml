@@ -18,8 +18,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux binaries are built on Ubuntu 22.04, so they need glibc 2.35
-          # or newer and the OpenSSL 3 shared library at run time.
+          # Linux binaries are built on Ubuntu 22.04 (glibc 2.35) and need the
+          # OpenSSL 3 shared library at run time; the glibc check below keeps
+          # the documented floor of 2.34 (RHEL 9).
           - platform: Linux x86-64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -35,9 +36,13 @@ jobs:
           - platform: Windows x86-64
             runner: windows-2025
             target: x86_64-pc-windows-msvc
+            # Link the C runtime statically, so the binary runs without the
+            # Visual C++ Redistributable.
+            rustflags: -C target-feature=+crt-static
           - platform: Windows arm64
             runner: windows-11-arm
             target: aarch64-pc-windows-msvc
+            rustflags: -C target-feature=+crt-static
     defaults:
       run:
         shell: bash
@@ -71,6 +76,7 @@ jobs:
           rustup target add "$TARGET"
       - name: Build the CLI
         env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
           TARGET: ${{ matrix.target }}
         run: cargo build --release --locked --package ga4gh-cli --target "$TARGET"
       - name: Pack the archive
@@ -92,6 +98,16 @@ jobs:
           if [[ -z "$version" || "$version" == "$version_output" ]]; then
             echo "::error::Unexpected version output: $version_output"
             exit 1
+          fi
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            # The README promises glibc 2.34 or newer; fail if a dependency
+            # starts to need a newer symbol version.
+            glibc="$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu | tail -n 1)"
+            echo "Newest glibc symbol version: $glibc"
+            if [[ "$(printf '%s\n' GLIBC_2.34 "$glibc" | sort -V | tail -n 1)" != GLIBC_2.34 ]]; then
+              echo "::error::The binary needs $glibc, newer than the documented GLIBC_2.34"
+              exit 1
+            fi
           fi
           name="ga4gh-cli-$version-$TARGET"
           staging="$RUNNER_TEMP/$name"

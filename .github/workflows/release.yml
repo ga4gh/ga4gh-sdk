@@ -87,9 +87,11 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/wheels.yml
 
+  # Waits for the CLI binaries too, so that nothing irreversible happens
+  # before every artefact of the release is built.
   publish:
     name: Publish package
-    needs: [prepare, wheels]
+    needs: [prepare, wheels, binaries]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -147,17 +149,22 @@ jobs:
         run: |
           # A re-run replaces the files of the draft it created before; a
           # published release is left alone.
-          if is_draft="$(gh release view "$TAG" --json isDraft --jq .isDraft 2> /dev/null)"; then
+          if is_draft="$(gh release view "$TAG" --json isDraft --jq .isDraft 2> view-error.txt)"; then
             if [[ "$is_draft" != true ]]; then
               echo "::error::The release $TAG is already published"
               exit 1
             fi
             gh release upload "$TAG" dist/* --clobber
-          else
+          elif grep -q 'release not found' view-error.txt; then
             flags=(--draft --verify-tag --generate-notes --title "$TAG")
             if [[ "$PRERELEASE" == true ]]; then
               flags+=(--prerelease)
             fi
             gh release create "$TAG" "${flags[@]}" dist/*
+          else
+            # Creating a draft now could leave two drafts for one tag.
+            cat view-error.txt
+            echo "::error::Could not check for an existing release of $TAG"
+            exit 1
           fi
           echo "Draft release: $(gh release view "$TAG" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"

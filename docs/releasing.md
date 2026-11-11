@@ -50,17 +50,27 @@ with the CLI binaries, which a maintainer completes and publishes.
    | Windows x86-64 | `x86_64-pc-windows-msvc` | `windows-2025` |
    | Windows arm64 | `aarch64-pc-windows-msvc` | `windows-11-arm` |
 
-   The Linux binaries link the system's OpenSSL 3 and glibc dynamically;
-   building on Ubuntu 22.04 keeps the glibc floor at 2.35. The binaries aren't
-   code-signed or notarised. CI runs the same build on every pull request,
-   without publishing. This job runs in parallel with the wheels.
+   The Linux binaries link the system's OpenSSL 3 and glibc dynamically. They
+   are built on Ubuntu 22.04, and the job fails if a binary needs a glibc
+   symbol newer than 2.34, the floor that the README documents (RHEL 9). The
+   binaries aren't code-signed or notarised. CI runs the same build on every
+   pull request, without publishing. This job runs in parallel with the
+   wheels; **Publish package** waits for both, so that nothing reaches PyPI
+   unless every artefact of the release is built. The Windows binaries link
+   the C runtime statically and need no Visual C++ Redistributable.
 5. **GitHub release** runs after the package is published. It writes
    `SHA256SUMS` for the archives, records
    [build provenance attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
    for them, and creates a **draft** release for the tag, flagged as a
    pre-release as chosen in step 1, with the archives, `SHA256SUMS` and
-   GitHub's generated notes. A re-run of a failed run replaces the files of
-   the draft; it stops if the release is already published.
+   GitHub's generated notes. A re-run replaces the files of the draft; it
+   stops if the release is already published or if it can't check whether a
+   release exists.
+
+If a run fails after **Publish package** has uploaded the files, use **Re-run
+failed jobs**, not **Re-run all jobs**: PyPI refuses files it already has, so
+a full re-run fails at the upload and never reaches the GitHub release. If the
+deployment to `pypi` is rejected, the run creates no GitHub release.
 
 The Python version comes from the workspace version; maturin converts it to
 PEP 440, so `0.2.0-rc.1` becomes `0.2.0rc1` on PyPI. Files on PyPI can't be
@@ -112,8 +122,8 @@ Maintainers of `ga4gh/ga4gh-sdk` set this up once before the first tag:
    git push origin v0.2.0
    ```
 
-3. Approve the deployment to `pypi` in the workflow run once the wheels are
-   built.
+3. Approve the deployment to `pypi` in the workflow run once the wheels and
+   the CLI binaries are built.
 4. When the run has finished, open the draft release, add the curated notes
    above GitHub's generated ones, check that it lists the six CLI archives and
    `SHA256SUMS`, and publish it. A draft is visible to maintainers only and can

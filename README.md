@@ -60,14 +60,16 @@ Each [release](https://github.com/ga4gh/ga4gh-sdk/releases) has an archive of
 | Windows x86-64 | `x86_64-pc-windows-msvc` | `.zip` |
 | Windows arm64 | `aarch64-pc-windows-msvc` | `.zip` |
 
-The Linux binaries need glibc 2.35 or newer (for example Ubuntu 22.04,
+The Linux binaries need glibc 2.34 or newer (for example Ubuntu 22.04,
 Debian 12, RHEL 9 or newer), the OpenSSL 3 library (`libssl3` on Debian and
 Ubuntu, `openssl-libs` on Fedora and RHEL) and CA certificates
 (`ca-certificates`); minimal container images may lack the last two.
-Elsewhere, build from source as below. The binaries aren't signed, so macOS may block them until you
-remove the quarantine attribute (`xattr -d com.apple.quarantine ga4gh-cli`).
-For example, on Linux x86-64, check the download against the release's
-`SHA256SUMS` and, optionally, its build provenance, then unpack it:
+Elsewhere, build from source as below. The binaries aren't signed, so macOS
+may block them until you remove the quarantine attribute
+(`xattr -d com.apple.quarantine ga4gh-cli`). For example, on Linux x86-64,
+check the download against the release's `SHA256SUMS` and, optionally, its
+build provenance, then unpack it (replace the example version with that of
+the release):
 
 ```sh
 version=0.2.0
