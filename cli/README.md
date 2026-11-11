@@ -101,8 +101,13 @@ ga4gh-cli tes create "$(cat examples/tes-hello.json)"
 cat examples/tes-hello.json | ga4gh-cli tes create -
 ```
 
-The command prints only the new task ID. If the service rejects it, the CLI
-prints the HTTP status and server message to stderr and exits with code 1.
+By default the command prints the new task ID as text. For scripts that must
+recover an opaque ID exactly, use `tes create --format json`: it prints
+`{"id":"..."}` with JSON escapes and does not need a subsequent list request.
+The shell example above assumes an ordinary ID; command substitution cannot
+represent a NUL byte and strips trailing newlines. If the service rejects the
+task, the CLI prints the HTTP status and server message to stderr and exits
+with code 1.
 
 2. To retrieve the list of tasks run `tes list` command:
 
@@ -149,8 +154,9 @@ ga4gh-cli tes get "$task_id" FULL
 
 Possible `VIEW` values: `MINIMAL`, `BASIC` and `FULL`, in any case. `tes list`
 takes the same values with `-w`.
-The command prints the server's JSON unchanged, including fields unknown to
-the current SDK models.
+The command preserves the server's JSON values and fields unknown to the
+current SDK models. Terminal formatting characters inside strings are written
+as equivalent JSON escapes.
 
 4. To retrieve the task status run the `tes status` command:
 
@@ -182,7 +188,7 @@ ga4gh-cli drs get 'object-id'
 ga4gh-cli drs access 'object-id' 'access-id'
 ```
 
-Both commands print the server's JSON unchanged. The `access` result may
+Both commands preserve the server's JSON values. The `access` result may
 contain headers needed to fetch the bytes. Service failures print an error to
 stderr, escaped as described in [Text and JSON output](#text-and-json-output),
 and exit with code 1; missing arguments use exit code 2.
@@ -196,13 +202,18 @@ by its ID.
 1. To submit a workflow, run `wes run` with the workflow URL, the workflow type
    and the version of the type. Parameters are optional (an empty object by
    default) and, as with `tes create`, can be a JSON file, inline JSON or `-`
-   for standard input. The command prints only the new run ID:
+   for standard input. By default the command prints the new run ID as text:
 
 ```sh
 run_id=$(ga4gh-cli wes run 'https://example.org/workflows/main.cwl' \
     --type CWL --type_version v1.2 --params params.json)
 printf '%s\n' "$run_id"
 ```
+
+For an exact machine-readable ID, use `wes run --format json`. Its output is
+`{"run_id":"..."}` with JSON escapes. The shell example assumes an ordinary
+ID; command substitution cannot represent a NUL byte and strips trailing
+newlines.
 
 Repeat `--attachment` (`-a`) to upload workflow files with the request. Each
 file is uploaded under the relative path given, so run the command from the
@@ -241,7 +252,8 @@ and `--all --format jsonl` writes every run as one JSON object per line, with
 the same `--max-pages` and `--max-items` limits.
 
 3. To get the details of a run, including its request, logs and outputs, run
-   `wes get`. It prints the server's JSON unchanged:
+   `wes get`. It preserves the server's JSON values, escaping terminal
+   formatting characters inside strings:
 
 ```sh
 ga4gh-cli wes get "$run_id"
@@ -265,7 +277,7 @@ server errors; missing commands or arguments use exit code 2. In the table,
 the printed run IDs and the error messages, control and bidirectional
 formatting characters from the server are escaped, such as `\u{1b}`; JSONL
 records use JSON escapes such as `\u001b`. Like `tes get` and `drs get`,
-`wes get` prints the server's JSON as received.
+`wes get` preserves the server's JSON values and unknown fields.
 
 ### TRS examples
 
@@ -414,13 +426,12 @@ All commands treat values from a service the same way:
   including backslashes, are printed as they are, so an escaped value can't be
   told apart from a value that contains the same backslash sequence. Values
   without such characters are printed unchanged.
-- `tes get`, `wes get`, `drs get` and `drs access` print the server's JSON as
-  received. A response that isn't valid JSON is reported as an error on
-  stderr, with exit code 1. JSON can't hold raw control characters such as
-  ESC, except tabs, line breaks and carriage returns between values, but its
-  strings can hold other control and bidirectional formatting characters.
-  These commands print all of them as they are; pipe the output to `jq -a .`
-  to show it reformatted, with such characters escaped.
+- `tes get`, `wes get`, `drs get` and `drs access` preserve the server's JSON
+  values, field order, whitespace and number spelling. Raw control and
+  bidirectional formatting characters inside strings become equivalent JSON
+  `\u` escapes. A response that isn't valid JSON is reported as an error on
+  stderr, with exit code 1. JSON may still contain layout whitespace between
+  values; its strings cannot contain unescaped C0 controls such as ESC.
 - `tes list --all --format jsonl` and `wes list --all --format jsonl` write
   each record with JSON escapes, such as `\u001b`, which decode to the
   original value. `registry get` and the JSON output of the `trs` commands
@@ -429,11 +440,11 @@ All commands treat values from a service the same way:
   received, since it is meant to be saved as a file.
 
 Escaping changes only what is printed. The SDK keeps the values it received,
-and commands send the IDs given to them unchanged. If an ID that `tes create`,
-`wes run` or a table prints contains escapes, take the original value from
-the JSONL export, for example with
-`ga4gh-cli tes list --all --format jsonl | jq -r .id` for tasks or
-`ga4gh-cli wes list --all --format jsonl | jq -r .run_id` for runs.
+and commands send the IDs given to them unchanged. For a newly submitted ID,
+use `tes create --format json` or `wes run --format json` and parse the `id`
+or `run_id` field in the calling program. For an ID shown in a table, the
+JSONL exports retain its original value: `tes list --all --format jsonl` and
+`wes list --all --format jsonl`.
 
 ## Extending the CLI in Rust
 

@@ -571,6 +571,49 @@ fn server_text_is_escaped_in_text_output() {
 }
 
 #[test]
+fn create_json_recovers_the_opaque_id_for_followup_requests() {
+    let _service = service_info_mock("/create-json/service-info");
+    let _create = mock("POST", "/create-json/tasks")
+        .with_status(200)
+        .with_body(json!({"id": CONTROL_ID}).to_string())
+        .create();
+    let status = mock(
+        "GET",
+        format!("/create-json/tasks/{CONTROL_ID_PATH}?view=MINIMAL").as_str(),
+    )
+    .with_status(200)
+    .with_body(json!({"id": CONTROL_ID, "state": "RUNNING"}).to_string())
+    .expect(1)
+    .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/create-json",
+        mockito::server_url()
+    )));
+
+    let created = home.run(
+        &[
+            "tes",
+            "create",
+            home.path().join("task.json").to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    assert!(created.status.success(), "{}", stderr(&created));
+    let create_json = stdout(&created);
+    assert!(!create_json.contains('\u{1b}'));
+    let id = serde_json::from_str::<Value>(&create_json).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(id, CONTROL_ID);
+    let state = home.run(&["tes", "status", &id], None);
+    assert!(state.status.success(), "{}", stderr(&state));
+    status.assert();
+}
+
+#[test]
 fn json_output_keeps_server_values() {
     let _service = service_info_mock("/escape-json/service-info");
     let task = json!({"id": CONTROL_ID, "state": "QUEUED", "name": "a\u{202E}b"});
@@ -584,7 +627,7 @@ fn json_output_keeps_server_values() {
     .create();
     let _list = mock("GET", "/escape-json/tasks")
         .with_status(200)
-        .with_body(json!({"tasks": [task]}).to_string())
+        .with_body(json!({"tasks": [task.clone()]}).to_string())
         .create();
     let home = Home::new(&config_with_fields(&format!(
         "{}/escape-json",
@@ -593,7 +636,10 @@ fn json_output_keeps_server_values() {
 
     let got = home.run(&["tes", "get", CONTROL_ID, "FULL"], None);
     assert!(got.status.success(), "{}", stderr(&got));
-    assert_eq!(got.stdout, body.as_bytes());
+    let got_json = stdout(&got);
+    assert!(!got_json.contains('\u{202e}'));
+    assert_eq!(serde_json::from_str::<Value>(&got_json).unwrap(), task);
+    assert_eq!(got_json.replace("\\u202e", "\u{202e}"), body);
 
     let exported = home.run(&["tes", "list", "--all", "--format", "jsonl"], None);
     assert!(exported.status.success(), "{}", stderr(&exported));

@@ -22,6 +22,13 @@ pub fn command() -> Command {
             Command::new("create")
                 .about("Create a task")
                 .arg(arg!(<TASK_FILE> "Task file, inline JSON, or - for stdin"))
+                .arg(
+                    clap::Arg::new("format")
+                        .long("format")
+                        .help("Output text or a JSON object containing the original ID")
+                        .value_parser(["text", "json"])
+                        .default_value("text"),
+                )
                 // .arg(arg!(--url <URL> "The URL for the task"))
                 .arg_required_else_help(true),
         )
@@ -117,7 +124,15 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             Err(error) => return Ok(service_failure(error.as_ref())),
         };
         match tes.create(testask).await {
-            Ok(task) => return Ok(CommandOutput::success(format!("{}\n", printable(&task.id)))),
+            Ok(task) => {
+                let output = if sub.get_one::<String>("format").map(String::as_str) == Some("json")
+                {
+                    json_printable(&serde_json::json!({"id": task.id}).to_string())
+                } else {
+                    printable(&task.id)
+                };
+                return Ok(CommandOutput::success(format!("{output}\n")));
+            }
             Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }

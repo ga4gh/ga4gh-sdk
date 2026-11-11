@@ -1,4 +1,4 @@
-use crate::render::printable;
+use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::pagination::{Pager, PagingOptions};
@@ -32,6 +32,13 @@ pub fn command() -> Command {
                 .arg(arg!(--type <TYPE> "The workflow type, such as CWL, WDL or NFL").required(true))
                 .arg(arg!(--type_version <VERSION> "The version of the workflow type, such as v1.2").required(true))
                 .arg(arg!(--params [PARAMS] "Workflow parameters: JSON file, inline JSON object, or - for stdin"))
+                .arg(
+                    clap::Arg::new("format")
+                        .long("format")
+                        .help("Output text or a JSON object containing the original ID")
+                        .value_parser(["text", "json"])
+                        .default_value("text"),
+                )
                 .arg(
                     arg!(-a --attachment [PATH] "A file to upload, at the relative path the run sees")
                         .action(ArgAction::Append)
@@ -119,8 +126,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                 Ok(wes) => wes,
                 Err(error) => return Ok(CommandOutput::failure(error)),
             };
-            // Not Run::log: the server's JSON is printed unchanged, with
-            // fields that the SDK models lack.
+            // Not Run::log: keep the server's JSON fields that the SDK
+            // models lack. The output renderer escapes terminal controls.
             let path = format!("runs/{}", urlencode(id));
             Ok(match wes.transport.get(&path, None).await {
                 Ok(log) => CommandOutput::json(log),
@@ -184,7 +191,15 @@ async fn submit(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Comm
             .run_workflow_streaming(request, attachments, &operation)
             .await
         {
-            Ok(run) => CommandOutput::success(format!("{}\n", printable(&run.id))),
+            Ok(run) => {
+                let output = if sub.get_one::<String>("format").map(String::as_str) == Some("json")
+                {
+                    json_printable(&serde_json::json!({"run_id": run.id}).to_string())
+                } else {
+                    printable(&run.id)
+                };
+                CommandOutput::success(format!("{output}\n"))
+            }
             Err(error) => CommandOutput::failure(error),
         },
     )

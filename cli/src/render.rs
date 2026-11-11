@@ -2,9 +2,9 @@
 //!
 //! Text output, such as tables, bare IDs and error messages, shows control
 //! and bidirectional formatting characters as escapes, so that a value can't
-//! add lines, terminal sequences or reordered text. JSON output keeps every
-//! value: commands that print the server's JSON print it as received, and
-//! JSONL records use JSON escapes, which decode to the original value.
+//! add lines, terminal sequences or reordered text. JSON output retains every
+//! value while escaping these characters inside strings. Raw JSON response
+//! layout and number spelling stay intact.
 
 /// Escapes control and bidirectional formatting characters in a value for
 /// text output, as Rust escapes such as `\n` or `\u{1b}`.
@@ -25,21 +25,32 @@ pub fn printable(value: &str) -> String {
         .collect()
 }
 
-/// Escapes the same characters as [`printable`] in serialised JSON, as JSON
-/// `\uXXXX` escapes, so that the output stays valid JSON with the same
-/// values. Serde escapes C0 controls in strings already; the remaining ones
-/// are all in the Basic Multilingual Plane and can only occur inside strings.
+/// Escapes unsafe characters inside JSON strings without changing the values.
+/// Whitespace, number spelling, field order, and existing escapes stay intact.
+/// The caller must validate JSON before passing an untrusted response here.
 pub(crate) fn json_printable(json: &str) -> String {
-    json.chars()
-        .map(|c| {
-            // Raw newlines are the layout of pretty JSON; serde escapes the rest.
-            if c != '\n' && needs_escape(c) {
-                format!("\\u{:04x}", u32::from(c))
-            } else {
-                c.to_string()
+    let mut output = String::with_capacity(json.len());
+    let (mut in_string, mut escaped) = (false, false);
+    for c in json.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            } else if needs_escape(c) {
+                // JSON permits these raw Unicode characters in strings, but
+                // a terminal could interpret them as controls or bidi marks.
+                output.push_str(&format!("\\u{:04x}", u32::from(c)));
+                continue;
             }
-        })
-        .collect()
+        } else if c == '"' {
+            in_string = true;
+        }
+        output.push(c);
+    }
+    output
 }
 
 fn needs_escape(c: char) -> bool {
@@ -73,5 +84,18 @@ mod tests {
         assert!(!escaped.contains(['\u{202E}', '\u{9b}']), "{escaped}");
         let decoded: serde_json::Value = serde_json::from_str(&escaped).unwrap();
         assert_eq!(decoded["id"], value);
+    }
+
+    #[test]
+    fn json_rendering_preserves_layout_and_existing_escapes() {
+        let json = " \t{\"id\":\"a\u{202e}b\",\"literal\":\"\\\\u202e\",\"n\":1.00}\r\n";
+        let rendered = json_printable(json);
+        assert_eq!(
+            rendered,
+            " \t{\"id\":\"a\\u202eb\",\"literal\":\"\\\\u202e\",\"n\":1.00}\r\n"
+        );
+        let before: serde_json::Value = serde_json::from_str(json).unwrap();
+        let after: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(before, after);
     }
 }

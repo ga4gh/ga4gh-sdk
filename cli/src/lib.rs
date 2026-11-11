@@ -62,12 +62,11 @@ impl CommandOutput {
         }
     }
 
-    /// Passes a response body through unchanged if it is JSON. A body that
-    /// isn't JSON is reported as a failure instead, since it could hold raw
-    /// control characters that JSON doesn't allow.
+    /// Preserves the JSON value while escaping terminal controls inside its
+    /// strings. A body that is not JSON is reported as a failure.
     fn json(body: String) -> Self {
         match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(_) => Self::success(body),
+            Ok(_) => Self::success(render::json_printable(&body)),
             Err(error) => Self::failure(format!("The response is not valid JSON: {error}")),
         }
     }
