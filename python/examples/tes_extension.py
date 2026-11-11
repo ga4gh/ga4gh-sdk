@@ -8,7 +8,7 @@ import json
 import sys
 from urllib.parse import quote
 
-from GA4GH import Configuration, TES
+from ga4gh_sdk import Configuration, TES
 
 
 class ProvenanceTES(TES):

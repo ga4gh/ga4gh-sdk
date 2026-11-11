@@ -200,7 +200,7 @@ fn strings(values: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<String>> {
 ///
 /// `json()` and `to_dict()` return the object's JSON as received, including fields that the
 /// DRS models don't know.
-#[pyclass(name = "DrsObject", module = "GA4GH", subclass)]
+#[pyclass(name = "DrsObject", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyDrsObject {
     /// The object parsed into the DRS model; derived from `raw`.
@@ -312,7 +312,7 @@ impl PyDrsObject {
 ///
 /// The URL and headers may hold credentials, such as a signature or a bearer token, so
 /// `repr()` doesn't show them.
-#[pyclass(name = "AccessURL", module = "GA4GH", subclass)]
+#[pyclass(name = "AccessURL", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyAccessURL {
     /// The access URL parsed into the DRS model; derived from `raw`.
@@ -364,7 +364,7 @@ impl PyAccessURL {
 /// An access URL from `DRS.get_bulk_access_urls()`, with the IDs it belongs to.
 ///
 /// Like `AccessURL`, `repr()` doesn't show the URL or headers.
-#[pyclass(name = "BulkAccessURL", module = "GA4GH", subclass)]
+#[pyclass(name = "BulkAccessURL", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyBulkAccessURL {
     /// The access URL parsed into the DRS model; derived from `raw`.
@@ -429,7 +429,7 @@ impl PyBulkAccessURL {
 /// seconds.
 ///
 /// `api_root` and `endpoint` say what to ask for; they hold no credentials.
-#[pyclass(name = "PendingResolution", module = "GA4GH", subclass)]
+#[pyclass(name = "PendingResolution", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyPendingResolution {
     pub inner: PendingResolution,
@@ -490,7 +490,7 @@ fn ready_or_pending<T: IntoPy<PyObject>>(
 /// Limits of `DRS.get_bulk_objects()` and `DRS.get_bulk_access_urls()`.
 ///
 /// The values are checked when a bulk call starts; invalid ones raise `ValueError` there.
-#[pyclass(name = "BulkPolicy", module = "GA4GH", subclass)]
+#[pyclass(name = "BulkPolicy", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyBulkPolicy {
     pub inner: BulkPolicy,
@@ -599,7 +599,7 @@ impl PyBulkPolicy {
 ///
 /// `repr()` shows counts only, as resolved access URLs and error texts may hold
 /// credentials.
-#[pyclass(name = "BulkOutcome", module = "GA4GH", subclass)]
+#[pyclass(name = "BulkOutcome", module = "ga4gh_sdk", subclass)]
 pub struct PyBulkOutcome {
     pub object_id: String,
     pub access_id: Option<String>,
@@ -727,7 +727,7 @@ impl PyBulkOutcome {
 
 /// The result of a bulk call: one `BulkOutcome` per distinct requested ID (or ID pair),
 /// sorted by ID, and the problems with the server's answers that belong to no ID.
-#[pyclass(name = "BulkReport", module = "GA4GH", subclass)]
+#[pyclass(name = "BulkReport", module = "ga4gh_sdk", subclass)]
 pub struct PyBulkReport {
     pub outcomes: Vec<Py<PyBulkOutcome>>,
     pub diagnostics: Vec<String>,
@@ -821,7 +821,7 @@ fn access_pairs(pairs: &Bound<'_, PyAny>) -> PyResult<Vec<BulkKey>> {
 ///
 /// The public `inner` preserves the Rust extension API and is safe to share
 /// between Python threads while synchronous requests release the GIL.
-#[pyclass(name = "DRS", module = "GA4GH", subclass)]
+#[pyclass(name = "DRS", module = "ga4gh_sdk", subclass)]
 pub struct PyDRS {
     pub inner: DRS,
 }
@@ -1141,7 +1141,7 @@ impl PyDRS {
 }
 
 /// A hostname-based DRS URI, such as `drs://drs.example.org/object-id`.
-#[pyclass(name = "DrsUri", module = "GA4GH", subclass)]
+#[pyclass(name = "DrsUri", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyDrsUri {
     pub inner: DrsUri,
@@ -1200,7 +1200,7 @@ impl PyDrsUri {
 /// How to fetch a DRS object's bytes: an access method, its URL and its headers.
 ///
 /// The URL and headers may hold credentials, so `repr()` shows only the URL's origin.
-#[pyclass(name = "AccessPlan", module = "GA4GH", subclass)]
+#[pyclass(name = "AccessPlan", module = "ga4gh_sdk", subclass)]
 pub struct PyAccessPlan {
     pub inner: AccessPlan,
 }
@@ -1279,7 +1279,7 @@ fn parse_access_type(name: &str) -> PyResult<Type> {
 /// By default, a URI's host is asked anonymously at `https://<host>/ga4gh/drs/v1`.
 /// `with_service()` maps a host to a `Transport` with its own API root and settings;
 /// settings are never sent to other hosts. It never downloads object bytes.
-#[pyclass(name = "DrsResolver", module = "GA4GH", subclass)]
+#[pyclass(name = "DrsResolver", module = "ga4gh_sdk", subclass)]
 pub struct PyDrsResolver {
     pub inner: DrsResolver,
 }

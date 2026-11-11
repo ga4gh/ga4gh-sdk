@@ -62,7 +62,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install Maturin and pytest
-        run: python -m pip install 'maturin==1.7.0' 'pytest==8.3.5'
+        run: python -m pip install 'maturin==1.16.0' 'pytest==8.3.5'
       - name: Build and install the bindings
         working-directory: python
         run: |
@@ -71,6 +71,12 @@ jobs:
       - name: Run Python tests
         working-directory: python
         run: python -m pytest
+
+  # Builds the wheels of every release platform and the sdist, so that a
+  # platform-specific break shows up before a tag; nothing is published.
+  wheels:
+    name: Python wheels
+    uses: ./.github/workflows/wheels.yml
 
   integration:
     name: Integration (${{ matrix.suite }})
@@ -195,7 +201,7 @@ jobs:
 
   passed:
     name: CI passed
-    needs: [lint, test, build, python, integration, coverage, pre-commit]
+    needs: [lint, test, build, python, wheels, integration, coverage, pre-commit]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -213,7 +219,8 @@ jobs:
           for name, result in results.items():
               print(f'{name}: {result}')
           expected = {
-              'lint', 'test', 'build', 'python', 'integration', 'coverage', 'pre-commit'
+              'lint', 'test', 'build', 'python', 'wheels', 'integration', 'coverage',
+              'pre-commit',
           }
           if set(results) != expected or any(
               result != 'success' for result in results.values()

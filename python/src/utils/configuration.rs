@@ -8,7 +8,7 @@ use pyo3::types::{PyDict, PyTuple, PyType};
 use serde_json::Value;
 use url::Url;
 
-#[pyclass(name = "Configuration", module = "GA4GH", subclass)]
+#[pyclass(name = "Configuration", module = "ga4gh_sdk", subclass)]
 pub struct PyConfiguration {
     pub inner: Configuration,
 }
