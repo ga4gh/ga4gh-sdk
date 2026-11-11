@@ -109,13 +109,14 @@ confirmed.
 
 ## Dry run in a fork
 
-Try changes to the workflows in a fork before tagging `ga4gh/ga4gh-sdk`. A fork
-publishes under its own name, because TestPyPI ties a project to its first
-publisher and `ga4gh-sdk` is kept for this repository:
+Try changes to the workflows in a fork before tagging `ga4gh/ga4gh-sdk`. Use
+a distinct, available test-only distribution name that explains its purpose,
+such as `ga4gh-sdk-release-rehearsal`. The TestPyPI publisher and the name in
+`python/pyproject.toml` must match exactly:
 
-1. In the fork, change `name` in `python/pyproject.toml` to
-   `ga4gh-sdk-<your-user>`, and create the environment `testpypi`.
-2. On TestPyPI, add a pending trusted publisher for `ga4gh-sdk-<your-user>`
+1. In the fork, change `name` in `python/pyproject.toml` to the chosen test
+   name, and create the environment `testpypi`.
+2. On TestPyPI, add a pending trusted publisher for the same test name
    with the fork's owner and repository, workflow `release.yml` and
    environment `testpypi`.
 3. Set the workspace version to a version that is not yet on TestPyPI, for
@@ -125,8 +126,11 @@ publisher and `ga4gh-sdk` is kept for this repository:
 4. Check that the run publishes to TestPyPI, then install from there:
 
    ```sh
-   python -m pip install --index-url https://test.pypi.org/simple/ ga4gh-sdk-<your-user>==0.1.0.dev1
+   python -m pip install --index-url https://test.pypi.org/simple/ ga4gh-sdk-release-rehearsal==0.1.0.dev1
    python -c 'import ga4gh_sdk; print(ga4gh_sdk.TES.__name__)'
    ```
 
-5. Delete the test tag in the fork afterwards.
+   Substitute your chosen test name in the install command if it differs from
+   this example.
+5. Keep the test tag until the run and package can be reviewed; delete it from
+   the fork later if it is no longer needed.
