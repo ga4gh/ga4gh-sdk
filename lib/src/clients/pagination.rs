@@ -1,4 +1,7 @@
 //! Lazy TES/WES pages and item cursors. No snapshot/exactly-once guarantee.
+//!
+//! Queries are encoded as described in [`crate::utils::query`], the same as
+//! for [`Transport`]; [`Pager::new`] rejects unsupported values.
 use super::{
     tes::{models::ListTasksParams, TES},
     wait::ServiceKind,
@@ -6,6 +9,7 @@ use super::{
 };
 use crate::utils::{
     operation::Operation,
+    query::query_pairs,
     transport::{response_text, BodyLimits, Transport},
 };
 use serde::{Deserialize, Serialize};
@@ -101,6 +105,8 @@ impl Pager {
             Some(Value::String(s)) => Some(s).filter(|s| !s.is_empty()),
             _ => return Err("page_token must be a string".into()),
         };
+        // Reject unsupported values before the first request, not at it.
+        query_pairs(&query)?;
         let mut seen = HashSet::new();
         if let Some(token) = &token {
             seen.insert(Sha256::digest(token.as_bytes()).into());
@@ -182,23 +188,8 @@ impl Pager {
         if let Some(token) = &self.checkpoint.next_token {
             params["page_token"] = json!(token);
         }
-        let mut pairs = Vec::new();
-        for (key, value) in params.as_object().unwrap() {
-            let values = match value {
-                Value::Array(values) => values.clone(),
-                v => vec![v.clone()],
-            };
-            for value in values {
-                if value.is_null() {
-                    continue;
-                }
-                let text = match value {
-                    Value::String(s) => s,
-                    v => v.to_string(),
-                };
-                pairs.push((key.clone(), text));
-            }
-        }
+        // `new` checked the query and the token is a string, so this can't fail.
+        let pairs = query_pairs(&params).map_err(|e| self.failure(e))?;
         let path = match self.checkpoint.service {
             ServiceKind::Tes => "tasks",
             ServiceKind::Wes => "runs",

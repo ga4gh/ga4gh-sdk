@@ -1,9 +1,10 @@
-use crate::utils::convert::check_extra_args;
-use crate::PyServiceType;
+use crate::utils::convert::{check_extra_args, to_python};
+use crate::ServiceSection;
 use ga4gh_sdk::utils::configuration::Configuration;
 use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
+use serde_json::Value;
 use url::Url;
 
 #[pyclass(name = "Configuration", module = "GA4GH", subclass)]
@@ -46,7 +47,14 @@ impl PyConfiguration {
         self.inner.base_path.to_string()
     }
 
-    pub fn from_file(&mut self, service_type: PyServiceType) -> PyResult<()> {
+    /// Returns the other keys of the configuration file section as a `dict`.
+    pub fn get_extra(&self, py: Python<'_>) -> PyResult<PyObject> {
+        to_python(py, &Value::Object(self.inner.extra.clone()))
+    }
+
+    /// Reads a section of `~/.ga4gh-cli/config.json`: a `ServiceType`, or the name of
+    /// any other section as a `str`.
+    pub fn from_file(&mut self, service_type: ServiceSection) -> PyResult<()> {
         self.inner = Configuration::from_file(service_type.into()).map_err(|error| {
             let message = error.to_string();
             match error.downcast_ref::<std::io::Error>() {

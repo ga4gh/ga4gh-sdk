@@ -17,21 +17,30 @@ _Params: TypeAlias = Mapping[str, Any] | str
 
 @final
 class ServiceType:
-    """A GA4GH service type, for `Configuration.from_file()`."""
+    """A built-in section of the configuration file, for `Configuration.from_file()`.
+
+    Other sections are named by a `str`.
+    """
 
     TES: ServiceType
     DRS: ServiceType
     TRS: ServiceType
     AAI: ServiceType
     WES: ServiceType
+    REGISTRY: ServiceType
 
 class Configuration:
-    """The API root and settings for connecting to a GA4GH service."""
+    """The API root and settings for connecting to a GA4GH service.
+
+    `from_file()` reads a section of `~/.ga4gh-cli/config.json`, named by a
+    `ServiceType` or by a `str`; `get_extra()` returns the section's other keys.
+    """
 
     def __init__(self, base_path: str) -> None: ...
     def set_base_path(self, base_path: str) -> None: ...
     def get_base_path(self) -> str: ...
-    def from_file(self, service_type: ServiceType) -> None: ...
+    def get_extra(self) -> _JSONObject: ...
+    def from_file(self, service_type: ServiceType | str) -> None: ...
 
 class ServiceInfo:
     """Reads a service's service info."""
