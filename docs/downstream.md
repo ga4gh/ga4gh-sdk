@@ -9,14 +9,14 @@ crate that does so through public APIs only. CI builds and tests it (job
 fails CI.
 
 The example's extensions are made up: a TES service that offers
-`GET /tasks/{id}/usage` with the resource usage of a task, and a `priority`
-field on tasks.
+`GET /tasks/{id}/usage` with the resource usage of a task and a `priority`
+field on tasks, and a separate service that offers `GET /quota`.
 
 | File | Shows |
 | --- | --- |
 | [`src/usage.rs`](../examples/downstream-sdk/src/usage.rs) | A client for an additional endpoint that shares the SDK's `Transport` |
 | [`src/task.rs`](../examples/downstream-sdk/src/task.rs) | A model that extends `TesTask` with a field |
-| [`src/cli.rs`](../examples/downstream-sdk/src/cli.rs), [`src/main.rs`](../examples/downstream-sdk/src/main.rs) | A binary that adds a subcommand to the SDK's CLI |
+| [`src/cli.rs`](../examples/downstream-sdk/src/cli.rs), [`src/main.rs`](../examples/downstream-sdk/src/main.rs) | A binary with its own name, version, configuration file and token variable that adds subcommands to the SDK's CLI |
 | [`tests/downstream.rs`](../examples/downstream-sdk/tests/downstream.rs) | Tests of all three against a mock service |
 
 ## Dependencies
@@ -106,43 +106,83 @@ For a single extra field, `TesTask::extra` alone is enough; a typed wrapper
 like this one is worth it when the downstream code reads or writes the field
 often.
 
-## A CLI with an added subcommand
+## A CLI with added subcommands
 
-[`cli::command`](../examples/downstream-sdk/src/cli.rs) starts from the
-SDK's command tree and adds `tes usage <ID>`:
+The example's binary, `downstream-cli`, has its own name, version,
+configuration file and token variable. A `ga4gh_cli::CliContext` holds them;
+[`cli::context`](../examples/downstream-sdk/src/cli.rs) creates it:
 
 ```rust
-// Abridged: the example also sets the version and help texts.
-ga4gh_cli::command()
-    .name("downstream-cli")
-    .bin_name("downstream-cli")
+CliContext::new("downstream-cli", env!("CARGO_PKG_VERSION"))
+    .with_about("CLI for GA4GH services, with service extensions")
+    .with_token_env("DOWNSTREAM_CLI_TOKEN")
+```
+
+| Setting | Default for `CliContext::new(name, …)` | `ga4gh-cli` (`CliContext::default()`) | Example |
+| --- | --- | --- | --- |
+| Name and `bin_name` | `name` | `ga4gh-cli` | `downstream-cli` |
+| Version (`--version`) | as given | the CLI crate's version | the example crate's version |
+| Configuration file | `~/.<name>/config.json`; `with_config_path` sets another | `~/.ga4gh-cli/config.json` | `~/.downstream-cli/config.json` |
+| Token variable | none; `with_token_env` sets one | none | `DOWNSTREAM_CLI_TOKEN` |
+
+The token variable holds an OAuth access token for every section of the
+file that sets no credentials (`basic_auth`, `oauth_access_token` or
+`oauth_access_token_env`); credentials in a section take precedence. An
+unset or empty variable leaves those sections without a token. Since one
+variable serves all such sections, the token goes to each of their services;
+to send different tokens to different services, name a variable per section
+with `oauth_access_token_env`. Like the configured tokens, it is sent only
+where the SDK sends credentials (see [Not covered yet](#not-covered-yet)).
+
+[`cli::command`](../examples/downstream-sdk/src/cli.rs) starts from the
+context's command tree and adds `tes usage <ID>` and a top-level `quota`:
+
+```rust
+// Abridged: the example also sets help texts.
+context()
+    .command()
     .mut_subcommand("tes", |tes| {
         tes.subcommand(Command::new("usage").arg(Arg::new("ID").required(true)))
     })
+    .subcommand(Command::new("quota"))
 ```
 
-`cli::run`, which the binary calls, handles `tes usage` itself and leaves
+`cli::run`, which the binary calls, handles its own commands and leaves
 everything else to the SDK:
 
-- For `tes usage`, it reads the `TES` section of the configuration file and
-  calls `cli::run_extension`, which takes the configuration as an argument
-  and returns `None` for commands it doesn't own.
-- For all other commands, it calls `ga4gh_cli::dispatch_to`, which runs a
-  built-in command with its own service's section of the configuration file
-  and returns `None` for commands it doesn't own.
+- For `tes usage`, it reads the `TES` section with
+  `CliContext::load_config` and calls `cli::run_extension`, which takes the
+  configuration as an argument and returns `None` for commands it doesn't
+  own.
+- For `quota`, it reads its own `QUOTA` section with
+  `load_config(ServiceType::Custom("QUOTA".into()))` and calls `cli::quota`.
+- For all other commands, it calls `CliContext::dispatch_to`, which runs a
+  built-in command with its own service's section of the context's
+  configuration file and returns `None` for commands it doesn't own.
   `ga4gh_cli::dispatch_with_config_to` does the same with a configuration
   that the caller supplies; that configuration must be for the command's
-  service.
+  service. The free functions `ga4gh_cli::command`, `dispatch` and
+  `dispatch_to` use `CliContext::default()`, so they read `ga4gh-cli`'s
+  file.
 - They write to caller-owned writers, so tests can capture the output.
+- `ga4gh_cli::CommandOutput` gives an added command the output and exit
+  codes of the built-in ones: `CommandOutput::json` checks and escapes a
+  JSON response, `CommandOutput::failure` escapes an error message and sets
+  a failure exit code, `CommandOutput::success` takes text that is already
+  escaped, and `write_to` writes both streams and returns the exit code.
+  `cli::quota` uses them.
 - `ga4gh_cli::printable` escapes control characters in values from the
   service, as the SDK's CLI does in its text output.
 
-Run it from the repository root, with the configuration file described in
-the [usage guide](usage.md#configuration-file):
+Run it from the repository root, with `~/.downstream-cli/config.json` in the
+format described in the [usage guide](usage.md#configuration-file), with a
+`TES` section and, for `quota`, a `QUOTA` section:
 
 ```sh
+cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- --version
 cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes usage <task-id>
 cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes list
+cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- quota
 ```
 
 ## Checks

@@ -2,13 +2,15 @@
 //!
 //! Each test uses its own API root on the shared mock server, so that tests
 //! running in parallel don't see each other's mocks. Only one test sets
-//! `HOME`; checks that read the configuration file belong into that test.
+//! `HOME` and the token variable; checks that read the configuration file
+//! or the variable belong into that test.
 
 use downstream_sdk::cli;
 use downstream_sdk::task::PrioritizedTask;
 use downstream_sdk::usage::{TaskUsage, UsageClient};
 use ga4gh_sdk::clients::tes::models::{TesExecutor, TesTask};
 use ga4gh_sdk::clients::tes::{TesView, TES};
+use ga4gh_sdk::clients::ServiceType;
 use ga4gh_sdk::reqwest;
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
@@ -180,7 +182,7 @@ fn cli_keeps_the_built_in_commands_and_adds_one() {
     for name in ["create", "list", "get", "status", "cancel", "usage"] {
         assert!(tes.find_subcommand(name).is_some(), "missing tes {name}");
     }
-    for name in ["drs", "trs", "wes", "workflow", "registry"] {
+    for name in ["drs", "trs", "wes", "workflow", "registry", "quota"] {
         assert!(command.find_subcommand(name).is_some(), "missing {name}");
     }
     cli::command().debug_assert();
@@ -192,6 +194,42 @@ fn cli_keeps_the_built_in_commands_and_adds_one() {
         error.kind(),
         clap::error::ErrorKind::MissingRequiredArgument
     );
+
+    // The binary's own name and version, not those of `ga4gh-cli`.
+    let version = cli::command()
+        .try_get_matches_from([cli::BIN_NAME, "--version"])
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        version,
+        format!("{} {}\n", cli::BIN_NAME, env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(cli::context().token_env(), Some(cli::TOKEN_ENV));
+}
+
+#[tokio::test]
+async fn quota_shows_the_json_response_escaped_or_the_error() {
+    let _quota = mock("GET", "/quota-ok/quota")
+        .with_status(200)
+        .with_body("{\"user\":\"a\u{202e}\",\"cpu_hours\":10}")
+        .create();
+    let _error = mock("GET", "/quota-error/quota")
+        .with_status(403)
+        .with_body("denied")
+        .create();
+    let quota_config = |root: &str| {
+        Configuration::new(Url::parse(&format!("{}/{root}/", mockito::server_url())).unwrap())
+    };
+
+    let output = cli::quota(&quota_config("quota-ok")).await;
+    assert_eq!(output.exit_code, ExitCode::SUCCESS);
+    assert_eq!(output.stdout, "{\"user\":\"a\\u202e\",\"cpu_hours\":10}");
+    assert!(output.stderr.is_empty());
+
+    let output = cli::quota(&quota_config("quota-error")).await;
+    assert_eq!(output.exit_code, ExitCode::FAILURE);
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.contains("403"), "{}", output.stderr);
 }
 
 #[tokio::test]
@@ -242,8 +280,8 @@ async fn cli_extension_escapes_output_and_reports_errors() {
     assert_eq!(exit_code, None);
 }
 
-/// The binary's entry point, with the configuration file in a temporary
-/// home directory. The only test that reads `HOME`.
+/// The binary's entry point, with its configuration file in a temporary
+/// home directory. The only test that reads `HOME` and the token variable.
 #[tokio::test]
 async fn cli_run_reads_the_config_file_for_added_and_built_in_commands() {
     let _info = service_info("cli-run");
@@ -255,18 +293,43 @@ async fn cli_run_reads_the_config_file_for_added_and_built_in_commands() {
         .with_status(200)
         .with_body(r#"{"tasks":[{"id":"task-from-sdk","state":"COMPLETE"}]}"#)
         .create();
+    let _quota = mock("GET", "/cli-run-quota/quota")
+        .with_status(200)
+        .with_body(r#"{"cpu_hours":3}"#)
+        .create();
     let home = tempfile::tempdir().unwrap();
-    std::fs::create_dir(home.path().join(".ga4gh-cli")).unwrap();
+    // The binary's own file; a file of `ga4gh-cli` would not be read.
+    std::fs::create_dir(home.path().join(".downstream-cli")).unwrap();
     std::fs::write(
-        home.path().join(".ga4gh-cli/config.json"),
-        json!({"TES": {"base_path": api_root("cli-run")}}).to_string(),
+        home.path().join(".downstream-cli/config.json"),
+        json!({
+            "TES": {"base_path": api_root("cli-run")},
+            "QUOTA": {
+                "base_path": format!("{}/cli-run-quota/", mockito::server_url()),
+                "oauth_access_token": "from-file"
+            }
+        })
+        .to_string(),
     )
     .unwrap();
+    std::fs::create_dir(home.path().join(".ga4gh-cli")).unwrap();
+    std::fs::write(home.path().join(".ga4gh-cli/config.json"), "{}").unwrap();
     std::env::set_var("HOME", home.path());
+    std::env::set_var(cli::TOKEN_ENV, "from-env");
+
+    // The token variable fills in sections without credentials only.
+    let context = cli::context();
+    let tes = context.load_config(ServiceType::TES).unwrap();
+    assert_eq!(tes.oauth_access_token.as_deref(), Some("from-env"));
+    let quota = context
+        .load_config(ServiceType::Custom(cli::QUOTA_SECTION.into()))
+        .unwrap();
+    assert_eq!(quota.oauth_access_token.as_deref(), Some("from-file"));
 
     for (args, expected) in [
         (vec!["tes", "usage", "task-1"], "task-1\t-\t5\n"),
         (vec!["tes", "list"], "task-from-sdk"),
+        (vec!["quota"], r#"{"cpu_hours":3}"#),
     ] {
         let matches = cli::command()
             .try_get_matches_from([cli::BIN_NAME].into_iter().chain(args.clone()))

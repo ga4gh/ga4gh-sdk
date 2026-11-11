@@ -479,3 +479,18 @@ too, as the `ga4gh-cli` binary does in [its logger setup](src/main.rs). See the
 downstream command can read its own section of the configuration file with
 `Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))`; keys
 that the SDK doesn't use itself are in `Configuration::extra`.
+
+A downstream binary with its own name, version, configuration file or token
+variable describes them in a `ga4gh_cli::CliContext`, for example
+`CliContext::new("my-cli", env!("CARGO_PKG_VERSION")).with_token_env("MY_CLI_TOKEN")`,
+and calls its `command()`, `dispatch()` and `dispatch_to()` in place of the
+free functions, which use the settings of `ga4gh-cli`. Its configuration file
+defaults to `~/.my-cli/config.json` (`with_config_path()` sets another), and
+`load_config()` reads a section from it, for built-in and custom services
+alike. The token variable supplies an OAuth access token to sections without
+credentials. Its own commands can build their output as the built-in ones
+do: `CommandOutput::json()` and `failure()` escape their content and set the
+exit code, `success()` takes text that is already escaped, and `write_to()`
+writes both streams and returns the exit code. The
+guide [Build on this SDK](../docs/downstream.md) walks through an example
+crate.
