@@ -63,7 +63,9 @@ with requests yet (see
 [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). For now, use services
 that allow anonymous access, or a proxy that adds credentials. Keep the file
 private (`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold
-credentials.
+credentials. To keep a token out of the file, name an environment variable
+that holds it with `oauth_access_token_env`; the
+[usage guide](../docs/usage.md#configuration-file) describes all keys.
 
 ## Usage
 
@@ -101,8 +103,13 @@ ga4gh-cli tes create "$(cat examples/tes-hello.json)"
 cat examples/tes-hello.json | ga4gh-cli tes create -
 ```
 
-The command prints only the new task ID. If the service rejects it, the CLI
-prints the HTTP status and server message to stderr and exits with code 1.
+By default the command prints the new task ID as text. For scripts that must
+recover an opaque ID exactly, use `tes create --format json`: it prints
+`{"id":"..."}` with JSON escapes and does not need a subsequent list request.
+The shell example above assumes an ordinary ID; command substitution cannot
+represent a NUL byte and strips trailing newlines. If the service rejects the
+task, the CLI prints the HTTP status and server message to stderr and exits
+with code 1.
 
 2. To retrieve the list of tasks run `tes list` command:
 
@@ -149,8 +156,9 @@ ga4gh-cli tes get "$task_id" FULL
 
 Possible `VIEW` values: `MINIMAL`, `BASIC` and `FULL`, in any case. `tes list`
 takes the same values with `-w`.
-The command prints the server's JSON unchanged, including fields unknown to
-the current SDK models.
+The command preserves the server's JSON values and fields unknown to the
+current SDK models. Terminal formatting characters inside strings are written
+as equivalent JSON escapes.
 
 4. To retrieve the task status run the `tes status` command:
 
@@ -167,7 +175,9 @@ ga4gh-cli tes cancel 'running-task-id'
 ```
 
 All five TES commands exit with code 0 on success and code 1 on request or
-server errors. Missing commands or arguments use Clap's exit code 2.
+server errors. Missing commands or arguments use Clap's exit code 2. Task IDs,
+page tokens and error messages are text output, so control characters in them
+are escaped (see [Text and JSON output](#text-and-json-output)).
 
 ### DRS examples
 
@@ -180,9 +190,10 @@ ga4gh-cli drs get 'object-id'
 ga4gh-cli drs access 'object-id' 'access-id'
 ```
 
-Both commands print the server's JSON unchanged. The `access` result may
+Both commands preserve the server's JSON values. The `access` result may
 contain headers needed to fetch the bytes. Service failures print an error to
-stderr and exit with code 1; missing arguments use exit code 2.
+stderr, escaped as described in [Text and JSON output](#text-and-json-output),
+and exit with code 1; missing arguments use exit code 2.
 
 ### WES examples
 
@@ -193,13 +204,18 @@ by its ID.
 1. To submit a workflow, run `wes run` with the workflow URL, the workflow type
    and the version of the type. Parameters are optional (an empty object by
    default) and, as with `tes create`, can be a JSON file, inline JSON or `-`
-   for standard input. The command prints only the new run ID:
+   for standard input. By default the command prints the new run ID as text:
 
 ```sh
 run_id=$(ga4gh-cli wes run 'https://example.org/workflows/main.cwl' \
     --type CWL --type_version v1.2 --params params.json)
 printf '%s\n' "$run_id"
 ```
+
+For an exact machine-readable ID, use `wes run --format json`. Its output is
+`{"run_id":"..."}` with JSON escapes. The shell example assumes an ordinary
+ID; command substitution cannot represent a NUL byte and strips trailing
+newlines.
 
 Repeat `--attachment` (`-a`) to upload workflow files with the request. Each
 file is uploaded under the relative path given, so run the command from the
@@ -238,7 +254,8 @@ and `--all --format jsonl` writes every run as one JSON object per line, with
 the same `--max-pages` and `--max-items` limits.
 
 3. To get the details of a run, including its request, logs and outputs, run
-   `wes get`. It prints the server's JSON unchanged:
+   `wes get`. It preserves the server's JSON values, escaping terminal
+   formatting characters inside strings:
 
 ```sh
 ga4gh-cli wes get "$run_id"
@@ -262,7 +279,7 @@ server errors; missing commands or arguments use exit code 2. In the table,
 the printed run IDs and the error messages, control and bidirectional
 formatting characters from the server are escaped, such as `\u{1b}`; JSONL
 records use JSON escapes such as `\u001b`. Like `tes get` and `drs get`,
-`wes get` prints the server's JSON as received.
+`wes get` preserves the server's JSON values and unknown fields.
 
 ### TRS examples
 
@@ -401,6 +418,36 @@ success and code 1 on request or server errors. A 404 from `list` or `types`
 adds a hint to check `base_path`; from `get`, a 404 means that no service has
 that ID.
 
+## Text and JSON output
+
+All commands treat values from a service the same way:
+
+- Text output, such as tables, bare task and run IDs, page tokens, and error
+  and log messages on stderr, shows control and bidirectional formatting characters as
+  Rust escapes, such as `\n`, `\u{1b}` or `\u{202e}`. Other characters,
+  including backslashes, are printed as they are, so an escaped value can't be
+  told apart from a value that contains the same backslash sequence. Values
+  without such characters are printed unchanged.
+- `tes get`, `wes get`, `drs get` and `drs access` preserve the server's JSON
+  values, field order, whitespace and number spelling. Raw control and
+  bidirectional formatting characters inside strings become equivalent JSON
+  `\u` escapes. A response that isn't valid JSON is reported as an error on
+  stderr, with exit code 1. JSON may still contain layout whitespace between
+  values; its strings cannot contain unescaped C0 controls such as ESC.
+- `tes list --all --format jsonl` and `wes list --all --format jsonl` write
+  each record with JSON escapes, such as `\u001b`, which decode to the
+  original value. `registry get` and the JSON output of the `trs` commands
+  use JSON escapes in the same way.
+- `trs descriptor --plain` and `trs tests --plain` print the file content as
+  received, since it is meant to be saved as a file.
+
+Escaping changes only what is printed. The SDK keeps the values it received,
+and commands send the IDs given to them unchanged. For a newly submitted ID,
+use `tes create --format json` or `wes run --format json` and parse the `id`
+or `run_id` field in the calling program. For an ID shown in a table, the
+JSONL exports retain its original value: `tes list --all --format jsonl` and
+`wes list --all --format jsonl`.
+
 ## Extending the CLI in Rust
 
 The `ga4gh-cli` package also exposes a Rust library. A downstream binary can
@@ -409,5 +456,13 @@ add its own Clap 4 subcommands to `ga4gh_cli::command()`. Call
 `ga4gh_cli::dispatch_with_config()` to supply a service configuration directly.
 Both return `None` when the downstream binary should handle its own command.
 Built-in commands return stdout, stderr, and an exit code in `CommandOutput`,
-so the downstream binary can write or reformat their output. See the
-[downstream CLI test](tests/downstream_cli.rs) for a working example.
+so the downstream binary can write or reformat their output; `stderr` and the
+text parts of `stdout` are already escaped as described above.
+`ga4gh_cli::printable()` escapes a value in the same way for a downstream
+binary's own text output. SDK log messages can hold a service's response, so
+a downstream binary that writes logs should pass them through `printable()`
+too, as the `ga4gh-cli` binary does in [its logger setup](src/main.rs). See the
+[downstream CLI test](tests/downstream_cli.rs) for a working example. A
+downstream command can read its own section of the configuration file with
+`Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))`; keys
+that the SDK doesn't use itself are in `Configuration::extra`.
