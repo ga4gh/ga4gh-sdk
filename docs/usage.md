@@ -42,10 +42,10 @@ host, which usually fails with `404 Not Found`.
 
 ## Configuration file
 
-The CLI and Rust `Configuration::from_file` read
-`~/.ga4gh-cli/config.json`. Python `Configuration.from_file()` reads the same
-file for the service types exposed by the Python binding. The file holds one
-object per service type, keyed by `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY`:
+The CLI, Rust `Configuration::from_file` and Python `Configuration.from_file()`
+read `~/.ga4gh-cli/config.json`. The file holds one object per service, keyed by
+the section name: `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` for the built-in
+services, or any other name for a custom service:
 
 ```json
 {
@@ -53,6 +53,11 @@ object per service type, keyed by `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY`:
     "base_path": "https://example.org/ga4gh/tes/v1",
     "basic_auth": {"username": "alice", "password": "change-me"},
     "oauth_access_token": "my-token"
+  },
+  "MY_SERVICE": {
+    "base_path": "https://example.org/my-service/v1",
+    "oauth_access_token_env": "MY_SERVICE_TOKEN",
+    "timeout_seconds": 30
   }
 }
 ```
@@ -61,9 +66,24 @@ object per service type, keyed by `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY`:
 - `basic_auth` (object, optional): `username` (string) and an optional
   `password` (string).
 - `oauth_access_token` (string, optional): an access token.
+- `oauth_access_token_env` (string, optional): the name of an environment
+  variable that holds the access token, so that the token needn't be in the
+  file. Use it in place of `oauth_access_token`, not together with it. If the
+  variable isn't set, reading the section is an error.
+- Any other key: kept with its JSON value in `Configuration::extra` (Python:
+  `Configuration.get_extra()`), for settings that the SDK doesn't use itself,
+  such as those of a downstream crate. In the example, `extra` holds
+  `timeout_seconds`. Rust's `Debug` output shows only the keys, but `extra`
+  and `get_extra()` themselves return the values as they are, so don't log
+  them if they can hold credentials. The file doesn't set the other
+  `Configuration` fields: `user_agent`, `bearer_access_token` and `api_key`
+  in a section end up in `extra` as well.
 
-A missing file or section, or a field of the wrong type, is an error.
-`Configuration::from_path(path, "TES")` reads a section from another file.
+A missing file or section, or a field of the wrong type, is an error. Rust
+reads a custom section with `ServiceType::Custom("MY_SERVICE".into())`, Python
+with `config.from_file("MY_SERVICE")`. `Configuration::from_path(path, "TES")`
+reads a section from another file. Files written for earlier versions read as
+before; their `extra` is empty.
 
 The SDK reads `basic_auth` and `oauth_access_token` but **doesn't send them
 yet**: requests carry no `Authorization` header (see
@@ -112,7 +132,11 @@ let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
 
 // Credentials are stored, but not yet sent with requests (see #31)
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
-    .with_oauth_access_token(std::env::var("GA4GH_TOKEN")?);
+    .with_oauth_access_token("my-token".to_owned());
+
+// The token from an environment variable of your choice
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_oauth_access_token_from_env("MY_SERVICE_TOKEN")?;
 
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_basic_auth(BasicAuth {
@@ -123,7 +147,13 @@ let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
 // From ~/.ga4gh-cli/config.json
 use ga4gh_sdk::clients::ServiceType;
 let config = Configuration::from_file(ServiceType::TES)?;
+
+// A custom section and its other keys
+let config = Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))?;
+let timeout = config.extra.get("timeout_seconds").and_then(|value| value.as_u64());
 ```
+
+`ServiceType` is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm.
 
 ### ServiceInfo
 
