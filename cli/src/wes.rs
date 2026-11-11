@@ -10,14 +10,26 @@ use ga4gh_sdk::clients::wes::models::{RunListResponse, RunRequest};
 use ga4gh_sdk::clients::wes::{urlencode, Run, WES};
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::operation::Operation;
+use ga4gh_sdk::utils::timeouts::Timeouts;
 use ga4gh_sdk::utils::transport::Transport;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
-/// Time allowed for preparing, uploading and acknowledging one submission.
+/// Time allowed for preparing, uploading and acknowledging one submission when
+/// the configuration doesn't set a `submission` limit of its own.
 const SUBMISSION_BUDGET: Duration = Duration::from_secs(300);
+
+/// The time allowed for one `wes run` submission: the configuration's
+/// `submission` limit, or [`SUBMISSION_BUDGET`] if it is the library default,
+/// which leaves more time for uploads than the library does.
+fn submission_budget(config: &Configuration) -> Duration {
+    match config.timeouts.submission {
+        limit if limit == Timeouts::default().submission => SUBMISSION_BUDGET,
+        limit => limit,
+    }
+}
 
 /// Build the WES command and its subcommands.
 pub fn command() -> Command {
@@ -185,7 +197,7 @@ async fn submit(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Comm
         Ok(wes) => wes,
         Err(error) => return Ok(CommandOutput::failure(error)),
     };
-    let operation = Operation::new(SUBMISSION_BUDGET);
+    let operation = Operation::new(submission_budget(config));
     Ok(
         match wes
             .run_workflow_streaming(request, attachments, &operation)
@@ -371,8 +383,24 @@ pub async fn export_all(
 
 #[cfg(test)]
 mod tests {
-    use super::format_runs;
+    use super::{format_runs, submission_budget, SUBMISSION_BUDGET};
     use ga4gh_sdk::clients::wes::models::{RunListResponse, RunListResponseRunsInner, State};
+    use ga4gh_sdk::utils::{configuration::Configuration, timeouts::Timeouts};
+    use std::time::Duration;
+
+    #[test]
+    fn submission_budget_is_the_configured_limit_or_the_cli_default() {
+        let config = Configuration::default();
+        assert_eq!(submission_budget(&config), SUBMISSION_BUDGET);
+        for seconds in [5, 600] {
+            let limit = Duration::from_secs(seconds);
+            let config = Configuration::default().with_timeouts(Timeouts {
+                submission: limit,
+                ..Default::default()
+            });
+            assert_eq!(submission_budget(&config), limit);
+        }
+    }
 
     #[test]
     fn runs_are_aligned_and_missing_states_are_unknown() {
