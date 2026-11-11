@@ -15,6 +15,7 @@ ga4gh-lib = { path = "../lib" }
 clap = "4"
 tokio = { version = "1", features = ["full"] }
 serde_json = "^1.0"
+serde = "1"
 tempfile = "3.2"
 dirs = "5.0.1"
 anyhow = "1.0.86"
