@@ -116,7 +116,7 @@ pub fn command() -> Command {
 /// a `CommandOutput` with an error message and a failure exit code.
 pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
     if let Some(("workflow", sub)) = matches.subcommand() {
-        return workflow::run(sub).await.map(Some);
+        return workflow::run(sub, None).await.map(Some);
     }
     let service_type = match matches.subcommand() {
         Some(("drs", _)) => ServiceType::DRS,
@@ -141,7 +141,7 @@ pub async fn dispatch_with_config(
 ) -> anyhow::Result<Option<CommandOutput>> {
     match matches.subcommand() {
         Some(("drs", sub)) => drs::run(sub, config).await.map(Some),
-        Some(("workflow", sub)) => workflow::run(sub).await.map(Some),
+        Some(("workflow", sub)) => workflow::run(sub, Some(config)).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
         Some(("trs", sub)) => trs::run(sub, config).await.map(Some),
         Some(("wes", sub)) => wes::run(sub, config).await.map(Some),
@@ -158,7 +158,7 @@ pub async fn dispatch_to(
     stderr: &mut dyn std::io::Write,
 ) -> anyhow::Result<Option<ExitCode>> {
     if let Some(("workflow", sub)) = matches.subcommand() {
-        let output = workflow::run(sub).await?;
+        let output = workflow::run(sub, None).await?;
         stdout.write_all(output.stdout.as_bytes())?;
         stderr.write_all(output.stderr.as_bytes())?;
         return Ok(Some(output.exit_code));
