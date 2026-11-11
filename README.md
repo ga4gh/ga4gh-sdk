@@ -140,6 +140,11 @@ reads as `ReadOnly` (including appropriate lookup POSTs). A non-replayable
 operation gets one attempt and reports lost-response ambiguity for reconciliation.
 `send_once` also covers multipart headers/body and permits an explicit larger
 upload budget. Dropping a future or canceling its token stops local I/O.
+If cancellation or an expired deadline prevents the send future from being
+polled, submission returns an inspectable `OperationError` and makes no attempt.
+Once the send future is polled, interruption remains an
+`AmbiguousSubmissionError`: the server may have accepted the request, so reconcile
+remote state before resubmitting. Local interruption never cancels a remote job.
 
 DRS `get_object_once` and `get_access_url_once` return `Resolution::Ready` or
 `Pending` with a credential-free resume reference. The immediate convenience
