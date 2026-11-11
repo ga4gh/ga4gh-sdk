@@ -1,8 +1,8 @@
 # GA4GH-CLI
 
 The `ga4gh-cli` uses the GA4GH SDK to work with GA4GH API services. It
-currently provides TES, WES, DRS and Service Registry commands. The Rust
-library also provides `TRS` and `ServiceInfo` clients (see the
+currently provides TES, WES, DRS, TRS and Service Registry commands. The Rust
+library also provides a `ServiceInfo` client (see the
 [usage guide](../docs/usage.md)).
 
 ## Installation
@@ -18,8 +18,8 @@ ga4gh-cli --help
 
 The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file. 
 
-The file and the section for the selected service (`TES`, `WES`, `DRS` or
-`REGISTRY`) must exist;
+The file and the section for the selected service (`TES`, `WES`, `DRS`, `TRS`
+or `REGISTRY`) must exist;
 the CLI reports an error instead of silently using `http://localhost` when
 either is missing. Only `base_path` is required. `basic_auth` may omit
 `password`, in which case no password is set.
@@ -38,6 +38,9 @@ are errors rather than being ignored.
     },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
+    },
+    "TRS": {
+        "base_path": "https://workflowhub.eu/ga4gh/trs/v2"
     },
     "REGISTRY": {
         "base_path": "https://registry.example.org/ga4gh/registry/v1"
@@ -260,6 +263,82 @@ the printed run IDs and the error messages, control and bidirectional
 formatting characters from the server are escaped, such as `\u{1b}`; JSONL
 records use JSON escapes such as `\u001b`. Like `tes get` and `drs get`,
 `wes get` prints the server's JSON as received.
+
+### TRS examples
+
+The `trs` commands browse a GA4GH Tool Registry Service (TRS), such as
+WorkflowHub or Dockstore, and download workflow files from it. They only read
+from the registry; nothing is changed there.
+
+#### 1. Configure the registry
+
+The `trs` commands need to know which registry to talk to. They read it from
+the `TRS` section of the CLI's configuration file, `~/.ga4gh-cli/config.json`
+(see [Configuration](#configuration)). The CLI uses one registry at a time.
+
+**a. Choose a registry.** Its `base_path` is the registry's TRS API root.
+
+| Registry    | `base_path`                               | Tool IDs look like                  |
+|-------------|-------------------------------------------|-------------------------------------|
+| WorkflowHub | `https://workflowhub.eu/ga4gh/trs/v2`     | `26`                                |
+| Dockstore   | `https://dockstore.org/api/ga4gh/trs/v2`  | `#workflow/github.com/org/repo`     |
+
+**b. Add the `TRS` section to the configuration file.** For a file containing
+only TRS configuration, the full JSON is:
+
+```json
+{
+    "TRS": {
+        "base_path": "https://workflowhub.eu/ga4gh/trs/v2"
+    }
+}
+```
+
+**c. Check the connection.** This lists one tool from the registry:
+
+```sh
+ga4gh-cli trs tools --limit 1
+```
+
+#### 2. Find a tool, pick a version, download its files
+
+A registry holds **tools**. Each tool has **versions**, and each version has
+one or more **descriptors**: workflow files written in a language such as CWL
+or WDL. Replace `TOOL_ID` and `VERSION_ID` below with values returned by the
+registry:
+
+```sh
+# Find tools. All filters are optional.
+ga4gh-cli trs tools --tool-class Workflow --descriptor-type CWL --limit 5
+
+# Look at one tool and its versions.
+ga4gh-cli trs tool 'TOOL_ID'
+ga4gh-cli trs versions 'TOOL_ID'
+ga4gh-cli trs version 'TOOL_ID' 'VERSION_ID'
+
+# See which files the version has, then download the main workflow file.
+ga4gh-cli trs files 'TOOL_ID' 'VERSION_ID' --type CWL
+ga4gh-cli trs descriptor 'TOOL_ID' 'VERSION_ID' --type CWL --plain > main.cwl
+```
+
+#### Commands
+
+| Command | Result |
+| --- | --- |
+| `trs tools [filters]` | A list of tools, optionally filtered. |
+| `trs tool <TOOL_ID>` | One tool and its versions. |
+| `trs versions <TOOL_ID>` | The versions of a tool. |
+| `trs version <TOOL_ID> <VERSION_ID>` | One version and its descriptor types. |
+| `trs files <TOOL_ID> <VERSION_ID> --type <TYPE>` | The paths and types of its files. |
+| `trs descriptor <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its primary descriptor; `--path <RELATIVE_PATH>` selects another file. |
+| `trs tests <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its test parameter files. |
+
+Results are JSON by default. `trs descriptor --plain` prints the descriptor
+content without a JSON wrapper. `trs tests --plain` prints one inline test file;
+if the server returns several files or only a URL, omit `--plain` to inspect
+their JSON instead. The commands exit with code 0 on success and 1 on request
+or server errors; missing arguments use exit code 2. Error messages and JSON
+output escape terminal control and bidirectional formatting characters.
 
 ## Service Registry commands
 

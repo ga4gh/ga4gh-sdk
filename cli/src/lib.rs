@@ -25,6 +25,7 @@
 pub mod drs;
 pub mod registry;
 pub mod tes;
+pub mod trs;
 pub mod wes;
 
 use clap::{ArgMatches, Command};
@@ -67,6 +68,7 @@ pub fn command() -> Command {
         .arg_required_else_help(true)
         .subcommand(drs::command())
         .subcommand(tes::command())
+        .subcommand(trs::command())
         .subcommand(wes::command())
         .subcommand(registry::command())
 }
@@ -80,6 +82,7 @@ pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutp
     let service_type = match matches.subcommand() {
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
+        Some(("trs", _)) => ServiceType::TRS,
         Some(("wes", _)) => ServiceType::WES,
         Some(("registry", _)) => ServiceType::REGISTRY,
         _ => return Ok(None),
@@ -100,6 +103,7 @@ pub async fn dispatch_with_config(
     match matches.subcommand() {
         Some(("drs", sub)) => drs::run(sub, config).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
+        Some(("trs", sub)) => trs::run(sub, config).await.map(Some),
         Some(("wes", sub)) => wes::run(sub, config).await.map(Some),
         Some(("registry", sub)) => registry::run(sub, config).await.map(Some),
         _ => Ok(None),
@@ -116,6 +120,7 @@ pub async fn dispatch_to(
     let service_type = match matches.subcommand() {
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
+        Some(("trs", _)) => ServiceType::TRS,
         Some(("wes", _)) => ServiceType::WES,
         Some(("registry", _)) => ServiceType::REGISTRY,
         _ => return Ok(None),
