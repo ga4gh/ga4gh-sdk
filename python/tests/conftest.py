@@ -56,3 +56,8 @@ def server():
 @pytest.fixture
 def config(server):
     return Configuration(server.base)
+
+
+@pytest.fixture
+def wes_config(server):
+    return Configuration(f"{server.root}/wes")

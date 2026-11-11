@@ -13,6 +13,9 @@
 //!   (`PyTesTask` is an alias).
 //! - `TesState`: the state of a task, a `str` enum.
 //! - `ListTasksParams` and `ListTasksResponse`: filters and results of `TES.list()`.
+//! - `WES`: a WES client; `Run`: a WES run addressed by its ID; `RunRequest`: a run to
+//!   start; `WesState`: the state of a run, a `str` enum. `RunLog`, `RunSummary`,
+//!   `RunListResponse`, `TaskLog` and `TaskListResponse` are results with their full JSON.
 //!
 //! All classes except the enums can be subclassed in Python. Rust crates can depend on this
 //! crate (`rlib`) to build further bindings on these classes; their `inner` fields hold the
@@ -61,6 +64,7 @@ pub enum PyServiceType {
     DRS,
     TRS,
     AAI,
+    WES,
 }
 
 impl From<PyServiceType> for ServiceType {
@@ -70,6 +74,7 @@ impl From<PyServiceType> for ServiceType {
             PyServiceType::DRS => ServiceType::DRS,
             PyServiceType::TRS => ServiceType::TRS,
             PyServiceType::AAI => ServiceType::AAI,
+            PyServiceType::WES => ServiceType::WES,
         }
     }
 }
@@ -80,6 +85,7 @@ fn GA4GH(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyConfiguration>()?;
     m.add_class::<PyServiceInfo>()?;
     m.add_class::<PyTransport>()?;
+    clients::wes::register(py, m)?;
     m.add_class::<PyTES>()?;
     m.add_class::<PyTesTask>()?;
     // Previous name of `TesTask`.
