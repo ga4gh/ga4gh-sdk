@@ -1,9 +1,10 @@
 name: Release
 
-# Publishes the release artefacts of a version tag (v<workspace version>);
-# for now the Python distributions. The ga4gh/ga4gh-sdk repository publishes
-# to PyPI, forks to TestPyPI; the repository variable PYPI_INDEX (pypi or
-# testpypi) overrides that default. See docs/releasing.md.
+# Publishes the release artefacts of a version tag (v<workspace version>):
+# the Python distributions to a package index, then the CLI binaries to a
+# draft GitHub release. The ga4gh/ga4gh-sdk repository publishes to PyPI,
+# forks to TestPyPI; the repository variable PYPI_INDEX (pypi or testpypi)
+# overrides that default. See docs/releasing.md.
 on:
   push:
     tags: ['v*']
@@ -22,6 +23,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       index: ${{ steps.index.outputs.index }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,8 +46,12 @@ jobs:
           print(f'tag: {tag}, workspace version: {version}')
           if tag != f'v{version}':
               sys.exit(f'::error::Tag {tag} does not match the workspace version v{version}')
+          # Every release before 1.0.0, and every version with a pre-release
+          # part (for example 1.1.0-rc.1), is a GitHub pre-release.
+          prerelease = version.startswith('0.') or '-' in version.split('+')[0]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               print(f'version={version}', file=output)
+              print(f'prerelease={str(prerelease).lower()}', file=output)
           PY
       - name: Check that the tagged commit is on main
         run: |
@@ -100,3 +106,58 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           repository-url: ${{ needs.prepare.outputs.index == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
+
+  binaries:
+    name: Release binaries
+    needs: prepare
+    uses: ./.github/workflows/binaries.yml
+
+  # Runs last, after the package is on the index: a draft release with the
+  # CLI archives, their checksums and GitHub's generated notes. Maintainers
+  # add the curated notes and publish it.
+  github-release:
+    name: GitHub release
+    needs: [prepare, binaries, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      attestations: write # record the build provenance of the archives
+      contents: write # create the draft release and upload its files
+      id-token: write # sign the provenance attestations
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: cli-*
+          path: dist
+          merge-multiple: true
+      - name: Write checksums
+        working-directory: dist
+        run: |
+          sha256sum -- ga4gh-cli-* > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Create the draft release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # A re-run replaces the files of the draft it created before; a
+          # published release is left alone.
+          if is_draft="$(gh release view "$TAG" --json isDraft --jq .isDraft 2> /dev/null)"; then
+            if [[ "$is_draft" != true ]]; then
+              echo "::error::The release $TAG is already published"
+              exit 1
+            fi
+            gh release upload "$TAG" dist/* --clobber
+          else
+            flags=(--draft --verify-tag --generate-notes --title "$TAG")
+            if [[ "$PRERELEASE" == true ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$TAG" "${flags[@]}" dist/*
+          fi
+          echo "Draft release: $(gh release view "$TAG" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"

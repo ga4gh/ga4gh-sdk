@@ -78,6 +78,12 @@ jobs:
     name: Python wheels
     uses: ./.github/workflows/wheels.yml
 
+  # Builds and runs the CLI binary of every release platform; nothing is
+  # published.
+  binaries:
+    name: CLI binaries
+    uses: ./.github/workflows/binaries.yml
+
   integration:
     name: Integration (${{ matrix.suite }})
     runs-on: ubuntu-latest
@@ -139,7 +145,7 @@ jobs:
 
   passed:
     name: CI passed
-    needs: [lint, test, build, python, wheels, integration]
+    needs: [lint, test, build, python, wheels, binaries, integration]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -156,7 +162,7 @@ jobs:
           results = {name: job['result'] for name, job in json.loads(os.environ['NEEDS']).items()}
           for name, result in results.items():
               print(f'{name}: {result}')
-          if set(results) != {'lint', 'test', 'build', 'python', 'wheels', 'integration'} or any(
+          if set(results) != {'lint', 'test', 'build', 'python', 'wheels', 'binaries', 'integration'} or any(
               result != 'success' for result in results.values()
           ):
               sys.exit(1)
