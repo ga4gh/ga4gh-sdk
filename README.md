@@ -214,9 +214,12 @@ list of strings, numbers and booleans repeats it once per item, in order
 (`tag_key=a&tag_key=b`; an empty list sends nothing). Keys and values are form
 encoded, so a space becomes `+`. Objects, nested lists and `null` inside a list
 are rejected before a request is sent, because TES pairs `tag_key` and
-`tag_value` items by position. Before, `Pager` sent objects and nested lists as
-JSON text, and `Pager` and the Python `Transport` left out `null` list items;
-`Pager::new` and the Python methods now return an error for them instead.
+`tag_value` items by position.
+
+**Behavior change:** `Pager` used to send objects and nested lists as JSON text,
+and `Pager` and the Python `Transport` left out `null` list items.
+`Pager::new` and the Python methods now return an error for them instead;
+remove such values from the query before the call.
 
 The CLI streams `tes list --all --format jsonl` and `wes list --all --format
 jsonl` through caller-owned writers, with one JSON object per stdout line.

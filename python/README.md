@@ -422,12 +422,13 @@ The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=
 - `params` holds query parameters, as a `dict` or a JSON object string. Values are
   strings, numbers, booleans or lists of these; a list repeats the parameter
   (`{"tag_key": ["a", "b"]}` gives `tag_key=a&tag_key=b`), and `None` or an empty
-  list leaves it out. Keys and values are form encoded (a space becomes `+`), the same
-  as in the Rust SDK; they follow any query already in `endpoint`. Other values, such
-  as a `dict`, a nested list or `None` inside a list, raise `ValueError` before a
-  request is sent. Earlier versions left out `None` list items; remove them yourself,
-  or leave out the whole parameter, because TES pairs `tag_key` and `tag_value` items
-  by position.
+  list leaves it out. Keys and values are form encoded (a space becomes `+`), as in
+  the Rust SDK, and are appended after a query already in `endpoint`.
+  - Other values, such as a `dict`, a nested list or `None` inside a list, raise
+    `ValueError` before a request is sent.
+  - **Behavior change:** earlier versions left out `None` list items. Remove them
+    yourself, keeping `tag_key` and `tag_value` items aligned, since TES pairs them
+    by position.
 - `fields` is a list of `(name, value)` text parts; `files` is a list of
   `(name, filename, content)` or `(name, filename, content, content_type)` tuples, with
   `content` as `bytes`. Names may repeat, as for WES `workflow_attachment`.

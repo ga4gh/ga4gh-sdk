@@ -188,6 +188,7 @@ impl Pager {
         if let Some(token) = &self.checkpoint.next_token {
             params["page_token"] = json!(token);
         }
+        // `new` checked the query and the token is a string, so this can't fail.
         let pairs = query_pairs(&params).map_err(|e| self.failure(e))?;
         let path = match self.checkpoint.service {
             ServiceKind::Tes => "tasks",

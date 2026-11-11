@@ -3,11 +3,12 @@
 //! Each case goes through a public request path to a mock server that matches
 //! the raw query string exactly.
 use ga4gh_sdk::{
+    clients::tes::{models::ListTasksParams, TES},
     clients::{
         pagination::{Pager, PagingOptions},
         wait::ServiceKind,
     },
-    utils::{configuration::Configuration, transport::Transport},
+    utils::{configuration::Configuration, query::encode_query, transport::Transport},
 };
 use mockito::{mock, server_url, Matcher};
 use serde_json::{json, Value};
@@ -55,6 +56,8 @@ fn unsupported_cases() -> Vec<(&'static str, Value)> {
 #[tokio::test]
 async fn transport_sends_shared_cases() {
     for (name, params, query) in shared_cases() {
+        // The Python bindings send `encode_query`'s output; it must match.
+        assert_eq!(encode_query(&params).unwrap(), query, "{name}");
         let request = mock("GET", format!("/qt-{name}/tasks").as_str())
             .match_query(Matcher::Exact(query.to_owned()))
             .with_body("ok")
@@ -149,4 +152,34 @@ async fn pager_rejects_unsupported_values_before_sending() {
         assert!(error.starts_with("query parameter '"), "{name}: {error}");
         request.assert();
     }
+}
+
+#[tokio::test]
+async fn tes_pages_repeat_tags_in_order() {
+    let request = mock("GET", "/qp-tags/tasks")
+        .match_query(Matcher::Exact(
+            "page_size=2&tag_key=team+a&tag_key=x%2Fy&tag_value=&tag_value=1%262".to_owned(),
+        ))
+        .with_body(r#"{"tasks":[]}"#)
+        .expect(1)
+        .create();
+    let tes = TES {
+        config: Configuration::new(url::Url::parse(&format!("{}/qp-tags", server_url())).unwrap()),
+        service: Err("unused".into()),
+        transport: transport("/qp-tags"),
+    };
+    let params = ListTasksParams {
+        tag_key: Some(vec!["team a".into(), "x/y".into()]),
+        tag_value: Some(vec!["".into(), "1&2".into()]),
+        page_size: Some(2),
+        name_prefix: None,
+        state: None,
+        page_token: None,
+        view: None,
+    };
+    let mut pager = tes
+        .pages(Some(params), PagingOptions::new(Duration::from_secs(10)))
+        .unwrap();
+    pager.next_page().await.unwrap();
+    request.assert();
 }

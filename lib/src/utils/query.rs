@@ -25,6 +25,7 @@ use std::{error::Error, fmt};
 
 /// Query parameters that the shared policy can't encode.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum QueryError {
     /// The parameters are not a JSON object.
     NotAnObject,
