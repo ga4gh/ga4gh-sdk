@@ -60,7 +60,9 @@ gateway keeps its whole prefix, for example
 `timeouts` sets time limits in seconds for the commands of that section:
 `connect` (default 10), `request` (default 60), `discovery` (the service-info
 check, default 10) and `submission` (`tes create` and `wes run`, including
-uploads, default 300). A submission is sent once; if it runs out of time
+uploads, default 300). `tes save` applies `request` to each wait for data
+of a download instead of to the whole download. A submission is sent once;
+if it runs out of time
 after its request started, the error says that it may have been accepted, so look
 for the task or run before you submit it again. The
 [usage guide](../docs/usage.md#timeouts) has the details. Downstream binaries
@@ -245,6 +247,7 @@ still running, has no logs yet, or an executor log has no `stdout` field. URLs
 are shown without user names, passwords, query strings and fragments; `?...`
 marks a removed query string or fragment, which may hold the signature of a
 pre-signed URL. `tes get "$task_id" FULL` shows the complete response.
+`tes log` and `tes save` print these notes only when they fail.
 
 2. To show an inline log, run `tes log` with its selector. Control and
    bidirectional formatting characters are escaped; line breaks are kept:
@@ -287,8 +290,8 @@ paths) and declare that file in `outputs`, then save it as a `file:` or
 
 Supported URL schemes:
 
-- `http` and `https`: The CLI sends a plain `GET` request, follows
-  redirects and uses the `connect` timeout of the `TES` section. It sends no
+- `http` and `https`: The CLI sends a plain `GET` request and follows
+  redirects. It sends no
   credentials from the configuration file, since output URLs can point to
   any host. Use URLs that need no credentials, such as pre-signed URLs.
   Proxy environment variables apply.
@@ -299,6 +302,13 @@ Supported URL schemes:
   add `AWS_ALLOW_HTTP=true` for a plain HTTP endpoint). Set
   `AWS_SKIP_SIGNATURE=true` for public buckets. Requests that fail
   temporarily are retried up to three times.
+
+Both wait at most the `connect` time of the `TES` section for a connection,
+and fail when no data arrives for the `request` time (default 60 seconds); a
+download as a whole has no time limit. Saved files get the permissions that
+the umask allows, as with other new files. Debug logs of the HTTP libraries
+show full URLs, so the CLI logs them only when `RUST_LOG` names them, for
+example `RUST_LOG=debug,reqwest=debug`.
 
 Other schemes, such as `file`, `gs` or `ftp`, are refused with an error, and
 so are declared outputs of type `DIRECTORY` or with a wildcard: save the files

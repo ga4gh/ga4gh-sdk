@@ -31,7 +31,7 @@ const FINAL_STATES: [&str; 5] = [
 ];
 
 /// The URL schemes that `tes save` can download.
-pub(crate) const SUPPORTED_SCHEMES: &str = "http, https and s3";
+const SUPPORTED_SCHEMES: &str = "http, https and s3";
 
 /// What a task holds under one selector.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,7 +169,7 @@ impl Catalog {
     fn add_executor_log(&mut self, attempt: usize, executor: usize, log: &Value) {
         let exit_code = log
             .get("exit_code")
-            .map_or_else(|| "none".to_string(), ToString::to_string);
+            .map_or_else(|| "none".to_string(), |code| printable(&code.to_string()));
         for stream in ["stdout", "stderr"] {
             let selector = format!("{stream}:{attempt}:{executor}");
             match log.get(stream).and_then(Value::as_str) {
@@ -251,7 +251,9 @@ impl Catalog {
             };
             table.push_str(&format!(
                 "{:<14} {:<10} {}{detail}\n",
-                item.selector, size, item.description
+                item.selector,
+                size,
+                printable(&item.description)
             ));
         }
         table
@@ -535,9 +537,12 @@ async fn save_one(
     config: &Configuration,
 ) -> anyhow::Result<u64> {
     let dir = destination.parent().unwrap_or(Path::new("."));
-    let mut temp = tempfile::Builder::new()
-        .prefix(".ga4gh-cli-")
-        .suffix(".part")
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".ga4gh-cli-").suffix(".part");
+    // Saved files get the usual permissions under the umask, not 0600.
+    #[cfg(unix)]
+    builder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o666));
+    let mut temp = builder
         .tempfile_in(dir)
         .map_err(|error| anyhow::anyhow!("Can't create a file in {}: {error}", dir.display()))?;
     let written = match &item.content {
@@ -576,7 +581,7 @@ async fn download(
     let parsed = Url::parse(url).map_err(|error| anyhow::anyhow!("Malformed URL: {error}"))?;
     match parsed.scheme() {
         "http" | "https" => download_http(&parsed, file, config).await,
-        "s3" => download_s3(&parsed, file).await,
+        "s3" => download_s3(&parsed, file, config).await,
         scheme => anyhow::bail!(
             "Unsupported URL scheme '{}'; supported: {SUPPORTED_SCHEMES}",
             printable(scheme)
@@ -604,9 +609,11 @@ async fn download_http(
         anyhow::bail!("{shown} returned HTTP {status}");
     }
     let expected = response.content_length();
-    let mut stream = response.bytes_stream();
+    let mut stream = Box::pin(response.bytes_stream());
     let mut written = 0u64;
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) =
+        next_chunk(&mut stream, config.timeouts.request, &shown, written).await?
+    {
         let chunk = chunk.map_err(|error| {
             anyhow::anyhow!(
                 "Download from {shown} was interrupted after {written} bytes: {}",
@@ -622,8 +629,12 @@ async fn download_http(
     Ok(written)
 }
 
-async fn download_s3(url: &Url, file: &mut std::fs::File) -> anyhow::Result<u64> {
-    use object_store::aws::AmazonS3Builder;
+async fn download_s3(
+    url: &Url,
+    file: &mut std::fs::File,
+    config: &Configuration,
+) -> anyhow::Result<u64> {
+    use object_store::aws::{AmazonS3Builder, AmazonS3ConfigKey};
     use object_store::ObjectStore;
 
     let shown = display_url(url.as_str());
@@ -636,10 +647,29 @@ async fn download_s3(url: &Url, file: &mut std::fs::File) -> anyhow::Result<u64>
     if key.as_ref().is_empty() {
         anyhow::bail!("{shown} names no object");
     }
+    // `with_client_options` replaces the client settings that `from_env`
+    // read, such as `AWS_ALLOW_HTTP`, so they are read here again.
+    let mut options = object_store::ClientOptions::new();
+    for (key, value) in std::env::vars() {
+        if !key.starts_with("AWS_") {
+            continue;
+        }
+        if let Ok(AmazonS3ConfigKey::Client(key)) = key.to_ascii_lowercase().parse() {
+            options = options.with_config(key, value);
+        }
+    }
     let store = AmazonS3Builder::from_env()
         .with_bucket_name(bucket)
+        // No limit for a whole request, which would cut off large objects; a
+        // stalled transfer fails in `next_chunk` instead.
+        .with_client_options(
+            options
+                .with_timeout_disabled()
+                .with_connect_timeout(config.timeouts.connect),
+        )
         .with_retry(object_store::RetryConfig {
             max_retries: 3,
+            retry_timeout: std::time::Duration::MAX,
             ..Default::default()
         })
         .build()
@@ -651,7 +681,9 @@ async fn download_s3(url: &Url, file: &mut std::fs::File) -> anyhow::Result<u64>
     let expected = result.meta.size;
     let mut stream = result.into_stream();
     let mut written = 0u64;
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) =
+        next_chunk(&mut stream, config.timeouts.request, &shown, written).await?
+    {
         let chunk = chunk.map_err(|error| {
             anyhow::anyhow!("Download of {shown} was interrupted after {written} bytes: {error}")
         })?;
@@ -662,6 +694,25 @@ async fn download_s3(url: &Url, file: &mut std::fs::File) -> anyhow::Result<u64>
         anyhow::bail!("Download of {shown} ended after {written} of {expected} bytes");
     }
     Ok(written)
+}
+
+/// Waits for the next chunk of a download for at most `idle`, so that a server
+/// that stops sending can't stall the command. The whole download has no
+/// time limit.
+async fn next_chunk<S: futures_util::Stream + Unpin>(
+    stream: &mut S,
+    idle: std::time::Duration,
+    shown: &str,
+    written: u64,
+) -> anyhow::Result<Option<S::Item>> {
+    tokio::time::timeout(idle, stream.next())
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Download from {shown} stalled: no data for {} seconds after {written} bytes",
+                idle.as_secs_f64()
+            )
+        })
 }
 
 #[cfg(test)]
@@ -723,6 +774,16 @@ mod tests {
         let table = catalog.table();
         assert!(table.contains("file:0:0       6          output file: s3://bucket/results/out.txt (path /outputs/out.txt)"), "{table}");
         assert!(!table.contains("secret"), "{table}");
+    }
+
+    #[test]
+    fn server_values_in_the_table_are_escaped() {
+        let task = json!({"state": "COMPLETE", "logs": [{
+            "logs": [{"exit_code": "\u{9b}2J\u{202e}", "stdout": ""}],
+        }]});
+        let table = Catalog::from_task(&task).table();
+        assert!(table.contains(r#"exit code "\u{9b}2J\u{202e}""#), "{table}");
+        assert!(!table.contains(['\u{9b}', '\u{202e}']), "{table}");
     }
 
     #[test]

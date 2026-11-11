@@ -1,5 +1,5 @@
 //! `tes files`, `tes log` and `tes save` against a mock TES, mock HTTP and S3
-//! storage, and a server that breaks off a download.
+//! storage, and servers that break off or stall a download.
 
 // The CLI locates its config through HOME, which Windows does not use.
 #![cfg(unix)]
@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 /// Bytes that aren't valid UTF-8, to check that files are saved unchanged.
@@ -190,6 +191,52 @@ fn files_lists_selectors_and_hides_url_secrets() {
         "{text}"
     );
     assert!(!text.contains("SECRET"), "{text}");
+}
+
+#[test]
+fn debug_logs_omit_redirected_signed_urls() {
+    let prefix = "/save-redirect";
+    let storage = format!("{}{prefix}/storage", mockito::server_url());
+    let task = json!({"id": "t1", "state": "COMPLETE", "logs": [{"logs": [], "outputs": [
+        {"url": format!("{storage}/signed?X-Amz-Signature=SECRET1"), "path": "/o/r.bin", "size_bytes": "2"}
+    ]}]});
+    let _tes = tes_mocks(prefix, &task);
+    let _storage = [
+        mock("GET", Matcher::Regex(format!("^{prefix}/storage/signed")))
+            .with_status(302)
+            .with_header(
+                "location",
+                &format!("{storage}/target?X-Amz-Signature=SECRET2"),
+            )
+            .create(),
+        mock("GET", Matcher::Regex(format!("^{prefix}/storage/target")))
+            .with_status(200)
+            .with_body("ok")
+            .create(),
+    ];
+    let home = home_with_tes(prefix);
+    let dir = home.path().join("results");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
+    command
+        .args([
+            "tes",
+            "save",
+            "t1",
+            "file:0:0",
+            "--dir",
+            dir.to_str().unwrap(),
+        ])
+        .env("HOME", home.path())
+        .env("RUST_LOG", "trace");
+    for proxy in ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+        command.env_remove(proxy);
+    }
+    let output = command.output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(fs::read(dir.join("r.bin")).unwrap(), b"ok");
+    for stream in [stdout(&output), stderr(&output)] {
+        assert!(!stream.contains("SECRET"), "{stream}");
+    }
 }
 
 #[test]
@@ -445,4 +492,99 @@ fn invalid_input_fails_before_the_service_is_contacted() {
     let output = run(&home, &["tes", "save", "t1", "file:0:0"]);
     assert_eq!(output.status.code(), Some(2), "--dir is required");
     assert!(!dir.exists());
+}
+
+#[test]
+fn a_stalled_download_times_out_and_leaves_no_file() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 4096];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nslow")
+            .unwrap();
+        // Keep the connection open without sending more data.
+        std::thread::sleep(Duration::from_secs(5));
+    });
+    let prefix = "/save-stalled";
+    let task = json!({"id": "t1", "state": "COMPLETE", "logs": [{
+        "logs": [], "outputs": [{"url": format!("http://{address}/slow.bin"), "path": "/o/slow.bin", "size_bytes": "1000"}]
+    }]});
+    let _tes = tes_mocks(prefix, &task);
+    let home = home_with_tes(prefix);
+    let config = json!({"TES": {
+        "base_path": format!("{}{prefix}", mockito::server_url()),
+        "timeouts": {"request": 1},
+    }});
+    fs::write(
+        home.path().join(".ga4gh-cli/config.json"),
+        config.to_string(),
+    )
+    .unwrap();
+    let dir = home.path().join("results");
+    let started = Instant::now();
+    let output = run(
+        &home,
+        &[
+            "tes",
+            "save",
+            "t1",
+            "file:0:0",
+            "--dir",
+            dir.to_str().unwrap(),
+        ],
+    );
+    let message = stderr(&output);
+    assert_eq!(output.status.code(), Some(1), "{message}");
+    assert!(
+        message.contains("stalled: no data for 1 seconds after 4 bytes"),
+        "{message}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(entries(&dir).is_empty(), "{:?}", entries(&dir));
+    server.join().unwrap();
+}
+
+#[test]
+fn force_replaces_a_symlink_without_writing_through_it() {
+    let prefix = "/save-symlink";
+    let _tes = tes_mocks(prefix, &complete_task(prefix));
+    let home = home_with_tes(prefix);
+    let dir = home.path().join("results");
+    fs::create_dir(&dir).unwrap();
+    let outside = home.path().join("outside.txt");
+    fs::write(&outside, "keep").unwrap();
+    std::os::unix::fs::symlink(&outside, dir.join("stdout-0-0.txt")).unwrap();
+    let dir_arg = dir.to_str().unwrap();
+    let output = run(
+        &home,
+        &["tes", "save", "t1", "stdout:0:0", "--dir", dir_arg],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("already exists"),
+        "{}",
+        stderr(&output)
+    );
+    let output = run(
+        &home,
+        &[
+            "tes",
+            "save",
+            "t1",
+            "stdout:0:0",
+            "--dir",
+            dir_arg,
+            "--force",
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "keep");
+    assert!(!dir
+        .join("stdout-0-0.txt")
+        .symlink_metadata()
+        .unwrap()
+        .is_symlink());
 }

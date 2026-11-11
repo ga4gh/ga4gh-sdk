@@ -303,7 +303,8 @@ async fn run_files(
         .flatten()
         .map(|values| values.cloned().collect())
         .unwrap_or_default();
-    // Invalid selectors and names fail before the service is contacted.
+    // Invalid selectors and names fail before the service is contacted;
+    // `Catalog::find` normalizes the selectors again when it looks them up.
     for selector in &selectors {
         tes_files::parse_selector(selector)?;
     }
