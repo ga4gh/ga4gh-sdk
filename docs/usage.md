@@ -85,11 +85,13 @@ with `config.from_file("MY_SERVICE")`. `Configuration::from_path(path, "TES")`
 reads a section from another file. Files written for earlier versions read as
 before; their `extra` is empty.
 
-The SDK reads `basic_auth` and `oauth_access_token` but **doesn't send them
-yet**: requests carry no `Authorization` header (see
-[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). Until that changes, the
-SDK and the CLI work only with services that allow anonymous access, or behind
-a proxy that adds credentials.
+Default SDK clients and CLI service commands read `basic_auth` and
+`oauth_access_token` but **do not send them yet** (see
+[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). They need an anonymous
+service or an authenticating proxy. The experimental `workflow submit` CLI
+command sends a configured OAuth bearer token; Rust callers can also supply an
+authenticated client through `WES::from_transport()`. Cross-surface consistency
+is tracked in [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.

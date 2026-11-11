@@ -47,7 +47,8 @@ Downstream CLI callers can instead supply a `Configuration` through
 For OAuth, set `oauth_access_token` to the current token. The CLI injects a
 sensitive bearer header into the shared transport; it does not implement login
 or token refresh. Other schemes use `WES::from_transport` with a caller-owned
-authenticated client (the broader configuration/auth work remains #31):
+authenticated client (shared transport authentication remains #31; cross-surface
+integration is tracked in #203):
 
 ```sh
 cargo run -p ga4gh-cli -- workflow submit \
