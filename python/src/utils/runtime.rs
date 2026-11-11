@@ -9,8 +9,9 @@
 //! runtime as `asyncio` futures, with [`future_into_py`].
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use std::future::Future;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
+use tokio::sync::{oneshot, Semaphore};
 
 static RUNTIME: OnceLock<Result<Runtime, std::io::Error>> = OnceLock::new();
 
@@ -42,7 +43,7 @@ pub fn io<T: Send>(
         .map_err(PyRuntimeError::new_err)
 }
 
-/// How many async calls run at once; further calls wait for a thread.
+/// How many async calls run at once; further calls wait for a slot.
 pub const ASYNC_CALL_THREADS: usize = 256;
 
 /// The name of the threads that run async calls.
@@ -66,32 +67,63 @@ fn call_threads() -> Result<&'static Runtime, String> {
         .map_err(|e| format!("Cannot start async call threads: {e}"))
 }
 
+fn call_slots() -> Arc<Semaphore> {
+    static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    SLOTS
+        .get_or_init(|| Arc::new(Semaphore::new(ASYNC_CALL_THREADS)))
+        .clone()
+}
+
+async fn run_until_cancelled<F, Fut, T>(
+    make: F,
+    cancelled: oneshot::Receiver<()>,
+) -> Option<Result<T, String>>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T, String>>,
+{
+    tokio::select! {
+        biased;
+        _ = cancelled => None,
+        // Construct the SDK future only after the cancellation branch is checked.
+        result = async move { make().await } => Some(result),
+    }
+}
+
 /// Runs the future that `make` creates on the runtime and gives its result.
 ///
 /// The SDK's futures are not `Send` (they hold boxed errors across awaits), so they can't
 /// be spawned as tasks. Each one runs in a thread of its own pool instead (up to
-/// [`ASYNC_CALL_THREADS`] at once), which blocks on it on the runtime. The future that this
-/// function returns is `Send`; dropping it drops the SDK's future, which cancels its
-/// request, or skips the call if it hasn't started yet.
+/// [`ASYNC_CALL_THREADS`] at once), which blocks on it on the runtime. Further calls wait
+/// for a slot before entering the blocking pool. The future that this function returns is
+/// `Send`; dropping it drops the SDK's future, which cancels its request, or skips the call
+/// if it hasn't started yet.
 pub async fn spawn_io<F, Fut, T>(make: F) -> Result<T, String>
 where
     F: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = Result<T, String>> + 'static,
     T: Send + 'static,
 {
+    spawn_io_with_slots(make, call_slots()).await
+}
+
+async fn spawn_io_with_slots<F, Fut, T>(make: F, slots: Arc<Semaphore>) -> Result<T, String>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T, String>> + 'static,
+    T: Send + 'static,
+{
     let runtime = runtime()?;
+    // A cancelled waiter leaves this queue without scheduling a blocking task.
+    let slot = slots
+        .acquire_owned()
+        .await
+        .map_err(|_| "The async call pool is closed".to_owned())?;
     // Dropped with the returned future, which ends the `select!` below.
-    let (_cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
+    let (_cancel, cancelled) = oneshot::channel::<()>();
     let task = call_threads()?.spawn_blocking(move || {
-        runtime.block_on(async move {
-            tokio::select! {
-                // Checked first, so that a call cancelled while waiting for a thread
-                // doesn't start its request.
-                biased;
-                _ = cancelled => None,
-                result = make() => Some(result),
-            }
-        })
+        let _slot = slot;
+        runtime.block_on(run_until_cancelled(make, cancelled))
     });
     match task.await {
         Ok(Some(result)) => result,
@@ -157,17 +189,20 @@ mod tests {
         }
         let dropped = Arc::new(AtomicBool::new(false));
         let flag = dropped.clone();
+        let (started, started_rx) = oneshot::channel::<()>();
         let call = spawn_io(move || {
             let guard = SetOnDrop(flag);
             async move {
                 let _guard = guard;
+                let _ = started.send(());
                 std::future::pending::<Result<(), String>>().await
             }
         });
         runtime().unwrap().block_on(async {
+            tokio::pin!(call);
             tokio::select! {
-                _ = call => panic!("the pending future finished"),
-                _ = tokio::task::yield_now() => {}
+                _ = &mut call => panic!("the pending future finished"),
+                _ = started_rx => {}
             }
         });
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -184,5 +219,48 @@ mod tests {
             pyo3_async_runtimes::tokio::get_runtime(),
             runtime
         ));
+    }
+
+    #[test]
+    fn cancellation_before_start_does_not_construct_the_call() {
+        let constructed = Arc::new(AtomicBool::new(false));
+        let flag = constructed.clone();
+        let (cancel, cancelled) = oneshot::channel::<()>();
+        drop(cancel);
+        let result = runtime().unwrap().block_on(run_until_cancelled(
+            move || {
+                flag.store(true, Ordering::SeqCst);
+                async { Ok::<(), String>(()) }
+            },
+            cancelled,
+        ));
+        assert!(result.is_none());
+        assert!(!constructed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn cancellation_while_waiting_for_a_slot_does_not_queue_a_call() {
+        let slots = Arc::new(Semaphore::new(1));
+        let constructed = Arc::new(AtomicBool::new(false));
+        let flag = constructed.clone();
+        runtime().unwrap().block_on(async {
+            let slot = slots.clone().acquire_owned().await.unwrap();
+            let mut call = Box::pin(spawn_io_with_slots(
+                move || {
+                    flag.store(true, Ordering::SeqCst);
+                    async { Ok::<(), String>(()) }
+                },
+                slots,
+            ));
+            tokio::select! {
+                biased;
+                result = &mut call => panic!("call ran without a slot: {result:?}"),
+                _ = tokio::task::yield_now() => {}
+            }
+            drop(call);
+            drop(slot);
+            tokio::task::yield_now().await;
+        });
+        assert!(!constructed.load(Ordering::SeqCst));
     }
 }

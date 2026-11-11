@@ -229,7 +229,9 @@ asyncio.run(main())
 - The requests run on the runtime of the sync API without the GIL, so they don't block
   the event loop, and several of them run at the same time. Because the SDK's futures
   aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256
-  calls run at once, and further ones wait for a thread (cancelled ones never start).
+  calls run at once. Further calls wait for a slot without occupying a pool thread;
+  cancelling a waiting call prevents it from starting. This limits concurrent calls,
+  not the number of futures an app can schedule.
 - The methods return `asyncio.Future`s of the running event loop, so call them from a
   coroutine or a callback of the loop; outside of one, they raise `RuntimeError`.
 - Cancelling an awaitable, for example with `asyncio.wait_for()` or
