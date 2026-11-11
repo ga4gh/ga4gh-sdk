@@ -1,5 +1,6 @@
 """Exercise actual HTTP, sockets, multipart, replay, expiry and session boundaries."""
 import concurrent.futures
+import hashlib
 import http.client
 import importlib.util
 import json
@@ -169,8 +170,16 @@ class ScenarioAPI(unittest.TestCase):
         import re
         pack=ROOT/'testbed/pack'
         remotes=json.loads((pack/'reference-map.json').read_text())
+        pins=json.loads((pack/'spec-pins.json').read_text())
+        expected={f'{service}.openapi.yaml': pins[service]['sha256'] for service in ('tes','wes','trs')}
+        expected.update(pins['drs']['files'])
+        expected[pins['service-info']['local_path']]=pins['service-info']['sha256']
+        snapshot_files=(*pack.rglob('*.yaml'),*pack.rglob('*.md'))
+        self.assertEqual({str(path.relative_to(pack)) for path in snapshot_files},set(expected))
+        for name,sha256 in expected.items():
+            self.assertEqual(hashlib.sha256((pack/name).read_bytes()).hexdigest(),sha256,name)
         for source in pack.rglob('*.yaml'):
-            for ref in re.findall(r"\$ref:\s*['\"]?([^'\"\s]+)",source.read_text()):
+            for ref in re.findall(r"['\"]?\$ref['\"]?\s*:\s*['\"]?([^'\"\s]+)",source.read_text()):
                 path=ref.split('#')[0]
                 if not path:continue
                 target=pack/remotes[path] if path.startswith('http') else source.parent/path
