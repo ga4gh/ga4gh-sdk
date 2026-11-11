@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/ga4gh-io-profile.schema.json",
+  "title": "GA4GH IO Profile Meta-Schema",
+  "description": "Meta-schema for validating GA4GH workflow and tool IO JSON Schema profiles.",
+  "allOf": [
+    {
+      "$ref": "https://json-schema.org/draft/2020-12/schema"
+    }
+  ],
+  "properties": {
+    "properties": {
+      "type": "object",
+      "properties": {
+        "inputs": {
+          "description": "JSON Schema block defining the expected input parameters for the workflow or tool.",
+          "$ref": "https://json-schema.org/draft/2020-12/schema"
+        },
+        "outputs": {
+          "description": "JSON Schema block defining the expected output structure from the workflow or tool.",
+          "$ref": "https://json-schema.org/draft/2020-12/schema"
+        }
+      },
+      "required": ["inputs"]
+    }
+  },
+  "$defs": {
+    "ga4gh-extensions": {
+      "description": "Custom GA4GH annotations for execution APIs and UI rendering.",
+      "type": "object",
+      "properties": {
+        "x-ga4gh-drs-uri": {
+          "type": "boolean",
+          "description": "Indicates if a string field is expected to be a valid DRS URI."
+        },
+        "x-ga4gh-ontology": {
+          "type": "string",
+          "format": "uri",
+          "description": "URI to an ontology term (e.g., EDAM format) semantically describing the data type."
+        },
+        "x-ga4gh-tabular-schema": {
+          "$ref": "https://json-schema.org/draft/2020-12/schema",
+          "description": "A nested JSON schema to validate the internal row/column structure of a tabular file."
+        },
+        "x-ga4gh-ui-widget": {
+          "$ref": "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/vocabularies/ui-widgets.schema.json",
+          "description": "Hint for UI clients on how to render this input/output. References an external standardized vocabulary."
+        },
+        "x-ga4gh-fa-icon": {
+          "type": "string",
+          "description": "Inspired by nf-core. FontAwesome icon class to display next to the parameter in dynamic UIs."
+        },
+        "x-ga4gh-description-format": {
+          "type": "string",
+          "enum": ["plain_text", "markdown", "rst"],
+          "default": "plain_text",
+          "description": "Hint for UI/CLI clients on how to parse and render the standard JSON Schema 'description' field, avoiding redundant text properties."
+        },
+        "x-ga4gh-hidden": {
+          "type": "boolean",
+          "description": "Inspired by nf-core. If true, UI generators should hide this parameter from default user views."
+        },
+        "x-ga4gh-error-message": {
+          "type": "string",
+          "description": "Inspired by nf-core. Custom, human-readable error message to display if WES payload validation fails."
+        }
+      }
+    }
+  }
+}

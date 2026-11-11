@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-import GA4GH
-from GA4GH import (
+import ga4gh_sdk
+from ga4gh_sdk import (
     AccessPlan,
     AccessURL,
     BulkAccessURL,
@@ -489,17 +489,17 @@ def test_client_can_be_used_from_several_threads(drs):
 @pytest.mark.parametrize(
     "cls",
     [
-        GA4GH.DRS,
-        GA4GH.DrsObject,
-        GA4GH.AccessURL,
-        GA4GH.BulkAccessURL,
-        GA4GH.PendingResolution,
-        GA4GH.BulkPolicy,
-        GA4GH.BulkOutcome,
-        GA4GH.BulkReport,
-        GA4GH.DrsUri,
-        GA4GH.DrsResolver,
-        GA4GH.AccessPlan,
+        ga4gh_sdk.DRS,
+        ga4gh_sdk.DrsObject,
+        ga4gh_sdk.AccessURL,
+        ga4gh_sdk.BulkAccessURL,
+        ga4gh_sdk.PendingResolution,
+        ga4gh_sdk.BulkPolicy,
+        ga4gh_sdk.BulkOutcome,
+        ga4gh_sdk.BulkReport,
+        ga4gh_sdk.DrsUri,
+        ga4gh_sdk.DrsResolver,
+        ga4gh_sdk.AccessPlan,
     ],
 )
 def test_classes_can_be_subclassed(cls):

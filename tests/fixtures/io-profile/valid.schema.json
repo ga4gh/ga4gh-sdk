@@ -1,0 +1,49 @@
+{
+  "$schema": "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/ga4gh-io-profile.schema.json",
+  "$id": "https://example.com/valid-workflow-schema.json",
+  "title": "Valid Workflow IO Schema",
+  "description": "An example schema defining inputs and outputs for a bioinformatics workflow.",
+  "type": "object",
+  "properties": {
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "sample_id": {
+          "type": "string",
+          "description": "The ID of the sample to process.",
+          "x-ga4gh-ui-widget": "text"
+        },
+        "input_bam": {
+          "type": "string",
+          "description": "The aligned reads file in BAM format.",
+          "x-ga4gh-drs-uri": true,
+          "x-ga4gh-ui-widget": "file-picker"
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 8,
+          "x-ga4gh-ui-widget": "number",
+          "x-ga4gh-hidden": true
+        }
+      },
+      "required": [
+        "sample_id",
+        "input_bam"
+      ]
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "output_vcf": {
+          "type": "string",
+          "description": "The resulting variant calls in VCF format.",
+          "x-ga4gh-ui-widget": "text"
+        }
+      }
+    }
+  },
+  "required": [
+    "inputs"
+  ]
+}

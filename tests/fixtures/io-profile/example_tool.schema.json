@@ -1,0 +1,44 @@
+{
+  "$schema": "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/ga4gh-io-profile.schema.json",
+  "$id": "https://ga4gh.org/schemas/tool-io-profile/v1",
+  "title": "BWA MEM Aligner",
+  "description": "Burrows-Wheeler Aligner for short read mapping.",
+  "type": "object",
+  "properties": {
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "reference_fasta": {
+          "type": "string",
+          "format": "uri",
+          "title": "Reference FASTA",
+          "x-ga4gh-ontology": "http://edamontology.org/format_1929"
+        },
+        "read_1": {
+          "type": "string",
+          "format": "uri",
+          "title": "Read 1 FASTQ"
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4,
+          "title": "CPU Threads"
+        }
+      },
+      "required": ["reference_fasta", "read_1"]
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "alignment_bam": {
+          "type": "string",
+          "format": "uri",
+          "title": "Aligned BAM",
+          "x-ga4gh-ontology": "http://edamontology.org/format_2572",
+          "x-ga4gh-ui-widget": "genome-browser"
+        }
+      }
+    }
+  }
+}

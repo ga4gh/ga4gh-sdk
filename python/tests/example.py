@@ -7,7 +7,7 @@ another TES API root.
 import os
 import time
 
-from GA4GH import Configuration, ListTasksParams, TES, TesState
+from ga4gh_sdk import Configuration, ListTasksParams, TES, TesState
 
 TERMINAL_STATES = {
     TesState.COMPLETE,

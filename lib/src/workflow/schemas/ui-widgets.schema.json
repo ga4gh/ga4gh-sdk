@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/vocabularies/ui-widgets.schema.json",
+  "title": "GA4GH UI Widgets Vocabulary",
+  "description": "Controlled vocabulary defining UI rendering hints for input and output properties.",
+  "type": "string",
+  "anyOf": [
+    {
+      "enum": [
+        "text",
+        "textarea",
+        "password",
+        "number",
+        "slider",
+        "dropdown",
+        "typeahead",
+        "radio",
+        "checkbox",
+        "switch",
+        "date-picker",
+        "time-picker",
+        "datetime-picker",
+        "color-picker",
+        "file-picker",
+        "directory-picker",
+        "tags",
+        "genome-browser",
+        "scatter-plot",
+        "html-viewer",
+        "pdf-viewer",
+        "table-viewer",
+        "markdown-viewer"
+      ]
+    },
+    {
+      "type": "string",
+      "pattern": "^custom:[a-z0-9-]+$",
+      "description": "Custom widget fallback allowing platform-specific experimental UI components (e.g., custom:my-widget)."
+    }
+  ]
+}

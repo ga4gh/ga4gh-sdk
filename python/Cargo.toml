@@ -13,7 +13,7 @@ name = "ga4gh"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ga4gh-lib = { path = "../lib" }
+ga4gh-lib = { path = "../lib", default-features = false, features = ["rustls-native-roots"] }
 pyo3 = { version = "0.22.5", features = ["abi3-py311", "experimental-async"] }
 pyo3-async-runtimes = { version = "0.22.0", features = ["tokio-runtime"] }
 reqwest = { version = "0.11", default-features = false, features = ["multipart"] }
@@ -32,5 +32,5 @@ extension-module = ["pyo3/extension-module"]
 pyo3-build-config = "0.22.5"
 
 [package.metadata.maturin]
-name = "GA4GH"
+name = "ga4gh_sdk"
 bindings = "pyo3"

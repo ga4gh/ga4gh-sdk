@@ -34,7 +34,8 @@ are errors rather than being ignored.
         "base_path": "http://localhost:8000/ga4gh/tes/v1"
     },
     "WES": {
-        "base_path": "https://wes.example.org/ga4gh/wes/v1"
+        "base_path": "https://wes.example.org/ga4gh/wes/v1",
+        "timeouts": {"discovery": 30, "submission": 600}
     },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
@@ -56,15 +57,29 @@ must add the deployed service prefix, such as `/ga4gh/tes/v1`,
 gateway keeps its whole prefix, for example
 `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
 
+`timeouts` sets time limits in seconds for the commands of that section:
+`connect` (default 10), `request` (default 60), `discovery` (the service-info
+check, default 10) and `submission` (`tes create` and `wes run`, including
+uploads, default 300). A submission is sent once; if it runs out of time
+after its request started, the error says that it may have been accepted, so look
+for the task or run before you submit it again. The
+[usage guide](../docs/usage.md#timeouts) has the details. Downstream binaries
+that call `dispatch_with_config()` set them with
+`Configuration::with_timeouts`.
+
 ### Authentication
 
-The CLI reads `basic_auth` and `oauth_access_token`, but doesn't send them
-with requests yet (see
-[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). For now, use services
-that allow anonymous access, or a proxy that adds credentials. Keep the file
-private (`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold
-credentials. To keep a token out of the file, name an environment variable
-that holds it with `oauth_access_token_env`; the
+The service commands read `basic_auth` and `oauth_access_token`, but do not yet
+send them with requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)).
+The experimental `workflow submit` is an exception: it sends
+`oauth_access_token` as a bearer token to WES; callers supplying a
+`Configuration` directly can also use `bearer_access_token`. It does not
+support Basic auth or API keys. [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203) tracks consistent
+authentication across the SDK and CLI. For other commands, use services that
+allow anonymous access or a proxy that adds credentials. Keep the file private
+(`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold credentials. To keep
+a token out of the file, name an environment variable that holds it with
+`oauth_access_token_env`; the
 [usage guide](../docs/usage.md#configuration-file) describes all keys.
 
 ## Usage
@@ -179,7 +194,9 @@ as equivalent JSON escapes.
 ga4gh-cli tes status "$task_id"
 ```
 
-The command prints the TES state, such as `QUEUED`.
+The command prints the TES state, such as `QUEUED`, or `UNKNOWN` for a state
+that the TES specification doesn't define (see
+[Undefined states](#undefined-states)).
 
 5. To cancel a task that is still running, use its ID with `tes cancel`:
 
@@ -275,7 +292,8 @@ ga4gh-cli wes get "$run_id"
 ```
 
 4. To get the state of a run, such as `RUNNING` or `COMPLETE`, run
-   `wes status`:
+   `wes status`. A state that the WES specification doesn't define is printed
+   as `UNKNOWN` (see [Undefined states](#undefined-states)):
 
 ```sh
 ga4gh-cli wes status "$run_id"
@@ -431,6 +449,15 @@ success and code 1 on request or server errors. A 404 from `list` or `types`
 adds a hint to check `base_path`; from `get`, a 404 means that no service has
 that ID.
 
+## Experimental workflow contracts
+
+`wes` operates the WES service API: submit a run and inspect its state and
+outputs. `workflow` provides client-side contracts around a run: validate a
+pinned request, submit it explicitly through WES, project and verify selected
+results, and compare runs against a policy. It is not a second workflow
+execution service. See the [workflow contracts guide](../docs/workflow-contracts.md)
+for the commands and their evidence boundaries.
+
 ## Text and JSON output
 
 All commands treat values from a service the same way:
@@ -460,6 +487,18 @@ use `tes create --format json` or `wes run --format json` and parse the `id`
 or `run_id` field in the calling program. For an ID shown in a table, the
 JSONL exports retain its original value: `tes list --all --format jsonl` and
 `wes list --all --format jsonl`.
+
+### Undefined states
+
+A server may report a task or run state that its specification doesn't
+define, such as `SUSPENDED`. The commands that read the state into the SDK
+models show such a state as the specification's `UNKNOWN`: `tes status`,
+`wes status` and the `wes list` table print `UNKNOWN`, and the `tes list`
+table prints `Unknown`. The `wes list` table also shows a run without a state
+as `UNKNOWN`, while the `tes list` table shows `None`. `tes get` and `wes get`
+show the server's value as it is, and so do the JSONL exports of
+`tes list --all` and `wes list --all`. Use one of those to see which state the
+server actually reported.
 
 ## Extending the CLI in Rust
 
