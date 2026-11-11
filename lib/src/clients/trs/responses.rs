@@ -89,10 +89,12 @@ pub async fn files_zip(
     {
         return Err("TRS tool/version IDs must be nonempty opaque segments".into());
     }
+    // `Unrecognized` descriptor types hold any string; send them as one segment.
     let path = format!(
-        "tools/{}/versions/{}/{descriptor}/files",
+        "tools/{}/versions/{}/{}/files",
         urlencode(tool),
-        urlencode(version)
+        urlencode(version),
+        super::segment("descriptor type", &descriptor.to_string())?
     );
     let response = transport
         .request_response(

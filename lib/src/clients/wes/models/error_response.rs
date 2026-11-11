@@ -22,6 +22,10 @@ pub struct ErrorResponse {
     /// The integer representing the HTTP status code (e.g. 200, 404).
     #[serde(rename = "status_code", skip_serializing_if = "Option::is_none")]
     pub status_code: Option<i32>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ErrorResponse {
@@ -30,6 +34,7 @@ impl ErrorResponse {
         ErrorResponse {
             msg: None,
             status_code: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

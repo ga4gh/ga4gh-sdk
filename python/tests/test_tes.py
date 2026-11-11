@@ -165,7 +165,7 @@ def test_create_from_missing_file_raises_os_error(config, tmp_path):
     [
         [NEW_TASK],
         {"executors": "not a list"},
-        {"state": "NOT_A_STATE", "executors": []},
+        {"executors": [{"command": ["true"]}]},
         object(),
     ],
 )
@@ -199,6 +199,13 @@ def test_get_returns_typed_task(config):
     assert task.inputs is None
     assert task.to_dict() == TASK
     assert repr(task) == "TesTask(id='task-1', state='COMPLETE')"
+
+
+def test_states_that_the_spec_does_not_define_read_as_unknown(config):
+    # TES defines UNKNOWN as the safe default; the JSON keeps the server's value.
+    task = TES(config).get("FULL", "new-state")
+    assert task.state is TesState.UNKNOWN
+    assert task.to_dict() == {"id": "new-state", "state": "SUSPENDED"}
 
 
 def test_task_fields_of_a_new_task():

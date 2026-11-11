@@ -162,6 +162,28 @@ async fn trs_pagination_uses_urls_and_zip_is_opaque() {
         .unwrap();
     assert_eq!(read_bounded(response, 1024).await.unwrap().body, bytes);
     zip.assert();
+
+    // Unrecognized descriptor types are one encoded path segment.
+    let unrecognized = mock(
+        "GET",
+        "/tools/a%2Fb/versions/v%201/CWL%2Ffiles%3Fformat%3Djson/files?format=zip",
+    )
+    .with_body(bytes.clone())
+    .expect(1)
+    .create();
+    let descriptor = DescriptorType::Unrecognized("CWL/files?format=json".into());
+    let response = files_zip(&transport, "a/b", "v 1", descriptor)
+        .await
+        .unwrap();
+    assert_eq!(read_bounded(response, 1024).await.unwrap().body, bytes);
+    unrecognized.assert();
+    for value in ["", ".", ".."] {
+        let descriptor = DescriptorType::Unrecognized(value.into());
+        let error = files_zip(&transport, "a/b", "v 1", descriptor)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("descriptor type"), "{error}");
+    }
 }
 
 #[tokio::test]

@@ -49,6 +49,10 @@ pub struct GetServiceInfo200Response {
     /// The max length the bullk request endpoints can handle (>= 1) before generating a 413 error e.g. how long can the arrays bulk_object_ids and bulk_object_access_ids be for this server.
     #[serde(rename = "maxBulkRequestLength")]
     pub max_bulk_request_length: i32,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl GetServiceInfo200Response {
@@ -73,6 +77,7 @@ impl GetServiceInfo200Response {
             environment: None,
             version,
             max_bulk_request_length,
+            extra: serde_json::Map::new(),
         }
     }
 }

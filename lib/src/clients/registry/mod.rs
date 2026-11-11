@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn extra_fields_are_ignored() {
+    async fn extra_fields_are_kept() {
         let mut body = service("org.example.wes", "wes");
         body["sync"] = json!({"enabled": true});
         body["organization"]["logo"] = json!("https://example.org/logo.png");
@@ -138,9 +138,8 @@ mod tests {
             .create();
         let services = registry("/extra").list_services().await.unwrap();
         assert_eq!(services[0].id, "org.example.wes");
-        let reserialized = serde_json::to_value(&services[0]).unwrap();
-        assert!(reserialized.get("sync").is_none());
-        assert_eq!(reserialized, service("org.example.wes", "wes"));
+        assert_eq!(services[0].extra["sync"], json!({"enabled": true}));
+        assert_eq!(serde_json::to_value(&services[0]).unwrap(), body);
     }
 
     #[tokio::test]
@@ -192,11 +191,14 @@ mod tests {
             )
             .create();
         let types = registry("/types/v1/").list_service_types().await.unwrap();
+        let mut wes = models::ServiceType::new("org.ga4gh".into(), "wes".into(), "1.1.0".into());
+        // A field that the spec doesn't define is kept, even if it is called `extra`.
+        wes.extra.insert("extra".into(), json!(1));
         assert_eq!(
             types,
             vec![
                 models::ServiceType::new("org.ga4gh".into(), "tes".into(), "1.1.0".into()),
-                models::ServiceType::new("org.ga4gh".into(), "wes".into(), "1.1.0".into()),
+                wes,
             ]
         );
     }
