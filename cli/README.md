@@ -418,6 +418,15 @@ success and code 1 on request or server errors. A 404 from `list` or `types`
 adds a hint to check `base_path`; from `get`, a 404 means that no service has
 that ID.
 
+## Experimental workflow contracts
+
+`wes` operates the WES service API: submit a run and inspect its state and
+outputs. `workflow` provides client-side contracts around a run: validate a
+pinned request, submit it explicitly through WES, project and verify selected
+results, and compare runs against a policy. It is not a second workflow
+execution service. See the [workflow contracts guide](../docs/workflow-contracts.md)
+for the commands and their evidence boundaries.
+
 ## Text and JSON output
 
 All commands treat values from a service the same way:
