@@ -5,13 +5,10 @@
 # hooks (`SKIP=cargo-fmt,cargo-clippy`) because the `lint` job runs the same
 # commands. See `docs/development.md`.
 #
-# The file-level hooks skip the generated models (`lib/src/clients/*/models/`):
-# their text comes from the upstream OpenAPI specifications. They also skip
-# the patches for those models (`utils/patches/`), whose whitespace must
-# match the generated files exactly. The Rust hooks
-# still format and lint the whole workspace, models included, but a commit
-# that only changes models does not trigger them (see docs/development.md).
-exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
+# Formatting and spelling hooks skip generated models and their patches.
+# Structural checks still scan them for merge markers and oversized files.
+# A change to generated Rust models also triggers the local Rust hooks, which
+# format and lint the whole workspace (see docs/development.md).
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
@@ -27,7 +24,9 @@ repos:
       - id: check-toml
       - id: check-yaml
       - id: end-of-file-fixer
+        exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
       - id: trailing-whitespace
+        exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
   # Schemas of GitHub's files: issue forms and their `config.yml`, workflows
   # and the Dependabot configuration
   - repo: https://github.com/python-jsonschema/check-jsonschema
@@ -47,6 +46,7 @@ repos:
     rev: 7f9d0819ca1c008ade73f4b41fa9d258d48f605b  # frozen: v1.51.1
     hooks:
       - id: typos
+        exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
   # The same commands as the `lint` job; they need the toolchain from
   # `rust-toolchain.toml`
   - repo: local

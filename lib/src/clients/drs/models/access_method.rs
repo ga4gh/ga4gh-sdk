@@ -31,6 +31,10 @@ pub struct AccessMethod {
     pub available: Option<bool>,
     #[serde(rename = "authorizations", skip_serializing_if = "Option::is_none")]
     pub authorizations: Option<Box<models::AccessMethodAuthorizations>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl AccessMethod {
@@ -42,11 +46,12 @@ impl AccessMethod {
             region: None,
             available: None,
             authorizations: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
 /// Type of the access method.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Type {
     #[serde(rename = "s3")]
     S3,
@@ -64,6 +69,25 @@ pub enum Type {
     Https,
     #[serde(rename = "file")]
     File,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
+}
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::S3 => write!(f, "s3"),
+            Self::Gs => write!(f, "gs"),
+            Self::Ftp => write!(f, "ftp"),
+            Self::Gsiftp => write!(f, "gsiftp"),
+            Self::Globus => write!(f, "globus"),
+            Self::Htsget => write!(f, "htsget"),
+            Self::Https => write!(f, "https"),
+            Self::File => write!(f, "file"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
+        }
+    }
 }
 
 impl Default for Type {

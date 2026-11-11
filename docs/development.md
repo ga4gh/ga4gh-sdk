@@ -70,13 +70,14 @@ into [`_typos.toml`](../_typos.toml)), and run `cargo fmt --all` and
 `cargo clippy --workspace --all-targets --locked`. When a hook changes
 files, the commit stops: review the changes, stage them, and commit again.
 
-The file-level hooks (hygiene, typos) skip the generated models in
+The formatting and spelling hooks skip generated models in
 `lib/src/clients/*/models/`, because their text comes from the upstream
-OpenAPI specifications, and the patches for them in `utils/patches/`, whose
-whitespace must match the generated files exactly. The Rust hooks work on the whole workspace, so
-`cargo fmt --all` also formats the models, as the `lint` job requires. A
-commit that only changes models doesn't trigger the Rust hooks, though: run
-`make fmt`, then `make lint`, after regenerating models.
+OpenAPI specifications, and their patches in `utils/patches/`, whose
+whitespace must match the generated files exactly. Structural checks still
+scan those files for merge markers and oversized files. A change to generated
+Rust models triggers the local Rust hooks, which format and lint the whole
+workspace. After regenerating models, run `make fmt` and `make lint` before
+committing.
 
 Run all hooks on all files with `make pre-commit`, and skip single hooks with
 `SKIP`, for example `SKIP=cargo-clippy git commit`. Dependabot bumps the
@@ -102,16 +103,11 @@ cargo llvm-cov report --html --open \
 
 ## Lints
 
-All workspace members share the lints in the `[workspace.lints]` table of
-[`Cargo.toml`](../Cargo.toml) (`[lints] workspace = true` in each member):
-
-- `missing_docs` (a rustc lint): public items need documentation comments.
-  It only warns for now (CI does not fail on warnings): about 350 items lack
-  documentation, 250 of them in the generated models. Document the items you
-  add or change.
-
-The warnings appear in the output of `cargo build`, `cargo test` and
-`cargo clippy`.
+`make clippy` checks all workspace targets. The CI lint job runs the same
+command and checks formatting. Documentation lint enforcement remains in
+[#87](https://github.com/ga4gh/ga4gh-sdk/issues/87); it needs a policy for
+generated models and the existing undocumented public API before it can become
+a useful gate.
 
 ## CI
 
@@ -137,6 +133,7 @@ its `needs:` and to the list of expected jobs in its script.
 New issues offer forms for bug reports and feature requests
 ([`.github/ISSUE_TEMPLATE/`](../.github/ISSUE_TEMPLATE/)), with links for
 questions, chat and reporting vulnerabilities. New pull requests start from
-[the pull request template](../.github/pull_request_template.md): a summary
-with the issues it closes, the verification, declined review findings, open
-questions and a checklist.
+[the pull request template](../.github/pull_request_template.md): a summary,
+related issues when applicable, issue-specific verification, and optional
+review notes. Use `Closes #N` only when merging the PR will fully satisfy the
+issue; otherwise use `Refs #N`.

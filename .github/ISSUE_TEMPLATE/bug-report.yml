@@ -8,8 +8,8 @@ body:
       value: >-
         Thanks for taking the time to report a bug! Please search the open
         issues first, to see whether it has been reported already. Never
-        report vulnerabilities here: follow the [security
-        policy](https://github.com/elixir-cloud-aai/.github/blob/main/SECURITY.md)
+        report vulnerabilities here: follow the [GA4GH security reporting
+        guidance](https://www.ga4gh.org/work_stream/data-security-work-stream/)
         instead.
   - type: textarea
     id: description

@@ -30,12 +30,16 @@ tests/run-wes-docker-integration.sh
 The script starts `ga4gh/ga4gh-starter-kit-wes:0.2.0-nextflow` with temporary
 configuration, an initialized SQLite database, a shared work directory, and
 the Docker socket. It waits up to 180 seconds for
-`/ga4gh/wes/v1/service-info`, runs the SDK test, and cleans up the container
-and temporary files. On failure it prints server logs. Increase
-`WES_STARTUP_TIMEOUT_SECONDS` or `WES_RUN_TIMEOUT_SECONDS` on slower hosts.
+`/ga4gh/wes/v1/service-info`, runs the SDK test and then a CLI test that
+submits a run with `ga4gh-cli wes run` and tracks it to completion with
+`wes status` and `wes get`, and cleans up the container and temporary files.
+On failure it prints server logs. Increase `WES_STARTUP_TIMEOUT_SECONDS` or
+`WES_RUN_TIMEOUT_SECONDS` on slower hosts. Because of the server limitations
+below, `wes cancel`, `wes run --attachment` and the paging of `wes list` are
+checked only against a mock server, in the default CLI tests.
 The [CI workflow](../.github/workflows/ci.yml) runs this suite on an Ubuntu
-runner when WES, shared library, dependency, or integration files change. It
-runs both integration suites on manual dispatch. The `CI passed` job checks
+runner when WES, CLI, shared library, dependency, or integration files change.
+It runs both integration suites on manual dispatch. The `CI passed` job checks
 their results alongside lint, unit tests, and builds.
 
 Starter Kit WES 0.2.0 only accepts a GitHub-shaped Nextflow project URL; its
@@ -45,6 +49,36 @@ project cache at a deterministic commit, so the workflow runs without fetching
 a remote project. This server returns a fixed run list instead of recently
 submitted runs, and its cancellation endpoint does not stop a run. The test
 accounts for both limitations and does not claim that a run was canceled.
+
+## Verified TRS CWL bundle with Toil WES
+
+The bundle unit tests use a local TRS fixture and a capturing mock WES to compare
+every staged/uploaded byte and nested relative filename. They also cover missing
+imports, external/dynamic dependencies, unsafe/colliding paths, checksum mismatch,
+explicit URL fetch policy and content changing behind the same TRS version.
+
+For a real execution, use Python 3.12+ and Rust on PATH, with network access to
+install the pinned Toil 9.3.0 test environment:
+
+```sh
+tests/run-toil-bundle-integration.sh
+```
+
+The script creates/reuses `target/toil-bundle-venv`, installs
+`toil[server,cwl,aws]==9.3.0` (the server imports its AWS helpers even for local
+execution), and starts a loopback-only WES with `--bypass_celery --no-container`.
+It prepares the checked-in CWL workflow and nested echo tool through the TRS
+fixture, submits their verified staged bytes to the real WES/Toil engine, waits
+for COMPLETE and verifies the output file contains `verified hello\n`. It records
+the run/manifest in `target/toil-bundle-evidence.json` and stops its server on exit.
+Set `GA4GH_TOIL_ENV_DIR` to reuse another prepared virtual environment.
+
+This is a named local backend check, not a claim of compatibility with every
+WES deployment. Toil 9.3.0 advertises WES 1.0.0 and omits generic GA4GH identity
+fields from service-info; the test uses explicitly supplied backend identity
+instead of the SDK's generic discovery constructor. TRS is a controlled fixture;
+WES, the CWL engine and output verification are real. Starter Kit's disabled
+attachment handling remains unsupported for this bundle scenario.
 
 ## TRS public registries
 
@@ -56,6 +90,48 @@ they build with the other tests but only run on request:
 cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
 ```
 
+## Public Service Registry
+
+The first ignored smoke test reads all four Service Registry 1.0 endpoints
+from the [official GA4GH Registry](https://ga4gh.github.io/ga4gh-registry/).
+It looks up the registry itself by ID. It needs network access and anonymous
+reads.
+
+```sh
+cargo test -p ga4gh-lib --test registry_public official_registry_reads_without_a_token -- --ignored
+```
+
+For a stricter check, set `GA4GH_REGISTRY_URL` to a compatible registry root
+that permits anonymous reads. This second test gets **every** listed service
+by its ID and confirms its type is in `/services/types`:
+
+```sh
+GA4GH_REGISTRY_URL='https://your-registry.example.org/ga4gh/registry/v1' \
+  cargo test -p ga4gh-lib --test registry_public configured_registry_supports_all_read_endpoints -- --ignored
+```
+
+As checked on 2026-11-10, the official GA4GH deployment returns HTTP 400
+when looking up a listed service whose ID contains `/`; the SDK encodes that
+slash as `%2F` to keep the ID in one URL path segment. The strict check is
+therefore unsuitable for that deployment until its lookup accepts such IDs.
+
+## Gen3 DRS (CanineDC)
+
+This ignored smoke test reads CanineDC, a public Gen3 data commons, without
+credentials. It needs network access to `caninedc.org`:
+
+```sh
+cargo test -p ga4gh-lib --test drs_gen3_public -- --ignored
+```
+
+It sends one service-info request and one bulk `POST /objects` request for a
+documented public object and one unknown ID, allows one bulk attempt within a
+30-second budget, and checks that the reply uses the Gen3 dialect, that the
+object resolves by its ID, and that the unknown ID gets 404. It requests no
+access URLs and downloads no bytes. Access URLs need credentials on this
+service (`POST /objects/access` returned 401 anonymously on 2026-11-10), so
+Gen3 bulk access behavior is unverified.
+
 ## Test fixtures
 
 - [`sample.tes`](sample.tes) comes from the Funnel task examples and is used by
@@ -63,3 +139,8 @@ cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
 - [`grape.tes`](grape.tes) is an alternative TES task document. It is not used
   by the current tests and contains nonstandard placeholders such as
   `${AWS_ACCESS_KEY_ID}` that would need substitution before submission.
+- [`fixtures/drs/gen3-caninedc-bulk-objects.json`](fixtures/drs/gen3-caninedc-bulk-objects.json)
+  is the anonymous CanineDC reply to `POST /ga4gh/drs/v1/objects` for one
+  public object and one unknown ID, recorded on 2026-11-10 and reformatted
+  with sorted keys. It contains public metadata only and is used by
+  [`drs_bulk.rs`](../lib/tests/drs_bulk.rs).

@@ -4,7 +4,7 @@ use ga4gh_sdk::clients::tes::models::ListTasksParams;
 use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
 use ga4gh_sdk::clients::tes::models::TesState;
 use ga4gh_sdk::clients::tes::models::TesTask;
-use ga4gh_sdk::clients::tes::{Task, TES};
+use ga4gh_sdk::clients::tes::{Task, TesView, TES};
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use log::debug;
@@ -41,7 +41,7 @@ pub fn command() -> Command {
                 )
                 .arg(arg!(-p --page_size [PAGE_SIZE] "The page size for pagination"))
                 .arg(arg!(-t --page_token [PAGE_TOKEN] "The page token for pagination"))
-                .arg(arg!(-w --view [VIEW] "The view for the tasks"))
+                .arg(arg!(-w --view [VIEW] "The view for the tasks: MINIMAL, BASIC or FULL"))
                 .arg(
                     arg!(--all "Fetch pages lazily and stream JSONL")
                         .action(clap::ArgAction::SetTrue),
@@ -68,7 +68,7 @@ pub fn command() -> Command {
             Command::new("get")
                 .about("get task data")
                 .arg(arg!(<id> "The id of the task which should be returned"))
-                .arg(arg!(<view> "The view in which the task should be returned"))
+                .arg(arg!(<view> "The view in which the task should be returned: MINIMAL, BASIC or FULL"))
                 .arg_required_else_help(true),
         )
         .subcommand(
@@ -154,7 +154,10 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             })
             .transpose()?;
         let page_token = sub.get_one::<String>("page_token").cloned();
-        let view = sub.get_one::<String>("view").cloned();
+        let view = sub
+            .get_one::<String>("view")
+            .map(|view| view.parse::<TesView>())
+            .transpose()?;
 
         let parameters = ListTasksParams {
             name_prefix,
@@ -188,7 +191,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             .ok_or_else(|| anyhow::anyhow!("id argument is required"))?;
         let view = sub
             .get_one::<String>("view")
-            .ok_or_else(|| anyhow::anyhow!("view argument is required"))?;
+            .ok_or_else(|| anyhow::anyhow!("view argument is required"))?
+            .parse::<TesView>()?;
 
         let tes = match TES::new(config).await {
             Ok(tes) => tes,
@@ -249,11 +253,16 @@ fn parse_state(value: &str) -> anyhow::Result<TesState> {
         .and_then(|state| state.strip_suffix('"'))
         .unwrap_or(trimmed);
     let normalized = unquoted.to_ascii_uppercase().replace(' ', "_");
-    serde_json::from_value(serde_json::Value::String(normalized)).map_err(|_| {
-        anyhow::anyhow!(
-            "Invalid state '{value}': expected UNKNOWN, QUEUED, INITIALIZING, RUNNING, PAUSED, COMPLETE, EXECUTOR_ERROR, SYSTEM_ERROR, CANCELED, CANCELING, or PREEMPTED"
-        )
-    })
+    // `TesState` reads states that it doesn't know as `Unknown`; a filter
+    // must name a state exactly.
+    serde_json::from_value::<TesState>(serde_json::Value::String(normalized.clone()))
+        .ok()
+        .filter(|state| state.to_string() == normalized)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid state '{value}': expected UNKNOWN, QUEUED, INITIALIZING, RUNNING, PAUSED, COMPLETE, EXECUTOR_ERROR, SYSTEM_ERROR, CANCELED, CANCELING, or PREEMPTED"
+            )
+        })
 }
 
 // Helper functions
@@ -312,10 +321,13 @@ pub async fn export_all(
         anyhow::bail!("--all requires --format jsonl");
     }
     let mut query = serde_json::Map::new();
-    for key in ["name_prefix", "page_token", "view"] {
+    for key in ["name_prefix", "page_token"] {
         if let Some(value) = sub.get_one::<String>(key) {
             query.insert(key.into(), serde_json::json!(value));
         }
+    }
+    if let Some(value) = sub.get_one::<String>("view") {
+        query.insert("view".into(), serde_json::json!(value.parse::<TesView>()?));
     }
     if let Some(value) = sub.get_one::<String>("state") {
         query.insert("state".into(), serde_json::to_value(parse_state(value)?)?);
@@ -351,22 +363,33 @@ pub async fn export_all(
     let tes = match TES::new(config).await {
         Ok(tes) => tes,
         Err(error) => {
-            writeln!(stderr, "{error}")?;
+            writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
             return Ok(std::process::ExitCode::FAILURE);
         }
     };
-    let mut pager = ga4gh_sdk::clients::pagination::Pager::new(
+    let pager = ga4gh_sdk::clients::pagination::Pager::new(
         &tes.transport,
         ServiceKind::Tes,
         query.into(),
         options,
     )
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    write_jsonl(pager, stdout, stderr).await
+}
+
+/// Write each page's records as JSONL; report limits and failures with a
+/// resume checkpoint on stderr.
+pub(crate) async fn write_jsonl(
+    mut pager: ga4gh_sdk::clients::pagination::Pager,
+    stdout: &mut dyn std::io::Write,
+    stderr: &mut dyn std::io::Write,
+) -> anyhow::Result<std::process::ExitCode> {
     loop {
         match pager.next_page().await {
             Ok(Some(page)) => {
                 for record in page.items {
-                    serde_json::to_writer(&mut *stdout, &record)?;
+                    let line = serde_json::to_string(&record)?;
+                    stdout.write_all(crate::registry::json_printable(&line).as_bytes())?;
                     writeln!(stdout)?;
                 }
                 stdout.flush()?;
@@ -377,18 +400,18 @@ pub async fn export_all(
                     writeln!(
                         stderr,
                         "Listing stopped at configured limit; resume checkpoint: {}",
-                        serde_json::to_string(&checkpoint)?
+                        crate::registry::json_printable(&serde_json::to_string(&checkpoint)?)
                     )?;
                     return Ok(std::process::ExitCode::FAILURE);
                 }
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             Err(error) => {
-                writeln!(stderr, "{error}")?;
+                writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
                 writeln!(
                     stderr,
                     "Resume checkpoint: {}",
-                    serde_json::to_string(&error.checkpoint)?
+                    crate::registry::json_printable(&serde_json::to_string(&error.checkpoint)?)
                 )?;
                 return Ok(std::process::ExitCode::FAILURE);
             }
@@ -410,5 +433,9 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("PREEMPTED"));
+        // `TesState` reads unknown names as `Unknown`; only `UNKNOWN` itself is a
+        // valid filter.
+        assert_eq!(parse_state("unknown").unwrap(), TesState::Unknown);
+        assert!(parse_state("SUSPENDED").is_err());
     }
 }

@@ -8,7 +8,7 @@ contact_links:
     url: https://join.slack.com/t/elixir-cloud/shared_invite/zt-4f6zdhi84-X4YBkJHxhYmVIHJkRfY2JQ
     about: Join the ELIXIR Cloud & AAI Slack workspace for informal discussions.
   - name: Report a vulnerability
-    url: https://github.com/elixir-cloud-aai/.github/blob/main/SECURITY.md
+    url: https://www.ga4gh.org/work_stream/data-security-work-stream/
     about: >-
-      Report vulnerabilities privately, as described in the security policy
-      of ELIXIR Cloud & AAI, never in public issues.
+      Email security-notification@ga4gh.org for potential security flaws
+      in GA4GH technical tools; do not use public issues.

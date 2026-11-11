@@ -130,8 +130,9 @@ impl DRS {
         }
     }
 
-    /// Preserve the server's JSON while applying the same pending-state rules.
-    pub(super) async fn resolve_reference_raw(
+    /// Like [`DRS::resolve_reference`], but keeps the server's JSON text, including fields
+    /// that the SDK models don't know.
+    pub async fn resolve_reference_raw(
         &self,
         reference: &ResolutionReference,
     ) -> Result<Resolution<String>, Box<dyn Error>> {
@@ -142,22 +143,10 @@ impl DRS {
             .transport
             .request_response(reqwest::Method::GET, &reference.endpoint, None, None)
             .await?;
-        if response.status() == reqwest::StatusCode::ACCEPTED {
-            let value = response
-                .headers()
-                .get(reqwest::header::RETRY_AFTER)
-                .ok_or("DRS 202 missing Retry-After")?
-                .to_str()?;
-            if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
-                return Err("DRS Retry-After must be integral seconds".into());
-            }
-            let seconds: u64 = value.parse().map_err(|_| "DRS Retry-After overflow")?;
-            if seconds > 3600 {
-                return Err("DRS Retry-After exceeds the supported one-hour bound".into());
-            }
+        if let Some(seconds) = deferred_delay(&response)? {
             return Ok(Resolution::Pending(PendingResolution {
                 reference: reference.clone(),
-                retry_after_secs: seconds.max(1),
+                retry_after_secs: seconds,
             }));
         }
         let body = response_text(response, BodyLimits::default()).await?;
@@ -214,4 +203,24 @@ impl DRS {
         })
         .await
     }
+}
+
+/// Shared DRS 1.4 deferred-response interpretation for singular and bulk reads.
+pub fn deferred_delay(response: &reqwest::Response) -> Result<Option<u64>, Box<dyn Error>> {
+    if response.status() != reqwest::StatusCode::ACCEPTED {
+        return Ok(None);
+    }
+    let value = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .ok_or("DRS 202 missing Retry-After")?
+        .to_str()?;
+    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("DRS Retry-After must be integral seconds".into());
+    }
+    let seconds: u64 = value.parse().map_err(|_| "DRS Retry-After overflow")?;
+    if seconds > 3600 {
+        return Err("DRS Retry-After exceeds the supported one-hour bound".into());
+    }
+    Ok(Some(seconds.max(1)))
 }
