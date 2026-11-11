@@ -329,14 +329,18 @@ that ID.
 
 All commands treat values from a service the same way:
 
-- Text output, such as tables, bare task and run IDs, page tokens and error
-  messages on stderr, shows control and bidirectional formatting characters as
+- Text output, such as tables, bare task and run IDs, page tokens, and error
+  and log messages on stderr, shows control and bidirectional formatting characters as
   Rust escapes, such as `\n`, `\u{1b}` or `\u{202e}`. Other characters,
   including backslashes, are printed as they are, so an escaped value can't be
   told apart from a value that contains the same backslash sequence. Values
   without such characters are printed unchanged.
 - `tes get`, `wes get`, `drs get` and `drs access` print the server's JSON as
-  received.
+  received. A response that isn't valid JSON is reported as an error on
+  stderr, with exit code 1. JSON strings can't hold raw C0 control characters
+  such as ESC, but they can hold other control and bidirectional formatting
+  characters, which these commands print as they are; pipe the output to
+  `jq -a .` to show them escaped.
 - `tes list --all --format jsonl` and `wes list --all --format jsonl` write
   each record with JSON escapes, such as `\u001b`, which decode to the
   original value. `registry get` uses JSON escapes in the same way.
@@ -345,7 +349,8 @@ Escaping changes only what is printed. The SDK keeps the values it received,
 and commands send the IDs given to them unchanged. If an ID that `tes create`,
 `wes run` or a table prints contains escapes, take the original value from
 the JSONL export, for example with
-`ga4gh-cli tes list --all --format jsonl | jq -r .id`.
+`ga4gh-cli tes list --all --format jsonl | jq -r .id` for tasks or
+`ga4gh-cli wes list --all --format jsonl | jq -r .run_id` for runs.
 
 ## Extending the CLI in Rust
 
@@ -356,5 +361,7 @@ add its own Clap 4 subcommands to `ga4gh_cli::command()`. Call
 Both return `None` when the downstream binary should handle its own command.
 Built-in commands return stdout, stderr, and an exit code in `CommandOutput`,
 so the downstream binary can write or reformat their output; `stderr` and the
-text parts of `stdout` are already escaped as described above. See the
+text parts of `stdout` are already escaped as described above.
+`ga4gh_cli::printable()` escapes a value in the same way for a downstream
+binary's own text output. See the
 [downstream CLI test](tests/downstream_cli.rs) for a working example.

@@ -123,7 +123,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             // fields that the SDK models lack.
             let path = format!("runs/{}", urlencode(id));
             Ok(match wes.transport.get(&path, None).await {
-                Ok(log) => CommandOutput::success(log),
+                Ok(log) => CommandOutput::json(log),
                 Err(error) => CommandOutput::failure(error),
             })
         }

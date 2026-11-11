@@ -10,8 +10,9 @@
 /// text output, as Rust escapes such as `\n` or `\u{1b}`.
 ///
 /// Other characters, including backslashes, are kept, so escaping text that
-/// is already escaped doesn't change it.
-pub(crate) fn printable(value: &str) -> String {
+/// is already escaped doesn't change it. Downstream CLIs can use it for their
+/// own text output, as the `ga4gh-cli` binary does for its log messages.
+pub fn printable(value: &str) -> String {
     value
         .chars()
         .map(|c| {
@@ -43,7 +44,7 @@ pub(crate) fn json_printable(json: &str) -> String {
 
 fn needs_escape(c: char) -> bool {
     c.is_control()
-        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        || matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 #[cfg(test)]
@@ -59,8 +60,8 @@ mod tests {
 
     #[test]
     fn control_and_bidirectional_characters_are_escaped_once() {
-        let escaped = printable("t1\u{1b}[2K\r\nx\u{9b}\u{202E}\u{2066}");
-        assert_eq!(escaped, r"t1\u{1b}[2K\r\nx\u{9b}\u{202e}\u{2066}");
+        let escaped = printable("t1\u{1b}[2K\r\nx\u{9b}\u{202E}\u{2066}\u{61C}");
+        assert_eq!(escaped, r"t1\u{1b}[2K\r\nx\u{9b}\u{202e}\u{2066}\u{61c}");
         assert_eq!(printable(&escaped), escaped);
     }
 

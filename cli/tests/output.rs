@@ -481,7 +481,10 @@ const CONTROL_ID_PATH: &str = "t1%1B%5B2K%0Aforged";
 /// Asserts that text output has no raw control or bidirectional characters.
 fn assert_escaped(text: &str) {
     assert!(
-        !text.contains(['\u{1b}', '\u{7}', '\u{202E}']),
+        !text
+            .chars()
+            .any(|c| (c.is_control() && c != '\n')
+                || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')),
         "raw control character in {text:?}"
     );
 }
@@ -554,7 +557,10 @@ fn server_text_is_escaped_in_text_output() {
     let canceled = home.run(&["tes", "cancel", CONTROL_ID], None);
     assert!(canceled.status.success(), "{}", stderr(&canceled));
     assert_escaped(&stdout(&canceled));
-    assert!(stdout(&canceled).starts_with("STATUS: "));
+    assert_eq!(
+        stdout(&canceled),
+        "STATUS: Object {\"note\": String(\"ok\\u{1b}[31m\")}\n"
+    );
     cancel.assert();
 
     let failed = home.run(&["tes", "get", "broken", "FULL"], None);
@@ -594,4 +600,46 @@ fn json_output_keeps_server_values() {
     let record: Value = serde_json::from_str(stdout(&exported).trim()).unwrap();
     assert_eq!(record["id"], CONTROL_ID);
     assert_eq!(record["name"], "a\u{202E}b");
+}
+
+#[test]
+fn get_reports_a_body_that_is_not_json() {
+    let _service = service_info_mock("/escape-raw/service-info");
+    let _get = mock("GET", "/escape-raw/tasks/t1?view=FULL")
+        .with_status(200)
+        .with_body("\u{1b}]0;title\u{7}ok")
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/escape-raw",
+        mockito::server_url()
+    )));
+    let output = home.run(&["tes", "get", TASK_ID, "FULL"], None);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty(), "{}", stdout(&output));
+    let message = stderr(&output);
+    assert_escaped(&message);
+    assert!(message.contains("not valid JSON"), "{message}");
+}
+
+#[test]
+fn log_messages_are_escaped() {
+    let _service = mock("GET", "/escape-log/service-info")
+        .with_status(500)
+        .with_body("down\u{202E}x\nforged")
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/escape-log",
+        mockito::server_url()
+    )));
+    for log_level in LOG_LEVELS {
+        let output = home.run(&["tes", "list"], log_level);
+        assert_eq!(output.status.code(), Some(1), "{log_level:?}");
+        let message = stderr(&output);
+        assert_escaped(&message);
+        assert!(
+            !message.lines().any(|line| line.starts_with("forged")),
+            "{log_level:?}: {message}"
+        );
+        assert!(message.contains("down\\u{202e}x\\nforged"), "{message}");
+    }
 }

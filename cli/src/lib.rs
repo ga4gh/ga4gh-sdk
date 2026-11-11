@@ -28,6 +28,8 @@ mod render;
 pub mod tes;
 pub mod wes;
 
+pub use render::printable;
+
 use clap::{ArgMatches, Command};
 use ga4gh_sdk::clients::ServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
@@ -56,6 +58,16 @@ impl CommandOutput {
             stdout: String::new(),
             stderr: format!("{}\n", render::printable(&message.to_string())),
             exit_code: ExitCode::FAILURE,
+        }
+    }
+
+    /// Passes a response body through unchanged if it is JSON. A body that
+    /// isn't JSON is reported as a failure instead, since it could hold raw
+    /// control characters that JSON doesn't allow.
+    fn json(body: String) -> Self {
+        match serde_json::from_str::<serde_json::Value>(&body) {
+            Ok(_) => Self::success(body),
+            Err(error) => Self::failure(format!("The response is not valid JSON: {error}")),
         }
     }
 }

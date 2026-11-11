@@ -200,7 +200,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             Err(error) => return Ok(service_failure(error.as_ref())),
         };
         match tes.get_raw(view, id).await {
-            Ok(task) => return Ok(CommandOutput::success(task)),
+            Ok(task) => return Ok(CommandOutput::json(task)),
             Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
@@ -227,6 +227,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         let task = Task::new(id, transport);
         match task.cancel().await {
             Ok(output) => {
+                // Debug escapes most controls in strings already; `printable`
+                // applies the text-output rules whatever Debug leaves.
                 let status = printable(&format!("{output:?}"));
                 return Ok(CommandOutput::success(format!("STATUS: {status}\n")));
             }
