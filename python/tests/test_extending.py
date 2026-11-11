@@ -35,6 +35,8 @@ class PluginTransport(Transport):
         GA4GH.TesTask,
         GA4GH.ListTasksParams,
         GA4GH.ListTasksResponse,
+        GA4GH.AsyncTES,
+        GA4GH.AsyncTask,
     ],
 )
 def test_classes_can_be_subclassed(cls):
@@ -207,14 +209,23 @@ def base_args(cls, server, config):
     """The arguments that each class's constructor requires."""
     if cls is Configuration:
         return (server.base,)
-    if cls is GA4GH.Task:
+    if cls in (GA4GH.Task, GA4GH.AsyncTask):
         return ("task-1", Transport(config))
     if cls is TesTask:
         return (TASK,)
     return (config,)
 
 
-CONSTRUCTED_CLASSES = [Configuration, GA4GH.ServiceInfo, Transport, TES, GA4GH.Task, TesTask]
+CONSTRUCTED_CLASSES = [
+    Configuration,
+    GA4GH.ServiceInfo,
+    Transport,
+    TES,
+    GA4GH.Task,
+    TesTask,
+    GA4GH.AsyncTES,
+    GA4GH.AsyncTask,
+]
 
 
 @pytest.mark.parametrize("cls", CONSTRUCTED_CLASSES)

@@ -41,7 +41,8 @@ required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
 now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
 items are `RunListResponseRunsInner` and deprecated task log items are
 `RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
-endpoints.
+endpoints. As for `TES`, the error type of `WES::service` is now
+`Box<dyn Error + Send + Sync>`, so a `WES` client can move between threads.
 
 ## Installation
 
@@ -111,7 +112,8 @@ Docker may download the Alpine image on the first run.
 The [CLI README](cli/README.md) describes all CLI commands. The
 [usage guide](docs/usage.md) covers configuration, authentication, and the
 Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, `TRS`, and `ServiceRegistry`
-clients. The CLI also has [Service Registry commands](cli/README.md#service-registry-commands).
+clients. The CLI also has [WES commands](cli/README.md#wes-examples) and
+[Service Registry commands](cli/README.md#service-registry-commands).
 
 ## Advanced transport
 
@@ -140,6 +142,11 @@ reads as `ReadOnly` (including appropriate lookup POSTs). A non-replayable
 operation gets one attempt and reports lost-response ambiguity for reconciliation.
 `send_once` also covers multipart headers/body and permits an explicit larger
 upload budget. Dropping a future or canceling its token stops local I/O.
+If cancellation or an expired deadline prevents the send future from being
+polled, submission returns an inspectable `OperationError` and makes no attempt.
+Once the send future is polled, interruption remains an
+`AmbiguousSubmissionError`: the server may have accepted the request, so reconcile
+remote state before resubmitting. Local interruption never cancels a remote job.
 
 DRS `get_object_once` and `get_access_url_once` return `Resolution::Ready` or
 `Pending` with a credential-free resume reference. The immediate convenience
@@ -224,10 +231,11 @@ At a partially consumed or truncated page, a checkpoint replays that page.
 Mutable listings provide neither snapshot isolation nor exactly-once processing;
 callers reconcile replays. Credentials are supplied separately when resuming.
 
-The CLI streams `tes list --all --format jsonl` through caller-owned writers,
-with one JSON object per stdout line. `--max-pages` and `--max-items` bound work;
-limits or later failures preserve emitted records, report a resume checkpoint on
-stderr and return a nonzero exit code. Reusable CLIs use `dispatch_to` or
+The CLI streams `tes list --all --format jsonl` and `wes list --all --format
+jsonl` through caller-owned writers, with one JSON object per stdout line.
+`--max-pages` and `--max-items` bound work; limits or later failures preserve
+emitted records, report a resume checkpoint on stderr and return a nonzero exit
+code. Reusable CLIs use `dispatch_to` or
 `dispatch_with_config_to`; existing buffered dispatch remains available for
 ordinary commands.
 
