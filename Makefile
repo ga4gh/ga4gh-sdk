@@ -12,10 +12,13 @@ PRE_COMMIT ?= pre-commit
 COVERAGE_IGNORE ?= lib/src/clients/[^/]+/models/
 COVERAGE_DIR ?= coverage
 
+# Example crate with its own workspace (see docs/downstream.md)
+DOWNSTREAM_DIR ?= examples/downstream-sdk
+
 .DEFAULT_GOAL := help
 
 .PHONY: help build test fmt fmt-check clippy lint check coverage docs models \
-	pre-commit clean-coverage
+	pre-commit clean-coverage downstream
 
 help: ## Show this list of targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -52,6 +55,13 @@ coverage: ## Measure test coverage (needs cargo-llvm-cov)
 clean-coverage: ## Remove coverage data and reports
 	$(CARGO) llvm-cov clean --workspace
 	rm -rf $(COVERAGE_DIR)
+
+downstream: ## Check, lint and test the downstream example crate
+	cp Cargo.lock $(DOWNSTREAM_DIR)/Cargo.lock
+	$(CARGO) fmt --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml --check
+	$(CARGO) clippy --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml --all-targets \
+		-- -D warnings
+	$(CARGO) test --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml
 
 docs: ## Build the API documentation (target/doc)
 	$(CARGO) doc --workspace --no-deps --locked
