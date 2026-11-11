@@ -1,4 +1,5 @@
 use crate::clients::ServiceType;
+use crate::utils::timeouts::Timeouts;
 use serde_json::{Map, Value};
 use std::fmt;
 use std::path::Path;
@@ -29,12 +30,29 @@ impl fmt::Debug for RedactedValues<'_> {
 }
 
 /// The keys of a configuration file section that `Configuration::from_path` reads itself.
-const SECTION_KEYS: [&str; 4] = [
+const SECTION_KEYS: [&str; 5] = [
     "base_path",
     "basic_auth",
     "oauth_access_token",
     "oauth_access_token_env",
+    "timeouts",
 ];
+
+/// Reads the `timeouts` object of a configuration file section: each key is a
+/// limit of [`Timeouts`] in seconds; missing keys keep their defaults.
+fn timeouts_from_value(value: &Value) -> Result<Timeouts, String> {
+    let fields = value
+        .as_object()
+        .ok_or("timeouts must be an object of numbers of seconds")?;
+    let mut timeouts = Timeouts::default();
+    for (key, value) in fields {
+        // A non-number is as invalid as a negative one; NaN gives the same message.
+        timeouts
+            .set_seconds(key, value.as_f64().unwrap_or(f64::NAN))
+            .map_err(|error| format!("Invalid timeouts: {error}"))?;
+    }
+    Ok(timeouts)
+}
 
 /// Reads a token from the environment variable `name`.
 fn token_from_env(name: &str) -> Result<String, String> {
@@ -94,6 +112,8 @@ pub struct Configuration {
     /// settings that the SDK doesn't know, such as those of a downstream crate.
     /// They can hold credentials, so `Debug` output shows only their keys.
     pub extra: Map<String, Value>,
+    /// The time limits of requests; see [`Timeouts`].
+    pub timeouts: Timeouts,
 }
 
 /// Represents the basic authentication credentials.
@@ -125,6 +145,7 @@ impl fmt::Debug for Configuration {
             bearer_access_token,
             api_key,
             extra,
+            timeouts,
         } = self;
         f.debug_struct("Configuration")
             .field("base_path", &display_url(base_path))
@@ -134,6 +155,7 @@ impl fmt::Debug for Configuration {
             .field("bearer_access_token", &redact(bearer_access_token))
             .field("api_key", api_key)
             .field("extra", &RedactedValues(extra))
+            .field("timeouts", timeouts)
             .finish()
     }
 }
@@ -184,6 +206,7 @@ impl Configuration {
             bearer_access_token: None,
             api_key: None,
             extra: Map::new(),
+            timeouts: Timeouts::default(),
         }
     }
 
@@ -259,6 +282,20 @@ impl Configuration {
         Ok(self.with_oauth_access_token(token_from_env(name)?))
     }
 
+    /// Sets the time limits of requests; see [`Timeouts`].
+    ///
+    /// # Arguments
+    ///
+    /// * `timeouts` - The time limits.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of Configuration.
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+
     /// Loads the configuration from a JSON file.
     ///
     /// # Arguments
@@ -281,8 +318,11 @@ impl Configuration {
     ///
     /// Only `base_path` is required; authentication fields are optional.
     /// `oauth_access_token_env` names an environment variable to read the token
-    /// from, in place of `oauth_access_token`. Other keys of the section go into
-    /// `extra`. A missing file is an I/O error; malformed content is an input error.
+    /// from, in place of `oauth_access_token`. `timeouts` is an object with
+    /// `connect`, `request`, `discovery` and `submission` in seconds; missing
+    /// ones keep their defaults (see [`Timeouts`]). Other keys of the section go
+    /// into `extra`. A missing file is an I/O error; malformed content is an
+    /// input error.
     ///
     /// # Example
     ///
@@ -365,6 +405,10 @@ impl Configuration {
             }
             _ => return Err("oauth_access_token_env must be a string".into()),
         }
+        match fields.get("timeouts") {
+            None | Some(Value::Null) => {}
+            Some(value) => config.timeouts = timeouts_from_value(value)?,
+        }
         config.extra = fields
             .iter()
             .filter(|(key, _)| !SECTION_KEYS.contains(&key.as_str()))
@@ -390,6 +434,7 @@ impl Default for Configuration {
             bearer_access_token: None,
             api_key: None,
             extra: Map::new(),
+            timeouts: Timeouts::default(),
         }
     }
 }
@@ -576,6 +621,50 @@ mod tests {
     }
 
     #[test]
+    fn test_from_path_reads_timeouts() {
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org","timeouts":{"discovery":30,"submission":0.5}}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(
+            config.timeouts,
+            Timeouts {
+                discovery: Duration::from_secs(30),
+                submission: Duration::from_millis(500),
+                ..Default::default()
+            }
+        );
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+
+        for document in [
+            r#"{"custom":{"base_path":"https://example.org"}}"#,
+            r#"{"custom":{"base_path":"https://example.org","timeouts":null}}"#,
+            r#"{"custom":{"base_path":"https://example.org","timeouts":{}}}"#,
+        ] {
+            std::fs::write(&path, document).unwrap();
+            let config = Configuration::from_path(&path, "custom").unwrap();
+            assert_eq!(config.timeouts, Timeouts::default(), "{document}");
+        }
+    }
+
+    #[test]
+    fn test_with_timeouts() {
+        let timeouts = Timeouts {
+            connect: std::time::Duration::from_secs(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            Configuration::default().with_timeouts(timeouts).timeouts,
+            timeouts
+        );
+    }
+
+    #[test]
     fn test_from_path_invalid_documents() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
@@ -603,6 +692,30 @@ mod tests {
             (
                 r#"{"custom":{"base_path":"https://example.org","oauth_access_token":"token","oauth_access_token_env":"GA4GH_SDK_TEST_TOKEN_BOTH"}}"#,
                 "not both",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":30}}"#,
+                "timeouts must be an object",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"read":30}}}"#,
+                "Invalid timeouts: unknown timeout 'read'",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"request":"30"}}}"#,
+                "Invalid timeouts: request must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"connect":0}}}"#,
+                "Invalid timeouts: connect must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"discovery":-1}}}"#,
+                "Invalid timeouts: discovery must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"submission":1e300}}}"#,
+                "Invalid timeouts: submission must be a positive number of seconds",
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"GA4GH_SDK_TEST_TOKEN_UNSET"}}"#,
@@ -671,7 +784,8 @@ mod tests {
              oauth_access_token: Some(<redacted>), \
              bearer_access_token: Some(<redacted>), \
              api_key: Some(ApiKey { prefix: Some(\"Token\"), key: <redacted> }), \
-             extra: {\"client_secret\": <redacted>} }"
+             extra: {\"client_secret\": <redacted>}, \
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s } }"
         );
     }
 
@@ -686,7 +800,8 @@ mod tests {
              oauth_access_token: None, \
              bearer_access_token: None, \
              api_key: None, \
-             extra: {} }"
+             extra: {}, \
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s } }"
         );
     }
 

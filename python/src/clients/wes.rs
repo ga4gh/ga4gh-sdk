@@ -28,11 +28,6 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-/// The time that `WES.run()` allows for uploading a run and reading the answer, as for
-/// `WES::run_workflow_with_attachments`.
-const RUN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Registers the WES classes in a module.
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -994,7 +989,8 @@ impl PyWES {
             rt.block_on(self.inner.run_workflow_streaming(
                 request,
                 attachments,
-                &Operation::new(RUN_TIMEOUT),
+                // The submission limit, as for `WES::run_workflow_with_attachments`.
+                &Operation::new(self.inner.transport.config.timeouts.submission),
             ))
             .map(|inner| PyRun { inner })
             .map_err(|error| format!("Failed to run workflow: {error}"))

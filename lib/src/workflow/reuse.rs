@@ -177,6 +177,8 @@ impl RecipeIdentity {
 pub struct ExecutionOrigin {
     pub service: String,
     pub run_id: String,
+    /// Exact durable run reference recorded in the accompanying result.
+    pub run_reference: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -437,7 +439,8 @@ impl ReuseReceipt {
         }
         if !stable_reference(&self.original.service)
             || self.original.run_id.trim().is_empty()
-            || self.result.run_reference.trim().is_empty()
+            || !stable_reference(&self.original.run_reference)
+            || self.result.run_reference != self.original.run_reference
             || self.provenance_source.trim().is_empty()
             || self.artifacts.len() != self.recipe.output_paths.len()
             || self.artifacts.iter().any(|(pointer, a)| {

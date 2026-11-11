@@ -175,21 +175,28 @@ impl TRS {
     /// Creates a new `TRS` instance and checks that the endpoint is a TRS.
     ///
     /// # Arguments
-    /// - `config`: The client configuration; `base_path` is the TRS API root.
+    /// - `config`: The client configuration; `base_path` is the TRS API root,
+    ///   and `timeouts` set the time limits (see
+    ///   [`Timeouts`](crate::utils::timeouts::Timeouts)).
     ///
     /// # Returns
     /// - A new `TRS` instance, or an error if the service info can't be
     ///   fetched or doesn't describe a TRS (`org.ga4gh`, artifact `trs`).
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn Error>> {
+        Self::with_transport(Transport::new(config)).await
+    }
+
+    /// Creates a new `TRS` instance that sends its requests with `transport`,
+    /// for example one from [`Transport::with_client`], and checks that the
+    /// endpoint is a TRS. The client's configuration is the transport's.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn Error>> {
         let mut instance = TRS {
-            config: config.clone(),
-            transport: Transport::new(config),
+            config: transport.config.clone(),
+            transport,
             // Replaced below; `new` never returns an instance without it.
             service: Ok(Service::default()),
         };
-        let service =
-            tokio::time::timeout(std::time::Duration::from_secs(10), instance.service_info())
-                .await??;
+        let service = instance.service_info().await?;
         if !is_trs(&service) {
             return Err("The endpoint is not an instance of TRS".into());
         }
@@ -212,13 +219,15 @@ impl TRS {
         Ok(serde_json::from_str(&body)?)
     }
 
-    /// Fetches the service info of the registry (`GET /service-info`).
+    /// Fetches the service info of the registry (`GET /service-info`), within
+    /// the `discovery` limit of the transport's configuration.
     ///
     /// Dockstore sends `createdAt` and `updatedAt` as numbers, while
     /// service-info defines them as strings; such non-string values are
     /// dropped instead of failing the whole response.
     pub async fn service_info(&self) -> Result<Service, Box<dyn Error>> {
-        let mut value: Value = self.get_json("service-info", None).await?;
+        let body = crate::clients::serviceinfo::fetch_raw(&self.transport, "service-info").await?;
+        let mut value: Value = serde_json::from_str(&body)?;
         if let Some(object) = value.as_object_mut() {
             for key in ["createdAt", "updatedAt"] {
                 if object.get(key).is_some_and(|v| !v.is_string()) {

@@ -73,6 +73,7 @@ fn receipt() -> ReuseReceipt {
         ExecutionOrigin {
             service: "https://a.example/tes/v1".into(),
             run_id: "original-1".into(),
+            run_reference: result.run_reference.clone(),
         },
         "authorized-provider-a-export".into(),
         result,
@@ -387,6 +388,13 @@ fn receipt_claims_and_matching_digests_cannot_supply_their_own_trust() {
         &tampered.assess(&receipt.recipe, &trust(&receipt), 32, read),
         ReasonCode::ReceiptNotTrusted,
     );
+    let mut inconsistent = receipt.clone();
+    inconsistent.result.run_reference = "https://other.example/tes/v1/tasks/other".into();
+    let report = inconsistent.assess(&inconsistent.recipe, &trust(&inconsistent), 32, |_| {
+        panic!("inconsistent original execution must not read artifacts")
+    });
+    assert_eq!(report.status, ReuseStatus::Ineligible);
+    reason(&report, ReasonCode::ArtifactManifestMismatch);
     let mut tampered = receipt.clone();
     tampered.recipe.command.push("--forged".into());
     reason(
@@ -617,6 +625,7 @@ fn real_local_result_reuse() {
         ExecutionOrigin {
             service: api_a.clone(),
             run_id: run.id.clone(),
+            run_reference: result.run_reference.clone(),
         },
         "authorized-local-provider-a-export".into(),
         result,

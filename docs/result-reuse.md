@@ -48,9 +48,10 @@ empty segments, backslashes or drive prefixes.
 ## Explicit receipt exchange and current checks
 
 `ReuseReceipt` embeds the existing phase-two `results::ResultRecord`. Its small
-eligibility envelope adds recipe identity, original service/run identity,
-provenance-source label and artifact relative paths, stable references, sizes and
-SHA-256 values. Existing typed values, schema annotations, execution state,
+eligibility envelope adds recipe identity, original service/run identity, the
+exact result run reference, a provenance-source label, and artifact relative
+paths, stable references, sizes and SHA-256 values. Existing typed values,
+schema annotations, execution state,
 contract diagnostics and provenance context remain available. CrateGen remains
 the RO-Crate conversion/provenance component. There is no new artifact package,
 global cache index, upload service, DRS checksum-search requirement or proposed
@@ -77,7 +78,8 @@ For each assessment/action, independently establish current provenance trust:
 `assess` returns `ELIGIBLE`, `INELIGIBLE` or `UNVERIFIED` with machine-readable
 reason codes. It requires COMPLETE execution, a matching pinned output contract,
 conformant typed outputs, consistent artifact manifests and a matching complete
-recipe. Imported artifact verification evidence is historical and is cleared
+recipe. The origin's durable run reference must match the one in the typed result.
+Imported artifact verification evidence is historical and is cleared
 before current verification.
 
 A caller-owned access adapter receives each `ArtifactReference` and must perform
@@ -114,6 +116,8 @@ artifact manifest and measurements. It cannot be deserialized into a substitute
 for performing current checks. This is a checked reference at the time of the
 read, not a lease guaranteeing future availability. Consumers that materialize
 files must preserve the relative paths and independently control their destination.
+`prepared_for_service` is a caller-supplied label, not evidence that the second
+provider accepted or ran a task.
 
 ## Reproducible local experiment
 
@@ -124,13 +128,16 @@ cargo test -p ga4gh-lib --features workflow-contracts --test result_reuse --lock
 python3 examples/result-reuse/run.py
 ```
 
-Docker must already have the pinned Python image. The adapter uses `--pull=never`
-and never downloads or deletes unrelated images. The adapter uses Docker context
-`default` on every platform. Set `GA4GH_REUSE_DOCKER_CONTEXT` to an existing context
-when needed; it does not change the global Docker context. Mac workspaces default
-below the ignored repository `target/result-reuse` directory so the workspace can
-use a home-directory mount. Use `--work` to choose a workspace that the selected
-Docker daemon can bind mount. For a clean Linux CI runner:
+Docker must already have the pinned Python image in the selected Docker context.
+The adapter uses `--pull=never` and never downloads or deletes unrelated images.
+It uses Docker context `default` unless `GA4GH_REUSE_DOCKER_CONTEXT` names another
+trusted local context; it does not change the global Docker context. Check
+`docker --context default info` before the run. On a Docker Desktop setup where
+`default` has no daemon, select its local context explicitly, for example
+`GA4GH_REUSE_DOCKER_CONTEXT=desktop-linux python3 examples/result-reuse/run.py`.
+On macOS, workspaces default below this checkout's ignored
+`target/result-reuse` directory. Use `--work` if the selected Docker daemon
+cannot bind-mount that path. For a clean Linux CI runner:
 
 ```sh
 docker pull python@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91
