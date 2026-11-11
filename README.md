@@ -329,6 +329,8 @@ WES invocation plans, typed results with selected artifact evidence, and explici
 scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
 `results`, `verify` and `compare`. See the [workflow guide](docs/workflow-contracts.md)
 for the public sequence-QC example, offline commands and evidence boundaries.
+The same optional feature provides [exact result reuse](docs/result-reuse.md)
+from a trusted receipt and freshly checked artifacts; it does not submit a job.
 
 ## Building
 
