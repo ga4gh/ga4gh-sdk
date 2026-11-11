@@ -1,11 +1,31 @@
 ## GA4GH-SDK Python Bindings
 
-This directory provides Python bindings for the GA4GH SDK using [PyO3](https://docs.rs/pyo3/latest/pyo3).
-These instructions build the bindings from this repository. Start at the
-repository root; after `cd python`, run later commands from `python/` with the
-virtual environment active.
+This directory provides Python bindings for the GA4GH SDK using
+[PyO3](https://docs.rs/pyo3/latest/pyo3). Releases use the PyPI distribution
+name `ga4gh-sdk`. The other instructions build the bindings from this
+repository. Start at the repository root; after `cd python`, run later commands
+from `python/` with the virtual environment active.
+
+## Install from PyPI
+
+Once the first release is published, install it into a CPython 3.11+ environment:
+
+```sh
+python -m pip install ga4gh-sdk
+python -c 'from ga4gh_sdk import TES; print(TES.__name__)'
+```
+
+pip skips pre-releases such as `0.2.0rc1` unless you add `--pre` or name the
+version (`ga4gh-sdk==0.2.0rc1`). The release workflow builds wheels for Linux
+(x86-64 and aarch64, glibc 2.28 or newer), macOS (x86-64 and arm64) and
+Windows (x86-64); installing them needs no Rust toolchain. Elsewhere, for
+example on musl-based Linux such as Alpine or with an older glibc, pip builds
+the bindings from the sdist, which needs the prerequisites below. See the
+[release guide](../docs/releasing.md) for the publication process.
 
 ## Prerequisites
+
+To build the bindings from source:
 
 - CPython 3.11 or newer (PyPy and free-threaded builds are not supported)
 - The [Rust toolchain](../README.md#installation)
@@ -21,11 +41,14 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install 'maturin>=1.7,<2'
 maturin develop --locked
-python -c 'from GA4GH import TES; print(TES.__name__)'
+python -c 'from ga4gh_sdk import TES; print(TES.__name__)'
 ```
 
 Use a Python 3.11+ executable if `python3` points to an older version. The
-distribution is named `GA4GH-SDK`; the import name is `GA4GH`.
+distribution is named `ga4gh-sdk`; the import name is `ga4gh_sdk`. Earlier
+source builds used `from GA4GH import ...`; update those imports before using
+the released package. An uppercase import alias is not shipped because it can
+collide with the older `ga4gh` package on case-insensitive file systems.
 
 ## Build a wheel
 
@@ -79,7 +102,7 @@ root, so its path from `python/` is `../examples/tes-hello.json`. It runs
 `echo` in an Alpine container without external storage.
 
 ```python
-from GA4GH import Configuration, ServiceInfo, ServiceType, TES
+from ga4gh_sdk import Configuration, ServiceInfo, ServiceType, TES
 
 config = Configuration("http://localhost:8000/ga4gh/tes/v1")
 # Or read the TES section of ~/.ga4gh-cli/config.json:
@@ -113,7 +136,7 @@ section that the SDK doesn't use itself, as a `dict` with the values as they are
 in the file, so don't log it if it can hold credentials:
 
 ```python
-from GA4GH import Configuration, ServiceType
+from ga4gh_sdk import Configuration, ServiceType
 
 config = Configuration("https://example.org")
 config.from_file(ServiceType.TES)
@@ -132,7 +155,7 @@ arguments; `config.get_timeouts()` returns all four as a `dict`. A section of
 the configuration file sets them with its `timeouts` object:
 
 ```python
-from GA4GH import Configuration, TES
+from ga4gh_sdk import Configuration, TES
 
 config = Configuration("https://example.org/ga4gh/tes/v1")
 config.set_timeouts(discovery=30, submission=600)
@@ -155,6 +178,10 @@ Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
 timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
 
 ## Network behavior
+
+The Python build uses rustls for HTTPS and loads trusted certificates from the
+host system. On Linux, install the system CA certificate bundle for HTTPS
+requests; building the bindings does not need OpenSSL development headers.
 
 Synchronous network methods release the Python GIL while Rust waits for I/O.
 They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
@@ -179,7 +206,7 @@ arguments also raise `ValueError`.
 need neither task files on disk nor JSON parsing:
 
 ```python
-from GA4GH import Configuration, ListTasksParams, TES, TesState, TesTask
+from ga4gh_sdk import Configuration, ListTasksParams, TES, TesState, TesTask
 
 tes = TES(Configuration("http://localhost:8000/ga4gh/tes/v1"))
 
@@ -255,7 +282,7 @@ same methods as `TES` and `Task`, take the same arguments and give the same resu
 ```python
 import asyncio
 
-from GA4GH import AsyncTES, Configuration, TesState
+from ga4gh_sdk import AsyncTES, Configuration, TesState
 
 
 async def main():
@@ -299,7 +326,7 @@ asyncio.run(main())
 
 ### Type hints
 
-The package ships type stubs (`GA4GH.pyi`, with a `py.typed` marker), so editors and
+The package ships type stubs (`ga4gh_sdk.pyi`, with a `py.typed` marker), so editors and
 type checkers such as mypy see every class and method. `tests/test_stubs.py` checks that
 the stubs declare every class and member of the module.
 
@@ -310,7 +337,7 @@ requests as `dict`s, and workflow files as `bytes` or paths:
 
 ```python
 from pathlib import Path
-from GA4GH import Configuration, WES, WesState
+from ga4gh_sdk import Configuration, WES, WesState
 
 wes = WES(Configuration("https://your-wes.example/ga4gh/wes/v1"))
 
@@ -443,7 +470,7 @@ CI runs this exact script against a mock service and checks the submitted task b
 access URLs, one at a time or in bulk. It never downloads object bytes:
 
 ```python
-from GA4GH import Configuration, DRS, PendingResolution
+from ga4gh_sdk import Configuration, DRS, PendingResolution
 
 drs = DRS(Configuration("https://your-drs.example/ga4gh/drs/v1"))
 
@@ -532,7 +559,7 @@ The Python test suite runs this file against a mock DRS service.
 value)` pairs, unlike the `"Name: value"` strings of `AccessURL`), and its `region`:
 
 ```python
-from GA4GH import Configuration, DrsResolver, DrsUri, Transport
+from ga4gh_sdk import Configuration, DrsResolver, DrsUri, Transport
 
 resolver = DrsResolver().with_service(
     "drs.example.org", Transport(Configuration("https://drs.example.org/ga4gh/drs/v1"))
@@ -642,7 +669,7 @@ The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=
 
 ```python
 from pathlib import Path
-from GA4GH import Configuration, Transport
+from ga4gh_sdk import Configuration, Transport
 
 transport = Transport(Configuration("https://your-wes.example/ga4gh/wes/v1"))
 transport.post_multipart(
@@ -668,7 +695,7 @@ order), `task.to_dict()` as a `dict`. `TES.create()` sends such fields as given,
 `ListTasksParams` takes the filters of the TES `ListTasks` request as keyword arguments:
 
 ```python
-from GA4GH import ListTasksParams
+from ga4gh_sdk import ListTasksParams
 
 params = ListTasksParams(state="running", tag_key=["project"], tag_value=["demo"], page_size=50)
 page = tes.list(params)
@@ -692,7 +719,7 @@ that the sync and the async classes share are public functions in `clients::tes`
 `get_task()` and `task_status()`; an async extension method can run them with
 `clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
 `clients::tes_async` does. The extension module gets its own copies of the base classes,
-which don't mix with those of the `GA4GH` module: a `GA4GH.Configuration` can't be passed
+which don't mix with those of the `ga4gh_sdk` module: a `ga4gh_sdk.Configuration` can't be passed
 to it. So register every base class that its users need
 (`m.add_class::<PyConfiguration>()` and so on, and `m.add("TesState",
 tes_state_type(py)?)` for the state enum) in the extension module, and import everything

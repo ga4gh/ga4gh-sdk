@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from GA4GH import Configuration, ServiceType
+from ga4gh_sdk import Configuration, ServiceType
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix", reason="HOME controls the config path on Unix"

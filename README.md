@@ -99,7 +99,8 @@ ga4gh-lib = { git = "https://github.com/ga4gh/ga4gh-sdk" }
 ```
 
 For the Python bindings (built with [maturin](https://www.maturin.rs/)), see
-the [Python README](python/README.md).
+the [Python README](python/README.md) for installation and the `ga4gh_sdk`
+import name. Maintainers can follow the [release guide](docs/releasing.md).
 
 ## Quick start
 
