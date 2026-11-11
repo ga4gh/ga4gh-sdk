@@ -188,10 +188,10 @@ replies, merged over all chunks. If a reply has both arrays, the standard one
 wins and a diagnostic is added; a `null` array counts as absent.
 Gen3 objects can carry `created_time: null`, which the typed `DrsObject` cannot
 represent. `get_bulk_objects` reports such an entry as an error in its outcome
-and never invents a timestamp; `get_bulk_objects_raw` returns every resolved
-entry as JSON, correlated by `id`. Single-object `get_object` has the same
-limit for these objects; use `get_object_raw`. The Gen3 bulk access reply is not
-read in another shape, because it was not verified without credentials.
+and never invents a timestamp; `get_bulk_objects_raw` returns each requested
+resolved entry as JSON, correlated by `id`. Single-object `get_object` has the
+same limit for these objects; use `get_object_raw`. The Gen3 bulk access reply
+is not read in another shape, because it was not verified without credentials.
 Checked against CanineDC on 2026-11-10; see the [opt-in live check](tests/README.md#gen3-drs-caninedc).
 
 The GA4GH Starter Kit DRS bulk routes (`1.3.0experimental`) are not supported.

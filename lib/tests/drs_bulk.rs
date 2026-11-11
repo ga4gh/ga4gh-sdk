@@ -377,6 +377,38 @@ async fn standard_field_wins_when_a_reply_uses_both_dialects() {
 }
 
 #[tokio::test]
+async fn dialects_from_separate_chunks_are_reported_together() {
+    let standard = mock("POST", "/mixed-dialects/objects")
+        .match_body(Matcher::Json(json!({"bulk_object_ids":["a"]})))
+        .with_body(json!({"resolved_drs_object":[object("a")]}).to_string())
+        .expect(1)
+        .create();
+    let gen3 = mock("POST", "/mixed-dialects/objects")
+        .match_body(Matcher::Json(json!({"bulk_object_ids":["b"]})))
+        .with_body(json!({"resolved_drs_objects":[object("b")]}).to_string())
+        .expect(1)
+        .create();
+    let policy = BulkPolicy {
+        chunk_size: 1,
+        concurrency: 2,
+        ..Default::default()
+    };
+    let report = client("/mixed-dialects")
+        .get_bulk_objects(&["b".into(), "a".into()], &[], &policy, &budget())
+        .await
+        .unwrap();
+
+    assert!(report.outcomes[&key("a")].is_success());
+    assert!(report.outcomes[&key("b")].is_success());
+    assert_eq!(
+        report.dialects,
+        BTreeSet::from([BulkDialect::Standard, BulkDialect::Gen3])
+    );
+    standard.assert();
+    gen3.assert();
+}
+
+#[tokio::test]
 async fn starter_kit_experimental_reply_is_not_interpreted() {
     // Starter Kit DRS `1.3.0experimental` (develop 2b76a63) reads `selection`
     // and reports failures in an `unresolved_drs_object` map.
