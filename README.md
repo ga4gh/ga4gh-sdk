@@ -147,6 +147,10 @@ Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, `TRS`, and `ServiceRegistry`
 clients. The CLI also has [WES commands](cli/README.md#wes-examples) and
 [Service Registry commands](cli/README.md#service-registry-commands).
 
+The [provider contract proposals](docs/rfcs/README.md) describe possible
+extensions for leased interactive sessions and workload-bound secrets. They
+are not implemented SDK features.
+
 ## Advanced transport
 
 Advanced transport callers can use `request_response` for status and headers
