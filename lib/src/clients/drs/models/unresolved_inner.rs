@@ -19,6 +19,10 @@ pub struct UnresolvedInner {
     pub error_code: Option<i32>,
     #[serde(rename = "object_ids", skip_serializing_if = "Option::is_none")]
     pub object_ids: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl UnresolvedInner {
@@ -26,6 +30,7 @@ impl UnresolvedInner {
         UnresolvedInner {
             error_code: None,
             object_ids: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

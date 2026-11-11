@@ -34,6 +34,10 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
+As for `TES`, the error type of `DRS::service` is now
+`Box<dyn Error + Send + Sync>`, so a `DRS` client can move between threads;
+`DRS::new` stores only a successful service-info response.
+
 The WES models follow WES 1.1.0 and use the schema names of the spec:
 `WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
 `State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
@@ -43,6 +47,30 @@ items are `RunListResponseRunsInner` and deprecated task log items are
 `RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
 endpoints. As for `TES`, the error type of `WES::service` is now
 `Box<dyn Error + Send + Sync>`, so a `WES` client can move between threads.
+
+All models now keep what their spec doesn't define (see
+[Models](docs/usage.md#models)). This breaks some code:
+
+- Model structs have a new public field, `extra`. Struct literals of models
+  must set it or end with `..Default::default()`; prefer the models' `new`
+  functions.
+- Enums have a new variant, `Unrecognized(String)`, and are no longer `Copy`.
+  `match` statements need an arm for it, and code that copies an enum value
+  must `.clone()` it. `TesState` and the WES `State` are not affected: they
+  stay `Copy` and read unknown states as `Unknown`, which is now their last
+  variant (this changes their `Ord` order). They write such states back as
+  `UNKNOWN`.
+- Model enums of a single property, such as the DRS `access_method::Type`,
+  now implement `Display`.
+- `extra` keys with the name of a field of the model are sent twice in the
+  JSON; only WES `run_workflow` rejects them.
+- Unknown fields are no longer dropped: serializing a model, or
+  `ga4gh-cli registry get`, now includes the fields that the server added.
+- WES `run_workflow` sends `RunRequest.extra` as further form parts; names of
+  the request's own parts are an error.
+- TRS methods that take a descriptor type encode it as a path segment and
+  reject `Unrecognized` values that are empty, `.` or `..`.
+- `TesTask::new(executors)` now sets `executors`; it used to ignore them.
 
 ## Installation
 
@@ -107,6 +135,10 @@ ga4gh-cli tes status "$task_id"
 ga4gh-cli tes list
 ```
 
+For scripts that need to preserve arbitrary server-provided IDs, use
+`ga4gh-cli tes create examples/tes-hello.json --format json` and parse its
+`id` field. The text output above is intended for ordinary IDs.
+
 Docker may download the Alpine image on the first run.
 
 The [CLI README](cli/README.md) describes all CLI commands. The
@@ -132,9 +164,16 @@ the server's `next_page` URL within the same tools API root, and returns an
 opaque `files_zip` response without extraction or text conversion. These helpers
 compose with a configured `Transport` independently of the basic TRS client.
 
-The default client uses a 10-second connection budget and 60-second request
-budget. Use `with_timeouts` or inject a client to change them. For a multi-attempt
-operation, `RequestOptions` holds one absolute deadline, a local cancellation
+By default, connecting may take 10 seconds and a request 60 seconds; the
+service-info check of the TES, WES, DRS and TRS clients may take 10 seconds and a
+TES task or WES run submission, including uploads, 300 seconds. Set them with
+`Configuration::with_timeouts` (or the `timeouts` object of a configuration file
+section); `Transport::with_timeouts` sets only the first two. The clients'
+`with_transport` constructors take a ready `Transport`, such as one with an
+injected client. The [usage guide](docs/usage.md#timeouts) says which limit
+applies to which request.
+
+For a multi-attempt operation, `RequestOptions` holds one absolute deadline, a local cancellation
 token, body bounds and an explicit replay classification. Retries are opt-in,
 capped at 32 attempts, and use exponential backoff with jitter; 429/503 honor
 delta/date `Retry-After` within that same deadline. Mark only protocol-defined
@@ -231,6 +270,20 @@ At a partially consumed or truncated page, a checkpoint replays that page.
 Mutable listings provide neither snapshot isolation nor exactly-once processing;
 callers reconcile replays. Credentials are supplied separately when resuming.
 
+Query parameters are a JSON object. `Transport`, `Pager` and the Python
+bindings encode them with one policy, documented in `utils::query`: a string,
+number or boolean gives one parameter, `null` leaves the parameter out, and a
+list of strings, numbers and booleans repeats it once per item, in order
+(`tag_key=a&tag_key=b`; an empty list sends nothing). Keys are sorted. Keys and
+values are form encoded, so a space becomes `+`. Objects, nested lists and
+`null` inside a list are rejected before a request is sent, because TES pairs
+`tag_key` and `tag_value` items by position.
+
+**Behavior change:** `Pager` used to send objects and nested lists as JSON text,
+and `Pager` and the Python `Transport` left out `null` list items.
+`Pager::new` and the Python methods now return an error for them instead;
+remove such values from the query before the call.
+
 The CLI streams `tes list --all --format jsonl` and `wes list --all --format
 jsonl` through caller-owned writers, with one JSON object per stdout line.
 `--max-pages` and `--max-items` bound work; limits or later failures preserve
@@ -264,6 +317,14 @@ credentials, and never follows redirects.
 that were hashed, returning a run plus manifest/execution linkage. Workflow
 parameters, bearer tokens and signed descriptor URLs are excluded from provenance.
 See the [named Toil integration check](tests/README.md) for an actual CWL execution.
+
+## Experimental workflow contracts
+
+Enable `ga4gh-lib/workflow-contracts` for pinned local I/O validation, immutable
+WES invocation plans, typed results with selected artifact evidence, and explicit
+scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
+`results`, `verify` and `compare`. See the [workflow guide](docs/workflow-contracts.md)
+for the public sequence-QC example, offline commands and evidence boundaries.
 
 ## Building
 
@@ -315,8 +376,8 @@ The basic `list_tools` method returns a page without headers. Use
 `clients::trs::responses` with the client's transport for server-provided paging
 URLs and opaque `format=zip` downloads (see the advanced transport API above).
 Authentication isn't supported yet: the SDK's transport doesn't send
-the configured tokens, so only public registries and tools work. The CLI has
-no TRS commands yet.
+the configured tokens, so only public registries and tools work. The CLI's
+`trs` commands use this client; see the [CLI README](cli/README.md#trs-examples).
 
 ## Testing
 Unit tests run by default. Integration suites are opt-in.
@@ -349,6 +410,8 @@ the form of bug reports, feature requests, discussions, ideas, fixes, or other
 code changes. Please read [these guidelines][contributing] if you want to
 contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
+
+For local checks, coverage, and hooks, see the [development guide](docs/development.md).
 
 ## License
 

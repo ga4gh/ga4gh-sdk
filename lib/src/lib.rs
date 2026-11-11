@@ -7,3 +7,6 @@ pub mod utils;
 
 /// HTTP types used by the public transport API.
 pub use reqwest;
+
+#[cfg(feature = "workflow-contracts")]
+pub mod workflow;

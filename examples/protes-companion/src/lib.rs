@@ -1,13 +1,18 @@
 //! Downstream proTES consumer. No proprietary endpoints are added to standard TES.
 use ga4gh_sdk::{
     clients::tes::models::TesTask,
-    utils::transport::{urlencode, Transport},
+    utils::{
+        operation::AmbiguousSubmissionError,
+        transport::{urlencode, HttpStatusError, Transport},
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, error::Error};
 pub type CompanionError = Box<dyn Error>;
 pub const API_REVISION: &str = "55c4d1591cd3be883ad0b4fd2da01d49976414cb";
+const PLAN_SOURCE: &str = "caller_supplied_original_client_request";
+const PLAN_SUBMISSION: &str = "not_submitted; review this new request before explicit create";
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Pipeline {
     pub source: Option<String>,
@@ -92,6 +97,7 @@ pub async fn fetch(transport: &Transport, id: &str) -> Result<Explanation, Compa
     explain(serde_json::from_str(&raw)?, false)
 }
 #[derive(Default, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Choices {
     pub pipeline: Option<String>,
     pub backends: Option<BackendSelection>,
@@ -104,6 +110,7 @@ pub enum BackendMode {
     Forbid,
 }
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BackendSelection {
     #[serde(rename = "type")]
     pub mode: BackendMode,
@@ -111,6 +118,17 @@ pub struct BackendSelection {
 }
 #[derive(Debug, Serialize)]
 pub struct RerunPlan {
+    format_version: u32,
+    source: String,
+    request: Value,
+    removed_fields: Vec<String>,
+    removed_gateway_tags: Vec<String>,
+    submission: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlanDocument {
     format_version: u32,
     source: String,
     request: Value,
@@ -195,11 +213,11 @@ pub fn prepare_rerun(original: &Value, choices: Choices) -> Result<RerunPlan, Co
     }
     Ok(RerunPlan {
         format_version: 1,
-        source: "caller_supplied_original_client_request".into(),
+        source: PLAN_SOURCE.into(),
         request,
         removed_fields,
         removed_gateway_tags,
-        submission: "not_submitted; review this new request before explicit create".into(),
+        submission: PLAN_SUBMISSION.into(),
     })
 }
 
@@ -226,28 +244,63 @@ pub fn configured_transport(
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .default_headers(headers)
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(60))
+        .connect_timeout(config.timeouts.connect)
+        .timeout(config.timeouts.request)
         .build()?;
-    Ok(Transport {
-        config: config.clone(),
-        client,
-    })
+    Ok(Transport::with_client(config, client))
 }
 /// Compose an authenticated standard TES client without a second anonymous discovery.
 pub async fn tes_client(
     config: &ga4gh_sdk::utils::configuration::Configuration,
 ) -> Result<ga4gh_sdk::clients::tes::TES, CompanionError> {
-    let transport = configured_transport(config)?;
-    let service = serde_json::from_str(&transport.get("service-info", None).await?)?;
-    Ok(ga4gh_sdk::clients::tes::TES {
-        config: config.clone(),
-        transport,
-        service: Ok(service),
-    })
+    ga4gh_sdk::clients::tes::TES::with_transport(configured_transport(config)?).await
 }
 
 impl RerunPlan {
+    /// Load a prepared plan without permitting server-owned fields or recorded
+    /// gateway routing state to enter the submitted request.
+    pub fn from_value(value: Value) -> Result<Self, CompanionError> {
+        let document: PlanDocument = serde_json::from_value(value)?;
+        if document.format_version != 1
+            || document.source != PLAN_SOURCE
+            || document.submission != PLAN_SUBMISSION
+        {
+            return Err("unsupported or modified plan metadata".into());
+        }
+        let tags = document.request.get("tags").and_then(Value::as_object);
+        let pipeline = tags
+            .and_then(|tags| tags.get("gateway.pipeline"))
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or("gateway.pipeline must be a string")
+            })
+            .transpose()?;
+        let backends = tags
+            .and_then(|tags| tags.get("gateway.backends"))
+            .map(|value| -> Result<BackendSelection, CompanionError> {
+                Ok(serde_json::from_str(
+                    value
+                        .as_str()
+                        .ok_or("gateway.backends must be a JSON string")?,
+                )?)
+            })
+            .transpose()?;
+        let validated = prepare_rerun(&document.request, Choices { pipeline, backends })?;
+        if validated.request != document.request {
+            return Err("plan request contains unsupported or server-owned fields".into());
+        }
+        Ok(Self {
+            format_version: document.format_version,
+            source: document.source,
+            request: document.request,
+            removed_fields: document.removed_fields,
+            removed_gateway_tags: document.removed_gateway_tags,
+            submission: document.submission,
+        })
+    }
+
     pub fn request(&self) -> &Value {
         &self.request
     }
@@ -261,21 +314,17 @@ pub async fn create_plan(
     client: &ga4gh_sdk::clients::tes::TES,
     plan: &RerunPlan,
 ) -> Result<ga4gh_sdk::clients::tes::Task, CompanionError> {
-    if !client
-        .service
-        .as_ref()
-        .is_ok_and(|s| s.r#type.artifact.eq_ignore_ascii_case("tes"))
-    {
-        return Err("expected an authenticated TES service".into());
+    match client.create_value(plan.request.clone()).await {
+        Ok(task) => Ok(task),
+        Err(error) => {
+            if let Some(status) = error.downcast_ref::<HttpStatusError>() {
+                if !status.status.is_client_error() {
+                    return Err(Box::new(AmbiguousSubmissionError {
+                        reason: format!("gateway returned HTTP {}", status.status),
+                    }));
+                }
+            }
+            Err(error)
+        }
     }
-    let response=client.transport.post("tasks",Some(plan.request.clone())).await.map_err(|error| {
-        if error.downcast_ref::<ga4gh_sdk::utils::transport::HttpStatusError>().is_some_and(|e|e.status.is_client_error()) {error}
-        else {format!("submission outcome may be unknown; reconcile before another execution: {error}").into()}
-    })?;
-    let acknowledgement:Value=serde_json::from_str(&response).map_err(|_|"submission may have succeeded; malformed acknowledgement; reconcile before another execution")?;
-    let id=acknowledgement.get("id").and_then(Value::as_str).filter(|s|!s.is_empty()).ok_or("submission may have succeeded without a usable task ID; reconcile before another execution")?;
-    Ok(ga4gh_sdk::clients::tes::Task::new(
-        id.into(),
-        client.transport.clone(),
-    ))
 }

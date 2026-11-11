@@ -51,13 +51,14 @@ pytest
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root or read it from `~/.ga4gh-cli/config.json`. |
+| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys; `set_timeouts()` and `get_timeouts()` set and give the time limits of requests. See [Reading the configuration file](#reading-the-configuration-file) and [Timeouts](#timeouts). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
+| `DRS`, `DrsResolver` | Read DRS objects and access URLs, one at a time or in bulk, wait while the server prepares them, and plan access for `drs://` URIs; read full JSON including unknown fields. See [Using DRS](#using-drs). |
 | `WES`, `Run`, `RunRequest` | Start runs (with workflow attachments), list, inspect, poll, and cancel WES runs, and read their tasks; read full JSON including unknown fields. See [Using WES](#using-wes). |
-| DRS, TRS, Service Registry | Available in the Rust SDK, not yet as Python client classes. |
+| TRS, Service Registry | Available in the Rust SDK, not yet as Python client classes. |
 
 The Python API is maintained by hand; a new Rust SDK method or model does not
 appear in Python automatically. For each SDK change, decide whether to expose
@@ -101,6 +102,57 @@ Use `TesTask.from_json(text)` when the task starts as JSON text.
 For a task that is still running, call `task.cancel()`.
 `from_file` replaces the API root. `Task.status()` and `Task.cancel()` are methods;
 `id` and `status` on tasks returned by `list()` and `get()` are attributes.
+
+## Reading the configuration file
+
+`config.from_file()` reads a section of `~/.ga4gh-cli/config.json` (format in
+the [usage guide](../docs/usage.md#configuration-file)). Name a built-in
+section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`, `REGISTRY`), and
+any other section with a `str`. `config.get_extra()` returns the keys of the
+section that the SDK doesn't use itself, as a `dict` with the values as they are
+in the file, so don't log it if it can hold credentials:
+
+```python
+from GA4GH import Configuration, ServiceType
+
+config = Configuration("https://example.org")
+config.from_file(ServiceType.TES)
+config.from_file("MY_SERVICE")
+queue = config.get_extra().get("queue")
+```
+
+A section can name an environment variable for its token with
+`oauth_access_token_env`. A missing section or an unset variable raises
+`ValueError`, a missing file `FileNotFoundError`.
+
+## Timeouts
+
+`config.set_timeouts()` sets time limits of requests, in seconds, as keyword
+arguments; `config.get_timeouts()` returns all four as a `dict`. A section of
+the configuration file sets them with its `timeouts` object:
+
+```python
+from GA4GH import Configuration, TES
+
+config = Configuration("https://example.org/ga4gh/tes/v1")
+config.set_timeouts(discovery=30, submission=600)
+config.get_timeouts()
+# {'connect': 10.0, 'discovery': 30.0, 'request': 60.0, 'submission': 600.0}
+tes = TES(config)
+```
+
+- `connect` (default 10): opening each connection.
+- `request` (default 60): each request that the limits below don't apply to.
+- `discovery` (default 10): the service check of `TES(config)`, `AsyncTES`,
+  `WES(config)` and `DRS(config)`, in place of `request`.
+- `submission` (default 300): `TES.create()`, `AsyncTES.create()` and
+  `WES.run()`, including uploads, in place of `request`. A submission that runs
+  out of time after its request started raises `RuntimeError` with "submission may have
+  been accepted"; look for the task or run before you submit it again.
+
+Clients and `Transport` read the limits when they are built, so set them first.
+Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
+timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
 
 ## Network behavior
 
@@ -176,8 +228,9 @@ pickled and copied, including the attributes of subclass instances.
 
 Its fields are properties: `id`, `state`, `name`, `description`, `creation_time`,
 `inputs`, `outputs`, `resources`, `executors`, `volumes`, `tags` and `logs`. Missing
-fields are `None`, except `state`, which is `TesState.UNKNOWN` then. Nested values, such
-as executors, come as `dict`s and `list`s. The `status` property is the same as `state` and
+fields are `None`, except `state`, which is `TesState.UNKNOWN` then. A state that TES
+1.1 doesn't define is also `TesState.UNKNOWN`; `to_dict()` keeps the server's value.
+Nested values, such as executors, come as `dict`s and `list`s. The `status` property is the same as `state` and
 is kept for compatibility. Data objects such as `TesTask` have properties; `Task`, which
 asks the server, has methods (`Task.status()`).
 
@@ -297,16 +350,18 @@ print(run.task(tasks.task_logs[0].id).stderr)
   `os.PathLike`); as for `TES.create()`, a `str` is always a path, so pass JSON text as
   `RunRequest.from_json(text)`. `workflow_type`, `workflow_type_version`, `workflow_url`
   and `workflow_params` are required; `workflow_params` must be a JSON object.
-  The request goes to the server as the fields of
-  the WES `RunRequest` form; fields that the WES models don't know are kept in the
-  `RunRequest` but not sent.
+  The request goes to the server as the fields of the WES `RunRequest` form. Fields
+  that the WES models don't know, such as a server's extension fields, go as further
+  form parts: strings as they are, other values as JSON. A `workflow_attachment` field
+  raises `ValueError` before a request; pass files with `attachments` instead.
 - `attachments` maps filenames to contents, as `bytes` (or `bytearray`) or as the path of
   a file (`os.PathLike`, such as `pathlib.Path`), which is streamed rather than read into
   memory. A list of `(filename, content)` pairs works too. Filenames are relative paths
   with `/` separators, such as `tools/echo.cwl`; absolute paths, `..`, backslashes,
   colons and repeated filenames raise `ValueError` before a request. Refer to an
   attachment in `workflow_url` by its filename. The upload and the server's answer must
-  finish within 60 seconds.
+  finish within the `submission` limit of the configuration, 300 seconds by default
+  (see [Timeouts](#timeouts)).
 - `Run` addresses a run on the server by its `id`. `Run.status()` returns a `WesState`,
   `Run.cancel()` cancels the run and returns `None`, and `Run.log()` returns a `RunLog`.
   `Run.tasks(page_size=None, page_token=None)` returns a `TaskListResponse` with
@@ -340,8 +395,10 @@ and `json()` as JSON text.
 - `TaskLog`: `id`, `name`, `cmd`, `start_time`, `end_time`, `stdout`, `stderr`,
   `exit_code`, `system_logs` and `tes_uri`.
 
-Missing fields are `None`, except `state`, which is `WesState.UNKNOWN` then. Nested
-values, such as `run_log`, come as `dict`s and `list`s. `WesState` is a `str` enum of the
+Missing fields are `None`, except `state`, which is `WesState.UNKNOWN` then. A state
+that WES 1.1 does not define also reads as `WesState.UNKNOWN`; `to_dict()` keeps
+the server's original value. Nested values, such as `run_log`, come as `dict`s
+and `list`s. `WesState` is a `str` enum of the
 WES states (`UNKNOWN`, `QUEUED`, `INITIALIZING`, `RUNNING`, `PAUSED`, `COMPLETE`,
 `EXECUTOR_ERROR`, `SYSTEM_ERROR`, `CANCELED`, `CANCELING`, `PREEMPTED`) that works like
 `TesState`, but is a separate class.
@@ -380,6 +437,146 @@ The script creates a task from a Python `dict` and also works when invoked
 from the repository root. Set `GA4GH_TES_URL` to use another TES API root.
 CI runs this exact script against a mock service and checks the submitted task body.
 
+## Using DRS
+
+`DRS` is a client for a Data Repository Service (DRS 1.4). It reads object metadata and
+access URLs, one at a time or in bulk. It never downloads object bytes:
+
+```python
+from GA4GH import Configuration, DRS, PendingResolution
+
+drs = DRS(Configuration("https://your-drs.example/ga4gh/drs/v1"))
+
+obj = drs.get_object("my-object-id")
+print(obj.id, obj.size, obj.checksums)
+for method in obj.access_methods or []:
+    print(method["type"], method.get("access_id"))
+
+access = drs.get_access_url("my-object-id", "my-access-id")
+# Fetch the bytes from access.url with access.headers; don't log signed URLs.
+
+# The server may still be preparing an answer (202 Accepted):
+answer = drs.get_object_once("my-object-id")
+if isinstance(answer, PendingResolution):
+    print("ask again in", answer.retry_after, "seconds")
+obj = drs.resolve_object("my-object-id", timeout=120, max_attempts=10)
+
+report = drs.get_bulk_objects(["id-1", "id-2"])
+for outcome in report.outcomes:
+    if outcome.is_success:
+        print(outcome.object_id, outcome.resolved[0].size)
+    else:
+        print(outcome.object_id, outcome.failure_codes, outcome.pending, outcome.errors)
+urls = drs.get_bulk_access_urls({"id-1": "my-access-id"})
+```
+
+The checked-in [DRS example](examples/drs_read.py) reads one object without
+printing any access URL or header. Run it from `python/` after installing the
+bindings:
+
+```sh
+python examples/drs_read.py https://your-drs.example/ga4gh/drs/v1 my-object-id
+```
+
+The Python test suite runs this file against a mock DRS service.
+
+- `DRS(config)` reads the service info and raises `RuntimeError` if the service isn't
+  reachable or isn't a DRS.
+- `DRS.get_object(object_id)` returns a `DrsObject`. `DRS.get_access_url(object_id,
+  access_id)` returns an `AccessURL`; `access_id` is the `access_id` of one of the
+  object's `access_methods`. IDs are sent as one URL path segment each. The
+  `get_object_raw()` and `get_access_url_raw()` variants return the complete JSON
+  object as a `dict` without applying the generated models.
+- A DRS server can answer `202 Accepted` with a `Retry-After` header while it prepares
+  an object or URL. `get_object()` and `get_access_url()` then raise `RuntimeError`.
+  `get_object_once()` and `get_access_url_once()` send one request and return a
+  `PendingResolution` instead, with `retry_after` (seconds), `endpoint` and `api_root`
+  (without credentials). `resolve_object()` and `resolve_access_url()` wait and ask
+  again as the server says, up to `max_attempts` requests (default 5) and `timeout`
+  seconds in all (default 60), then raise `RuntimeError`.
+- `DRS.get_bulk_objects(ids, passports=None, policy=None, timeout=60.0)` asks for several
+  objects with `POST objects`; `DRS.get_bulk_access_urls(pairs, ...)` asks for access
+  URLs with `POST objects/access`. `pairs` maps object IDs to access IDs, or is a list of
+  `(object_id, access_id)` pairs, with one access ID per object per call. Repeated IDs
+  are asked for once. `passports` is a list of GA4GH Passport tokens to send in the
+  request body. Both calls return a `BulkReport` with one `BulkOutcome` per distinct ID
+  (or pair), sorted by ID, and `diagnostics` for problems with the server's answer that
+  belong to no ID. `dialects` names the reply shapes seen across the call:
+  `standard` and, for object lookups, `gen3`.
+- The typed bulk calls validate resolved entries against the generated models. The
+  `get_bulk_objects_raw()` and `get_bulk_access_urls_raw()` variants return complete
+  JSON `dict`s in `outcome.resolved` while still correlating IDs and reporting
+  failures. Use `get_bulk_objects_raw()` for Gen3 objects with
+  `created_time: null`; the typed call records those entries as errors.
+- A `BulkOutcome` has `object_id`, `access_id`, `resolved` (the `DrsObject`s or
+  `BulkAccessURL`s that the server returned for the ID), `failure_codes` (such as
+  `[404]`), `pending` (a `PendingResolution` if the server is still preparing the
+  answer), `errors` and `is_success` (exactly one result and nothing else). Failures of
+  single IDs and of requests are reported in the outcomes, not raised. For a pending
+  outcome, call the bulk method again for its IDs; its `endpoint` is the bulk endpoint.
+- `BulkPolicy(chunk_size=100, advertised_limit=None, concurrency=4, max_requests=1000,
+  max_split_depth=8, max_attempts=1, initial_delay=0.2, max_delay=10.0)` limits a bulk
+  call: IDs per request, parallel requests, requests in all, halvings of a request that
+  the server rejects as too large (413), and retries of network errors, 429 and 503.
+  `policy.with_service_info(info)` also keeps to the `maxBulkRequestLength` of the
+  service info, for example `json.loads(drs.transport.get("service-info"))`.
+- Errors: invalid IDs (empty, `.` or `..`), timeouts, attempt counts, bulk inputs and
+  policies raise `ValueError` before a request. Failed requests and responses that don't
+  fit the DRS models raise `RuntimeError`; model error messages name missing fields
+  without quoting response values, as those may be credentials.
+- The waiting calls block for up to `timeout` seconds without the GIL; Ctrl+C takes
+  effect after they return.
+
+`DrsResolver` turns hostname-based DRS URIs (`drs://<host>/<object-id>`) into an
+`AccessPlan`: the access method to use, its `url` and `headers` (a list of `(name,
+value)` pairs, unlike the `"Name: value"` strings of `AccessURL`), and its `region`:
+
+```python
+from GA4GH import Configuration, DrsResolver, DrsUri, Transport
+
+resolver = DrsResolver().with_service(
+    "drs.example.org", Transport(Configuration("https://drs.example.org/ga4gh/drs/v1"))
+)
+plan = resolver.access_plan("drs://drs.example.org/my-object-id", protocols=["https", "s3"])
+print(plan.method, plan.region)  # use plan.url and plan.headers to fetch the bytes
+
+uri = DrsUri("drs://drs.example.org/my-object-id")
+print(uri.authority, uri.object_id, uri.default_api_root())
+```
+
+- `with_service(authority, transport)` asks the DRS service of `transport` for URIs with
+  that host, using the transport's API root and settings. Other hosts are asked
+  anonymously at `https://<host>/ga4gh/drs/v1`; settings are never sent to them.
+  Add services before sharing a resolver between threads: while another thread plans
+  access with it, `with_service()` raises `RuntimeError`.
+- `access_plan(uri, protocols=None, regions=None, method_index=None, timeout=60.0,
+  max_attempts=5)` reads the object, picks an available access method (by `protocols`
+  and `regions`, in order of preference, or the one at `method_index`), and reads its
+  access URL if the method has none. It waits while the server prepares an answer, as
+  `resolve_object()` does. `access_plan_once()` sends each request once and returns a
+  `PendingResolution` instead.
+- Compact identifiers (`drs://prefix:accession`) are not supported; they and malformed
+  URIs raise `ValueError`. No usable access method raises `RuntimeError`.
+
+The results are typed objects with properties, and `DrsObject`, `AccessURL` and
+`BulkAccessURL` keep the JSON that the server sent, including fields that the DRS models
+don't know: `to_dict()` returns it as a new `dict` and `json()` as JSON text.
+
+- `DrsObject`: `id`, `name`, `self_uri`, `size`, `created_time`, `updated_time`,
+  `version`, `mime_type`, `checksums`, `access_methods`, `contents`, `description` and
+  `aliases`. Nested values, such as `access_methods`, come as `dict`s and `list`s.
+- `AccessURL`: `url` and `headers` (a list of `"Name: value"` strings).
+- `BulkAccessURL`: `drs_object_id`, `drs_access_id`, `url` and `headers`.
+
+Access URLs and headers may hold credentials, such as signatures or bearer tokens. The
+`repr()` of `AccessURL`, `BulkAccessURL`, `BulkOutcome` and `AccessPlan` doesn't show
+them.
+
+To read a DRS section of `~/.ga4gh-cli/config.json`, use
+`config.from_file(ServiceType.DRS)`. The Rust methods behind these classes are
+listed in the [usage guide](../docs/usage.md#drs); `DRS::resolve_reference`, which
+resumes from a stored reference, is not bound yet.
+
 ## Extending the bindings
 
 The bindings are meant as a base for clients of services that add endpoints or
@@ -394,6 +591,13 @@ constructor arguments can define `__init__` and call `super().__init__()`
 without arguments. For `TES` and `WES`, service-info discovery happens before the
 subclass's `__init__`, so those extra arguments cannot change its first
 request. A subclass without its own `__init__` accepts only the base arguments.
+
+`DRS`, `DrsResolver`, `BulkPolicy` and `DrsUri` can be subclassed too. Like `TES`,
+`DRS` reads the service info before a subclass's `__init__` runs.
+`DrsResolver.with_service()` returns the resolver itself, so it keeps its subclass. The
+result classes (`DrsObject`, `AccessURL`, `BulkAccessURL`, `PendingResolution`,
+`BulkOutcome`, `BulkReport` and `AccessPlan`) allow subclasses as well, for Rust crates
+that extend them, but the clients return instances of the base classes.
 
 ### Further endpoints
 
@@ -421,7 +625,15 @@ The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=
   pass `json.dumps(text)` to send a JSON string.
 - `params` holds query parameters, as a `dict` or a JSON object string. Values are
   strings, numbers, booleans or lists of these; a list repeats the parameter
-  (`{"tag_key": ["a", "b"]}` gives `tag_key=a&tag_key=b`), and `None` leaves it out.
+  (`{"tag_key": ["a", "b"]}` gives `tag_key=a&tag_key=b`), and `None` or an empty
+  list leaves it out. Keys are sorted. Keys and values are form encoded (a space
+  becomes `+`), as in the Rust SDK, and are appended after a query already in
+  `endpoint`.
+  - Other values, such as a `dict`, a nested list or `None` inside a list, raise
+    `ValueError` before a request is sent.
+  - **Behavior change:** earlier versions left out `None` list items. Remove them
+    yourself, keeping `tag_key` and `tag_value` items aligned, since TES pairs them
+    by position.
 - `fields` is a list of `(name, value)` text parts; `files` is a list of
   `(name, filename, content)` or `(name, filename, content, content_type)` tuples, with
   `content` as `bytes`. Names may repeat, as for WES `workflow_attachment`.
@@ -488,9 +700,11 @@ from there. The default feature `extension-module` builds the Python module; a d
 crate can turn it off with `default-features = false` and enable it in its own features
 instead.
 
+The DRS classes (`PyDRS`, `PyDrsResolver` and so on, in `clients::drs`) follow the same
+pattern; `clients::drs::register(py, m)` registers all of them.
 The WES classes (`PyWES`, `PyRun` and so on, in `clients::wes`) follow the same pattern;
-`clients::wes::register(py, m)` registers all of them, with the `WesState` enum. Further
-bindings, such as DRS and TRS, will too.
+`clients::wes::register(py, m)` registers all of them, with the `WesState` enum.
+Further bindings, such as TRS, will too.
 
 ## Documentation
 

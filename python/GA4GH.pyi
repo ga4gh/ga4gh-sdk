@@ -6,8 +6,8 @@
 import asyncio
 import enum
 import os
-from collections.abc import Iterable, Mapping
-from typing import Any, Self, TypeAlias, final
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, Generic, Self, TypeAlias, TypeVar, final
 
 _JSONObject: TypeAlias = dict[str, Any]
 """A JSON object as a `dict`, for example a task's executor."""
@@ -17,27 +17,281 @@ _Params: TypeAlias = Mapping[str, Any] | str
 
 @final
 class ServiceType:
-    """A GA4GH service type, for `Configuration.from_file()`."""
+    """A built-in section of the configuration file, for `Configuration.from_file()`.
+
+    Other sections are named by a `str`.
+    """
 
     TES: ServiceType
     DRS: ServiceType
     TRS: ServiceType
     AAI: ServiceType
     WES: ServiceType
+    REGISTRY: ServiceType
 
 class Configuration:
-    """The API root and settings for connecting to a GA4GH service."""
+    """The API root and settings for connecting to a GA4GH service.
+
+    `from_file()` reads a section of `~/.ga4gh-cli/config.json`, named by a
+    `ServiceType` or by a `str`; `get_extra()` returns the section's other keys.
+    `set_timeouts()` and `get_timeouts()` set and give the time limits of
+    requests in seconds; clients and transports read them when they are built.
+    """
 
     def __init__(self, base_path: str) -> None: ...
     def set_base_path(self, base_path: str) -> None: ...
     def get_base_path(self) -> str: ...
-    def from_file(self, service_type: ServiceType) -> None: ...
+    def get_extra(self) -> _JSONObject: ...
+    def set_timeouts(
+        self,
+        *,
+        connect: float | None = None,
+        request: float | None = None,
+        discovery: float | None = None,
+        submission: float | None = None,
+    ) -> None: ...
+    def get_timeouts(self) -> dict[str, float]: ...
+    def from_file(self, service_type: ServiceType | str) -> None: ...
 
 class ServiceInfo:
     """Reads a service's service info."""
 
     def __init__(self, py_config: Configuration) -> None: ...
     def get_service_info(self) -> str: ...
+
+class DrsObject:
+    """A DRS object's metadata, as returned by the server.
+
+    Keeps the object's full JSON, including fields that the DRS models don't know.
+    """
+
+    @property
+    def id(self) -> str: ...
+    @property
+    def name(self) -> str | None: ...
+    @property
+    def self_uri(self) -> str: ...
+    @property
+    def size(self) -> int: ...
+    @property
+    def created_time(self) -> str: ...
+    @property
+    def updated_time(self) -> str | None: ...
+    @property
+    def version(self) -> str | None: ...
+    @property
+    def mime_type(self) -> str | None: ...
+    @property
+    def checksums(self) -> list[_JSONObject] | None: ...
+    @property
+    def access_methods(self) -> list[_JSONObject] | None: ...
+    @property
+    def contents(self) -> list[_JSONObject] | None: ...
+    @property
+    def description(self) -> str | None: ...
+    @property
+    def aliases(self) -> list[str] | None: ...
+    def json(self) -> str: ...
+    def to_dict(self) -> _JSONObject: ...
+
+class AccessURL:
+    """An access URL of a DRS object. `repr()` hides the URL and headers."""
+
+    @property
+    def url(self) -> str: ...
+    @property
+    def headers(self) -> list[str] | None:
+        """The headers to send with a request to `url`, as `"Name: value"` strings."""
+    def json(self) -> str: ...
+    def to_dict(self) -> _JSONObject: ...
+
+class BulkAccessURL:
+    """An access URL from `DRS.get_bulk_access_urls()`, with the IDs it belongs to."""
+
+    @property
+    def drs_object_id(self) -> str | None: ...
+    @property
+    def drs_access_id(self) -> str | None: ...
+    @property
+    def url(self) -> str: ...
+    @property
+    def headers(self) -> list[str] | None: ...
+    def json(self) -> str: ...
+    def to_dict(self) -> _JSONObject: ...
+
+class PendingResolution:
+    """The server is still preparing an answer: ask again after `retry_after` seconds."""
+
+    @property
+    def api_root(self) -> str: ...
+    @property
+    def endpoint(self) -> str:
+        """The endpoint to ask again; for a bulk call, call the bulk method again."""
+    @property
+    def retry_after(self) -> int: ...
+    def to_dict(self) -> _JSONObject: ...
+
+class BulkPolicy:
+    """Limits of the bulk calls of `DRS`; checked when a call starts."""
+
+    def __init__(
+        self,
+        chunk_size: int = 100,
+        advertised_limit: int | None = None,
+        concurrency: int = 4,
+        max_requests: int = 1000,
+        max_split_depth: int = 8,
+        max_attempts: int = 1,
+        initial_delay: float = 0.2,
+        max_delay: float = 10.0,
+    ) -> None: ...
+    def with_service_info(self, service_info: Mapping[str, Any] | str) -> BulkPolicy: ...
+    @property
+    def chunk_size(self) -> int: ...
+    @property
+    def advertised_limit(self) -> int | None: ...
+    @property
+    def concurrency(self) -> int: ...
+    @property
+    def max_requests(self) -> int: ...
+    @property
+    def max_split_depth(self) -> int: ...
+    @property
+    def max_attempts(self) -> int: ...
+    @property
+    def initial_delay(self) -> float: ...
+    @property
+    def max_delay(self) -> float: ...
+
+_Resolved = TypeVar("_Resolved", DrsObject, BulkAccessURL, _JSONObject)
+"""What a bulk call resolves: a typed result or the complete JSON object."""
+
+class BulkOutcome(Generic[_Resolved]):
+    """The outcome for one requested ID (or ID pair) of a bulk call."""
+
+    @property
+    def object_id(self) -> str: ...
+    @property
+    def access_id(self) -> str | None: ...
+    @property
+    def resolved(self) -> list[_Resolved]: ...
+    @property
+    def failure_codes(self) -> list[int]: ...
+    @property
+    def pending(self) -> PendingResolution | None: ...
+    @property
+    def errors(self) -> list[str]: ...
+    @property
+    def is_success(self) -> bool: ...
+
+class BulkReport(Generic[_Resolved]):
+    """The outcomes, unattributed problems, and observed reply shapes of a bulk call."""
+
+    @property
+    def outcomes(self) -> list[BulkOutcome[_Resolved]]: ...
+    @property
+    def diagnostics(self) -> list[str]: ...
+    @property
+    def dialects(self) -> list[str]: ...
+
+class DRS:
+    """A DRS client."""
+
+    def __init__(self, config: Configuration) -> None: ...
+    @property
+    def config(self) -> Configuration: ...
+    @property
+    def transport(self) -> Transport: ...
+    def get_object(self, object_id: str) -> DrsObject: ...
+    def get_object_raw(self, object_id: str) -> _JSONObject: ...
+    def get_object_once(self, object_id: str) -> DrsObject | PendingResolution: ...
+    def resolve_object(
+        self, object_id: str, timeout: float = 60.0, max_attempts: int = 5
+    ) -> DrsObject: ...
+    def get_access_url(self, object_id: str, access_id: str) -> AccessURL: ...
+    def get_access_url_raw(self, object_id: str, access_id: str) -> _JSONObject: ...
+    def get_access_url_once(
+        self, object_id: str, access_id: str
+    ) -> AccessURL | PendingResolution: ...
+    def resolve_access_url(
+        self, object_id: str, access_id: str, timeout: float = 60.0, max_attempts: int = 5
+    ) -> AccessURL: ...
+    def get_bulk_objects(
+        self,
+        ids: Iterable[str],
+        passports: Iterable[str] | None = None,
+        policy: BulkPolicy | None = None,
+        timeout: float = 60.0,
+    ) -> BulkReport[DrsObject]: ...
+    def get_bulk_objects_raw(
+        self,
+        ids: Iterable[str],
+        passports: Iterable[str] | None = None,
+        policy: BulkPolicy | None = None,
+        timeout: float = 60.0,
+    ) -> BulkReport[_JSONObject]: ...
+    def get_bulk_access_urls(
+        self,
+        pairs: Mapping[str, str] | Iterable[tuple[str, str]],
+        passports: Iterable[str] | None = None,
+        policy: BulkPolicy | None = None,
+        timeout: float = 60.0,
+    ) -> BulkReport[BulkAccessURL]: ...
+    def get_bulk_access_urls_raw(
+        self,
+        pairs: Mapping[str, str] | Iterable[tuple[str, str]],
+        passports: Iterable[str] | None = None,
+        policy: BulkPolicy | None = None,
+        timeout: float = 60.0,
+    ) -> BulkReport[_JSONObject]: ...
+
+class DrsUri:
+    """A hostname-based DRS URI, such as `drs://drs.example.org/object-id`."""
+
+    def __init__(self, uri: str) -> None: ...
+    @property
+    def authority(self) -> str: ...
+    @property
+    def object_id(self) -> str: ...
+    def default_api_root(self) -> str: ...
+
+class AccessPlan:
+    """How to fetch a DRS object's bytes. `repr()` shows only the URL's origin."""
+
+    @property
+    def object_id(self) -> str: ...
+    @property
+    def method(self) -> str: ...
+    @property
+    def region(self) -> str | None: ...
+    @property
+    def url(self) -> str: ...
+    @property
+    def headers(self) -> list[tuple[str, str]]:
+        """`(name, value)` pairs, unlike the `"Name: value"` strings of `AccessURL`."""
+
+class DrsResolver:
+    """Turns hostname-based DRS URIs into `AccessPlan`s."""
+
+    def __init__(self) -> None: ...
+    def with_service(self, authority: str, transport: Transport) -> Self: ...
+    def access_plan_once(
+        self,
+        uri: str,
+        protocols: Sequence[str] | None = None,
+        regions: Sequence[str] | None = None,
+        method_index: int | None = None,
+        timeout: float = 60.0,
+    ) -> AccessPlan | PendingResolution: ...
+    def access_plan(
+        self,
+        uri: str,
+        protocols: Sequence[str] | None = None,
+        regions: Sequence[str] | None = None,
+        method_index: int | None = None,
+        timeout: float = 60.0,
+        max_attempts: int = 5,
+    ) -> AccessPlan: ...
 
 class Transport:
     """Sends requests below the configured API root and returns response bodies as text."""
@@ -77,6 +331,8 @@ class RunRequest:
     """A WES run request: a workflow to run, with its parameters.
 
     Keeps the request's full JSON, including fields that the WES models don't know.
+    `WES.run()` sends those fields as further form parts: strings as they are, other
+    values as JSON.
     """
 
     def __init__(self, request: RunRequest | Mapping[str, Any] | str) -> None: ...

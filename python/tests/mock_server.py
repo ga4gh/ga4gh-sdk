@@ -7,7 +7,9 @@ answers with a running task of that ID after the given delay, for tests of
 concurrent and cancelled calls, as does ``GET /slow-<seconds>/service-info``
 with the service info (``GET /failing-<seconds>/service-info`` with a 503); if the
 client closes the connection before,
-``GET /__disconnects__`` lists the request's path.
+``GET /__disconnects__`` lists the request's path. Below ``/hang``,
+``service-info`` answers at once and every other request gets no answer until
+the client leaves (at most 30 seconds), for tests of timed-out submissions.
 """
 
 import base64
@@ -16,7 +18,8 @@ import select
 import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from pathlib import Path
+from urllib.parse import parse_qs, quote, urlsplit
 
 SERVICE_INFO = {
     "id": "org.example.tes",
@@ -42,13 +45,117 @@ ROUTES = {
     ("GET", "/api/tasks/task-1"): (200, TASK),
     ("GET", "/api/tasks"): (200, {"tasks": [TASK], "next_page_token": "next"}),
     ("GET", "/api/tasks/task-1/provenance"): (200, {"events": ["created"]}),
-    ("GET", "/api/tasks/bad"): (200, {"id": "bad", "state": "NOT_A_STATE"}),
+    ("GET", "/api/tasks/bad"): (200, {"id": "bad", "executors": "not a list"}),
+    ("GET", "/api/tasks/new-state"): (200, {"id": "new-state", "state": "SUSPENDED"}),
     ("POST", "/api/tasks"): (200, {"id": "task-1"}),
     ("POST", "/api/runs"): (200, {"run_id": "run-1"}),
     ("POST", "/api/tasks/task-1:cancel"): (200, {}),
     ("PUT", "/api/plugins/p1"): (200, {"updated": True}),
     ("DELETE", "/api/plugins/p1"): (200, {"deleted": True}),
 }
+
+# A DRS below `/drs`. Replies may carry headers as a third item.
+DRS_SERVICE_INFO = {
+    **SERVICE_INFO,
+    "id": "org.example.drs",
+    "name": "Example DRS",
+    "type": {"group": "org.ga4gh", "artifact": "drs", "version": "1.4.0"},
+}
+
+DRS_OBJECT = {
+    "id": "obj-1",
+    "name": "reads.bam",
+    "self_uri": "drs://drs.example/obj-1",
+    "size": 1024,
+    "created_time": "2026-01-01T00:00:00Z",
+    "mime_type": "application/octet-stream",
+    "checksums": [{"checksum": "abc", "type": "sha-256"}],
+    "access_methods": [
+        {"type": "s3", "access_url": {"url": "s3://bucket/obj-1"}, "region": "us-east-1"},
+        {"type": "https", "access_id": "https-1", "region": "eu-west-1"},
+    ],
+    "aliases": ["reads"],
+    "extension_field": {"nested": [1, 2, 3]},
+}
+
+ACCESS_URL = {
+    "url": "https://store.example/obj-1?signature=SECRET",
+    "headers": ["Authorization: Bearer SECRET"],
+    "extension_field": "kept",
+}
+
+GEN3_REPLY = json.loads(
+    (Path(__file__).resolve().parents[2] / "tests/fixtures/drs/gen3-caninedc-bulk-objects.json")
+    .read_text()
+)
+GEN3_OBJECT = GEN3_REPLY["resolved_drs_objects"][0]
+
+
+class Sequence:
+    """Answers with each reply in turn, then keeps answering with the last one."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+
+    def __iter__(self):
+        reply = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+        return iter(reply)
+
+
+PENDING = (202, {}, {"Retry-After": "1"})
+
+ROUTES.update(
+    {
+        ("GET", "/drs/service-info"): (200, DRS_SERVICE_INFO),
+        ("GET", "/drs/objects/obj-1"): (200, DRS_OBJECT),
+        ("GET", "/drs/objects/obj-1/access/https-1"): (200, ACCESS_URL),
+        ("GET", "/drs/objects/a%2Fb%20c"): (200, {**DRS_OBJECT, "id": "a/b c"}),
+        ("GET", "/drs/objects/pending"): PENDING,
+        ("GET", "/drs/objects/obj-1/access/pending"): PENDING,
+        ("GET", "/drs/objects/later"): Sequence(PENDING, (200, {**DRS_OBJECT, "id": "later"})),
+        ("GET", "/drs/objects/no-retry"): (202, {}),
+        ("GET", "/drs/objects/bad"): (200, {"id": "bad"}),
+        ("GET", "/drs/objects/obj-1/access/bad"): (200, ["not", "an", "object"]),
+        ("GET", "/drs/objects/secret-access"): (
+            200,
+            {
+                **DRS_OBJECT,
+                "id": "secret-access",
+                "access_methods": [{"type": "https", "access_id": "wrong-type"}],
+            },
+        ),
+        ("GET", "/drs/objects/secret-access/access/wrong-type"): (
+            200,
+            {"url": "https://store.example/x", "headers": "Authorization: Bearer SECRET"},
+        ),
+        ("GET", "/drs/objects/obj-1/access/wrong-type"): (
+            200,
+            {"url": "https://store.example/x", "headers": "Authorization: Bearer SECRET"},
+        ),
+        ("POST", "/drs/objects"): (
+            200,
+            {
+                "resolved_drs_object": [DRS_OBJECT, {"id": "invalid"}],
+                "unresolved_drs_objects": [{"error_code": 404, "object_ids": ["missing"]}],
+            },
+        ),
+        ("POST", "/drs/objects/access"): (
+            200,
+            {
+                "resolved_drs_object_access_urls": [
+                    {"drs_object_id": "obj-1", "drs_access_id": "https-1", **ACCESS_URL}
+                ],
+                "unresolved_drs_objects": [{"error_code": 403, "object_ids": ["obj-2"]}],
+            },
+        ),
+        ("GET", "/drs-gen3/service-info"): (200, DRS_SERVICE_INFO),
+        ("GET", f"/drs-gen3/objects/{quote(GEN3_OBJECT['id'], safe='')}"): (200, GEN3_OBJECT),
+        ("POST", "/drs-gen3/objects"): (200, GEN3_REPLY),
+        # A DRS whose bulk requests are still pending.
+        ("GET", "/drs-pending/service-info"): (200, DRS_SERVICE_INFO),
+        ("POST", "/drs-pending/objects"): (202, {}, {"Retry-After": "5"}),
+    }
+)
 
 REQUESTS = []
 DISCONNECTS = []
@@ -57,9 +164,11 @@ DISCONNECTS = []
 class Handler(BaseHTTPRequestHandler):
     """Records each request and answers it from `ROUTES`."""
 
-    def _reply(self, status, payload):
+    def _reply(self, status, payload, headers=None):
         data = json.dumps(payload).encode()
         self.send_response(status)
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -80,6 +189,7 @@ class Handler(BaseHTTPRequestHandler):
                 "method": self.command,
                 "path": url.path,
                 "query": parse_qs(url.query, keep_blank_values=True),
+                "raw_query": url.query,
                 "headers": dict(self.headers),
                 "body": base64.b64encode(body).decode(),
             }
@@ -94,6 +204,12 @@ class Handler(BaseHTTPRequestHandler):
         if url.path.startswith("/failing-") and url.path.endswith("/service-info"):
             time.sleep(float(url.path.split("/")[1].removeprefix("failing-")))
             self._reply(503, {"msg": "unavailable"})
+            return
+        if url.path == "/hang/service-info":
+            self._reply(200, SERVICE_INFO)
+            return
+        if url.path.startswith("/hang/"):
+            self._client_left_within(30)
             return
         if url.path.startswith("/slow-") and url.path.endswith("/service-info"):
             if self._client_left_within(float(url.path.split("/")[1].removeprefix("slow-"))):
@@ -178,6 +294,7 @@ ROUTES.update(
         ("GET", "/wes/runs/run-1/tasks/task-1"): (200, TASK_LOG),
         ("GET", "/wes/runs/no-state"): (200, {"run_id": "no-state"}),
         ("GET", "/wes/runs/bad"): (200, {"run_id": "bad", "state": "NOT_A_STATE"}),
+        ("GET", "/wes/runs/malformed"): (200, ["not", "an", "object"]),
         # A WES 0.2.0 server (GA4GH Starter Kit) lists runs as a bare array.
         ("GET", "/starter-kit/service-info"): (200, WES_SERVICE_INFO),
         ("GET", "/starter-kit/runs"): (200, [RUN_SUMMARY]),

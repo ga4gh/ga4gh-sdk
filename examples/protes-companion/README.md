@@ -1,6 +1,7 @@
 # proTES downstream companion
 
-A standalone consumer of shared SDK transport/authentication and the proTES API
+A standalone consumer of SDK transport with an explicitly configured bearer
+client and the proTES API
 at `55c4d1591cd3be883ad0b4fd2da01d49976414cb`. Proprietary endpoints and gateway
 choices stay here, outside standard GA4GH clients. Tracks
 [ecosystem #98](https://github.com/elixir-cloud-aai/generic-issues/issues/98).
@@ -11,7 +12,7 @@ cargo run --manifest-path examples/protes-companion/Cargo.toml -- \
   explain examples/protes-companion/fixtures/provenance.json
 cargo run --manifest-path examples/protes-companion/Cargo.toml -- \
   prepare examples/protes-companion/fixtures/original-task.json \
-  --choices examples/protes-companion/fixtures/choices.json
+  --choices examples/protes-companion/fixtures/choices.json > protes-plan.json
 cargo test --manifest-path examples/protes-companion/Cargo.toml
 ```
 
@@ -29,7 +30,9 @@ which case occurred. Set `oauth_access_token` in that config section for CLI
 bearer authentication; the companion injects one authenticated reqwest client
 into shared SDK transport for discovery, provenance and explicit create. It
 does not implement login/refresh or silently treat unsupported auth as anonymous.
-Library callers can inject another authenticated transport. Inspection never submits, including `outcome_unknown`.
+The configured connect, request, discovery and submission limits also apply.
+Library callers can inject another authenticated transport. Inspection never
+submits, including `outcome_unknown`.
 
 `prepare` requires a caller-supplied **original client request**. It does not fetch
 FULL views as reconstruction input because those may contain plugin mutations.
@@ -42,14 +45,16 @@ all stored `gateway.*` tags. Optional explicit choices rebuild only
 `gateway.pipeline` (a preset/inline pipeline, subject to operator policy) and
 `gateway.backends` (a JSON-encoded object with `type` order/allow/forbid and backend
 URLs), matching the pinned API. It never copies recorded backend IDs/routes.
-The immutable prepared request is submitted as exact JSON; a round trip through
-older generated models must not silently discard nested TES 1.1 fields. Malformed
+The prepared request is submitted as JSON without a round trip through older
+generated models that could silently discard nested TES 1.1 fields. Malformed
 creation acknowledgements report an uncertain outcome and require reconciliation,
 without another POST.
 Unknown top-level fields are dropped with a diagnostic list rather than promoted
-into a new request. Review the JSON plan before a separate explicit `create`
-command using the same original request and choices; that command may launch a
-new execution. It has no automatic replay or failover path.
+into a new request. Review the saved JSON plan before running the separate
+`create protes-plan.json` command with a configured TES service. `create` reads
+that plan and validates its version, writable fields and gateway choices before
+submitting its request; it does not reread the original task or choices. The
+command may launch a new execution. It has no automatic replay or failover path.
 
 Validation includes the actual offline CLI, typed/raw preservation, changed paths,
 ordered attempts, sanitization, OAuth header reuse and HTTP 403/404 boundaries.

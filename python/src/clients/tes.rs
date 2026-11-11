@@ -95,8 +95,13 @@ pub fn state_to_python(py: Python<'_>, state: TesState) -> PyResult<PyObject> {
 
 /// Parses a TES state name, in any case.
 fn parse_state(state: &str) -> PyResult<TesState> {
-    serde_json::from_value(Value::String(state.to_uppercase()))
-        .map_err(|_| PyValueError::new_err(format!("Invalid TES state: {state}")))
+    let name = state.to_uppercase();
+    // `TesState` reads states that it doesn't know as `Unknown`; only exact
+    // names are valid here.
+    serde_json::from_value::<TesState>(Value::String(name.clone()))
+        .ok()
+        .filter(|parsed| parsed.to_string() == name)
+        .ok_or_else(|| PyValueError::new_err(format!("Invalid TES state: {state}")))
 }
 
 // The TES calls, shared by the sync classes (`TES`, `Task`) and the async ones (`AsyncTES`,
@@ -155,7 +160,8 @@ pub async fn get_task(tes: &TES, view: TesView, id: &str) -> Result<PyTesTask, S
 
 /// The endpoint that lists tasks with `params`.
 pub fn list_endpoint(params: Option<PyListTasksParams>) -> PyResult<String> {
-    // Not `TES::list_tasks`: reqwest's query encoder cannot repeat tag lists.
+    // Not `TES::list_tasks`, which drops the raw JSON that `ListTasksResponse`
+    // keeps; the query is the same (see `ga4gh_sdk::utils::query`).
     let params = params
         .map(|params| serde_json::to_value(params.inner))
         .transpose()
@@ -375,7 +381,8 @@ impl PyTesTask {
         self.inner.id.clone()
     }
 
-    /// The task's state as a `TesState`; `UNKNOWN` if the task has none.
+    /// The task's state as a `TesState`; `UNKNOWN` if the task has none or one that
+    /// TES 1.1 doesn't define.
     #[getter]
     pub fn state(&self, py: Python<'_>) -> PyResult<PyObject> {
         state_to_python(py, self.inner.state.unwrap_or_default())

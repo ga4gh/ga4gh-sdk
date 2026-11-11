@@ -1,5 +1,6 @@
 use crate::clients::ServiceType;
-use serde_json::Value;
+use crate::utils::timeouts::Timeouts;
+use serde_json::{Map, Value};
 use std::fmt;
 use std::path::Path;
 use url::Url;
@@ -15,6 +16,57 @@ impl fmt::Debug for Redacted {
 
 fn redact(value: &Option<String>) -> Option<Redacted> {
     value.as_ref().map(|_| Redacted)
+}
+
+/// Prints the keys of a map, each with a redacted value.
+struct RedactedValues<'a>(&'a Map<String, Value>);
+
+impl fmt::Debug for RedactedValues<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map()
+            .entries(self.0.keys().map(|key| (key, Redacted)))
+            .finish()
+    }
+}
+
+/// The keys of a configuration file section that `Configuration::from_path` reads itself.
+const SECTION_KEYS: [&str; 5] = [
+    "base_path",
+    "basic_auth",
+    "oauth_access_token",
+    "oauth_access_token_env",
+    "timeouts",
+];
+
+/// Reads the `timeouts` object of a configuration file section: each key is a
+/// limit of [`Timeouts`] in seconds; missing keys keep their defaults.
+fn timeouts_from_value(value: &Value) -> Result<Timeouts, String> {
+    let fields = value
+        .as_object()
+        .ok_or("timeouts must be an object of numbers of seconds")?;
+    let mut timeouts = Timeouts::default();
+    for (key, value) in fields {
+        // A non-number is as invalid as a negative one; NaN gives the same message.
+        timeouts
+            .set_seconds(key, value.as_f64().unwrap_or(f64::NAN))
+            .map_err(|error| format!("Invalid timeouts: {error}"))?;
+    }
+    Ok(timeouts)
+}
+
+/// Reads a token from the environment variable `name`.
+fn token_from_env(name: &str) -> Result<String, String> {
+    std::env::var(name).map_err(|error| var_error_message(name, &error))
+}
+
+/// Describes why the environment variable `name` can't be read, without its value.
+fn var_error_message(name: &str, error: &std::env::VarError) -> String {
+    match error {
+        std::env::VarError::NotPresent => format!("Environment variable '{name}' is not set"),
+        std::env::VarError::NotUnicode(_) => {
+            format!("Environment variable '{name}' is not valid Unicode")
+        }
+    }
 }
 
 /// Returns the URL without its user, password, query and fragment. The path stays.
@@ -38,6 +90,9 @@ fn display_url(url: &Url) -> String {
 ///
 /// The `Configuration` struct is responsible for specifying details of the Endpoint where the requests are made.
 /// It provides methods for making constructing new configuration, changing the base url, and specifying a default configuration.
+///
+/// Build it with `new()`, `default()`, `from_file()` or `from_path()` and the `with_*`
+/// methods rather than a struct literal, which breaks when a field is added.
 #[derive(Clone)]
 pub struct Configuration {
     /// The API root; endpoint paths are resolved below it, with or without a trailing slash.
@@ -53,6 +108,12 @@ pub struct Configuration {
     pub bearer_access_token: Option<String>,
     /// The API key for authentication.
     pub api_key: Option<ApiKey>,
+    /// Other keys of the configuration file section, with their JSON values, for
+    /// settings that the SDK doesn't know, such as those of a downstream crate.
+    /// They can hold credentials, so `Debug` output shows only their keys.
+    pub extra: Map<String, Value>,
+    /// The time limits of requests; see [`Timeouts`].
+    pub timeouts: Timeouts,
 }
 
 /// Represents the basic authentication credentials.
@@ -83,6 +144,8 @@ impl fmt::Debug for Configuration {
             oauth_access_token,
             bearer_access_token,
             api_key,
+            extra,
+            timeouts,
         } = self;
         f.debug_struct("Configuration")
             .field("base_path", &display_url(base_path))
@@ -91,6 +154,8 @@ impl fmt::Debug for Configuration {
             .field("oauth_access_token", &redact(oauth_access_token))
             .field("bearer_access_token", &redact(bearer_access_token))
             .field("api_key", api_key)
+            .field("extra", &RedactedValues(extra))
+            .field("timeouts", timeouts)
             .finish()
     }
 }
@@ -140,6 +205,8 @@ impl Configuration {
             oauth_access_token: None,
             bearer_access_token: None,
             api_key: None,
+            extra: Map::new(),
+            timeouts: Timeouts::default(),
         }
     }
 
@@ -199,11 +266,43 @@ impl Configuration {
         self
     }
 
+    /// Sets the OAuth access token from an environment variable that the caller names.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the environment variable that holds the token.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error naming the variable if it isn't set or isn't valid Unicode.
+    pub fn with_oauth_access_token_from_env(
+        self,
+        name: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(self.with_oauth_access_token(token_from_env(name)?))
+    }
+
+    /// Sets the time limits of requests; see [`Timeouts`].
+    ///
+    /// # Arguments
+    ///
+    /// * `timeouts` - The time limits.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of Configuration.
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+
     /// Loads the configuration from a JSON file.
     ///
     /// # Arguments
     ///
-    /// * `service_type` - The type of service to load the configuration for.
+    /// * `service_type` - The type of service to load the configuration for; its
+    ///   section name is `service_type.as_str()`, such as `TES`, or the name of a
+    ///   `ServiceType::Custom` section.
     ///
     /// # Errors
     ///
@@ -218,7 +317,12 @@ impl Configuration {
     /// Load one named section from a JSON configuration file.
     ///
     /// Only `base_path` is required; authentication fields are optional.
-    /// A missing file is an I/O error; malformed content is an input error.
+    /// `oauth_access_token_env` names an environment variable to read the token
+    /// from, in place of `oauth_access_token`. `timeouts` is an object with
+    /// `connect`, `request`, `discovery` and `submission` in seconds; missing
+    /// ones keep their defaults (see [`Timeouts`]). Other keys of the section go
+    /// into `extra`. A missing file is an I/O error; malformed content is an
+    /// input error.
     ///
     /// # Example
     ///
@@ -286,6 +390,30 @@ impl Configuration {
             Some(Value::String(token)) => config.oauth_access_token = Some(token.clone()),
             _ => return Err("oauth_access_token must be a string".into()),
         }
+        match fields.get("oauth_access_token_env") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(_)) if config.oauth_access_token.is_some() => {
+                return Err(
+                    "Set either oauth_access_token or oauth_access_token_env, not both".into(),
+                )
+            }
+            Some(Value::String(name)) => {
+                let token = token_from_env(name).map_err(|error| {
+                    format!("{error}; it is named by oauth_access_token_env in '{section}'")
+                })?;
+                config.oauth_access_token = Some(token);
+            }
+            _ => return Err("oauth_access_token_env must be a string".into()),
+        }
+        match fields.get("timeouts") {
+            None | Some(Value::Null) => {}
+            Some(value) => config.timeouts = timeouts_from_value(value)?,
+        }
+        config.extra = fields
+            .iter()
+            .filter(|(key, _)| !SECTION_KEYS.contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
         Ok(config)
     }
 }
@@ -305,6 +433,8 @@ impl Default for Configuration {
             oauth_access_token: None,
             bearer_access_token: None,
             api_key: None,
+            extra: Map::new(),
+            timeouts: Timeouts::default(),
         }
     }
 }
@@ -324,6 +454,10 @@ pub(crate) fn config_with_markers() -> Configuration {
         prefix: Some("Token".to_owned()),
         key: "SENTINEL_KEY".to_owned(),
     });
+    config.extra.insert(
+        "client_secret".to_owned(),
+        Value::String("SENTINEL_EXTRA".to_owned()),
+    );
     config
 }
 
@@ -358,6 +492,179 @@ mod tests {
     }
 
     #[test]
+    fn test_from_path_reads_existing_files_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "TES": {
+                    "base_path": "https://example.org/ga4gh/tes/v1",
+                    "basic_auth": {"username": "alice", "password": "change-me"},
+                    "oauth_access_token": "my-token"
+                },
+                "WES": {"base_path": "https://example.org/ga4gh/wes/v1"}
+            }"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, ServiceType::TES.as_str()).unwrap();
+        assert_eq!(
+            config.base_path.as_str(),
+            "https://example.org/ga4gh/tes/v1"
+        );
+        assert_eq!(
+            config.basic_auth,
+            Some(BasicAuth {
+                username: "alice".to_owned(),
+                password: Some("change-me".to_owned()),
+            })
+        );
+        assert_eq!(config.oauth_access_token.as_deref(), Some("my-token"));
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+
+        let config = Configuration::from_path(&path, ServiceType::WES.as_str()).unwrap();
+        assert_eq!(
+            config.base_path.as_str(),
+            "https://example.org/ga4gh/wes/v1"
+        );
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+    }
+
+    #[test]
+    fn test_from_path_custom_section_keeps_extra_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "TES": {"base_path": "https://example.org/ga4gh/tes/v1"},
+                "PROXY": {
+                    "base_path": "https://example.org/proxy/v1",
+                    "oauth_access_token": "token",
+                    "timeout_seconds": 30,
+                    "routing": {"region": "eu"}
+                }
+            }"#,
+        )
+        .unwrap();
+        let service_type = ServiceType::Custom("PROXY".to_owned());
+        let config = Configuration::from_path(&path, service_type.as_str()).unwrap();
+        assert_eq!(config.base_path.as_str(), "https://example.org/proxy/v1");
+        assert_eq!(config.oauth_access_token.as_deref(), Some("token"));
+        let mut keys: Vec<&str> = config.extra.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["routing", "timeout_seconds"]);
+        assert_eq!(config.extra["timeout_seconds"], serde_json::json!(30));
+        assert_eq!(config.extra["routing"], serde_json::json!({"region": "eu"}));
+    }
+
+    #[test]
+    fn test_from_path_reads_token_from_named_environment_variable() {
+        // PATH is set wherever tests run; setting a variable here would race with
+        // other test threads that read the environment.
+        let expected = std::env::var("PATH").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"PATH"}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(config.oauth_access_token, Some(expected.clone()));
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+
+        // `null` means unset, for both keys.
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org","oauth_access_token":null,"oauth_access_token_env":"PATH"}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(config.oauth_access_token, Some(expected));
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org","oauth_access_token":"token","oauth_access_token_env":null}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(config.oauth_access_token.as_deref(), Some("token"));
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+    }
+
+    #[test]
+    fn test_var_error_message_hides_value() {
+        let error = std::env::VarError::NotUnicode("SENTINEL_TOKEN".into());
+        assert_eq!(
+            var_error_message("MY_TOKEN", &error),
+            "Environment variable 'MY_TOKEN' is not valid Unicode"
+        );
+    }
+
+    #[test]
+    fn test_with_oauth_access_token_from_env() {
+        let config = Configuration::default()
+            .with_oauth_access_token_from_env("PATH")
+            .unwrap();
+        assert_eq!(
+            config.oauth_access_token,
+            Some(std::env::var("PATH").unwrap())
+        );
+
+        let error = Configuration::default()
+            .with_oauth_access_token_from_env("GA4GH_SDK_TEST_TOKEN_BUILDER_UNSET")
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Environment variable 'GA4GH_SDK_TEST_TOKEN_BUILDER_UNSET' is not set"
+        );
+    }
+
+    #[test]
+    fn test_from_path_reads_timeouts() {
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org","timeouts":{"discovery":30,"submission":0.5}}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(
+            config.timeouts,
+            Timeouts {
+                discovery: Duration::from_secs(30),
+                submission: Duration::from_millis(500),
+                ..Default::default()
+            }
+        );
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+
+        for document in [
+            r#"{"custom":{"base_path":"https://example.org"}}"#,
+            r#"{"custom":{"base_path":"https://example.org","timeouts":null}}"#,
+            r#"{"custom":{"base_path":"https://example.org","timeouts":{}}}"#,
+        ] {
+            std::fs::write(&path, document).unwrap();
+            let config = Configuration::from_path(&path, "custom").unwrap();
+            assert_eq!(config.timeouts, Timeouts::default(), "{document}");
+        }
+    }
+
+    #[test]
+    fn test_with_timeouts() {
+        let timeouts = Timeouts {
+            connect: std::time::Duration::from_secs(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            Configuration::default().with_timeouts(timeouts).timeouts,
+            timeouts
+        );
+    }
+
+    #[test]
     fn test_from_path_invalid_documents() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
@@ -377,6 +684,42 @@ mod tests {
             (
                 r#"{"custom":{"base_path":"https://example.org","oauth_access_token":3}}"#,
                 "oauth_access_token",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":3}}"#,
+                "oauth_access_token_env must be a string",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","oauth_access_token":"token","oauth_access_token_env":"GA4GH_SDK_TEST_TOKEN_BOTH"}}"#,
+                "not both",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":30}}"#,
+                "timeouts must be an object",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"read":30}}}"#,
+                "Invalid timeouts: unknown timeout 'read'",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"request":"30"}}}"#,
+                "Invalid timeouts: request must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"connect":0}}}"#,
+                "Invalid timeouts: connect must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"discovery":-1}}}"#,
+                "Invalid timeouts: discovery must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"submission":1e300}}}"#,
+                "Invalid timeouts: submission must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"GA4GH_SDK_TEST_TOKEN_UNSET"}}"#,
+                "Environment variable 'GA4GH_SDK_TEST_TOKEN_UNSET' is not set; it is named by oauth_access_token_env in 'custom'",
             ),
         ];
         for (document, expected_message) in cases {
@@ -440,7 +783,9 @@ mod tests {
              basic_auth: Some(BasicAuth { username: <redacted>, password: Some(<redacted>) }), \
              oauth_access_token: Some(<redacted>), \
              bearer_access_token: Some(<redacted>), \
-             api_key: Some(ApiKey { prefix: Some(\"Token\"), key: <redacted> }) }"
+             api_key: Some(ApiKey { prefix: Some(\"Token\"), key: <redacted> }), \
+             extra: {\"client_secret\": <redacted>}, \
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s } }"
         );
     }
 
@@ -454,7 +799,9 @@ mod tests {
              basic_auth: None, \
              oauth_access_token: None, \
              bearer_access_token: None, \
-             api_key: None }"
+             api_key: None, \
+             extra: {}, \
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s } }"
         );
     }
 

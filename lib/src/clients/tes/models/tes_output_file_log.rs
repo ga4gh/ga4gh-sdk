@@ -25,6 +25,10 @@ pub struct TesOutputFileLog {
     /// Size of the file in bytes. Note, this is currently coded as a string because official JSON doesn't support int64 numbers.
     #[serde(rename = "size_bytes")]
     pub size_bytes: String,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesOutputFileLog {
@@ -34,6 +38,7 @@ impl TesOutputFileLog {
             url,
             path,
             size_bytes,
+            extra: serde_json::Map::new(),
         }
     }
 }

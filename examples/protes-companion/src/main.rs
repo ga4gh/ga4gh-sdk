@@ -17,17 +17,16 @@ fn read(path: &str) -> Result<Value, Box<dyn std::error::Error>> {
 }
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let original = |name: &'static str| {
-        Command::new(name)
-            .arg(Arg::new("original-request").required(true))
-            .arg(Arg::new("choices").long("choices"))
-    };
     let m = Command::new("protes-companion")
         .subcommand_required(true)
         .subcommand(Command::new("explain").arg(Arg::new("record").required(true)))
         .subcommand(Command::new("fetch").arg(Arg::new("task-id").required(true)))
-        .subcommand(original("prepare"))
-        .subcommand(original("create"))
+        .subcommand(
+            Command::new("prepare")
+                .arg(Arg::new("original-request").required(true))
+                .arg(Arg::new("choices").long("choices")),
+        )
+        .subcommand(Command::new("create").arg(Arg::new("plan").required(true)))
         .get_matches();
     let (name, args) = m.subcommand().unwrap();
     let value = match name {
@@ -45,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?,
             )?
         }
-        "prepare" | "create" => {
+        "prepare" => {
             let choices = args
                 .get_one::<String>("choices")
                 .map(|p| read(p).and_then(|v| Ok(serde_json::from_value::<Choices>(v)?)))
@@ -55,14 +54,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &read(args.get_one::<String>("original-request").unwrap())?,
                 choices,
             )?;
-            if name == "prepare" {
-                serde_json::to_value(plan)?
-            } else {
-                let config = Configuration::from_file(ServiceType::TES)?;
-                let tes = tes_client(&config).await?;
-                let created = create_plan(&tes, &plan).await?;
-                json!({"task_id":created.id,"plan":plan})
-            }
+            serde_json::to_value(plan)?
+        }
+        "create" => {
+            let plan = protes_companion::RerunPlan::from_value(read(
+                args.get_one::<String>("plan").unwrap(),
+            )?)?;
+            let config = Configuration::from_file(ServiceType::TES)?;
+            let tes = tes_client(&config).await?;
+            let created = create_plan(&tes, &plan).await?;
+            json!({"task_id": created.id})
         }
         _ => unreachable!(),
     };

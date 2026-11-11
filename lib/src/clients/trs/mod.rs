@@ -76,15 +76,18 @@ fn is_trs(service: &Service) -> bool {
     service.r#type.group == "org.ga4gh" && service.r#type.artifact.eq_ignore_ascii_case("trs")
 }
 
-fn is_plain(descriptor_type: DescriptorTypeWithPlain) -> bool {
-    matches!(
-        descriptor_type,
+// Descriptor types that the spec doesn't define count as plain if they use the
+// spec's `PLAIN_` prefix.
+fn is_plain(descriptor_type: &DescriptorTypeWithPlain) -> bool {
+    match descriptor_type {
         DescriptorTypeWithPlain::PlainCwl
-            | DescriptorTypeWithPlain::PlainWdl
-            | DescriptorTypeWithPlain::PlainNfl
-            | DescriptorTypeWithPlain::PlainGalaxy
-            | DescriptorTypeWithPlain::PlainSmk
-    )
+        | DescriptorTypeWithPlain::PlainWdl
+        | DescriptorTypeWithPlain::PlainNfl
+        | DescriptorTypeWithPlain::PlainGalaxy
+        | DescriptorTypeWithPlain::PlainSmk => true,
+        DescriptorTypeWithPlain::Unrecognized(value) => value.starts_with("PLAIN_"),
+        _ => false,
+    }
 }
 
 // Plain descriptor types return the bare file, not a JSON `FileWrapper`.
@@ -172,21 +175,28 @@ impl TRS {
     /// Creates a new `TRS` instance and checks that the endpoint is a TRS.
     ///
     /// # Arguments
-    /// - `config`: The client configuration; `base_path` is the TRS API root.
+    /// - `config`: The client configuration; `base_path` is the TRS API root,
+    ///   and `timeouts` set the time limits (see
+    ///   [`Timeouts`](crate::utils::timeouts::Timeouts)).
     ///
     /// # Returns
     /// - A new `TRS` instance, or an error if the service info can't be
     ///   fetched or doesn't describe a TRS (`org.ga4gh`, artifact `trs`).
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn Error>> {
+        Self::with_transport(Transport::new(config)).await
+    }
+
+    /// Creates a new `TRS` instance that sends its requests with `transport`,
+    /// for example one from [`Transport::with_client`], and checks that the
+    /// endpoint is a TRS. The client's configuration is the transport's.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn Error>> {
         let mut instance = TRS {
-            config: config.clone(),
-            transport: Transport::new(config),
+            config: transport.config.clone(),
+            transport,
             // Replaced below; `new` never returns an instance without it.
             service: Ok(Service::default()),
         };
-        let service =
-            tokio::time::timeout(std::time::Duration::from_secs(10), instance.service_info())
-                .await??;
+        let service = instance.service_info().await?;
         if !is_trs(&service) {
             return Err("The endpoint is not an instance of TRS".into());
         }
@@ -209,13 +219,15 @@ impl TRS {
         Ok(serde_json::from_str(&body)?)
     }
 
-    /// Fetches the service info of the registry (`GET /service-info`).
+    /// Fetches the service info of the registry (`GET /service-info`), within
+    /// the `discovery` limit of the transport's configuration.
     ///
     /// Dockstore sends `createdAt` and `updatedAt` as numbers, while
     /// service-info defines them as strings; such non-string values are
     /// dropped instead of failing the whole response.
     pub async fn service_info(&self) -> Result<Service, Box<dyn Error>> {
-        let mut value: Value = self.get_json("service-info", None).await?;
+        let body = crate::clients::serviceinfo::fetch_raw(&self.transport, "service-info").await?;
+        let mut value: Value = serde_json::from_str(&body)?;
         if let Some(object) = value.as_object_mut() {
             for key in ["createdAt", "updatedAt"] {
                 if object.get(key).is_some_and(|v| !v.is_string()) {
@@ -280,7 +292,7 @@ impl TRS {
         let path = format!(
             "{}/{}/descriptor",
             version_path(id, version_id)?,
-            descriptor_type
+            segment("descriptor type", &descriptor_type.to_string())?
         );
         self.get_file(&path, descriptor_type).await
     }
@@ -301,7 +313,7 @@ impl TRS {
         let path = format!(
             "{}/{}/descriptor/{}",
             version_path(id, version_id)?,
-            descriptor_type,
+            segment("descriptor type", &descriptor_type.to_string())?,
             segment("relative path", relative_path)?
         );
         self.get_file(&path, descriptor_type).await
@@ -312,7 +324,7 @@ impl TRS {
         path: &str,
         descriptor_type: DescriptorTypeWithPlain,
     ) -> Result<FileWrapper, Box<dyn Error>> {
-        if is_plain(descriptor_type) {
+        if is_plain(&descriptor_type) {
             Ok(plain_file(self.get_text(path, None).await?))
         } else {
             self.get_json(path, None).await
@@ -335,9 +347,9 @@ impl TRS {
         let path = format!(
             "{}/{}/tests",
             version_path(id, version_id)?,
-            descriptor_type
+            segment("descriptor type", &descriptor_type.to_string())?
         );
-        if is_plain(descriptor_type) {
+        if is_plain(&descriptor_type) {
             Ok(plain_tests(self.get_text(&path, None).await?))
         } else {
             self.get_json(&path, None).await
@@ -357,7 +369,7 @@ impl TRS {
         let path = format!(
             "{}/{}/files",
             version_path(id, version_id)?,
-            descriptor_type
+            segment("descriptor type", &descriptor_type.to_string())?
         );
         self.get_json(&path, None).await
     }
@@ -702,8 +714,51 @@ mod tests {
                     .await
                     .unwrap_err();
                 assert!(error.to_string().contains("relative path"), "{error}");
+                let error = client
+                    .get_descriptor("1", "1", DescriptorTypeWithPlain::Unrecognized(id.into()))
+                    .await
+                    .unwrap_err();
+                assert!(error.to_string().contains("descriptor type"), "{error}");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_unrecognized_descriptor_types_are_one_encoded_segment() {
+        let json = get_mock(
+            "unrecognized",
+            &tool_version("JUPYTER%2F..%3Fx/descriptor"),
+            r#"{"content":"notebook"}"#,
+        );
+        let plain = get_mock(
+            "unrecognized",
+            &tool_version("PLAIN_JUPYTER/descriptor"),
+            "notebook",
+        );
+        for client in clients("unrecognized") {
+            let file = client
+                .get_descriptor(
+                    TOOL_ID,
+                    VERSION_ID,
+                    DescriptorTypeWithPlain::Unrecognized("JUPYTER/..?x".into()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(file.content.as_deref(), Some("notebook"));
+            // The spec's `PLAIN_` prefix marks a bare file, also for types that
+            // the spec doesn't define.
+            let file = client
+                .get_descriptor(
+                    TOOL_ID,
+                    VERSION_ID,
+                    DescriptorTypeWithPlain::Unrecognized("PLAIN_JUPYTER".into()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(file, plain_file("notebook".into()));
+        }
+        json.assert();
+        plain.assert();
     }
 
     #[tokio::test]
@@ -753,7 +808,7 @@ mod tests {
             );
             for client in clients("descriptor") {
                 let file = client
-                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type)
+                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type.clone())
                     .await
                     .unwrap();
                 assert_eq!(file.content, Some(format!("{name} content")));
@@ -782,7 +837,7 @@ mod tests {
             );
             for client in clients("plain-descriptor") {
                 let file = client
-                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type)
+                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type.clone())
                     .await
                     .unwrap();
                 assert_eq!(file, plain_file(body.clone()));

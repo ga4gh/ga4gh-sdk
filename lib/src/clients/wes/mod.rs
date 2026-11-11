@@ -147,26 +147,35 @@ pub struct WES {
 }
 
 impl WES {
-    /// Creates a new `WES` instance.
+    /// Creates a new `WES` instance. The `timeouts` of `config` set the time
+    /// limits (see [`Timeouts`](crate::utils::timeouts::Timeouts)).
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
-        let transport = Transport::new(config);
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            transport.get("service-info", None),
-        )
-        .await?;
-        let service = response
-            .and_then(|body| from_str::<Service>(&body).map_err(Into::into))
+        Self::with_transport(Transport::new(config)).await
+    }
+
+    /// Creates a new `WES` instance that sends its requests with `transport`, for
+    /// example one from [`Transport::with_client`]. The client's configuration is
+    /// the transport's.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        let service = crate::clients::serviceinfo::fetch_raw(&transport, "service-info")
+            .await
+            .and_then(|body| service_from_info(from_str(&body)?))
             .map_err(|error| access_error(error.as_ref()))?;
 
         let instance = WES {
-            config: config.clone(),
+            config: transport.config.clone(),
             transport,
             service: Ok(service),
         };
 
         instance.check()?;
         Ok(instance)
+    }
+
+    /// Discovers WES with a caller-owned transport, including its authenticated
+    /// client. Kept for callers that used this name before `with_transport`.
+    pub async fn from_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_transport(transport).await
     }
 
     fn check(&self) -> Result<(), String> {
@@ -189,6 +198,13 @@ impl WES {
     }
 
     /// Creates a workflow run with optional uploaded workflow files.
+    ///
+    /// The request is sent once, within the `submission` limit of the
+    /// transport's configuration, including the upload. If it runs out of time
+    /// or loses its connection after its request started, the error is an
+    /// [`AmbiguousSubmissionError`](crate::utils::operation::AmbiguousSubmissionError):
+    /// the service may have created the run. For a deadline or cancellation of
+    /// your own, use [`Self::run_workflow_streaming`].
     pub async fn run_workflow_with_attachments(
         &self,
         request: RunRequest,
@@ -204,7 +220,7 @@ impl WES {
         self.run_workflow_streaming(
             request,
             attachments,
-            &crate::utils::operation::Operation::new(std::time::Duration::from_secs(60)),
+            &crate::utils::operation::Operation::new(self.transport.config.timeouts.submission),
         )
         .await
     }
@@ -232,6 +248,7 @@ impl WES {
             RunListBody::StarterKit(runs) => RunListResponse {
                 runs: Some(runs),
                 next_page_token: None,
+                ..Default::default()
             },
         };
         Ok(list)
@@ -242,6 +259,56 @@ impl WES {
         let run = Run::new(id.to_string(), self.transport.clone());
         run.log().await
     }
+}
+
+// WES 1.0 service-info predates common GA4GH discovery fields. Keep this
+// compatibility projection outside generated models, and reject unrelated JSON.
+pub(crate) fn service_from_info(
+    raw: serde_json::Value,
+) -> Result<Service, Box<dyn std::error::Error>> {
+    if let Ok(service) = serde_json::from_value::<Service>(raw.clone()) {
+        return Ok(service);
+    }
+    #[derive(serde::Deserialize)]
+    struct NativeInfo {
+        workflow_type_versions: std::collections::HashMap<String, serde_json::Value>,
+        supported_wes_versions: Vec<String>,
+        supported_filesystem_protocols: Vec<String>,
+        workflow_engine_versions: std::collections::HashMap<String, String>,
+        default_workflow_engine_parameters: Vec<serde_json::Value>,
+        system_state_counts: std::collections::HashMap<String, i64>,
+        #[serde(default)]
+        auth_instructions_url: String,
+        tags: std::collections::HashMap<String, String>,
+    }
+    let info: NativeInfo = serde_json::from_value(raw)?;
+    if info.supported_wes_versions.is_empty()
+        || info.workflow_type_versions.is_empty()
+        || info.workflow_type_versions.values().any(|v| {
+            !v.get("workflow_type_version")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|a| !a.is_empty() && a.iter().all(serde_json::Value::is_string))
+        })
+    {
+        return Err("invalid native WES service-info".into());
+    }
+    let _ = (
+        info.supported_filesystem_protocols,
+        info.workflow_engine_versions,
+        info.default_workflow_engine_parameters,
+        info.system_state_counts,
+        info.auth_instructions_url,
+        info.tags,
+    );
+    Ok(Service {
+        r#type: Box::new(crate::clients::serviceinfo::models::ServiceType {
+            group: "org.ga4gh".into(),
+            artifact: "wes".into(),
+            version: info.supported_wes_versions[0].clone(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
 }
 
 #[cfg(test)]
@@ -646,6 +713,33 @@ mod tests {
                 .id,
             "tagged"
         );
+    }
+
+    #[tokio::test]
+    async fn test_wes_sends_extra_fields_as_form_parts() {
+        let _m = mock("POST", "/extra-fields/runs")
+            .match_body(Matcher::AllOf(vec![
+                Matcher::Regex(r#"name="x_queue"\r\n\r\nlong"#.to_string()),
+                Matcher::Regex(r#"name="x_limits"\r\n\r\n\{"cpus":2\}"#.to_string()),
+            ]))
+            .with_status(200)
+            .with_body(r#"{"run_id":"extra"}"#)
+            .create();
+        let mut request = valid_request();
+        request.extra.insert("x_queue".to_string(), json!("long"));
+        request
+            .extra
+            .insert("x_limits".to_string(), json!({ "cpus": 2 }));
+        let wes = wes_for(&format!("{}/extra-fields", server_url()));
+        assert_eq!(wes.run_workflow(request).await.unwrap().id, "extra");
+
+        // An extra field must not replace a part of the request.
+        for field in super::attachments::RESERVED_PARTS {
+            let mut request = valid_request();
+            request.extra.insert(field.to_string(), json!("other"));
+            let error = wes.run_workflow(request).await.unwrap_err();
+            assert!(error.to_string().contains("would replace"), "{error}");
+        }
     }
 
     #[tokio::test]

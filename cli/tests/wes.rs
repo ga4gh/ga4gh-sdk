@@ -165,6 +165,43 @@ fn run_submits_a_multipart_request_and_prints_the_run_id() {
 }
 
 #[test]
+fn run_json_recovers_the_opaque_id_for_followup_requests() {
+    let prefix = "/run-json/ga4gh/wes/v1";
+    let _service = service_info(prefix);
+    let run_id = "r1\u{1b}[2K\nforged";
+    let submit = mock("POST", format!("{prefix}/runs").as_str())
+        .with_status(200)
+        .with_body(json!({"run_id": run_id}).to_string())
+        .expect(1)
+        .create();
+    let status = mock(
+        "GET",
+        format!("{prefix}/runs/r1%1B%5B2K%0Aforged/status").as_str(),
+    )
+    .with_status(200)
+    .with_body(json!({"run_id": run_id, "state": "RUNNING"}).to_string())
+    .expect(1)
+    .create();
+    let home = home_with_wes_config(prefix);
+    let mut args = RUN_ARGS.to_vec();
+    args.extend(["v1.2", "--format", "json"]);
+    let output = run(&home, &args);
+    assert_success(&output);
+    let rendered = stdout(&output);
+    assert!(!rendered.contains('\u{1b}'));
+    let id = serde_json::from_str::<Value>(&rendered).unwrap()["run_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(id, run_id);
+    let state = run(&home, &["wes", "status", &id]);
+    assert_success(&state);
+    assert_eq!(stdout(&state), "RUNNING\n");
+    submit.assert();
+    status.assert();
+}
+
+#[test]
 fn run_reads_params_inline_from_stdin_or_defaults_to_an_empty_object() {
     let prefix = "/params/ga4gh/wes/v1";
     let _service = service_info(prefix);
@@ -558,4 +595,43 @@ fn empty_run_ids_are_usage_errors() {
         assert_eq!(output.status.code(), Some(2), "{command}");
         assert!(output.stdout.is_empty(), "{command}");
     }
+}
+
+#[test]
+fn undefined_states_read_as_unknown_except_in_get_and_jsonl() {
+    let prefix = "/undefined-state/ga4gh/wes/v1";
+    let _service = service_info(prefix);
+    let log_body = json!({"run_id": "r1", "state": "SUSPENDED"}).to_string();
+    let _log = mock("GET", format!("{prefix}/runs/r1").as_str())
+        .with_status(200)
+        .with_body(&log_body)
+        .create();
+    let _status = mock("GET", format!("{prefix}/runs/r1/status").as_str())
+        .with_status(200)
+        .with_body(&log_body)
+        .create();
+    let _list = mock("GET", format!("{prefix}/runs").as_str())
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body(json!({"runs": [{"run_id": "r1", "state": "SUSPENDED"}]}).to_string())
+        .create();
+    let home = home_with_wes_config(prefix);
+
+    let state = run(&home, &["wes", "status", "r1"]);
+    assert_success(&state);
+    assert_eq!(stdout(&state), "UNKNOWN\n");
+    let table = run(&home, &["wes", "list"]);
+    assert_success(&table);
+    assert!(
+        stdout(&table).contains("r1      UNKNOWN\n"),
+        "{}",
+        stdout(&table)
+    );
+    let get = run(&home, &["wes", "get", "r1"]);
+    assert_success(&get);
+    assert_eq!(stdout(&get), log_body);
+    let export = run(&home, &["wes", "list", "--all", "--format", "jsonl"]);
+    assert_success(&export);
+    let record: Value = serde_json::from_str(stdout(&export).trim()).unwrap();
+    assert_eq!(record["state"], "SUSPENDED");
 }

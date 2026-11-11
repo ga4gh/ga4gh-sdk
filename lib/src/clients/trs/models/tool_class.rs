@@ -25,6 +25,10 @@ pub struct ToolClass {
     /// A longer explanation of what this class is and what it can accomplish.
     #[serde(rename = "description", skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ToolClass {
@@ -34,6 +38,7 @@ impl ToolClass {
             id: None,
             name: None,
             description: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
