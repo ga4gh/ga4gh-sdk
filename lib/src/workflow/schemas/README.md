@@ -13,7 +13,7 @@ Copyright 2026 ELIXIR On-Cloud / GA4GH Contributors.
 local registry. The `main` URLs in the schemas are registry keys, not runtime
 network fetches. `PROFILE_REVISION` in `lib/src/workflow/mod.rs` pins the accepted
 profile and vocabulary revision. The matching upstream test fixtures are in
-[`tests/fixtures/io-profile/`](../../../../tests/fixtures/io-profile/README.md).
+[the repository's `tests/fixtures/io-profile/` directory](https://github.com/ga4gh/ga4gh-sdk/blob/main/tests/fixtures/io-profile/README.md).
 
 For a revision update, copy both files from the new upstream commit without
 rewriting their bytes, update `PROFILE_REVISION` and the fixture provenance, then
