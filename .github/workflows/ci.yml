@@ -62,7 +62,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install Maturin and pytest
-        run: python -m pip install 'maturin==1.15.0' 'pytest==8.3.5'
+        run: python -m pip install 'maturin==1.16.0' 'pytest==8.3.5'
       - name: Build and install the bindings
         working-directory: python
         run: |

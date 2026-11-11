@@ -53,7 +53,7 @@ jobs:
       - name: Build wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
-          maturin-version: v1.15.0
+          maturin-version: v1.16.0
           working-directory: python
           target: ${{ matrix.target }}
           # The Python build uses rustls and native certificate roots; no
@@ -108,10 +108,29 @@ jobs:
       - name: Build sdist
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
-          maturin-version: v1.15.0
+          maturin-version: v1.16.0
           working-directory: python
           command: sdist
           args: --out dist
+      - name: Check declared license files are in the sdist
+        run: |
+          python - <<'PY'
+          from email.parser import BytesParser
+          from glob import glob
+          from tarfile import open as open_tar
+
+          archives = glob('python/dist/*.tar.gz')
+          assert len(archives) == 1, archives
+          with open_tar(archives[0], 'r:gz') as archive:
+              members = set(archive.getnames())
+              metadata_path = next(name for name in members
+                                   if name.endswith('/PKG-INFO') and name.count('/') == 1)
+              metadata = BytesParser().parsebytes(archive.extractfile(metadata_path).read())
+              root = metadata_path.rsplit('/', 1)[0]
+              missing = [name for name in metadata.get_all('License-File', [])
+                         if f'{root}/{name}' not in members]
+              assert not missing, f'License-File entries missing from sdist: {missing}'
+          PY
       - name: Install the sdist and import it
         shell: bash
         run: |

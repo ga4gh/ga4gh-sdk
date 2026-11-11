@@ -12,8 +12,9 @@ release; that comes with the CLI binaries
    and that the tagged commit is on `main`. It then chooses the package index.
 2. **Release wheels** ([`wheels.yml`](../.github/workflows/wheels.yml)) builds
    one `abi3` wheel per platform with [maturin](https://www.maturin.rs/) and an
-   sdist, and imports each wheel and the sdist in a fresh environment. Each
-   wheel covers CPython 3.11 and newer:
+   sdist, checks that every declared license file is in the sdist, and imports
+   each artifact in a fresh environment. Each wheel covers CPython 3.11 and
+   newer:
 
    | Platform | Wheel tag |
    | --- | --- |
