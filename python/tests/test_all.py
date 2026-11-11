@@ -20,9 +20,10 @@ def test_get_service_info(server, config):
 def test_get_service_info_failure(server):
     service_info = ServiceInfo(Configuration(f"{server.root}/missing"))
 
-    with pytest.raises(RuntimeError, match="Failed to get service info"):
+    with pytest.raises(RuntimeError, match=r"Failed to get service info: .*404"):
         service_info.get_service_info()
-    assert server.last()["path"] == "/missing/service-info"
+    request = server.last()
+    assert (request["method"], request["path"]) == ("GET", "/missing/service-info")
 
 
 @pytest.mark.parametrize(
