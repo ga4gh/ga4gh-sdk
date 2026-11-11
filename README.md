@@ -34,6 +34,10 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
+As for `TES`, the error type of `DRS::service` is now
+`Box<dyn Error + Send + Sync>`, so a `DRS` client can move between threads;
+`DRS::new` stores only a successful service-info response.
+
 The WES models follow WES 1.1.0 and use the schema names of the spec:
 `WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
 `State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the

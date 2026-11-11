@@ -518,3 +518,49 @@ async fn gen3_field_is_read_only_for_object_lookups_with_an_array() {
     assert_eq!(report.dialects, BTreeSet::from([BulkDialect::Gen3]));
     request.assert();
 }
+
+#[tokio::test]
+async fn raw_bulk_reports_keep_fields_unknown_to_the_models() {
+    let mut extended = object("a");
+    extended["extension"] = json!({"kept": true});
+    let objects = mock("POST", "/raw/objects")
+        .with_body(json!({"resolved_drs_object": [extended.clone()]}).to_string())
+        .expect(1)
+        .create();
+    let access = mock("POST", "/raw/objects/access")
+        .with_body(
+            json!({"resolved_drs_object_access_urls": [{
+                "drs_object_id": "a", "drs_access_id": "x",
+                "url": "https://store.example/a", "extension": 1
+            }]})
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let client = client("/raw");
+    let report = client
+        .get_bulk_objects_raw(&["a".into()], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    assert_eq!(report.outcomes[&key("a")].resolved, vec![extended]);
+    let pair = BulkKey {
+        object_id: "a".into(),
+        access_id: Some("x".into()),
+    };
+    let report = client
+        .get_bulk_access_urls_raw(
+            std::slice::from_ref(&pair),
+            &[],
+            &BulkPolicy::default(),
+            &budget(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.outcomes[&pair].resolved[0]["extension"], json!(1));
+    assert!(client
+        .get_bulk_access_urls_raw(&[key("a")], &[], &BulkPolicy::default(), &budget())
+        .await
+        .is_err());
+    objects.assert();
+    access.assert();
+}
