@@ -172,6 +172,12 @@ impl PyRunRequest {
         if !raw.is_object() {
             return Err("not a JSON object".to_owned());
         }
+        if raw
+            .get("workflow_params")
+            .is_some_and(|params| !params.is_null() && !params.is_object())
+        {
+            return Err("workflow_params must be a JSON object".to_owned());
+        }
         let inner = serde_json::from_value(raw.clone()).map_err(|e| e.to_string())?;
         Ok(PyRunRequest { inner, raw })
     }
@@ -223,10 +229,18 @@ impl PyRunRequest {
                 )));
             }
         }
-        if request.workflow_params.as_ref().is_none_or(Value::is_null) {
-            return Err(PyValueError::new_err(
-                "Invalid run request: workflow_params is required",
-            ));
+        match request.workflow_params.as_ref() {
+            Some(Value::Object(_)) => {}
+            None | Some(Value::Null) => {
+                return Err(PyValueError::new_err(
+                    "Invalid run request: workflow_params is required",
+                ))
+            }
+            Some(_) => {
+                return Err(PyValueError::new_err(
+                    "Invalid run request: workflow_params must be a JSON object",
+                ))
+            }
         }
         Ok(())
     }

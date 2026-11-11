@@ -245,6 +245,7 @@ def test_run_with_missing_attachment_file_raises_os_error(server, wes_config, tm
         ({key: value for key, value in RUN_REQUEST.items() if key != "workflow_url"}, "workflow_url"),
         ({**RUN_REQUEST, "workflow_type": ""}, "workflow_type"),
         ({key: value for key, value in RUN_REQUEST.items() if key != "workflow_params"}, "workflow_params"),
+        ({**RUN_REQUEST, "workflow_params": [1]}, "workflow_params must be a JSON object"),
         ({**RUN_REQUEST, "tags": {"n": 1}}, "run request"),
         ([RUN_REQUEST], "run request"),
         (object(), "run request"),
@@ -496,7 +497,7 @@ def test_request_to_dict_returns_a_copy():
     assert request.workflow_params == {"message": "hello"}
 
 
-@pytest.mark.parametrize("request_", ["[]", "{", {"workflow_type": "CWL"}, ["a"]])
+@pytest.mark.parametrize("request_", ["[]", "{", {"workflow_type": "CWL"}, ["a"], {**RUN_REQUEST, "workflow_params": "wrong"}])
 def test_request_constructor_rejects_invalid_requests(request_):
     with pytest.raises(ValueError, match="run request"):
         RunRequest(request_)
