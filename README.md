@@ -180,6 +180,30 @@ resume through the same bulk API with caller-supplied credentials/Passports.
 There is no singular or anonymous fallback. Compatibility is verified against
 protocol fixtures, without a claim of broad real-service interoperability.
 
+Bulk requests always use the published DRS 1.4/1.5 shape. For object lookups,
+the SDK also reads one documented Gen3 (indexd) reply difference: resolved
+objects in `resolved_drs_objects` instead of `resolved_drs_object`.
+`BulkReport::dialects` lists the shapes (`Standard`, `Gen3`) seen in a call's
+replies, merged over all chunks. If a reply has both arrays, the standard one
+wins and a diagnostic is added; a `null` array counts as absent.
+Gen3 objects can carry `created_time: null`, which the typed `DrsObject` cannot
+represent. `get_bulk_objects` reports such an entry as an error in its outcome
+and never invents a timestamp; `get_bulk_objects_raw` returns each requested
+resolved entry as JSON, correlated by `id`. Single-object `get_object` has the
+same limit for these objects; use `get_object_raw`. The Gen3 bulk access reply
+is not read in another shape, because it was not verified without credentials.
+Checked against CanineDC on 2026-11-10; see the [opt-in live check](tests/README.md#gen3-drs-caninedc).
+
+The GA4GH Starter Kit DRS bulk routes (`1.3.0experimental`) are not supported.
+In its [`develop` branch at `2b76a63`](https://github.com/ga4gh/ga4gh-starter-kit-drs/blob/2b76a635161daa5bfbed669a9e2755fed31503cd/src/main/java/org/ga4gh/starterkit/drs/controller/Objects.java)
+(read on 2026-11-10, not run), they expect `selection` instead of
+`bulk_object_ids`, report failures in an `unresolved_drs_object` map, and
+return bulk access URLs as a bare array without object or access IDs, which
+cannot be correlated safely. The SDK sends only standard requests. In a reply,
+it ignores the `unresolved_drs_object` map, adds a diagnostic and records no
+dialect. Because the Starter Kit does not read `bulk_object_ids`, its resolved
+array stays empty and the requested IDs are reported as omitted.
+
 ## Service composition
 
 `TES::discover` and `WES::discover` return a `Discovered<T>` wrapper with a
