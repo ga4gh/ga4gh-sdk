@@ -689,3 +689,42 @@ fn log_messages_are_escaped() {
         assert!(message.contains("down\\u{202e}x\\nforged"), "{message}");
     }
 }
+
+#[test]
+fn undefined_states_read_as_unknown_except_in_get_and_jsonl() {
+    let _service = service_info_mock("/undefined-state/service-info");
+    let task = json!({"id": TASK_ID, "state": "SUSPENDED"});
+    let body = task.to_string();
+    let _task = mock("GET", "/undefined-state/tasks/t1")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body(&body)
+        .create();
+    let _list = mock("GET", "/undefined-state/tasks")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body(json!({"tasks": [task]}).to_string())
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/undefined-state",
+        mockito::server_url()
+    )));
+
+    let state = home.run(&["tes", "status", TASK_ID], None);
+    assert!(state.status.success(), "{}", stderr(&state));
+    assert_eq!(stdout(&state), "UNKNOWN\n");
+    let listed = home.run(&["tes", "list"], None);
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    let table = stdout(&listed);
+    assert!(
+        table.contains(&format!("{TASK_ID:<25} {:<15}\n", "Unknown")),
+        "{table}"
+    );
+    let got = home.run(&["tes", "get", TASK_ID, "FULL"], None);
+    assert!(got.status.success(), "{}", stderr(&got));
+    assert_eq!(stdout(&got), body);
+    let exported = home.run(&["tes", "list", "--all", "--format", "jsonl"], None);
+    assert!(exported.status.success(), "{}", stderr(&exported));
+    let record: Value = serde_json::from_str(stdout(&exported).trim()).unwrap();
+    assert_eq!(record["state"], "SUSPENDED");
+}
