@@ -90,7 +90,6 @@ mod list_tasks_params;
 pub mod models;
 mod view;
 use crate::clients::serviceinfo::models::Service;
-use crate::clients::serviceinfo::ServiceInfo;
 use crate::clients::tes::models::ListTasksParams;
 use crate::clients::tes::models::TesListTasksResponse;
 use crate::clients::tes::models::TesState;
@@ -182,18 +181,26 @@ impl TES {
     /// Creates a new `TES` instance.
     ///
     /// # Arguments
-    /// - `config`: A reference to the service configuration.
+    /// - `config`: A reference to the service configuration; its `timeouts`
+    ///   set the time limits (see [`Timeouts`](crate::utils::timeouts::Timeouts)).
     ///
     /// # Returns
     /// - A new `TES` instance, or an error if the initialization fails.
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
-        let transport = Transport::new(config);
-        let service_info = ServiceInfo::new(config)?;
+        Self::with_transport(Transport::new(config)).await
+    }
 
-        let service = service_info.get().await?;
+    /// Creates a new `TES` instance that sends its requests with `transport`, for
+    /// example one from [`Transport::with_client`]. The client's configuration is
+    /// the transport's.
+    ///
+    /// # Returns
+    /// - A new `TES` instance, or an error if the initialization fails.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        let service = crate::clients::serviceinfo::fetch(&transport, "service-info").await?;
 
         let instance = TES {
-            config: config.clone(),
+            config: transport.config.clone(),
             transport,
             service: Ok(service),
         };
@@ -242,6 +249,12 @@ impl TES {
     /// Creates a task from a JSON value, preserving fields unknown to the
     /// current TES models while applying the same submission and acknowledgement
     /// checks as [`Self::create`].
+    ///
+    /// The POST is sent once, within the `submission` limit of the transport's
+    /// configuration. If it runs out of time or loses its connection after it
+    /// was sent, the error is an
+    /// [`AmbiguousSubmissionError`](crate::utils::operation::AmbiguousSubmissionError):
+    /// the service may have created the task.
     pub async fn create_value(&self, task: Value) -> Result<Task, Box<dyn std::error::Error>> {
         let _: TesTask = serde_json::from_value(task.clone())?;
         // First, check if the service is of TES class
@@ -249,7 +262,8 @@ impl TES {
             log::error!("Service check failed: {}", e);
             e
         })?;
-        let operation = crate::utils::operation::Operation::new(std::time::Duration::from_secs(60));
+        let operation =
+            crate::utils::operation::Operation::new(self.transport.config.timeouts.submission);
         let request = self
             .transport
             .request_builder(reqwest::Method::POST, "tasks")?

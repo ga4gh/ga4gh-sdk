@@ -24,9 +24,14 @@ pub struct Operation {
     pub cancellation: CancellationToken,
 }
 impl Operation {
+    /// Starts an operation that ends `budget` from now. A budget beyond what
+    /// the platform clock can represent ends in about 30 years instead.
     pub fn new(budget: Duration) -> Self {
+        let now = Instant::now();
         Self {
-            deadline: Instant::now() + budget,
+            deadline: now
+                .checked_add(budget)
+                .unwrap_or_else(|| now + Duration::from_secs(30 * 365 * 86_400)),
             cancellation: CancellationToken::new(),
         }
     }

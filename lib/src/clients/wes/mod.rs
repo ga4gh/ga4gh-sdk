@@ -147,20 +147,23 @@ pub struct WES {
 }
 
 impl WES {
-    /// Creates a new `WES` instance.
+    /// Creates a new `WES` instance. The `timeouts` of `config` set the time
+    /// limits (see [`Timeouts`](crate::utils::timeouts::Timeouts)).
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
-        let transport = Transport::new(config);
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            transport.get("service-info", None),
-        )
-        .await?;
-        let service = response
+        Self::with_transport(Transport::new(config)).await
+    }
+
+    /// Creates a new `WES` instance that sends its requests with `transport`, for
+    /// example one from [`Transport::with_client`]. The client's configuration is
+    /// the transport's.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        let service = crate::clients::serviceinfo::fetch_raw(&transport, "service-info")
+            .await
             .and_then(|body| from_str::<Service>(&body).map_err(Into::into))
             .map_err(|error| access_error(error.as_ref()))?;
 
         let instance = WES {
-            config: config.clone(),
+            config: transport.config.clone(),
             transport,
             service: Ok(service),
         };
@@ -189,6 +192,13 @@ impl WES {
     }
 
     /// Creates a workflow run with optional uploaded workflow files.
+    ///
+    /// The request is sent once, within the `submission` limit of the
+    /// transport's configuration, including the upload. If it runs out of time
+    /// or loses its connection after it was sent, the error is an
+    /// [`AmbiguousSubmissionError`](crate::utils::operation::AmbiguousSubmissionError):
+    /// the service may have created the run. For a deadline or cancellation of
+    /// your own, use [`Self::run_workflow_streaming`].
     pub async fn run_workflow_with_attachments(
         &self,
         request: RunRequest,
@@ -204,7 +214,7 @@ impl WES {
         self.run_workflow_streaming(
             request,
             attachments,
-            &crate::utils::operation::Operation::new(std::time::Duration::from_secs(60)),
+            &crate::utils::operation::Operation::new(self.transport.config.timeouts.submission),
         )
         .await
     }
