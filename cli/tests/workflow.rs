@@ -1,5 +1,8 @@
+use ga4gh_cli::{command, dispatch_with_config};
+use ga4gh_sdk::utils::configuration::Configuration;
 use serde_json::{json, Value};
 use std::{path::Path, process::Command};
+use url::Url;
 fn run(args: &[&str], home: &Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"))
         .args(args)
@@ -148,6 +151,59 @@ fn explicit_cli_submission_uploads_the_reviewed_request_once() {
         result["invocation"]["request"]["workflow_params"]["sequences"][0],
         "ACGT"
     );
+    service.assert();
+    submission.assert();
+}
+
+#[tokio::test]
+async fn downstream_workflow_submission_uses_supplied_config() {
+    let info = json!({
+        "workflow_type_versions": {"CWL": {"workflow_type_version": ["v1.2"]}},
+        "supported_wes_versions": ["1.0.0"],
+        "supported_filesystem_protocols": ["file"],
+        "workflow_engine_versions": {},
+        "default_workflow_engine_parameters": [],
+        "system_state_counts": {},
+        "tags": {}
+    });
+    let service = mockito::mock("GET", "/injected-wes/service-info")
+        .match_header("authorization", "Bearer injected-token")
+        .with_body(info.to_string())
+        .expect(1)
+        .create();
+    let submission = mockito::mock("POST", "/injected-wes/runs")
+        .match_header("authorization", "Bearer injected-token")
+        .with_body(r#"{"run_id":"injected-run"}"#)
+        .expect(1)
+        .create();
+    let config =
+        Configuration::new(Url::parse(&format!("{}/injected-wes", mockito::server_url())).unwrap())
+            .with_oauth_access_token("injected-token".into());
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let schema = root.join("examples/qc-demo/profile.json");
+    let request = root.join("examples/qc-demo/request.json");
+    let pin = "45d41324353cb4900fdd999c307c2e36a3f2a410";
+    let matches = command()
+        .try_get_matches_from([
+            "ga4gh-cli",
+            "workflow",
+            "submit",
+            schema.to_str().unwrap(),
+            request.to_str().unwrap(),
+            "public-qc@1",
+            "--profile-revision",
+            pin,
+            "--vocabulary-revision",
+            pin,
+        ])
+        .unwrap();
+    let output = dispatch_with_config(&matches, &config)
+        .await
+        .unwrap()
+        .expect("workflow is a built-in command");
+    assert!(output.stderr.is_empty(), "{}", output.stderr);
+    let response: Value = serde_json::from_str(&output.stdout).unwrap();
+    assert_eq!(response["run_id"], "injected-run");
     service.assert();
     submission.assert();
 }
