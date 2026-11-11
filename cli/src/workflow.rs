@@ -50,7 +50,7 @@ pub fn command() -> Command {
         }
     };
     Command::new("workflow")
-        .about("Prepare, project and compare pinned workflow contracts")
+        .about("Client-side workflow contracts; submission uses WES")
         .subcommand_required(true)
         .subcommand(invocation("prepare"))
         .subcommand(invocation("submit"))
