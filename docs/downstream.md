@@ -153,7 +153,7 @@ Cargo workspace, so that the SDK's crates are built as dependencies, as in a
 downstream repository; the workspace commands such as `make check` leave it
 out. It has no lockfile of its own: the target copies the repository's
 `Cargo.lock` into it, lets Cargo add the example's own entry, and fails if
-any other package isn't locked at a version from the root lockfile. The
+any other package isn't locked at a version and source from the root lockfile. The
 example thus builds with the SDK's dependency versions; a dependency that
 only the example needs must be added to the workspace first. Without
 `make downstream`, Cargo resolves the example's dependencies afresh.

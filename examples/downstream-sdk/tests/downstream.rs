@@ -1,7 +1,8 @@
 //! Tests of the example against a mock TES service with extensions.
 //!
 //! Each test uses its own API root on the shared mock server, so that tests
-//! running in parallel don't see each other's mocks.
+//! running in parallel don't see each other's mocks. Only one test sets
+//! `HOME`; checks that read the configuration file belong into that test.
 
 use downstream_sdk::cli;
 use downstream_sdk::task::PrioritizedTask;
