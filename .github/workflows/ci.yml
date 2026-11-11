@@ -108,7 +108,8 @@ jobs:
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
-                lib/src/clients/mod.rs lib/src/lib.rs lib/tests/wes_starter_kit_docker.rs)
+                lib/src/clients/mod.rs lib/src/lib.rs lib/tests/wes_starter_kit_docker.rs
+                cli/Cargo.toml cli/src/ cli/tests/wes_starter_kit_docker.rs)
             fi
             if git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- "${paths[@]}"; then
               run_suite=false
