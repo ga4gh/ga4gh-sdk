@@ -192,9 +192,22 @@ jobs:
           SKIP: cargo-fmt,cargo-clippy
         run: pre-commit run --all-files --show-diff-on-failure
 
+  # The example crate in `examples/downstream-sdk/`, built against the
+  # library and the CLI as a downstream crate would (see docs/downstream.md)
+  downstream:
+    name: Downstream example
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check, lint and test the example
+        run: make downstream
+
   passed:
     name: CI passed
-    needs: [lint, test, build, python, integration, coverage, pre-commit]
+    needs: [lint, test, build, python, integration, coverage, pre-commit, downstream]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -212,7 +225,8 @@ jobs:
           for name, result in results.items():
               print(f'{name}: {result}')
           expected = {
-              'lint', 'test', 'build', 'python', 'integration', 'coverage', 'pre-commit'
+              'lint', 'test', 'build', 'python', 'integration', 'coverage', 'pre-commit',
+              'downstream',
           }
           if set(results) != expected or any(
               result != 'success' for result in results.values()
