@@ -8,6 +8,7 @@
 //! - `ServiceInfo`: reads a service's service info.
 //! - `Transport`: sends requests below the API root (GET, POST, PUT, DELETE, multipart).
 //! - `TES`: a TES client; `Task`: a TES task addressed by its ID.
+//! - `AsyncTES` and `AsyncTask`: the same for `asyncio`; their methods return awaitables.
 //! - `TesTask`: a task to create or as returned by the server, with its full JSON
 //!   (`PyTesTask` is an alias).
 //! - `TesState`: the state of a task, a `str` enum.
@@ -39,7 +40,8 @@
 //!
 //! # Notes
 //!
-//! - Synchronous network calls release the GIL and share a persistent Tokio runtime.
+//! - Synchronous network calls release the GIL and share a persistent Tokio runtime. The
+//!   async classes run their requests on the same runtime.
 //! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`.
 
 use ga4gh_sdk::clients::ServiceType;
@@ -51,6 +53,7 @@ use crate::clients::serviceinfo::PyServiceInfo;
 use crate::clients::tes::{
     tes_state_type, PyListTasksParams, PyTES, PyTask, PyTesListTasksResponse, PyTesTask,
 };
+use crate::clients::tes_async::{PyAsyncTES, PyAsyncTask};
 use crate::utils::configuration::PyConfiguration;
 use crate::utils::transport::PyTransport;
 
@@ -90,6 +93,8 @@ fn GA4GH(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyListTasksParams>()?;
     m.add_class::<PyTesListTasksResponse>()?;
     m.add_class::<PyTask>()?;
+    m.add_class::<PyAsyncTES>()?;
+    m.add_class::<PyAsyncTask>()?;
     m.add("TesState", tes_state_type(py)?)?;
     Ok(())
 }

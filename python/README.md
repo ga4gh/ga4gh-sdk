@@ -54,6 +54,7 @@ pytest
 | `Configuration` | Set one service API root or read it from `~/.ga4gh-cli/config.json`. |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
+| `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
 | `WES`, `Run`, `RunRequest` | Start runs (with workflow attachments), list, inspect, poll, and cancel WES runs, and read their tasks; read full JSON including unknown fields. See [Using WES](#using-wes). |
 | DRS, TRS, Service Registry | Available in the Rust SDK, not yet as Python client classes. |
@@ -107,8 +108,9 @@ Synchronous network methods release the Python GIL while Rust waits for I/O.
 They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
 connections remain reusable between calls. Inputs are decoded before releasing
 the GIL and Python results/exceptions are constructed after reacquiring it.
-No asyncio API or Python callback runs on the runtime. Use multiprocessing's
-`spawn` mode rather than forking a process after starting threaded I/O.
+No Python callback runs on the runtime. The [asyncio](#asyncio) classes run
+their requests on the same runtime. Use multiprocessing's `spawn` mode rather
+than forking a process after starting threaded I/O.
 
 `tests/test_io_runtime.py` exercises all synchronous network wrappers against a
 Python-thread HTTP server, including a heartbeat during delayed I/O, keep-alive
@@ -190,6 +192,57 @@ two methods for the whole page.
 `CANCELED`, `PREEMPTED`, `CANCELING`). Its members are also strings:
 `TesState.RUNNING == "RUNNING"`, and `str()`, f-strings and `json.dumps()` give the
 state's name. `TesState("RUNNING")` looks a state up by name. Members can be pickled.
+
+### asyncio
+
+`AsyncTES` and `AsyncTask` are the TES client and task for `asyncio` apps. They have the
+same methods as `TES` and `Task`, take the same arguments and give the same results
+(`TesTask`, `ListTasksResponse`, `TesState`), but each method returns an awaitable:
+
+```python
+import asyncio
+
+from GA4GH import AsyncTES, Configuration, TesState
+
+
+async def main():
+    tes = await AsyncTES.connect(Configuration("http://localhost:8000/ga4gh/tes/v1"))
+    task = await tes.create({"executors": [{"image": "alpine", "command": ["echo", "hello"]}]})
+    if await task.status() is TesState.QUEUED:
+        await task.cancel()
+    details, page = await asyncio.gather(tes.get("FULL", task.id), tes.list())
+    print(details.to_dict(), [listed.id for listed in page.tasks])
+
+
+asyncio.run(main())
+```
+
+- The built-in `AsyncTES` methods check the service info before their first TES
+  request. `AsyncTES(config)` doesn't contact the server: its first method call
+  checks the service, once for concurrent calls. If the check fails, the
+  calls that waited for it raise its `RuntimeError`, and a later call tries again.
+  `await AsyncTES.connect(config)` checks it right away and gives the
+  client. On a subclass, `connect()` builds `cls(config, *args, **kwargs)` at once, in
+  the caller's thread and context, and gives it once the check is done. A
+  subclass's `__init__` can send its own requests before that check completes.
+- `AsyncTES.create()` gives an `AsyncTask`; `AsyncTask(id, transport)` addresses an
+  existing task, like `Task`. `config`, `transport` and `id` are plain properties.
+- The requests run on the runtime of the sync API without the GIL, so they don't block
+  the event loop, and several of them run at the same time. Because the SDK's futures
+  aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256
+  calls run at once. Further calls wait for a slot without occupying a pool thread;
+  cancelling a waiting call prevents it from starting. This limits concurrent calls,
+  not the number of futures an app can schedule.
+- The methods return `asyncio.Future`s of the running event loop, so call them from a
+  coroutine or a callback of the loop; outside of one, they raise `RuntimeError`.
+- Cancelling an awaitable, for example with `asyncio.wait_for()` or
+  `asyncio.Task.cancel()`, returns at once and drops its request: the connection is
+  closed. Whether the server already acted on a request that was sent is unknown then.
+- Invalid arguments raise `ValueError` (or `OSError` for task files) when the method is
+  called; failed requests and invalid responses raise `RuntimeError` when awaited.
+- `transport` gives a `Transport` for further endpoints. Its methods are synchronous:
+  they release the GIL but block the event loop while a request runs, so run them with
+  `await asyncio.to_thread(...)` in a coroutine. There is no async `Transport` yet.
 
 ### Type hints
 
@@ -421,14 +474,19 @@ request use the uppercase TES spelling. Invalid views raise `ValueError` before 
 
 The `ga4gh` crate in this directory builds as a Python module and as a Rust library. A
 PyO3 crate (same PyO3 version) can depend on it and extend the classes in Rust, for
-example with `#[pyclass(extends = PyTES)]`; the `inner` field of each class
-holds the library type. The extension module gets its own copies of the base classes,
+example with `#[pyclass(extends = PyTES)]`; the `inner` field of each class holds the
+library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES calls
+that the sync and the async classes share are public functions in `clients::tes`, such as
+`get_task()` and `task_status()`; an async extension method can run them with
+`clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
+`clients::tes_async` does. The extension module gets its own copies of the base classes,
 which don't mix with those of the `GA4GH` module: a `GA4GH.Configuration` can't be passed
-to it. So register every base class that its users need (`m.add_class::<PyConfiguration>()`
-and so on, and `m.add("TesState", tes_state_type(py)?)` for the state enum) in the
-extension module, and import everything from there. The default
-feature `extension-module` builds the Python module; a dependent crate can turn it off
-with `default-features = false` and enable it in its own features instead.
+to it. So register every base class that its users need
+(`m.add_class::<PyConfiguration>()` and so on, and `m.add("TesState",
+tes_state_type(py)?)` for the state enum) in the extension module, and import everything
+from there. The default feature `extension-module` builds the Python module; a dependent
+crate can turn it off with `default-features = false` and enable it in its own features
+instead.
 
 The WES classes (`PyWES`, `PyRun` and so on, in `clients::wes`) follow the same pattern;
 `clients::wes::register(py, m)` registers all of them, with the `WesState` enum. Further
