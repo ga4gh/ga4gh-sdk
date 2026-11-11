@@ -15,13 +15,13 @@ use ga4gh_sdk::{
 use serde_json::{json, Value};
 use std::time::Duration;
 #[tokio::test]
-#[ignore = "requires two explicit Toil WES endpoints and a Docker-capable runner; see tests/run-phase2-qc.py"]
+#[ignore = "requires two explicit Toil WES endpoints and a Docker-capable runner; see tests/run-workflow-contracts-qc.py"]
 async fn real_qc_on_two_wes_instances() {
     let endpoints = std::env::var("GA4GH_QC_WES_URLS").expect("two comma-separated WES endpoints");
     let endpoints = endpoints.split(',').collect::<Vec<_>>();
     assert_eq!(endpoints.len(), 2);
-    let schema = include_bytes!("../../examples/qc-demo/profile.json");
-    let descriptor = include_bytes!("../../examples/qc-demo/main.cwl");
+    let schema = include_bytes!("../../examples/sequence-qc/profile.json");
+    let descriptor = include_bytes!("../../examples/sequence-qc/main.cwl");
     let p = Profile::from_slice(schema, Pins::reference()).unwrap();
     let mut records = vec![];
     let mut evidence = vec![];
@@ -29,7 +29,8 @@ async fn real_qc_on_two_wes_instances() {
         let config = Configuration::new(url::Url::parse(endpoint).unwrap());
         let wes = WES::new(&config).await.unwrap();
         let request: RunRequest =
-            serde_json::from_slice(include_bytes!("../../examples/qc-demo/request.json")).unwrap();
+            serde_json::from_slice(include_bytes!("../../examples/sequence-qc/request.json"))
+                .unwrap();
         let input_digest = digest(&serde_json::to_vec(&request.workflow_params).unwrap());
         let prepared = p
             .prepare(
@@ -118,7 +119,7 @@ async fn real_qc_on_two_wes_instances() {
         records.push(result);
     }
     let policy: ComparisonPolicy =
-        serde_json::from_slice(include_bytes!("../../examples/qc-demo/policy.json")).unwrap();
+        serde_json::from_slice(include_bytes!("../../examples/sequence-qc/policy.json")).unwrap();
     let comparison = policy.compare(&records[0], &records[1]).unwrap();
     assert_eq!(comparison.outcome, Outcome::EquivalentUnderPolicy);
     assert!(comparison.context_drift.contains_key("backend"));
