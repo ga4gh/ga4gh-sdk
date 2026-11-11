@@ -10,7 +10,7 @@ the [README](../README.md#installation).
 | API | Rust library | CLI | Python bindings |
 | --- | --- | --- | --- |
 | Service Info | `ServiceInfo` | No direct command | `ServiceInfo` |
-| TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES |
+| TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel`, `files`, `log`, `save` | TES |
 | DRS | Objects, access URLs, bulk, and `drs://` URIs | `drs get`, `access` | `DRS`, `DrsResolver` |
 | WES | Runs and attachments | `wes run`, `list`, `get`, `status`, `cancel` | `WES`, `Run` |
 | TRS | Tools and descriptors | `trs tools`, `tool`, `versions`, `version`, `descriptor`, `files`, `tests` | Not yet |

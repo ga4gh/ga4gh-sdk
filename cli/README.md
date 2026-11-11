@@ -209,6 +209,106 @@ server errors. Missing commands or arguments use Clap's exit code 2. Task IDs,
 page tokens and error messages are text output, so control characters in them
 are escaped (see [Text and JSON output](#text-and-json-output)).
 
+### TES logs and output files
+
+Three more commands read a task's `FULL` view and work with its logs and
+output files. Nothing is downloaded unless you select it.
+
+1. To see what a task has, run `tes files`. Each row has a selector for the
+   other two commands:
+
+```sh
+ga4gh-cli tes files "$task_id"
+```
+
+Example output:
+
+```sh
+SELECTOR       SIZE       DESCRIPTION
+output:0       -          declared output file: s3://bucket/results/out.txt (path /outputs/out.txt)
+stdout:0:0     6          executor stdout, 6 bytes, exit code 0
+stderr:0:0     0          executor stderr, 0 bytes, exit code 0
+system:0       21         system logs, 2 lines
+file:0:0       6          output file: s3://bucket/results/out.txt (path /outputs/out.txt)
+```
+
+| Selector | What it names |
+| --- | --- |
+| `stdout:ATTEMPT:EXECUTOR`, `stderr:ATTEMPT:EXECUTOR` | The `stdout` or `stderr` field of an executor log, as text in the response |
+| `system:ATTEMPT` | The `system_logs` of an attempt, one line per entry |
+| `output:INDEX` | An output that the task declares in `outputs` |
+| `file:ATTEMPT:INDEX` | An output file that the server reports in the attempt's `outputs` log, with its size |
+
+Attempts and executors are counted from 0, in the order of the response.
+Notes on stderr say what the response lacks, for example when the task is
+still running, has no logs yet, or an executor log has no `stdout` field. URLs
+are shown without user names, passwords, query strings and fragments; `?...`
+marks a removed query string or fragment, which may hold the signature of a
+pre-signed URL. `tes get "$task_id" FULL` shows the complete response.
+
+2. To show an inline log, run `tes log` with its selector. Control and
+   bidirectional formatting characters are escaped; line breaks are kept:
+
+```sh
+ga4gh-cli tes log "$task_id" stdout:0:0
+```
+
+3. To save logs and output files, run `tes save` with one or more selectors
+   and a directory:
+
+```sh
+ga4gh-cli tes save "$task_id" stdout:0:0 file:0:0 --dir results
+ga4gh-cli tes save "$task_id" output:0 --dir results --name out-copy.txt
+```
+
+The directory is created if it is missing. Inline logs are saved as written
+in the response, without escapes, as `stdout-0-0.txt`, `stderr-0-0.txt` or
+`system-0.txt`. A file is named after the last part of its `path`, or of its
+URL if the path is empty. `--name` sets the name instead, for a single
+selector. Every file goes into the directory itself: a name with a path
+separator, `..`, or control or bidirectional formatting characters is refused,
+whether it comes from the server or from `--name`, and so is an absolute
+`--name`. An existing file is kept, and the command fails, unless you add
+`--force`, which replaces it.
+
+The command checks all selections and names before it downloads anything. It
+then saves the selections in order and stops at the first error; the files
+saved before it are listed on stdout. Each download goes to a temporary file in
+the directory, which is moved to its name only when the transfer is complete
+and, for a `file:` selector, the number of bytes matches the task's
+`size_bytes`. An HTTP error status, a broken connection, a missing object or a
+size mismatch leaves no file behind.
+
+Inline `stdout` and `stderr` are whatever the server put in the response: TES
+servers may cut them short or leave them out. To keep complete output, have
+the executor write it to a file (with the executor's `stdout` and `stderr`
+paths) and declare that file in `outputs`, then save it as a `file:` or
+`output:` selection.
+
+Supported URL schemes:
+
+- `http` and `https`: The CLI sends a plain `GET` request, follows
+  redirects and uses the `connect` timeout of the `TES` section. It sends no
+  credentials from the configuration file, since output URLs can point to
+  any host. Use URLs that need no credentials, such as pre-signed URLs.
+  Proxy environment variables apply.
+- `s3`: `s3://BUCKET/KEY`. Credentials, region and endpoint come only from
+  the standard AWS environment variables, such as `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` (default
+  `us-east-1`) and `AWS_ENDPOINT` (for S3-compatible storage such as MinIO;
+  add `AWS_ALLOW_HTTP=true` for a plain HTTP endpoint). Set
+  `AWS_SKIP_SIGNATURE=true` for public buckets. Requests that fail
+  temporarily are retried up to three times.
+
+Other schemes, such as `file`, `gs` or `ftp`, are refused with an error, and
+so are declared outputs of type `DIRECTORY` or with a wildcard: save the files
+that the server reports under `file:` instead.
+
+The three commands exit with code 0 on success and code 1 on request, server,
+selection or download errors; missing arguments, such as `--dir`, use exit
+code 2. Invalid selectors and `--name` values fail before the CLI contacts
+the service.
+
 ### DRS examples
 
 Add a `DRS` section with the service's API root to the configuration file, as
@@ -480,6 +580,8 @@ All commands treat values from a service the same way:
   use JSON escapes in the same way.
 - `trs descriptor --plain` and `trs tests --plain` print the file content as
   received, since it is meant to be saved as a file.
+- `tes log` escapes each line of a log like other text output and keeps the
+  line breaks. `tes save` writes logs and files as received, without escapes.
 
 Escaping changes only what is printed. The SDK keeps the values it received,
 and commands send the IDs given to them unchanged. For a newly submitted ID,

@@ -121,12 +121,13 @@ impl Home {
     fn run_all(&self) -> Vec<(Vec<String>, Output)> {
         let task_file = self.path().join("task.json");
         let task_file = task_file.to_str().unwrap();
-        let commands: [&[&str]; 5] = [
+        let commands: [&[&str]; 6] = [
             &["tes", "create", task_file],
             &["tes", "list"],
             &["tes", "get", TASK_ID, "FULL"],
             &["tes", "status", TASK_ID],
             &["tes", "cancel", TASK_ID],
+            &["tes", "files", TASK_ID],
         ];
         let mut outputs = Vec::new();
         for args in commands {
@@ -202,6 +203,7 @@ fn test_output_on_success() {
                 "get" => assert_eq!(stdout(&output), task_json),
                 "status" => assert_eq!(stdout(&output), "COMPLETE\n"),
                 "cancel" => assert!(stdout(&output).starts_with("STATUS: "), "{args:?}"),
+                "files" => assert!(stdout(&output).starts_with("SELECTOR "), "{args:?}"),
                 _ => assert!(stdout(&output).contains(TASK_ID), "{args:?}"),
             }
         }

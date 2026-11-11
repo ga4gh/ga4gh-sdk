@@ -1,4 +1,5 @@
 use crate::render::{json_printable, printable};
+use crate::tes_files;
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
@@ -89,6 +90,35 @@ pub fn command() -> Command {
             Command::new("cancel")
                 .about("cancel the task")
                 .arg(arg!(<id> "The id of the task which should be cancel"))
+                .arg_required_else_help(true),
+        )
+        .subcommand(
+            Command::new("files")
+                .about("List a task's logs and output files, with selectors for log and save")
+                .arg(arg!(<id> "The id of the task"))
+                .arg_required_else_help(true),
+        )
+        .subcommand(
+            Command::new("log")
+                .about("Show an inline log of a task, such as stdout:0:0")
+                .arg(arg!(<id> "The id of the task"))
+                .arg(arg!(<SELECTOR> "stdout:ATTEMPT:EXECUTOR, stderr:ATTEMPT:EXECUTOR or system:ATTEMPT"))
+                .arg_required_else_help(true),
+        )
+        .subcommand(
+            Command::new("save")
+                .about("Save selected logs and output files of a task in a directory")
+                .arg(arg!(<id> "The id of the task"))
+                .arg(
+                    arg!(<SELECTOR> "Selectors from `tes files`, such as stdout:0:0 or file:0:1")
+                        .num_args(1..),
+                )
+                .arg(
+                    arg!(--dir <DIR> "Directory to save the files in; created if missing")
+                        .required(true),
+                )
+                .arg(arg!(--name <NAME> "File name for a single selection, instead of the server's"))
+                .arg(arg!(--force "Replace files that already exist").action(ArgAction::SetTrue))
                 .arg_required_else_help(true),
         )
 }
@@ -249,7 +279,83 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
+    if let Some((name @ ("files" | "log" | "save"), sub)) = sub.subcommand() {
+        return run_files(name, sub, config).await;
+    }
     Ok(CommandOutput::success(String::new()))
+}
+
+/// Runs `tes files`, `tes log` and `tes save` on the task's `FULL` view.
+///
+/// Notes on missing data go to stderr: always for `tes files`, and for the
+/// other commands when they fail.
+async fn run_files(
+    name: &str,
+    sub: &ArgMatches,
+    config: &Configuration,
+) -> anyhow::Result<CommandOutput> {
+    let id = sub
+        .get_one::<String>("id")
+        .ok_or_else(|| anyhow::anyhow!("id argument is required"))?;
+    let selectors: Vec<String> = sub
+        .try_get_many::<String>("SELECTOR")
+        .ok()
+        .flatten()
+        .map(|values| values.cloned().collect())
+        .unwrap_or_default();
+    // Invalid selectors and names fail before the service is contacted.
+    for selector in &selectors {
+        tes_files::parse_selector(selector)?;
+    }
+    if let Some(file_name) = sub.try_get_one::<String>("name").ok().flatten() {
+        tes_files::check_user_name(file_name)?;
+    }
+    let tes = match TES::new(config).await {
+        Ok(tes) => tes,
+        Err(error) => return Ok(service_failure(error.as_ref())),
+    };
+    let body = match tes.get_raw(TesView::Full, id).await {
+        Ok(body) => body,
+        Err(error) => return Ok(CommandOutput::failure(error)),
+    };
+    let task: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(task) => task,
+        Err(error) => {
+            return Ok(CommandOutput::failure(format!(
+                "The response is not valid JSON: {error}"
+            )))
+        }
+    };
+    let catalog = tes_files::Catalog::from_task(&task);
+    let result = match name {
+        "files" => Ok(CommandOutput::success(catalog.table())),
+        "log" => tes_files::show(&catalog, &selectors[0]),
+        _ => {
+            let dir = sub
+                .get_one::<String>("dir")
+                .ok_or_else(|| anyhow::anyhow!("--dir is required"))?;
+            tes_files::save(
+                &catalog,
+                &selectors,
+                sub.get_one::<String>("name").map(String::as_str),
+                Path::new(dir),
+                sub.get_flag("force"),
+                config,
+            )
+            .await
+        }
+    };
+    // A selection that doesn't match the task is reported with the notes.
+    let mut output = result.unwrap_or_else(CommandOutput::failure);
+    if name == "files" || output.exit_code != std::process::ExitCode::SUCCESS {
+        let notes: String = catalog
+            .notes
+            .iter()
+            .map(|note| format!("Note: {}\n", printable(note)))
+            .collect();
+        output.stderr = format!("{notes}{}", output.stderr);
+    }
+    Ok(output)
 }
 
 /// Parse task input as JSON and check it against the TES task model.
