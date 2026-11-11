@@ -61,6 +61,8 @@ use crate::clients::tes_async::{PyAsyncTES, PyAsyncTask};
 use crate::utils::configuration::PyConfiguration;
 use crate::utils::transport::PyTransport;
 
+/// A built-in section of the configuration file, for `Configuration.from_file()`.
+/// Other sections are named by a `str`.
 #[pyclass(name = "ServiceType", module = "GA4GH", eq, eq_int)]
 #[derive(Clone, PartialEq, Eq)]
 pub enum PyServiceType {
@@ -69,6 +71,7 @@ pub enum PyServiceType {
     TRS,
     AAI,
     WES,
+    REGISTRY,
 }
 
 impl From<PyServiceType> for ServiceType {
@@ -79,6 +82,26 @@ impl From<PyServiceType> for ServiceType {
             PyServiceType::TRS => ServiceType::TRS,
             PyServiceType::AAI => ServiceType::AAI,
             PyServiceType::WES => ServiceType::WES,
+            PyServiceType::REGISTRY => ServiceType::REGISTRY,
+        }
+    }
+}
+
+/// A section of the configuration file: a `ServiceType`, or the name of any other
+/// section as a `str`, which becomes `ServiceType::Custom`.
+#[derive(FromPyObject)]
+pub enum ServiceSection {
+    #[pyo3(transparent)]
+    BuiltIn(PyServiceType),
+    #[pyo3(transparent)]
+    Custom(String),
+}
+
+impl From<ServiceSection> for ServiceType {
+    fn from(section: ServiceSection) -> Self {
+        match section {
+            ServiceSection::BuiltIn(service_type) => service_type.into(),
+            ServiceSection::Custom(name) => ServiceType::Custom(name),
         }
     }
 }
