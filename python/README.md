@@ -321,9 +321,10 @@ print(run.task(tasks.task_logs[0].id).stderr)
   `os.PathLike`); as for `TES.create()`, a `str` is always a path, so pass JSON text as
   `RunRequest.from_json(text)`. `workflow_type`, `workflow_type_version`, `workflow_url`
   and `workflow_params` are required; `workflow_params` must be a JSON object.
-  The request goes to the server as the fields of
-  the WES `RunRequest` form; fields that the WES models don't know are kept in the
-  `RunRequest` but not sent.
+  The request goes to the server as the fields of the WES `RunRequest` form. Fields
+  that the WES models don't know, such as a server's extension fields, go as further
+  form parts: strings as they are, other values as JSON. A `workflow_attachment` field
+  raises `ValueError` before a request; pass files with `attachments` instead.
 - `attachments` maps filenames to contents, as `bytes` (or `bytearray`) or as the path of
   a file (`os.PathLike`, such as `pathlib.Path`), which is streamed rather than read into
   memory. A list of `(filename, content)` pairs works too. Filenames are relative paths
