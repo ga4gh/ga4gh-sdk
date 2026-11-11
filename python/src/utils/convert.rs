@@ -1,6 +1,6 @@
 //! Conversions between Python objects, JSON values and query strings.
 
-use pyo3::exceptions::{PyOSError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 use pyo3::PyTypeInfo;
@@ -37,20 +37,47 @@ pub fn check_extra_args<T: PyTypeInfo>(
 /// Failures to read raise the matching `OSError` subclass (such as `FileNotFoundError`) with
 /// the system's message and the path; text that isn't UTF-8 raises `ValueError`.
 pub fn read_file(py: Python<'_>, path: &Path) -> PyResult<String> {
-    let filename = path.to_string_lossy().into_owned();
-    let bytes = std::fs::read(path).map_err(|error| match error.raw_os_error() {
+    let bytes = std::fs::read(path).map_err(|error| os_error(py, error, path))?;
+    String::from_utf8(bytes).map_err(|_| {
+        PyValueError::new_err(format!(
+            "Invalid file {}: not UTF-8 text",
+            path.to_string_lossy()
+        ))
+    })
+}
+
+/// Converts an I/O error for `path` to the matching `OSError` subclass (such as
+/// `FileNotFoundError`), with the system's message and the path.
+pub fn os_error(py: Python<'_>, error: std::io::Error, path: &Path) -> PyErr {
+    match error.raw_os_error() {
         Some(errno) => match py
             .import_bound("os")
             .and_then(|os| os.call_method1("strerror", (errno,)))
             .and_then(|message| message.extract::<String>())
         {
-            Ok(message) => PyOSError::new_err((errno, message, filename.clone())),
+            Ok(message) => {
+                PyOSError::new_err((errno, message, path.to_string_lossy().into_owned()))
+            }
             Err(error) => error,
         },
         None => PyErr::from(error),
-    })?;
-    String::from_utf8(bytes)
-        .map_err(|_| PyValueError::new_err(format!("Invalid file {filename}: not UTF-8 text")))
+    }
+}
+
+/// Defines a Python class, such as a `str` enum, from Python source.
+///
+/// The source runs in a namespace of its own whose `__name__` is `GA4GH`.
+/// `PyModule::from_code_bound` would register a module in `sys.modules` and, under the
+/// name `GA4GH`, overwrite the package's attributes.
+pub fn define_class(py: Python<'_>, source: &str, name: &str) -> PyResult<Py<PyType>> {
+    let namespace = PyDict::new_bound(py);
+    namespace.set_item("__name__", "GA4GH")?;
+    py.run_bound(source, Some(&namespace), None)?;
+    Ok(namespace
+        .get_item(name)?
+        .ok_or_else(|| PyRuntimeError::new_err(format!("{name} is not defined")))?
+        .downcast_into::<PyType>()?
+        .unbind())
 }
 
 /// Converts a Python argument to JSON.
