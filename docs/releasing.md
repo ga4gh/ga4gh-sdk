@@ -1,15 +1,17 @@
 # Releasing
 
 A version tag `v<version>` on `main` starts the [Release workflow](../.github/workflows/release.yml).
-For now, it publishes the Python bindings to PyPI. It doesn't create a GitHub
-release; that comes with the CLI binaries
-([#91](https://github.com/ga4gh/ga4gh-sdk/issues/91)).
+It publishes the Python bindings to PyPI and creates a draft GitHub release
+with the CLI binaries, which a maintainer completes and publishes.
 
 ## What the workflow does
 
 1. **Prepare release** checks that the tag is `v` followed by the workspace
    version in the root `Cargo.toml` (for example `v0.2.0` or `v0.2.0-rc.1`)
-   and that the tagged commit is on `main`. It then chooses the package index.
+   and that the tagged commit is on `main`. It then chooses the package index
+   and whether the GitHub release is a pre-release: every version before
+   `1.0.0` is, and so is every version with a pre-release part such as
+   `1.1.0-rc.1`.
 2. **Release wheels** ([`wheels.yml`](../.github/workflows/wheels.yml)) builds
    one `abi3` wheel per platform with [maturin](https://www.maturin.rs/) and an
    sdist, and imports each wheel and the sdist in a fresh environment. Each
@@ -34,6 +36,31 @@ release; that comes with the CLI binaries
    environment. The upload also carries
    [attestations](https://docs.pypi.org/attestations/) of where each file was
    built.
+4. **Release binaries** ([`binaries.yml`](../.github/workflows/binaries.yml))
+   builds `ga4gh-cli` natively on one runner per platform, runs `--help` and
+   `--version` on it, and packs it with `LICENSE` and `README.md` into
+   `ga4gh-cli-<version>-<target>.tar.gz` (`.zip` on Windows):
+
+   | Platform | Target | Runner |
+   | --- | --- | --- |
+   | Linux x86-64 | `x86_64-unknown-linux-gnu` | `ubuntu-22.04` |
+   | Linux aarch64 | `aarch64-unknown-linux-gnu` | `ubuntu-22.04-arm` |
+   | macOS x86-64 | `x86_64-apple-darwin` | `macos-15-intel` |
+   | macOS arm64 | `aarch64-apple-darwin` | `macos-15` |
+   | Windows x86-64 | `x86_64-pc-windows-msvc` | `windows-2025` |
+   | Windows arm64 | `aarch64-pc-windows-msvc` | `windows-11-arm` |
+
+   The Linux binaries link the system's OpenSSL 3 and glibc dynamically;
+   building on Ubuntu 22.04 keeps the glibc floor at 2.35. The binaries aren't
+   code-signed or notarised. CI runs the same build on every pull request,
+   without publishing. This job runs in parallel with the wheels.
+5. **GitHub release** runs after the package is published. It writes
+   `SHA256SUMS` for the archives, records
+   [build provenance attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
+   for them, and creates a **draft** release for the tag, flagged as a
+   pre-release as chosen in step 1, with the archives, `SHA256SUMS` and
+   GitHub's generated notes. A re-run of a failed run replaces the files of
+   the draft; it stops if the release is already published.
 
 The Python version comes from the workspace version; maturin converts it to
 PEP 440, so `0.2.0-rc.1` becomes `0.2.0rc1` on PyPI. Files on PyPI can't be
@@ -67,7 +94,9 @@ Maintainers of `ga4gh/ga4gh-sdk` set this up once before the first tag:
 2. In the repository settings, create the environments `pypi` and `testpypi`.
    Limit them to tags matching `v*` (deployment branches and tags) and add
    required reviewers, so that every upload needs a maintainer's approval.
-   Neither environment needs secrets.
+   Neither environment needs secrets. The CLI binaries and the GitHub release
+   need no environment and no secret either; that job gets write access to
+   the repository contents from the workflow's own token.
 3. Protect `v*` tags with a tag ruleset, so that only maintainers can create
    them and nobody can move or delete them.
 
@@ -85,12 +114,18 @@ Maintainers of `ga4gh/ga4gh-sdk` set this up once before the first tag:
 
 3. Approve the deployment to `pypi` in the workflow run once the wheels are
    built.
+4. When the run has finished, open the draft release, add the curated notes
+   above GitHub's generated ones, check that it lists the six CLI archives and
+   `SHA256SUMS`, and publish it. A draft is visible to maintainers only and can
+   be edited or deleted; once published, its files may no longer be
+   replaceable (for example with immutable releases).
 
 ## Dry run in a fork
 
-Try changes to the workflows in a fork before tagging `ga4gh/ga4gh-sdk`. A fork
-publishes under its own name, because TestPyPI ties a project to its first
-publisher and `ga4gh-sdk` is kept for this repository:
+Try changes to the workflows in a fork before tagging `ga4gh/ga4gh-sdk`. The
+fork needs GitHub Actions enabled. A fork publishes under its own name, because
+TestPyPI ties a project to its first publisher and `ga4gh-sdk` is kept for this
+repository:
 
 1. In the fork, change `name` in `python/pyproject.toml` to
    `ga4gh-sdk-<your-user>`, and create the environment `testpypi`.
@@ -109,4 +144,9 @@ publisher and `ga4gh-sdk` is kept for this repository:
    python -c 'import GA4GH; print(GA4GH.TES.__name__)'
    ```
 
-5. Delete the test tag in the fork afterwards.
+5. Check the draft release in the fork: six CLI archives and `SHA256SUMS`,
+   flagged as a pre-release. Download one archive, check it with
+   `sha256sum --check --ignore-missing SHA256SUMS` and
+   `gh attestation verify <archive> --repo <fork-owner>/ga4gh-sdk`, and run
+   `ga4gh-cli --version`.
+6. Delete the draft release and the test tag in the fork afterwards.
