@@ -114,16 +114,23 @@ a distinct, available test-only distribution name that explains its purpose,
 such as `ga4gh-sdk-release-rehearsal`. The TestPyPI publisher and the name in
 `python/pyproject.toml` must match exactly:
 
-1. In the fork, change `name` in `python/pyproject.toml` to the chosen test
+1. Before making test changes, [sync the fork's `main` with upstream
+   `main`](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/syncing-a-fork)
+   (`gh repo sync YOUR_USERNAME/ga4gh-sdk -b main`) and verify it is not
+   behind. Check again immediately before tagging. If the fork already has
+   test commits, bring upstream changes into it without discarding those
+   commits or an existing test tag. Resolve any sync conflict; do not use
+   `gh repo sync --force`.
+2. In the fork, change `name` in `python/pyproject.toml` to the chosen test
    name, and create the environment `testpypi`.
-2. On TestPyPI, add a pending trusted publisher for the same test name
+3. On TestPyPI, add a pending trusted publisher for the same test name
    with the fork's owner and repository, workflow `release.yml` and
    environment `testpypi`.
-3. Set the workspace version to a version that is not yet on TestPyPI, for
+4. Set the workspace version to a version that is not yet on TestPyPI, for
    example `0.1.0-dev.1`, and run `cargo update --workspace`. Commit the
    version, `Cargo.lock` and the package name on the fork's `main`, tag that
    commit with `v0.1.0-dev.1` and push the tag to the fork.
-4. Check that the run publishes to TestPyPI, then install from there:
+5. Check that the run publishes to TestPyPI, then install from there:
 
    ```sh
    python -m pip install --index-url https://test.pypi.org/simple/ ga4gh-sdk-release-rehearsal==0.1.0.dev1
@@ -132,5 +139,5 @@ such as `ga4gh-sdk-release-rehearsal`. The TestPyPI publisher and the name in
 
    Substitute your chosen test name in the install command if it differs from
    this example.
-5. Keep the test tag until the run and package can be reviewed; delete it from
+6. Keep the test tag until the run and package can be reviewed; delete it from
    the fork later if it is no longer needed.
