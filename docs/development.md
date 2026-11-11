@@ -41,6 +41,7 @@ bump them, so update this guide when you change them.
 | `make check` | `lint`, `build` and `test`: the standard checks |
 | `make coverage` | Coverage report in `coverage/` (see below) |
 | `make clean-coverage` | Removes coverage data and `coverage/` |
+| `make downstream` | Formatting, Clippy and tests of the [downstream example](downstream.md#checks) |
 | `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
 | `make models` | Runs `utils/build_models_wrapper.sh`; run `make fmt` afterwards |
 | `make pre-commit` | `pre-commit run --all-files` |
@@ -123,6 +124,7 @@ on pushes to `main` and on manual dispatch:
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
+| `downstream` | Downstream example | `make downstream`: builds and tests [`examples/downstream-sdk/`](downstream.md) |
 | `passed` | CI passed | Fails unless all jobs above succeeded |
 
 `CI passed` is the check to require for merges. A new job must be added to

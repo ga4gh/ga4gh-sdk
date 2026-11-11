@@ -17,6 +17,9 @@ different directory is shown.
   wrapper must not change `lib/src/clients`.
 - When changing a public Rust, CLI, or Python API, consider the downstream
   extension use cases in [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78).
+  The example crate in `examples/downstream-sdk/` uses these APIs and has
+  its own workspace, so `make check` doesn't build it: run `make downstream`,
+  and update the example and [its guide](docs/downstream.md) with the API.
 
 ## Before opening a pull request
 

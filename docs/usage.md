@@ -3,7 +3,8 @@
 This guide covers the configuration file, the `ga4gh-cli` command-line tool
 and the Rust library (`ga4gh-lib`, imported as `ga4gh_sdk`). For the Python
 bindings, see the [Python README](../python/README.md). For installation, see
-the [README](../README.md#installation).
+the [README](../README.md#installation). To build your own SDK or CLI on top
+of this one, see [Build on this SDK](downstream.md).
 
 ## Available interfaces
 

@@ -319,6 +319,13 @@ scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
 `results`, `verify` and `compare`. See the [workflow guide](docs/workflow-contracts.md)
 for the public sequence-QC example, offline commands and evidence boundaries.
 
+## Build on this SDK
+
+An SDK for a service with API extensions can build on this SDK without
+forking it: add clients that share its transport, extend its models and add
+CLI subcommands. The guide [Build on this SDK](docs/downstream.md) walks
+through an example crate that CI builds and tests.
+
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).
