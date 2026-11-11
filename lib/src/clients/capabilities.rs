@@ -238,7 +238,11 @@ async fn discover(
     max_age: Duration,
 ) -> Result<(Service, CapabilitySnapshot), Box<dyn Error>> {
     let raw: Value = serde_json::from_str(&transport.get("service-info", None).await?)?;
-    let service: Service = serde_json::from_value(raw.clone())?;
+    let service: Service = if artifact == "wes" {
+        super::wes::service_from_info(raw.clone())?
+    } else {
+        serde_json::from_value(raw.clone())?
+    };
     if service.r#type.group != "org.ga4gh"
         || !service.r#type.artifact.eq_ignore_ascii_case(artifact)
     {
