@@ -31,6 +31,10 @@ pub struct TesExecutorLog {
     /// Exit code.
     #[serde(rename = "exit_code")]
     pub exit_code: i32,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesExecutorLog {
@@ -42,6 +46,7 @@ impl TesExecutorLog {
             stdout: None,
             stderr: None,
             exit_code,
+            extra: serde_json::Map::new(),
         }
     }
 }

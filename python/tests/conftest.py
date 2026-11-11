@@ -30,6 +30,16 @@ class MockServer:
         request["body"] = base64.b64decode(request["body"])
         return request
 
+    def paths(self) -> list[str]:
+        """The paths of the requests received so far."""
+        with urllib.request.urlopen(f"{self.root}/__requests__", timeout=10) as response:
+            return [request["path"] for request in json.load(response)]
+
+    def disconnects(self) -> list[str]:
+        """The paths of slow requests whose client closed the connection before the answer."""
+        with urllib.request.urlopen(f"{self.root}/__disconnects__", timeout=10) as response:
+            return json.load(response)
+
     def close(self):
         self.process.terminate()
         self.process.wait(timeout=10)
