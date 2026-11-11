@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 /// ImageType : Indicates what kind of container is this image is.
 /// Indicates what kind of container is this image is.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum ImageType {
     #[serde(rename = "Docker")]
     Docker,
@@ -23,6 +23,9 @@ pub enum ImageType {
     Singularity,
     #[serde(rename = "Conda")]
     Conda,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
 }
 
 impl std::fmt::Display for ImageType {
@@ -31,6 +34,7 @@ impl std::fmt::Display for ImageType {
             Self::Docker => write!(f, "Docker"),
             Self::Singularity => write!(f, "Singularity"),
             Self::Conda => write!(f, "Conda"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
         }
     }
 }

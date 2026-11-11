@@ -47,6 +47,10 @@ pub struct Service {
     /// Version of the service being described. Semantic versioning is recommended, but other identifiers, such as dates or commit hashes, are also allowed. The version should be changed whenever the service is updated.
     #[serde(rename = "version")]
     pub version: String,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Service {
@@ -70,6 +74,7 @@ impl Service {
             updated_at: None,
             environment: None,
             version,
+            extra: serde_json::Map::new(),
         }
     }
 }
