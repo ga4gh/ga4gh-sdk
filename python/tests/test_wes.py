@@ -109,6 +109,25 @@ def test_service_type_has_wes():
     assert ServiceType.WES != ServiceType.TES
 
 
+@pytest.mark.skipif(os.name != "posix", reason="HOME controls the config path on Unix")
+def test_wes_section_loads_into_client(server, tmp_path, monkeypatch):
+    config_dir = tmp_path / ".ga4gh-cli"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "TES": {"base_path": "https://wrong.example/tes"},
+                "WES": {"base_path": f"{server.root}/wes"},
+            }
+        )
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config = Configuration("https://example.org")
+    config.from_file(ServiceType.WES)
+    assert config.get_base_path() == f"{server.root}/wes"
+    assert WES(config).list().runs[0].run_id == "run-1"
+
+
 # Client
 
 
