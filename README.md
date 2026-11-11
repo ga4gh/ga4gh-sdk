@@ -351,8 +351,8 @@ The basic `list_tools` method returns a page without headers. Use
 `clients::trs::responses` with the client's transport for server-provided paging
 URLs and opaque `format=zip` downloads (see the advanced transport API above).
 Authentication isn't supported yet: the SDK's transport doesn't send
-the configured tokens, so only public registries and tools work. The CLI has
-no TRS commands yet.
+the configured tokens, so only public registries and tools work. The CLI's
+`trs` commands use this client; see the [CLI README](cli/README.md#trs-examples).
 
 ## Testing
 Unit tests run by default. Integration suites are opt-in.
@@ -385,6 +385,8 @@ the form of bug reports, feature requests, discussions, ideas, fixes, or other
 code changes. Please read [these guidelines][contributing] if you want to
 contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
+
+For local checks, coverage, and hooks, see the [development guide](docs/development.md).
 
 ## License
 

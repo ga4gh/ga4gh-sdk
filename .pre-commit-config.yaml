@@ -1,0 +1,103 @@
+---
+# Checks run on commit (`pre-commit install`) and in CI (`pre-commit` job in
+# `.github/workflows/ci.yml`). Hook versions are pinned to commits, and
+# Dependabot bumps them (`pre-commit` ecosystem). CI skips the local Rust
+# hooks (`SKIP=cargo-fmt,cargo-clippy`) because the `lint` job runs the same
+# commands. See `docs/development.md`.
+#
+# Formatting and spelling hooks skip generated models and their patches.
+# Pinned upstream inputs retain their exact bytes; the exceptions below name
+# individual files only. See their upstream provenance and checksum records.
+# Structural checks still scan them for merge markers and oversized files.
+# A change to generated Rust models also triggers the local Rust hooks, which
+# format and lint the whole workspace (see docs/development.md).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      # All tracked files, not only staged ones, so that CI checks them too
+      - id: check-added-large-files
+        args: [--enforce-all]
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs
+      # Rust inner attributes (`#![...]`) look like shebangs
+      - id: check-shebang-scripts-are-executable
+        exclude: \.rs$
+      - id: check-toml
+      - id: check-yaml
+        # This exact upstream DRS snapshot has a duplicate description key.
+        # spec-pins.json pins its SHA-256; preserve the published bytes.
+        exclude: ^testbed/pack/drs/components/parameters/BulkObjectIdNoPassport\.yaml$
+      - id: end-of-file-fixer
+        exclude: >-
+          (?x)^(
+            lib/src/clients/[^/]+/models/|utils/patches/
+            |lib/src/workflow/schemas/ga4gh\-io\-profile\.schema\.json$
+            |testbed/pack/drs/components/requestBodies/Passports\.yaml$
+            |testbed/pack/drs/components/responses/200OkAccess\.yaml$
+            |testbed/pack/drs/components/responses/200OkAuthorizations\.yaml$
+            |testbed/pack/drs/components/responses/200OkDrsObject\.yaml$
+            |testbed/pack/drs/components/responses/202Accepted\.yaml$
+            |testbed/pack/drs/components/responses/400BadRequest\.yaml$
+            |testbed/pack/drs/components/responses/401Unauthorized\.yaml$
+            |testbed/pack/drs/components/responses/403Forbidden\.yaml$
+            |testbed/pack/drs/components/responses/404NotFoundAccess\.yaml$
+            |testbed/pack/drs/components/responses/500InternalServerError\.yaml$
+            |testbed/pack/service\-info\.yaml$
+            |testbed/pack/trs\.openapi\.yaml$
+            |testbed/pack/wes\.openapi\.yaml$
+            |tests/fixtures/io\-profile/invalid\.schema\.json$
+            |tests/fixtures/io\-profile/valid\.schema\.json$
+          )
+      - id: trailing-whitespace
+        exclude: >-
+          (?x)^(
+            lib/src/clients/[^/]+/models/|utils/patches/
+            |testbed/pack/drs/components/schemas/DrsService\.yaml$
+            |testbed/pack/drs/paths/service\-info\.yaml$
+            |testbed/pack/drs/tags/Auth\.md$
+            |testbed/pack/tes\.openapi\.yaml$
+            |testbed/pack/trs\.openapi\.yaml$
+            |testbed/pack/wes\.openapi\.yaml$
+          )
+  # Schemas of GitHub's files: issue forms and their `config.yml`, workflows
+  # and the Dependabot configuration
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: a76b92851fc9eede9f9bc4073eb55202f34eb0df  # frozen: 0.39.0
+    hooks:
+      - id: check-github-issue-forms
+      - id: check-github-issue-config
+      - id: check-github-workflows
+      - id: check-dependabot
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
+    hooks:
+      # Workflows (`.github/workflows/`); also checks their scripts with
+      # shellcheck if it is installed (as on GitHub-hosted runners)
+      - id: actionlint
+  - repo: https://github.com/crate-ci/typos
+    rev: 7f9d0819ca1c008ade73f4b41fa9d258d48f605b  # frozen: v1.51.1
+    hooks:
+      - id: typos
+        exclude: >-
+          (?x)^(
+            lib/src/clients/[^/]+/models/|utils/patches/
+            |testbed/pack/drs/tags/Auth\.md$
+            |testbed/pack/tes\.openapi\.yaml$
+          )
+  # The same commands as the `lint` job; they need the toolchain from
+  # `rust-toolchain.toml`
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --workspace --all-targets --locked
+        language: system
+        types: [rust]
+        pass_filenames: false
