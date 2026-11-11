@@ -2,9 +2,12 @@
 
 import base64
 import json
+import subprocess
+import sys
 import threading
 import time
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -25,7 +28,7 @@ from GA4GH import (
     Transport,
 )
 
-from .mock_server import ACCESS_URL, DRS_OBJECT
+from .mock_server import ACCESS_URL, DRS_OBJECT, GEN3_OBJECT
 
 
 @pytest.fixture
@@ -72,6 +75,7 @@ def test_get_object_keeps_full_json(server, drs):
     assert obj.aliases == ["reads"]
     assert (obj.updated_time, obj.version, obj.contents, obj.description) == (None, None, None, None)
     assert repr(obj) == "DrsObject(id='obj-1', size=1024)"
+    assert drs.get_object_raw("obj-1") == DRS_OBJECT
 
 
 def test_ids_are_encoded_as_one_path_segment(server, drs):
@@ -101,6 +105,7 @@ def test_get_access_url_keeps_full_json_and_hides_credentials(server, drs):
     assert json.loads(access.json()) == ACCESS_URL
     assert "SECRET" not in repr(access)
     assert repr(access) == "AccessURL(url=<redacted>, headers=1)"
+    assert drs.get_access_url_raw("obj-1", "https-1") == ACCESS_URL
 
 
 def test_invalid_responses_raise_runtime_error(drs):
@@ -108,6 +113,8 @@ def test_invalid_responses_raise_runtime_error(drs):
         drs.get_object("bad")
     with pytest.raises(RuntimeError, match="Invalid DRS response: not a JSON object"):
         drs.get_access_url("obj-1", "bad")
+    with pytest.raises(RuntimeError, match="Invalid DRS response: not a JSON object"):
+        drs.get_access_url_raw("obj-1", "bad")
     with pytest.raises(RuntimeError, match="404"):
         drs.get_object("unknown")
     with pytest.raises(RuntimeError, match="Invalid DRS response: missing field `self_uri`"):
@@ -200,6 +207,7 @@ def test_bulk_objects(server, drs):
     }
     assert isinstance(report, BulkReport)
     assert report.diagnostics == []
+    assert report.dialects == ["standard"]
     assert repr(report) == "BulkReport(outcomes=3, diagnostics=0)"
     invalid, missing, found = report.outcomes
     assert isinstance(found, BulkOutcome)
@@ -238,6 +246,49 @@ def test_bulk_access_urls(server, drs):
     assert "SECRET" not in repr(access) + repr(found) + repr(report)
     assert (denied.access_id, denied.failure_codes) == ("https-2", [403])
     assert drs.get_bulk_access_urls([("obj-1", "https-1")]).outcomes[0].is_success
+    raw = drs.get_bulk_access_urls_raw({"obj-1": "https-1"})
+    assert raw.outcomes[0].resolved[0]["extension_field"] == "kept"
+    assert raw.dialects == ["standard"]
+
+
+def test_gen3_raw_objects_keep_null_fields_and_report_dialect(server):
+    drs = DRS(Configuration(f"{server.root}/drs-gen3"))
+    object_id = GEN3_OBJECT["id"]
+    with pytest.raises(RuntimeError, match="Invalid DRS response"):
+        drs.get_object(object_id)
+    assert drs.get_object_raw(object_id) == GEN3_OBJECT
+
+    typed = drs.get_bulk_objects([object_id])
+    assert typed.dialects == ["gen3"]
+    assert not typed.outcomes[0].is_success
+    assert typed.outcomes[0].resolved == []
+    assert "invalid resolved entry" in typed.outcomes[0].errors[0]
+
+    report = drs.get_bulk_objects_raw([object_id])
+    assert report.dialects == ["gen3"]
+    assert report.outcomes[0].is_success
+    assert report.outcomes[0].resolved == [GEN3_OBJECT]
+
+
+def test_checked_in_drs_example_reads_gen3_object(server):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "examples/drs_read.py",
+            f"{server.root}/drs-gen3",
+            GEN3_OBJECT["id"],
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+    assert result.stdout.splitlines() == [
+        f"Object ID: {GEN3_OBJECT['id']}",
+        f"Size: {GEN3_OBJECT['size']}",
+    ]
+    assert "s3://" not in result.stdout
 
 
 def test_bulk_pending_and_empty_calls(server):

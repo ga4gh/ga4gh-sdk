@@ -1,8 +1,8 @@
 # GA4GH-CLI
 
 The `ga4gh-cli` uses the GA4GH SDK to work with GA4GH API services. It
-currently provides TES, DRS and Service Registry commands. The Rust library
-also provides `WES`, `TRS`, and `ServiceInfo` clients (see the
+currently provides TES, WES, DRS and Service Registry commands. The Rust
+library also provides `TRS` and `ServiceInfo` clients (see the
 [usage guide](../docs/usage.md)).
 
 ## Installation
@@ -18,7 +18,8 @@ ga4gh-cli --help
 
 The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file. 
 
-The file and the section for the selected service (`TES`, `DRS` or `REGISTRY`) must exist;
+The file and the section for the selected service (`TES`, `WES`, `DRS` or
+`REGISTRY`) must exist;
 the CLI reports an error instead of silently using `http://localhost` when
 either is missing. Only `base_path` is required. `basic_auth` may omit
 `password`, in which case no password is set.
@@ -32,6 +33,9 @@ are errors rather than being ignored.
     "TES": {
         "base_path": "http://localhost:8000/ga4gh/tes/v1"
     },
+    "WES": {
+        "base_path": "https://wes.example.org/ga4gh/wes/v1"
+    },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
     },
@@ -44,9 +48,10 @@ are errors rather than being ignored.
 Each `base_path` is the service's API root, with or without a trailing slash.
 The CLI requests `service-info` and other endpoints below it. Do not include
 a query string or fragment. Configs that previously contained only the host
-must add the deployed service prefix, such as `/ga4gh/tes/v1` or
-`/ga4gh/drs/v1` in the example above. A service behind a gateway keeps its
-whole prefix, for example `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+must add the deployed service prefix, such as `/ga4gh/tes/v1`,
+`/ga4gh/wes/v1` or `/ga4gh/drs/v1` in the example above. A service behind a
+gateway keeps its whole prefix, for example
+`https://gateway.example.org/my-tes/ga4gh/tes/v1`.
 
 ### Authentication
 
@@ -175,6 +180,86 @@ ga4gh-cli drs access 'object-id' 'access-id'
 Both commands print the server's JSON unchanged. The `access` result may
 contain headers needed to fetch the bytes. Service failures print an error to
 stderr and exit with code 1; missing arguments use exit code 2.
+
+### WES examples
+
+Add a `WES` section with the service's API root to the configuration file, as
+shown above. The commands follow the TES commands: submit a run, then track it
+by its ID.
+
+1. To submit a workflow, run `wes run` with the workflow URL, the workflow type
+   and the version of the type. Parameters are optional (an empty object by
+   default) and, as with `tes create`, can be a JSON file, inline JSON or `-`
+   for standard input. The command prints only the new run ID:
+
+```sh
+run_id=$(ga4gh-cli wes run 'https://example.org/workflows/main.cwl' \
+    --type CWL --type_version v1.2 --params params.json)
+printf '%s\n' "$run_id"
+```
+
+Repeat `--attachment` (`-a`) to upload workflow files with the request. Each
+file is uploaded under the relative path given, so run the command from the
+directory that the paths are relative to; absolute paths and `..` are
+rejected. Symbolic links are followed, so check the files of a repository
+that you don't trust before you attach them. `WORKFLOW_URL` can then name an
+attached file, if the service supports attachments:
+
+```sh
+ga4gh-cli wes run main.cwl --type CWL --type_version v1.2 \
+    -a main.cwl -a tools/step.cwl --params '{"reads": "a.fastq"}'
+```
+
+`--tag KEY=VALUE` and `--engine_parameter KEY=VALUE` can be repeated;
+`--engine` and `--engine_version` select a workflow engine if the service
+offers several. Input errors, such as invalid JSON or a missing attachment, are
+reported before the CLI contacts the service.
+
+2. To list runs, run `wes list`:
+
+```sh
+ga4gh-cli wes list
+```
+
+Example output:
+
+```sh
+RUN ID                                STATE
+3f2a0b6e-58c2-4e8a-9d1e-0c5b7a1d2e3f  RUNNING
+9c1d4e2a-7b3f-4a6e-8d5c-1e2f3a4b5c6d  COMPLETE
+Next page token: next
+```
+
+As with `tes list`, `-p` sets the page size, `-t` passes the next page token,
+and `--all --format jsonl` writes every run as one JSON object per line, with
+the same `--max-pages` and `--max-items` limits.
+
+3. To get the details of a run, including its request, logs and outputs, run
+   `wes get`. It prints the server's JSON unchanged:
+
+```sh
+ga4gh-cli wes get "$run_id"
+```
+
+4. To get the state of a run, such as `RUNNING` or `COMPLETE`, run
+   `wes status`:
+
+```sh
+ga4gh-cli wes status "$run_id"
+```
+
+5. To cancel a run, run `wes cancel`. It prints the ID of the canceled run:
+
+```sh
+ga4gh-cli wes cancel "$run_id"
+```
+
+All five WES commands exit with code 0 on success and code 1 on request or
+server errors; missing commands or arguments use exit code 2. In the table,
+the printed run IDs and the error messages, control and bidirectional
+formatting characters from the server are escaped, such as `\u{1b}`; JSONL
+records use JSON escapes such as `\u001b`. Like `tes get` and `drs get`,
+`wes get` prints the server's JSON as received.
 
 ## Service Registry commands
 

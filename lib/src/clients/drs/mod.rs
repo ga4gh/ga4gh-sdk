@@ -9,6 +9,8 @@ use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::ServiceInfo;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::{urlencode, HttpStatusError, Transport};
+use std::error::Error;
+use std::fmt;
 
 // Describes a failed service-info request, with a hint if the API root seems wrong.
 fn access_error(error: &(dyn std::error::Error + 'static)) -> String {
@@ -20,6 +22,22 @@ fn access_error(error: &(dyn std::error::Error + 'static)) -> String {
         message.push_str(". Check that base_path is the DRS API root");
     }
     message
+}
+
+/// Keeps the original discovery failure inspectable while adding the API-root hint.
+#[derive(Debug)]
+struct DiscoveryError(Box<dyn Error>);
+
+impl fmt::Display for DiscoveryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&access_error(self.0.as_ref()))
+    }
+}
+
+impl Error for DiscoveryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.0.as_ref())
+    }
 }
 
 /// The main struct for interacting with a DRS service.
@@ -45,7 +63,7 @@ impl DRS {
         let service = service_info
             .get()
             .await
-            .map_err(|error| access_error(error.as_ref()))?;
+            .map_err(|error| Box::new(DiscoveryError(error)) as Box<dyn Error>)?;
 
         let instance = DRS {
             config: config.clone(),
@@ -190,6 +208,25 @@ mod tests {
             Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
         let drs = DRS::new(&config).await.unwrap();
         assert_eq!(drs.service.unwrap().r#type.artifact, "drs");
+    }
+
+    #[tokio::test]
+    async fn discovery_error_retains_http_status_and_api_root_hint() {
+        let _m = mock("GET", "/bad-root/service-info")
+            .with_status(404)
+            .with_body("missing")
+            .create();
+        let config =
+            Configuration::new(url::Url::parse(&format!("{}/bad-root", server_url())).unwrap());
+        let error = DRS::new(&config).await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Check that base_path is the DRS API root"));
+        let cause = error
+            .source()
+            .and_then(|source| source.downcast_ref::<HttpStatusError>())
+            .expect("HTTP error remains available as the source");
+        assert_eq!(cause.status, reqwest::StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

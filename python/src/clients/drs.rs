@@ -13,7 +13,7 @@ use crate::utils::convert::{check_extra_args, to_json, to_python};
 use crate::utils::runtime::io;
 use crate::PyConfiguration;
 use crate::PyTransport;
-use ga4gh_sdk::clients::drs::bulk::{BulkKey, BulkPolicy, BulkReport, ObjectOutcome};
+use ga4gh_sdk::clients::drs::bulk::{BulkDialect, BulkKey, BulkPolicy, BulkReport, ObjectOutcome};
 use ga4gh_sdk::clients::drs::models::access_method::Type;
 use ga4gh_sdk::clients::drs::models::{AccessUrl, BulkAccessUrl, DrsObject};
 use ga4gh_sdk::clients::drs::resolution::{
@@ -112,6 +112,17 @@ fn field(py: Python<'_>, raw: &Value, key: &str) -> PyResult<Option<PyObject>> {
         None | Some(Value::Null) => Ok(None),
         Some(value) => to_python(py, value).map(Some),
     }
+}
+
+fn response_object(py: Python<'_>, raw: &Value) -> PyResult<PyObject> {
+    if !raw.is_object() {
+        return Err(invalid_response("not a JSON object"));
+    }
+    to_python(py, raw)
+}
+
+fn raw_json(py: Python<'_>, raw: Value) -> Result<PyObject, String> {
+    response_object(py, &raw).map_err(|_| "could not convert JSON object to Python".to_owned())
 }
 
 /// Rejects IDs that can't be a path segment: empty, `.` or `..`.
@@ -720,6 +731,7 @@ impl PyBulkOutcome {
 pub struct PyBulkReport {
     pub outcomes: Vec<Py<PyBulkOutcome>>,
     pub diagnostics: Vec<String>,
+    pub dialects: Vec<String>,
 }
 
 impl PyBulkReport {
@@ -736,6 +748,15 @@ impl PyBulkReport {
         Ok(PyBulkReport {
             outcomes,
             diagnostics: report.diagnostics,
+            dialects: report
+                .dialects
+                .into_iter()
+                .map(|dialect| match dialect {
+                    BulkDialect::Standard => "standard".to_owned(),
+                    BulkDialect::Gen3 => "gen3".to_owned(),
+                    _ => format!("{dialect:?}"),
+                })
+                .collect(),
         })
     }
 }
@@ -753,6 +774,12 @@ impl PyBulkReport {
     #[getter]
     fn diagnostics(&self) -> Vec<String> {
         self.diagnostics.clone()
+    }
+
+    /// Reply shapes observed across the call, for example `standard` or `gen3`.
+    #[getter]
+    fn dialects(&self) -> Vec<String> {
+        self.dialects.clone()
     }
 
     fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {
@@ -942,6 +969,13 @@ impl PyDRS {
         PyDrsObject::from_json(raw)
     }
 
+    /// Gets the object's complete JSON as a `dict`, without model validation.
+    /// This also accepts provider extensions such as `created_time: null`.
+    pub fn get_object_raw(&self, py: Python<'_>, object_id: &str) -> PyResult<PyObject> {
+        let raw = self.ready(py, object_endpoint(object_id)?, "DRS object")?;
+        response_object(py, &raw)
+    }
+
     /// Asks once for an object: returns a `DrsObject`, or a `PendingResolution` if the
     /// server is still preparing it.
     pub fn get_object_once(&self, py: Python<'_>, object_id: &str) -> PyResult<PyObject> {
@@ -978,6 +1012,17 @@ impl PyDRS {
     ) -> PyResult<PyAccessURL> {
         let raw = self.ready(py, access_endpoint(object_id, access_id)?, "access URL")?;
         PyAccessURL::from_json(raw)
+    }
+
+    /// Gets the access URL's complete JSON as a `dict`, without model validation.
+    pub fn get_access_url_raw(
+        &self,
+        py: Python<'_>,
+        object_id: &str,
+        access_id: &str,
+    ) -> PyResult<PyObject> {
+        let raw = self.ready(py, access_endpoint(object_id, access_id)?, "access URL")?;
+        response_object(py, &raw)
     }
 
     /// Asks once for an access URL: returns an `AccessURL`, or a `PendingResolution` if the
@@ -1035,6 +1080,29 @@ impl PyDRS {
         PyBulkReport::convert(py, report, PyDrsObject::parse)
     }
 
+    /// Like `get_bulk_objects()`, but each resolved entry is a complete JSON `dict`.
+    /// The library still correlates entries by ID and records reply dialects.
+    #[pyo3(signature = (ids, passports=None, policy=None, timeout=60.0))]
+    pub fn get_bulk_objects_raw(
+        &self,
+        py: Python<'_>,
+        ids: &Bound<'_, PyAny>,
+        passports: Option<&Bound<'_, PyAny>>,
+        policy: Option<PyBulkPolicy>,
+        timeout: f64,
+    ) -> PyResult<PyBulkReport> {
+        let keys = strings(ids, "ids")?
+            .into_iter()
+            .map(|object_id| BulkKey {
+                object_id,
+                access_id: None,
+            })
+            .collect();
+        let passports = passports.map(|p| strings(p, "passports")).transpose()?;
+        let report = self.bulk(py, keys, false, passports, policy, timeout)?;
+        PyBulkReport::convert(py, report, |raw| raw_json(py, raw))
+    }
+
     /// Gets access URLs of several objects with `POST objects/access` (DRS 1.4).
     ///
     /// `pairs` maps object IDs to access IDs, or is an iterable of `(object_id, access_id)`
@@ -1053,6 +1121,22 @@ impl PyDRS {
         let passports = passports.map(|p| strings(p, "passports")).transpose()?;
         let report = self.bulk(py, keys, true, passports, policy, timeout)?;
         PyBulkReport::convert(py, report, PyBulkAccessURL::parse)
+    }
+
+    /// Like `get_bulk_access_urls()`, but each resolved entry is a complete JSON `dict`.
+    #[pyo3(signature = (pairs, passports=None, policy=None, timeout=60.0))]
+    pub fn get_bulk_access_urls_raw(
+        &self,
+        py: Python<'_>,
+        pairs: &Bound<'_, PyAny>,
+        passports: Option<&Bound<'_, PyAny>>,
+        policy: Option<PyBulkPolicy>,
+        timeout: f64,
+    ) -> PyResult<PyBulkReport> {
+        let keys = access_pairs(pairs)?;
+        let passports = passports.map(|p| strings(p, "passports")).transpose()?;
+        let report = self.bulk(py, keys, true, passports, policy, timeout)?;
+        PyBulkReport::convert(py, report, |raw| raw_json(py, raw))
     }
 }
 
