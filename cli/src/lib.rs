@@ -21,6 +21,12 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! A binary with its own name, version, configuration file or token
+//! variable describes them in a [`CliContext`] and uses its methods in place
+//! of [`command`], [`dispatch`] and [`dispatch_to`]. [`CommandOutput`] and
+//! [`printable`] give its own commands the output and exit codes of the
+//! built-in ones.
 
 pub mod drs;
 pub mod registry;
@@ -35,9 +41,14 @@ pub use render::printable;
 use clap::{ArgMatches, Command};
 use ga4gh_sdk::clients::ServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// Output of a built-in command. Callers decide where to write each stream.
+/// Output of a command. Callers decide where to write each stream.
+///
+/// Downstream commands can build it with [`success`](Self::success),
+/// [`failure`](Self::failure) and [`json`](Self::json), so that their output
+/// is escaped and their exit codes are set as for the built-in commands.
 pub struct CommandOutput {
     pub stdout: String,
     pub stderr: String,
@@ -45,7 +56,11 @@ pub struct CommandOutput {
 }
 
 impl CommandOutput {
-    fn success(stdout: String) -> Self {
+    /// Successful output with `stdout` as given and an empty `stderr`.
+    ///
+    /// `stdout` is not escaped: pass values from a service through
+    /// [`printable`] first.
+    pub fn success(stdout: String) -> Self {
         Self {
             stdout,
             stderr: String::new(),
@@ -53,9 +68,11 @@ impl CommandOutput {
         }
     }
 
+    /// A failure with `message` and a newline on `stderr`.
+    ///
     /// Error messages can hold a service's response body, so they are always
-    /// shown with [`render::printable`].
-    fn failure(message: impl std::fmt::Display) -> Self {
+    /// shown with [`printable`].
+    pub fn failure(message: impl std::fmt::Display) -> Self {
         Self {
             stdout: String::new(),
             stderr: format!("{}\n", render::printable(&message.to_string())),
@@ -63,9 +80,26 @@ impl CommandOutput {
         }
     }
 
+    /// Writes `stdout` and `stderr` to the given writers and returns the exit code.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a writer fails.
+    pub fn write_to(
+        self,
+        stdout: &mut dyn std::io::Write,
+        stderr: &mut dyn std::io::Write,
+    ) -> std::io::Result<ExitCode> {
+        stdout.write_all(self.stdout.as_bytes())?;
+        stderr.write_all(self.stderr.as_bytes())?;
+        Ok(self.exit_code)
+    }
+
+    /// Successful output of a JSON response body, such as one from a service.
+    ///
     /// Preserves the JSON value while escaping terminal controls inside its
     /// strings. A body that is not JSON is reported as a failure.
-    fn json(body: String) -> Self {
+    pub fn json(body: String) -> Self {
         // Validate syntax without materialising a Value: a valid extension
         // may contain deeply nested fields or numbers outside f64's range.
         match serde_json::from_str::<serde::de::IgnoredAny>(&body) {
@@ -93,42 +127,230 @@ mod output_tests {
     }
 }
 
-/// Build the root command. Downstream CLIs can append their own subcommands.
+/// The settings of a binary built on this CLI: its name, version, help text,
+/// configuration file and token variable.
+///
+/// [`CliContext::default`] describes `ga4gh-cli`. A downstream binary creates
+/// its own and uses its [`command`](Self::command),
+/// [`dispatch`](Self::dispatch) and [`dispatch_to`](Self::dispatch_to) in
+/// place of the free functions of the same names, which use the default:
+///
+/// ```no_run
+/// use clap::Command;
+/// use ga4gh_cli::CliContext;
+/// # async fn example() -> anyhow::Result<std::process::ExitCode> {
+/// let context = CliContext::new("my-cli", env!("CARGO_PKG_VERSION"))
+///     .with_about("CLI for my services")
+///     .with_token_env("MY_CLI_TOKEN");
+/// let matches = context.command().subcommand(Command::new("custom")).get_matches();
+/// let mut stdout = std::io::stdout();
+/// match context.dispatch_to(&matches, &mut stdout, &mut std::io::stderr()).await? {
+///     Some(exit_code) => Ok(exit_code),
+///     // Handle the custom subcommand, for example with the section
+///     // `context.load_config(ServiceType::Custom("MY_SERVICE".into()))`.
+///     None => Ok(std::process::ExitCode::SUCCESS),
+/// }
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+pub struct CliContext {
+    name: &'static str,
+    version: &'static str,
+    about: Option<&'static str>,
+    config_path: Option<PathBuf>,
+    token_env: Option<String>,
+}
+
+impl Default for CliContext {
+    /// The context of `ga4gh-cli`: configuration in `~/.ga4gh-cli/config.json`,
+    /// no token variable.
+    fn default() -> Self {
+        Self::new("ga4gh-cli", env!("CARGO_PKG_VERSION")).with_about("CLI for GA4GH services")
+    }
+}
+
+impl CliContext {
+    /// A context for the binary `name` at `version`, such as
+    /// `env!("CARGO_PKG_VERSION")`.
+    ///
+    /// The configuration file defaults to `~/.<name>/config.json`, and no
+    /// token variable is read.
+    pub fn new(name: &'static str, version: &'static str) -> Self {
+        Self {
+            name,
+            version,
+            about: None,
+            config_path: None,
+            token_env: None,
+        }
+    }
+
+    /// Sets the description that `--help` shows.
+    pub fn with_about(mut self, about: &'static str) -> Self {
+        self.about = Some(about);
+        self
+    }
+
+    /// Reads the configuration from `path` instead of `~/.<name>/config.json`.
+    pub fn with_config_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.config_path = Some(path.into());
+        self
+    }
+
+    /// Reads an OAuth access token from the environment variable `name` for
+    /// sections that set no credentials.
+    ///
+    /// The token applies to every service section that sets none of
+    /// `basic_auth`, `oauth_access_token` and `oauth_access_token_env`; an
+    /// unset or empty variable leaves those sections without a token. Name a
+    /// variable per section with `oauth_access_token_env` to send different
+    /// tokens to different services.
+    pub fn with_token_env(mut self, name: impl Into<String>) -> Self {
+        self.token_env = Some(name.into());
+        self
+    }
+
+    /// The binary's name.
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// The binary's version.
+    pub fn version(&self) -> &'static str {
+        self.version
+    }
+
+    /// The token variable set with [`with_token_env`](Self::with_token_env).
+    pub fn token_env(&self) -> Option<&str> {
+        self.token_env.as_deref()
+    }
+
+    /// The path of the configuration file.
+    ///
+    /// # Errors
+    ///
+    /// Fails if no path was set and the home directory is unknown, or the
+    /// name can't be used as a directory name.
+    pub fn config_path(&self) -> anyhow::Result<PathBuf> {
+        if let Some(path) = &self.config_path {
+            return Ok(path.clone());
+        }
+        if matches!(self.name, "" | "." | "..") || self.name.contains(['/', '\\']) {
+            anyhow::bail!(
+                "The binary name '{}' can't be used as a directory name; set a configuration path",
+                self.name
+            );
+        }
+        let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
+        Ok(home.join(format!(".{}", self.name)).join("config.json"))
+    }
+
+    /// Reads the section for `service_type` from the configuration file, as
+    /// [`Configuration::from_path`] does, and applies the token variable.
+    ///
+    /// The section name is `service_type.as_str()`, such as `TES`, or the name
+    /// of a `ServiceType::Custom` section.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the file or section is missing or malformed, or if the token
+    /// variable is set but not valid Unicode.
+    pub fn load_config(&self, service_type: ServiceType) -> anyhow::Result<Configuration> {
+        let path = self.config_path()?;
+        let mut config = Configuration::from_path(&path, service_type.as_str())
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Some(name) = &self.token_env {
+            if config.basic_auth.is_none() && config.oauth_access_token.is_none() {
+                match std::env::var(name) {
+                    Ok(token) if !token.is_empty() => config.oauth_access_token = Some(token),
+                    Ok(_) | Err(std::env::VarError::NotPresent) => {}
+                    Err(std::env::VarError::NotUnicode(_)) => {
+                        anyhow::bail!("Environment variable '{name}' is not valid Unicode")
+                    }
+                }
+            }
+        }
+        Ok(config)
+    }
+
+    /// Builds the root command with the built-in subcommands. Downstream CLIs
+    /// can append their own subcommands or change built-in ones.
+    pub fn command(&self) -> Command {
+        Command::new(self.name)
+            .bin_name(self.name)
+            .version(self.version)
+            .about(self.about)
+            .subcommand_required(true)
+            .arg_required_else_help(true)
+            .subcommand(drs::command())
+            .subcommand(tes::command())
+            .subcommand(trs::command())
+            .subcommand(wes::command())
+            .subcommand(workflow::command())
+            .subcommand(registry::command())
+    }
+
+    /// Runs a built-in command with its service's section of this context's
+    /// configuration file; see [`crate::dispatch`].
+    pub async fn dispatch(&self, matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
+        if let Some(("workflow", sub)) = matches.subcommand() {
+            return workflow::run_with_context(sub, None, self).await.map(Some);
+        }
+        let Some(service_type) = built_in_service(matches) else {
+            return Ok(None);
+        };
+        let config = self.load_config(service_type)?;
+        dispatch_with_config(matches, &config).await
+    }
+
+    /// Runs a built-in command with its service's section of this context's
+    /// configuration file, writing to caller-owned sinks; see
+    /// [`crate::dispatch_to`].
+    pub async fn dispatch_to(
+        &self,
+        matches: &ArgMatches,
+        stdout: &mut dyn std::io::Write,
+        stderr: &mut dyn std::io::Write,
+    ) -> anyhow::Result<Option<ExitCode>> {
+        if let Some(("workflow", sub)) = matches.subcommand() {
+            let output = workflow::run_with_context(sub, None, self).await?;
+            return Ok(Some(output.write_to(stdout, stderr)?));
+        }
+        let Some(service_type) = built_in_service(matches) else {
+            return Ok(None);
+        };
+        let config = self.load_config(service_type)?;
+        dispatch_with_config_to(matches, &config, stdout, stderr).await
+    }
+}
+
+/// The service whose configuration section a built-in command reads, or
+/// `None` for `workflow` and commands that this crate doesn't own.
+fn built_in_service(matches: &ArgMatches) -> Option<ServiceType> {
+    match matches.subcommand() {
+        Some(("drs", _)) => Some(ServiceType::DRS),
+        Some(("tes", _)) => Some(ServiceType::TES),
+        Some(("trs", _)) => Some(ServiceType::TRS),
+        Some(("wes", _)) => Some(ServiceType::WES),
+        Some(("registry", _)) => Some(ServiceType::REGISTRY),
+        _ => None,
+    }
+}
+
+/// Build the root command of `ga4gh-cli`. Downstream CLIs can append their own
+/// subcommands, or use [`CliContext::command`] for their own name and version.
 pub fn command() -> Command {
-    Command::new("ga4gh-cli")
-        .bin_name("ga4gh-cli")
-        .version(env!("CARGO_PKG_VERSION"))
-        .about("CLI for GA4GH services")
-        .subcommand_required(true)
-        .arg_required_else_help(true)
-        .subcommand(drs::command())
-        .subcommand(tes::command())
-        .subcommand(trs::command())
-        .subcommand(wes::command())
-        .subcommand(workflow::command())
-        .subcommand(registry::command())
+    CliContext::default().command()
 }
 
 /// Run a built-in command using its service section in the config file.
 ///
 /// `None` leaves an added command to its caller without reading the config file.
 /// Config and input errors are returned as `Err`. Service request failures return
-/// a `CommandOutput` with an error message and a failure exit code.
+/// a `CommandOutput` with an error message and a failure exit code. Reads
+/// `~/.ga4gh-cli/config.json`; [`CliContext::dispatch`] reads another file.
 pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
-    if let Some(("workflow", sub)) = matches.subcommand() {
-        return workflow::run(sub, None).await.map(Some);
-    }
-    let service_type = match matches.subcommand() {
-        Some(("drs", _)) => ServiceType::DRS,
-        Some(("tes", _)) => ServiceType::TES,
-        Some(("trs", _)) => ServiceType::TRS,
-        Some(("wes", _)) => ServiceType::WES,
-        Some(("registry", _)) => ServiceType::REGISTRY,
-        _ => return Ok(None),
-    };
-    let config = Configuration::from_file(service_type)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    dispatch_with_config(matches, &config).await
+    CliContext::default().dispatch(matches).await
 }
 
 /// Run a built-in command with a caller-supplied configuration for its service.
@@ -152,28 +374,16 @@ pub async fn dispatch_with_config(
 
 /// Built-in streaming dispatcher. Writes incrementally to caller-owned sinks.
 /// Added downstream commands return None before reading configuration.
+/// Reads `~/.ga4gh-cli/config.json`; [`CliContext::dispatch_to`] reads
+/// another file.
 pub async fn dispatch_to(
     matches: &ArgMatches,
     stdout: &mut dyn std::io::Write,
     stderr: &mut dyn std::io::Write,
 ) -> anyhow::Result<Option<ExitCode>> {
-    if let Some(("workflow", sub)) = matches.subcommand() {
-        let output = workflow::run(sub, None).await?;
-        stdout.write_all(output.stdout.as_bytes())?;
-        stderr.write_all(output.stderr.as_bytes())?;
-        return Ok(Some(output.exit_code));
-    }
-    let service_type = match matches.subcommand() {
-        Some(("drs", _)) => ServiceType::DRS,
-        Some(("tes", _)) => ServiceType::TES,
-        Some(("trs", _)) => ServiceType::TRS,
-        Some(("wes", _)) => ServiceType::WES,
-        Some(("registry", _)) => ServiceType::REGISTRY,
-        _ => return Ok(None),
-    };
-    let config = Configuration::from_file(service_type)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    dispatch_with_config_to(matches, &config, stdout, stderr).await
+    CliContext::default()
+        .dispatch_to(matches, stdout, stderr)
+        .await
 }
 
 /// Streaming counterpart of dispatch_with_config, including bounded JSONL export.
@@ -196,11 +406,7 @@ pub async fn dispatch_with_config_to(
         }
     }
     match dispatch_with_config(matches, config).await? {
-        Some(output) => {
-            stdout.write_all(output.stdout.as_bytes())?;
-            stderr.write_all(output.stderr.as_bytes())?;
-            Ok(Some(output.exit_code))
-        }
+        Some(output) => Ok(Some(output.write_to(stdout, stderr)?)),
         None => Ok(None),
     }
 }
