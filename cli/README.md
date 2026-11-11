@@ -63,7 +63,9 @@ with requests yet (see
 [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). For now, use services
 that allow anonymous access, or a proxy that adds credentials. Keep the file
 private (`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold
-credentials.
+credentials. To keep a token out of the file, name an environment variable
+that holds it with `oauth_access_token_env`; the
+[usage guide](../docs/usage.md#configuration-file) describes all keys.
 
 ## Usage
 
@@ -410,4 +412,7 @@ add its own Clap 4 subcommands to `ga4gh_cli::command()`. Call
 Both return `None` when the downstream binary should handle its own command.
 Built-in commands return stdout, stderr, and an exit code in `CommandOutput`,
 so the downstream binary can write or reformat their output. See the
-[downstream CLI test](tests/downstream_cli.rs) for a working example.
+[downstream CLI test](tests/downstream_cli.rs) for a working example. A
+downstream command can read its own section of the configuration file with
+`Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))`; keys
+that the SDK doesn't use itself are in `Configuration::extra`.
