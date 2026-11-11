@@ -34,7 +34,8 @@ are errors rather than being ignored.
         "base_path": "http://localhost:8000/ga4gh/tes/v1"
     },
     "WES": {
-        "base_path": "https://wes.example.org/ga4gh/wes/v1"
+        "base_path": "https://wes.example.org/ga4gh/wes/v1",
+        "timeouts": {"discovery": 30, "submission": 600}
     },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
@@ -55,6 +56,16 @@ must add the deployed service prefix, such as `/ga4gh/tes/v1`,
 `/ga4gh/wes/v1` or `/ga4gh/drs/v1` in the example above. A service behind a
 gateway keeps its whole prefix, for example
 `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+
+`timeouts` sets time limits in seconds for the commands of that section:
+`connect` (default 10), `request` (default 60), `discovery` (the service-info
+check, default 10) and `submission` (`tes create` and `wes run`, including
+uploads, default 300). A submission is sent once; if it runs out of time
+after its request started, the error says that it may have been accepted, so look
+for the task or run before you submit it again. The
+[usage guide](../docs/usage.md#timeouts) has the details. Downstream binaries
+that call `dispatch_with_config()` set them with
+`Configuration::with_timeouts`.
 
 ### Authentication
 
@@ -106,6 +117,19 @@ The CLI also accepts JSON text directly or from standard input:
 ga4gh-cli tes create "$(cat examples/tes-hello.json)"
 cat examples/tes-hello.json | ga4gh-cli tes create -
 ```
+
+Whatever the source, the CLI sends the task as the JSON it parsed from the
+input, including fields that the SDK's TES model doesn't know, at the task
+level or nested, for example in an executor. Explicit `null`s are kept, and
+integers stay integers. Numbers are read as 64-bit integers or as
+double-precision floats, so an integer beyond that range or a decimal with
+more digits than a double holds is sent rounded. Whitespace and key order may
+differ from the input. Whether the service accepts or uses an additional field is up to
+the service; it may reject the task. Before contacting the service, the CLI
+checks the input: input that isn't valid JSON fails with `Failed to parse
+JSON`, and a task that doesn't match the TES model, such as an executor
+without `image`, fails with `Invalid TES task`. Both print the reason to
+stderr and exit with code 1 without sending a request.
 
 By default the command prints the new task ID as text. For scripts that must
 recover an opaque ID exactly, use `tes create --format json`: it prints

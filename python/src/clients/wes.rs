@@ -28,11 +28,6 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-/// The time that `WES.run()` allows for uploading a run and reading the answer, as for
-/// `WES::run_workflow_with_attachments`.
-const RUN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Registers the WES classes in a module.
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -116,7 +111,7 @@ class WesState(str, enum.Enum):
     `json.dumps()` give the state's name. `WesState("RUNNING")` looks a state up by name.
     """
 
-    __module__ = "GA4GH"
+    __module__ = "ga4gh_sdk"
 
     UNKNOWN = "UNKNOWN"
     QUEUED = "QUEUED"
@@ -159,7 +154,7 @@ pub fn state_to_python(py: Python<'_>, state: State) -> PyResult<PyObject> {
 /// that the WES models don't know. `WES.run()` sends the fields of the WES `RunRequest` form,
 /// and fields that the WES models don't know as further form parts: strings as they are, other
 /// values as JSON.
-#[pyclass(name = "RunRequest", module = "GA4GH", subclass)]
+#[pyclass(name = "RunRequest", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyRunRequest {
     /// The request parsed into the WES model; derived from `raw`.
@@ -377,7 +372,7 @@ impl PyRunRequest {
 }
 
 /// A run's details, with its request, state, logs and outputs, as returned by the server.
-#[pyclass(name = "RunLog", module = "GA4GH", subclass)]
+#[pyclass(name = "RunLog", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyRunLog {
     pub inner: RunLog,
@@ -455,7 +450,7 @@ impl PyRunLog {
 }
 
 /// A run in the list of `WES.list()`.
-#[pyclass(name = "RunSummary", module = "GA4GH", subclass)]
+#[pyclass(name = "RunSummary", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyRunSummary {
     pub inner: RunListResponseRunsInner,
@@ -521,7 +516,7 @@ impl PyRunSummary {
 }
 
 /// One page of runs from `WES.list()`.
-#[pyclass(name = "RunListResponse", module = "GA4GH", subclass)]
+#[pyclass(name = "RunListResponse", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyRunListResponse {
     pub inner: RunListResponse,
@@ -575,7 +570,7 @@ impl PyRunListResponse {
 }
 
 /// A task of a run, from `Run.tasks()` or `Run.task()` (WES 1.1).
-#[pyclass(name = "TaskLog", module = "GA4GH", subclass)]
+#[pyclass(name = "TaskLog", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyTaskLog {
     pub inner: TaskLog,
@@ -664,7 +659,7 @@ impl PyTaskLog {
 }
 
 /// One page of tasks from `Run.tasks()`.
-#[pyclass(name = "TaskListResponse", module = "GA4GH", subclass)]
+#[pyclass(name = "TaskListResponse", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyTaskListResponse {
     pub inner: TaskListResponse,
@@ -719,7 +714,7 @@ fn get_run_log(py: Python<'_>, transport: &Transport, id: &str) -> PyResult<PyRu
 }
 
 /// A WES run on the server, addressed by its ID.
-#[pyclass(name = "Run", module = "GA4GH", subclass)]
+#[pyclass(name = "Run", module = "ga4gh_sdk", subclass)]
 pub struct PyRun {
     pub inner: Run,
 }
@@ -902,7 +897,7 @@ fn attachment_list(
 ///
 /// The public `inner` preserves the Rust extension API and is safe to share
 /// between Python threads while synchronous requests release the GIL.
-#[pyclass(name = "WES", module = "GA4GH", subclass)]
+#[pyclass(name = "WES", module = "ga4gh_sdk", subclass)]
 pub struct PyWES {
     pub inner: WES,
 }
@@ -994,7 +989,8 @@ impl PyWES {
             rt.block_on(self.inner.run_workflow_streaming(
                 request,
                 attachments,
-                &Operation::new(RUN_TIMEOUT),
+                // The submission limit, as for `WES::run_workflow_with_attachments`.
+                &Operation::new(self.inner.transport.config.timeouts.submission),
             ))
             .map(|inner| PyRun { inner })
             .map_err(|error| format!("Failed to run workflow: {error}"))

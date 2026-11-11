@@ -34,12 +34,23 @@ class Configuration:
 
     `from_file()` reads a section of `~/.ga4gh-cli/config.json`, named by a
     `ServiceType` or by a `str`; `get_extra()` returns the section's other keys.
+    `set_timeouts()` and `get_timeouts()` set and give the time limits of
+    requests in seconds; clients and transports read them when they are built.
     """
 
     def __init__(self, base_path: str) -> None: ...
     def set_base_path(self, base_path: str) -> None: ...
     def get_base_path(self) -> str: ...
     def get_extra(self) -> _JSONObject: ...
+    def set_timeouts(
+        self,
+        *,
+        connect: float | None = None,
+        request: float | None = None,
+        discovery: float | None = None,
+        submission: float | None = None,
+    ) -> None: ...
+    def get_timeouts(self) -> dict[str, float]: ...
     def from_file(self, service_type: ServiceType | str) -> None: ...
 
 class ServiceInfo:

@@ -208,32 +208,91 @@ fn test_output_on_success() {
     }
 }
 
+/// A task with known fields and fields that the TES models don't know, at the
+/// task and executor levels. A model round trip would change `ram_gb` to
+/// `2.0` and drop the explicit `null`.
+fn task_with_extension_fields() -> Value {
+    json!({
+        "name": "extended",
+        "description": null,
+        "resources": {"cpu_cores": 1, "ram_gb": 2},
+        "executors": [{
+            "image": "alpine",
+            "command": ["echo", "hello"],
+            "extension_field": {"nested": [1, 2.5, "three"]},
+        }],
+        "extension_field": {"kept": true},
+    })
+}
+
 #[test]
-fn create_accepts_file_inline_json_and_stdin() {
-    let _service = service_info_mock("/ga4gh/tes/v1/service-info");
-    let create = mock("POST", "/ga4gh/tes/v1/tasks")
-        .match_body(Matcher::PartialJson(
-            json!({"executors": [{"image": "alpine"}]}),
-        ))
+fn create_forwards_the_parsed_task_json_unchanged() {
+    let task = task_with_extension_fields();
+    let _service = service_info_mock("/raw-task/service-info");
+    let create = mock("POST", "/raw-task/tasks")
+        .match_body(Matcher::Json(task.clone()))
         .with_status(200)
         .with_body(json!({"id": TASK_ID}).to_string())
         .expect(3)
         .create();
-    let base_path = format!("{}/ga4gh/tes/v1", mockito::server_url());
-    let home = Home::new(&config_with_fields(&base_path));
-    let file = home.path().join("task.json");
-    let file = file.to_str().unwrap();
-    let inline = fs::read_to_string(file).unwrap();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/raw-task",
+        mockito::server_url()
+    )));
+    let file = home.path().join("extended.json");
+    // The CLI doesn't promise to keep whitespace or key order, only the
+    // parsed JSON structure.
+    let pretty = serde_json::to_string_pretty(&task).unwrap();
+    fs::write(&file, &pretty).unwrap();
+    let inline = task.to_string();
 
     for output in [
-        home.run(&["tes", "create", file], None),
+        home.run(&["tes", "create", file.to_str().unwrap()], None),
         home.run(&["tes", "create", &inline], None),
-        home.run_with_stdin(&["tes", "create", "-"], &inline),
+        home.run_with_stdin(&["tes", "create", "-"], &pretty),
     ] {
         assert!(output.status.success(), "{}", stderr(&output));
         assert_eq!(stdout(&output), format!("{TASK_ID}\n"));
     }
     create.assert();
+}
+
+#[test]
+fn invalid_task_input_fails_before_any_request() {
+    let requests = mock("GET", Matcher::Regex(r"^/invalid-task".into()))
+        .expect(0)
+        .create();
+    let posts = mock("POST", Matcher::Regex(r"^/invalid-task".into()))
+        .expect(0)
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/invalid-task",
+        mockito::server_url()
+    )));
+    let cases = [
+        (r#"{"executors": ["#.to_owned(), "Failed to parse JSON"),
+        (
+            json!({"executors": [{"command": ["true"]}], "extension_field": 1}).to_string(),
+            "Invalid TES task: missing field `image`",
+        ),
+    ];
+    for (input, expected) in cases {
+        let file = home.path().join("invalid.json");
+        fs::write(&file, &input).unwrap();
+        for output in [
+            home.run(&["tes", "create", file.to_str().unwrap()], None),
+            home.run(&["tes", "create", &input], None),
+            home.run_with_stdin(&["tes", "create", "-"], &input),
+        ] {
+            assert!(!output.status.success(), "{input}");
+            assert!(output.stdout.is_empty(), "{}", stdout(&output));
+            let message = stderr(&output);
+            assert!(message.contains(expected), "{message}");
+            assert!(!message.contains("panicked"), "{message}");
+        }
+    }
+    requests.assert();
+    posts.assert();
 }
 
 #[test]

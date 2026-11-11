@@ -70,7 +70,7 @@ pub async fn connected(tes: &LazyTES, config: &Configuration) -> Result<Arc<TES>
 /// `AsyncTES(config)` doesn't contact the server; its first call checks the service, as
 /// `TES(config)` does. `await AsyncTES.connect(config)` checks it right away. Subclass it to
 /// add endpoints, using `self.transport`.
-#[pyclass(name = "AsyncTES", module = "GA4GH", subclass)]
+#[pyclass(name = "AsyncTES", module = "ga4gh_sdk", subclass)]
 pub struct PyAsyncTES {
     /// The client's configuration.
     pub config: Configuration,
@@ -207,7 +207,7 @@ impl PyAsyncTES {
 }
 
 /// A TES task on the server, addressed by its ID, for `asyncio`: its methods return awaitables.
-#[pyclass(name = "AsyncTask", module = "GA4GH", subclass)]
+#[pyclass(name = "AsyncTask", module = "ga4gh_sdk", subclass)]
 pub struct PyAsyncTask {
     pub inner: Task,
 }

@@ -13,7 +13,7 @@ use std::borrow::Cow;
 /// `params` is a `dict` or a JSON object string of query parameters; list values repeat the
 /// parameter. `data` is a JSON string or any JSON-serialisable object. Responses are returned as
 /// text. Subclass it to add helpers for further endpoints.
-#[pyclass(name = "Transport", module = "GA4GH", subclass)]
+#[pyclass(name = "Transport", module = "ga4gh_sdk", subclass)]
 pub struct PyTransport {
     pub inner: Transport,
 }

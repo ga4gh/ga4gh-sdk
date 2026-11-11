@@ -7,6 +7,9 @@ different directory is shown.
 ## Changes and pull requests
 
 - Open pull requests against `main`.
+- Before work in a fork, compare its `main` with upstream `main` and bring in
+  upstream changes. Check again immediately before a release dry run. Preserve
+  fork-only commits and tags; do not force-reset a fork used for testing.
 - Use Conventional Commits for commit subjects, for example
   `docs: add contributor checks` or `fix(cli): handle missing config`.
 - Never put secrets or private details in commits, issues, or pull requests.
