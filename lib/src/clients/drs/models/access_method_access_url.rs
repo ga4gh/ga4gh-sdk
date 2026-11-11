@@ -21,10 +21,18 @@ pub struct AccessMethodAccessUrl {
     /// An optional list of headers to include in the HTTP request to `url`. These headers can be used to provide auth tokens required to fetch the object bytes.
     #[serde(rename = "headers", skip_serializing_if = "Option::is_none")]
     pub headers: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl AccessMethodAccessUrl {
     pub fn new(url: String) -> AccessMethodAccessUrl {
-        AccessMethodAccessUrl { url, headers: None }
+        AccessMethodAccessUrl {
+            url,
+            headers: None,
+            extra: serde_json::Map::new(),
+        }
     }
 }

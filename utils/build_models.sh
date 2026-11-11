@@ -35,6 +35,9 @@
 # `rustfmt` runs in the current directory, so from the repository root it
 # uses the toolchain pinned in rust-toolchain.toml.
 #
+# The generator uses the model template in utils/templates/rust/, which keeps
+# unknown fields and enum values (see docs/autogenerate_OAI_models.md).
+#
 # Steps: generate, fix the `use` statements, apply the patch, format with
 # `rustfmt` (if installed), replace `<DESTINATION_DIR>/models`.
 
@@ -86,6 +89,11 @@ if [ -n "$PATCH_FILE" ]; then
     PATCH_FILE="$(cd "$(dirname "$PATCH_FILE")" && pwd)/$(basename "$PATCH_FILE")"
 fi
 OPENAPI_GENERATOR_VERSION="${OPENAPI_GENERATOR_VERSION:-7.9.0}"
+TEMPLATE_DIR="$(cd "$(dirname "$0")" && pwd)/templates/rust"
+if [ ! -f "$TEMPLATE_DIR/model.mustache" ]; then
+    echo "Error: model template not found: $TEMPLATE_DIR/model.mustache" >&2
+    exit 1
+fi
 IMPORT_PATTERN='^use[[:space:]]+crate::models[[:space:]]*;'
 SED_RULE="s/$IMPORT_PATTERN/#![allow(unused_imports)]\n#![allow(clippy::empty_docs)]\nuse $MODULE_PATH;/"
 
@@ -111,10 +119,11 @@ run_generator() {
             exit 1
         fi
         (cd "$cli_dir" && openapi-generator-cli generate -g rust -i "$spec" -o "$TEMP_OUTPUT_DIR" \
+            -t "$TEMPLATE_DIR" \
             --additional-properties=useSingleRequestParameter=true \
             ${GENERATOR_ARGS[@]+"${GENERATOR_ARGS[@]}"})
     elif command -v docker >/dev/null 2>&1; then
-        local mounts=(-v "$TEMP_OUTPUT_DIR:/out")
+        local mounts=(-v "$TEMP_OUTPUT_DIR:/out" -v "$TEMPLATE_DIR:/templates:ro")
         if [ -f "$spec" ]; then
             local spec_dir
             spec_dir="$(cd "$(dirname "$spec")" && pwd)"
@@ -123,7 +132,7 @@ run_generator() {
         fi
         docker run --rm -u "$(id -u):$(id -g)" "${mounts[@]}" \
             "openapitools/openapi-generator-cli:v$OPENAPI_GENERATOR_VERSION" \
-            generate -g rust -i "$spec" -o /out \
+            generate -g rust -i "$spec" -o /out -t /templates \
             --additional-properties=useSingleRequestParameter=true \
             ${GENERATOR_ARGS[@]+"${GENERATOR_ARGS[@]}"}
     else

@@ -61,6 +61,10 @@ pub struct ToolVersion {
     /// An array of IDs for the applications that are stored inside this tool.
     #[serde(rename = "included_apps", skip_serializing_if = "Option::is_none")]
     pub included_apps: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ToolVersion {
@@ -81,6 +85,7 @@ impl ToolVersion {
             verified_source: None,
             signed: None,
             included_apps: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

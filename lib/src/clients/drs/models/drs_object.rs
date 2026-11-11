@@ -54,6 +54,10 @@ pub struct DrsObject {
     /// A list of strings that can be used to find other metadata about this `DrsObject` from external metadata sources. These aliases can be used to represent secondary accession numbers or external GUIDs.
     #[serde(rename = "aliases", skip_serializing_if = "Option::is_none")]
     pub aliases: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl DrsObject {
@@ -78,6 +82,7 @@ impl DrsObject {
             contents: None,
             description: None,
             aliases: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

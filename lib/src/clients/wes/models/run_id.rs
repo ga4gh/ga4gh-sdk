@@ -18,10 +18,17 @@ pub struct RunId {
     /// workflow run ID
     #[serde(rename = "run_id", skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl RunId {
     pub fn new() -> RunId {
-        RunId { run_id: None }
+        RunId {
+            run_id: None,
+            extra: serde_json::Map::new(),
+        }
     }
 }

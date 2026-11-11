@@ -25,6 +25,10 @@ pub struct ServiceType {
     /// Version of the API or specification. GA4GH specifications use semantic versioning.
     #[serde(rename = "version")]
     pub version: String,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ServiceType {
@@ -34,6 +38,7 @@ impl ServiceType {
             group,
             artifact,
             version,
+            extra: serde_json::Map::new(),
         }
     }
 }
