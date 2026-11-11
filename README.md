@@ -135,6 +135,10 @@ ga4gh-cli tes status "$task_id"
 ga4gh-cli tes list
 ```
 
+For scripts that need to preserve arbitrary server-provided IDs, use
+`ga4gh-cli tes create examples/tes-hello.json --format json` and parse its
+`id` field. The text output above is intended for ordinary IDs.
+
 Docker may download the Alpine image on the first run.
 
 The [CLI README](cli/README.md) describes all CLI commands. The
