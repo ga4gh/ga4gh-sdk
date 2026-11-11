@@ -217,13 +217,14 @@ async def main():
 asyncio.run(main())
 ```
 
-- Like `TES(config)`, an `AsyncTES` reads the service info and checks that the service
-  is a TES before its first request. `AsyncTES(config)` doesn't contact the server: its
-  first call checks the service, once for concurrent calls. If the check fails, the
+- The built-in `AsyncTES` methods check the service info before their first TES
+  request. `AsyncTES(config)` doesn't contact the server: its first method call
+  checks the service, once for concurrent calls. If the check fails, the
   calls that waited for it raise its `RuntimeError`, and a later call tries again.
   `await AsyncTES.connect(config)` checks it right away and gives the
   client. On a subclass, `connect()` builds `cls(config, *args, **kwargs)` at once, in
-  the caller's thread and context, and gives it once the check is done.
+  the caller's thread and context, and gives it once the check is done. A
+  subclass's `__init__` can send its own requests before that check completes.
 - `AsyncTES.create()` gives an `AsyncTask`; `AsyncTask(id, transport)` addresses an
   existing task, like `Task`. `config`, `transport` and `id` are plain properties.
 - The requests run on the runtime of the sync API without the GIL, so they don't block
