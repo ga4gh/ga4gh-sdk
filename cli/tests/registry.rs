@@ -107,7 +107,7 @@ fn list_prints_services_and_filters_by_type() {
 }
 
 #[test]
-fn get_prints_the_spec_fields_of_one_service() {
+fn get_prints_one_service_with_the_fields_that_the_registry_adds() {
     let mut body = service("org.example/tes 1", "tes");
     body["vendor_field"] = json!(true);
     let _m = mock("GET", "/get/services/org.example%2Ftes%201")
@@ -118,7 +118,7 @@ fn get_prints_the_spec_fields_of_one_service() {
     let output = run(&base_path, &["registry", "get", "org.example/tes 1"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let printed: Value = serde_json::from_str(&stdout(&output)).unwrap();
-    assert_eq!(printed, service("org.example/tes 1", "tes"));
+    assert_eq!(printed, body);
     _m.assert();
 }
 

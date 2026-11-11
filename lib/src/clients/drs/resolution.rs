@@ -130,8 +130,9 @@ impl DRS {
         }
     }
 
-    /// Preserve the server's JSON while applying the same pending-state rules.
-    pub(super) async fn resolve_reference_raw(
+    /// Like [`DRS::resolve_reference`], but keeps the server's JSON text, including fields
+    /// that the SDK models don't know.
+    pub async fn resolve_reference_raw(
         &self,
         reference: &ResolutionReference,
     ) -> Result<Resolution<String>, Box<dyn Error>> {

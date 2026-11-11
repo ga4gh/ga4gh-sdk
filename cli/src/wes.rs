@@ -374,6 +374,7 @@ mod tests {
                 RunListResponseRunsInner::new("long-run-id".into()),
             ]),
             next_page_token: Some(String::new()),
+            ..Default::default()
         };
         assert_eq!(
             format_runs(&response),

@@ -22,6 +22,10 @@ pub struct RunListResponse {
     /// A token which may be supplied as `page_token` in workflow run list request to get the next page of results.  An empty string indicates there are no more items to return.
     #[serde(rename = "next_page_token", skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl RunListResponse {
@@ -30,6 +34,7 @@ impl RunListResponse {
         RunListResponse {
             runs: None,
             next_page_token: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
