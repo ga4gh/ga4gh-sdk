@@ -13,7 +13,7 @@ the [README](../README.md#installation).
 | TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES |
 | DRS | Objects, access URLs, bulk, and `drs://` URIs | `drs get`, `access` | `DRS`, `DrsResolver` |
 | WES | Runs and attachments | `wes run`, `list`, `get`, `status`, `cancel` | `WES`, `Run` |
-| TRS | Tools and descriptors | Not yet ([#115](https://github.com/ga4gh/ga4gh-sdk/issues/115)) | Not yet |
+| TRS | Tools and descriptors | `trs tools`, `tool`, `versions`, `version`, `descriptor`, `files`, `tests` | Not yet |
 | Service Registry | `ServiceRegistry` | `registry list`, `get`, `types` | Not yet |
 
 `ServiceInfo` reads the discovery endpoint of one configured service. The
@@ -78,10 +78,11 @@ The file can hold credentials, so keep it private, for example with
 
 The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`), WES
 commands (`run`, `list`, `get`, `status`, `cancel`), DRS commands (`get`,
-`access`), and Service Registry commands (`list`, `get`, `types`). It reads the
-matching `TES`, `WES`, `DRS`, or `REGISTRY` configuration section. The
-[CLI README](../cli/README.md) describes each command, its output and exit
-codes. `TRS` and `ServiceInfo` are available from the Rust library below.
+`access`), TRS commands (`tools`, `tool`, `versions`, `version`, `descriptor`,
+`files`, `tests`), and Service Registry commands (`list`, `get`, `types`). It
+reads the matching `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` configuration
+section. The [CLI README](../cli/README.md) describes each command, its output
+and exit codes. `ServiceInfo` is available from the Rust library below.
 
 ## Rust library
 
