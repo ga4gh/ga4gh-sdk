@@ -66,37 +66,31 @@ Two tag rulesets allow only those two users to create `v*` tags and prevent
 updates or deletion. Verify these protections before each release.
 
 For the demonstrator release, the
-[`GENXT` PyPI organization](https://pypi.org/org/GENXT/) will temporarily own
-the `ga4gh-sdk` project. An authorized GENXT Owner or Manager should:
-
-1. In **Your organizations → GENXT → Projects**, create the `ga4gh-sdk`
-   project before the first release. PyPI [allows organizations to create a
-   project](https://docs.pypi.org/organization-accounts/actions/project-actions/#create-a-project)
-   without uploading a distribution. Confirm that the new project belongs to
-   GENXT. Its name remains `ga4gh-sdk`; the organization's uppercase spelling
-   does not change the package or Python import name.
-2. In that project's **Publishing** settings, add a
-   [GitHub trusted publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/)
-   with GitHub owner `ga4gh`, repository `ga4gh-sdk`, workflow `release.yml`,
-   and environment `pypi`. These fields identify the GitHub repository and do
-   not change when PyPI project ownership changes. No API token is needed.
+[`pavelnikonorov` PyPI account](https://pypi.org/user/pavelnikonorov/) will
+temporarily own the `ga4gh-sdk` project. In that account's **Publishing**
+settings, a [pending GitHub trusted publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
+is registered with project name `ga4gh-sdk`, GitHub owner `ga4gh`, repository
+`ga4gh-sdk`, workflow `release.yml`, and environment `pypi`. Verify these
+settings before the first release. The project name matches
+`python/pyproject.toml`; Python imports use `ga4gh_sdk`. The GitHub owner
+remains `ga4gh` after a PyPI ownership transfer. No API token is needed.
+A pending publisher neither creates the project nor reserves its name. The
+first successful upload creates the project under the account that registered
+the pending publisher; check name availability again before releasing.
 
 TestPyPI has separate accounts and project ownership. For the fork dry run
 below, use a distinct project name on TestPyPI. If also rehearsing the upstream
 release there, configure its `testpypi` publisher under whichever TestPyPI
-account owns that `ga4gh-sdk` project; do not assume the PyPI GENXT
-organization exists on TestPyPI.
+account owns that `ga4gh-sdk` project. PyPI and TestPyPI accounts are separate.
 
-After the demonstrator presentation, transfer the PyPI project from GENXT to
-the [`ga4gh` PyPI account](https://pypi.org/user/ga4gh/). In the project's
-Collaborators settings, invite `ga4gh` as an external **Owner** and have that
-account accept. Verify that `ga4gh` can manage the project and its trusted
-publisher. Then use **Settings → Remove project** to
-[remove it from GENXT](https://docs.pypi.org/organization-accounts/actions/project-actions/#remove-project-from-organization);
-this removes GENXT team permissions while retaining individual Owner roles.
-Verify the final owner on PyPI. Apply the same steps on TestPyPI only if GENXT
-owns the upstream project there. This organizational ownership is temporary
-until the transfer is confirmed.
+After the demonstrator presentation, transfer the PyPI project to the
+[`ga4gh` PyPI account](https://pypi.org/user/ga4gh/). In the project's
+Collaborators settings, invite `ga4gh` as **Owner** and have that account
+accept. Verify that `ga4gh` can manage the project and its trusted publisher.
+Then remove `pavelnikonorov` as Owner if sole `ga4gh` ownership is desired.
+Verify the final owner on PyPI; repeat on TestPyPI only if an upstream project
+was created there. Personal ownership is temporary until the transfer is
+confirmed.
 
 ## Making a release
 
