@@ -80,6 +80,7 @@ class Handler(BaseHTTPRequestHandler):
                 "method": self.command,
                 "path": url.path,
                 "query": parse_qs(url.query, keep_blank_values=True),
+                "raw_query": url.query,
                 "headers": dict(self.headers),
                 "body": base64.b64encode(body).decode(),
             }
