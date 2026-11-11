@@ -30,8 +30,10 @@ impl PrioritizedTask {
         }
     }
 
-    /// Sets the priority.
+    /// Sets the priority, replacing a `priority` in `task.extra`, so that
+    /// the JSON holds the key only once.
     pub fn with_priority(mut self, priority: u8) -> Self {
+        self.task.extra.remove("priority");
         self.priority = Some(priority);
         self
     }

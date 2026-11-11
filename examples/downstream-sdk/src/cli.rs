@@ -7,6 +7,7 @@
 use crate::usage::UsageClient;
 use clap::{Arg, ArgMatches, Command};
 use ga4gh_cli::printable;
+use ga4gh_sdk::clients::ServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
 use std::io::Write;
 use std::process::ExitCode;
@@ -41,7 +42,42 @@ pub fn usage_task_id(matches: &ArgMatches) -> Option<&str> {
     }
 }
 
-/// Runs this crate's own commands; returns `None` for all other commands.
+/// Runs any command, as the `downstream-cli` binary does.
+///
+/// Each command reads its service's section of `~/.ga4gh-cli/config.json`:
+/// `tes usage` the `TES` section, built-in commands the section that the
+/// SDK's [`ga4gh_cli::dispatch_to`] picks for them. A command that neither
+/// this crate nor the SDK owns writes an error and fails.
+///
+/// # Errors
+///
+/// Fails if the configuration can't be read, or for the errors of
+/// [`ga4gh_cli::dispatch_to`]. Service errors are written to `stderr`
+/// and give a failure exit code instead.
+pub async fn run(
+    matches: &ArgMatches,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> anyhow::Result<ExitCode> {
+    let exit_code = if usage_task_id(matches).is_some() {
+        // Only this crate's own commands read the section here.
+        let config = Configuration::from_file(ServiceType::TES)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        run_extension(matches, &config, stdout, stderr).await?
+    } else {
+        ga4gh_cli::dispatch_to(matches, stdout, stderr).await?
+    };
+    match exit_code {
+        Some(exit_code) => Ok(exit_code),
+        None => {
+            writeln!(stderr, "Error: Unrecognized command")?;
+            Ok(ExitCode::FAILURE)
+        }
+    }
+}
+
+/// Runs this crate's own commands with `config`; returns `None` for all
+/// other commands.
 ///
 /// Output and errors from the service go to `stdout` and `stderr`, with
 /// control characters escaped by [`printable`], as in the SDK's CLI.
@@ -70,19 +106,4 @@ pub async fn run_extension(
             Ok(Some(ExitCode::FAILURE))
         }
     }
-}
-
-/// Runs any command, built-in or added, with `config` for its service.
-///
-/// Returns `None` for a command that neither this crate nor the SDK owns.
-pub async fn run_with_config(
-    matches: &ArgMatches,
-    config: &Configuration,
-    stdout: &mut dyn Write,
-    stderr: &mut dyn Write,
-) -> anyhow::Result<Option<ExitCode>> {
-    if let Some(exit_code) = run_extension(matches, config, stdout, stderr).await? {
-        return Ok(Some(exit_code));
-    }
-    ga4gh_cli::dispatch_with_config_to(matches, config, stdout, stderr).await
 }

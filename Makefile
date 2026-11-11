@@ -14,6 +14,8 @@ COVERAGE_DIR ?= coverage
 
 # Example crate with its own workspace (see docs/downstream.md)
 DOWNSTREAM_DIR ?= examples/downstream-sdk
+# Lists the "name version" pairs of a lockfile, sorted
+LOCK_PACKAGES = awk '/^name = /{name = $$3} /^version = /{print name, $$3}' $(1) | tr -d '"' | sort
 
 .DEFAULT_GOAL := help
 
@@ -58,10 +60,20 @@ clean-coverage: ## Remove coverage data and reports
 
 downstream: ## Check, lint and test the downstream example crate
 	cp Cargo.lock $(DOWNSTREAM_DIR)/Cargo.lock
+	@# Adds the example to the copied lockfile; then every other package must
+	@# have a version from the root lockfile
+	$(CARGO) metadata --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml \
+		--format-version 1 > /dev/null
+	@extra=$$(comm -13 <($(call LOCK_PACKAGES,Cargo.lock)) \
+		<($(call LOCK_PACKAGES,$(DOWNSTREAM_DIR)/Cargo.lock)) \
+		| grep -v '^downstream-sdk ' || true); \
+	if [ -n "$$extra" ]; then \
+		echo "Packages not in the root Cargo.lock:"; echo "$$extra"; exit 1; \
+	fi
 	$(CARGO) fmt --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml --check
 	$(CARGO) clippy --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml --all-targets \
-		-- -D warnings
-	$(CARGO) test --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml
+		--locked -- -D warnings
+	$(CARGO) test --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml --locked
 
 docs: ## Build the API documentation (target/doc)
 	$(CARGO) doc --workspace --no-deps --locked

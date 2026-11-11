@@ -112,6 +112,7 @@ often.
 SDK's command tree and adds `tes usage <ID>`:
 
 ```rust
+// Abridged: the example also sets the version and help texts.
 ga4gh_cli::command()
     .name("downstream-cli")
     .bin_name("downstream-cli")
@@ -120,24 +121,28 @@ ga4gh_cli::command()
     })
 ```
 
-Its binary handles `tes usage` itself and leaves everything else to the SDK:
+`cli::run`, which the binary calls, handles `tes usage` itself and leaves
+everything else to the SDK:
 
-- `ga4gh_cli::dispatch_to` runs a built-in command with its service's section
-  of the configuration file and returns `None` for commands it doesn't own.
-- `ga4gh_cli::dispatch_with_config_to` does the same with a configuration
-  that the caller supplies, which the tests use.
-- Both write to caller-owned writers, so tests can capture the output.
+- For `tes usage`, it reads the `TES` section of the configuration file and
+  calls `cli::run_extension`, which takes the configuration as an argument
+  and returns `None` for commands it doesn't own.
+- For all other commands, it calls `ga4gh_cli::dispatch_to`, which runs a
+  built-in command with its own service's section of the configuration file
+  and returns `None` for commands it doesn't own.
+  `ga4gh_cli::dispatch_with_config_to` does the same with a configuration
+  that the caller supplies; that configuration must be for the command's
+  service.
+- They write to caller-owned writers, so tests can capture the output.
 - `ga4gh_cli::printable` escapes control characters in values from the
   service, as the SDK's CLI does in its text output.
 
-Run it from the example's directory, after `make downstream` (see
-[Checks](#checks)), with the configuration file described in the
-[usage guide](usage.md#configuration-file):
+Run it from the repository root, with the configuration file described in
+the [usage guide](usage.md#configuration-file):
 
 ```sh
-cd examples/downstream-sdk
-cargo run -- tes usage <task-id>
-cargo run -- tes list
+cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes usage <task-id>
+cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes list
 ```
 
 ## Checks
@@ -147,8 +152,11 @@ cargo run -- tes list
 Cargo workspace, so that the SDK's crates are built as dependencies, as in a
 downstream repository; the workspace commands such as `make check` leave it
 out. It has no lockfile of its own: the target copies the repository's
-`Cargo.lock` into it first, so that it builds with the same dependency
-versions.
+`Cargo.lock` into it, lets Cargo add the example's own entry, and fails if
+any other package isn't locked at a version from the root lockfile. The
+example thus builds with the SDK's dependency versions; a dependency that
+only the example needs must be added to the workspace first. Without
+`make downstream`, Cargo resolves the example's dependencies afresh.
 
 When you change a public API that the example uses, update the example and
 this guide in the same pull request.
