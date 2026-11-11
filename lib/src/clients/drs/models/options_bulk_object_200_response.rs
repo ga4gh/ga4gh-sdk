@@ -28,6 +28,10 @@ pub struct OptionsBulkObject200Response {
         skip_serializing_if = "Option::is_none"
     )]
     pub resolved_drs_object: Option<Vec<models::Authorizations>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl OptionsBulkObject200Response {
@@ -36,6 +40,7 @@ impl OptionsBulkObject200Response {
             summary: None,
             unresolved_drs_objects: None,
             resolved_drs_object: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

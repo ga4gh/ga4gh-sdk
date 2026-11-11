@@ -1,3 +1,4 @@
+use crate::registry::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgMatches, Command};
 use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain, FileWrapper};
@@ -106,7 +107,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     };
     Ok(match execute(&trs, request).await {
         Ok(stdout) => CommandOutput::success(stdout),
-        Err(error) => CommandOutput::failure(error),
+        Err(error) => CommandOutput::failure(printable(&error.to_string())),
     })
 }
 
@@ -117,6 +118,7 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
     let string = |id: &str| args.get_one::<String>(id).cloned();
     let required =
         |id: &str| string(id).ok_or_else(|| anyhow::anyhow!("{id} argument is required"));
+    let segment = |id: &str| segment_arg(id, required(id)?);
 
     Ok(match name {
         "tools" => Request::Tools(ToolFilter {
@@ -130,21 +132,24 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
             limit: string("limit")
                 .map(|value| {
                     value.parse::<i32>().map_err(|_| {
-                        anyhow::anyhow!("Invalid limit '{value}': expected an integer")
+                        anyhow::anyhow!(
+                            "Invalid limit '{}': expected an integer",
+                            printable(&value)
+                        )
                     })
                 })
                 .transpose()?,
             ..Default::default()
         }),
-        "tool" => Request::Tool(required("TOOL_ID")?),
-        "versions" => Request::Versions(required("TOOL_ID")?),
+        "tool" => Request::Tool(segment("TOOL_ID")?),
+        "versions" => Request::Versions(segment("TOOL_ID")?),
         "version" => Request::Version {
-            tool: required("TOOL_ID")?,
-            version: required("VERSION_ID")?,
+            tool: segment("TOOL_ID")?,
+            version: segment("VERSION_ID")?,
         },
         "descriptor" | "files" | "tests" => {
-            let tool = required("TOOL_ID")?;
-            let version = required("VERSION_ID")?;
+            let tool = segment("TOOL_ID")?;
+            let version = segment("VERSION_ID")?;
             let descriptor_type = parse_descriptor_type(&required("type")?)?;
             let plain = matches!(args.try_get_one::<bool>("plain"), Ok(Some(true)));
             match name {
@@ -153,7 +158,9 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
                     version,
                     descriptor_type: with_plain(descriptor_type, plain),
                     plain,
-                    path: string("path"),
+                    path: string("path")
+                        .map(|value| segment_arg("path", value))
+                        .transpose()?,
                 },
                 "files" => Request::Files {
                     tool,
@@ -170,6 +177,13 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
         }
         _ => anyhow::bail!("Unrecognized TRS command: {name}"),
     })
+}
+
+fn segment_arg(name: &str, value: String) -> anyhow::Result<String> {
+    if value.is_empty() || matches!(value.as_str(), "." | "..") {
+        anyhow::bail!("{name} must not be empty, '.' or '..'");
+    }
+    Ok(value)
 }
 
 async fn execute(trs: &TRS, request: Request) -> Result<String, Box<dyn Error>> {
@@ -195,7 +209,9 @@ async fn execute(trs: &TRS, request: Request) -> Result<String, Box<dyn Error>> 
                 None => trs.get_descriptor(&tool, &version, descriptor_type).await?,
             };
             if plain {
-                Ok(file.content.unwrap_or_default())
+                file.content.ok_or_else(|| {
+                    "TRS descriptor has no inline content; omit --plain to inspect its URL".into()
+                })
             } else {
                 json(serde_json::to_value(file))
             }
@@ -215,7 +231,7 @@ async fn execute(trs: &TRS, request: Request) -> Result<String, Box<dyn Error>> 
         } => {
             let files = trs.list_tests(&tool, &version, descriptor_type).await?;
             if plain {
-                Ok(plain_files(&files))
+                plain_files(&files)
             } else {
                 json(serde_json::to_value(files))
             }
@@ -224,16 +240,22 @@ async fn execute(trs: &TRS, request: Request) -> Result<String, Box<dyn Error>> 
 }
 
 fn json(value: Result<serde_json::Value, serde_json::Error>) -> Result<String, Box<dyn Error>> {
-    Ok(format!("{}\n", serde_json::to_string_pretty(&value?)?))
+    Ok(format!(
+        "{}\n",
+        json_printable(&serde_json::to_string_pretty(&value?)?)
+    ))
 }
 
-// print file's content
-fn plain_files(files: &[FileWrapper]) -> String {
-    files
-        .iter()
-        .filter_map(|file| file.content.clone().or_else(|| file.url.clone()))
-        .collect::<Vec<_>>()
-        .join("\n")
+// A plain response is one file's bytes. Multiple wrappers have no unambiguous
+// plain representation; JSON output retains their names and URLs.
+fn plain_files(files: &[FileWrapper]) -> Result<String, Box<dyn Error>> {
+    match files {
+        [file] => file.content.clone().ok_or_else(|| {
+            "TRS test file has no inline content; omit --plain to inspect its URL".into()
+        }),
+        [] => Err("TRS returned no test file for --plain".into()),
+        _ => Err("TRS returned multiple test files; omit --plain to inspect them".into()),
+    }
 }
 
 fn with_plain(descriptor_type: DescriptorType, plain: bool) -> DescriptorTypeWithPlain {
@@ -248,14 +270,26 @@ fn with_plain(descriptor_type: DescriptorType, plain: bool) -> DescriptorTypeWit
         (DescriptorType::Nfl, true) => DescriptorTypeWithPlain::PlainNfl,
         (DescriptorType::Galaxy, true) => DescriptorTypeWithPlain::PlainGalaxy,
         (DescriptorType::Smk, true) => DescriptorTypeWithPlain::PlainSmk,
+        (DescriptorType::Unrecognized(value), false) => {
+            DescriptorTypeWithPlain::Unrecognized(value)
+        }
+        (DescriptorType::Unrecognized(value), true) => {
+            DescriptorTypeWithPlain::Unrecognized(format!("PLAIN_{value}"))
+        }
     }
 }
 
 fn parse_descriptor_type(value: &str) -> anyhow::Result<DescriptorType> {
     let normalized = value.trim().to_ascii_uppercase();
-    serde_json::from_value(serde_json::Value::String(normalized)).map_err(|_| {
-        anyhow::anyhow!("Invalid descriptor type '{value}': expected CWL, WDL, NFL, GALAXY, or SMK")
-    })
+    serde_json::from_value::<DescriptorType>(serde_json::Value::String(normalized))
+        .ok()
+        .filter(|descriptor_type| !matches!(descriptor_type, DescriptorType::Unrecognized(_)))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid descriptor type '{}': expected CWL, WDL, NFL, GALAXY, or SMK",
+                printable(value)
+            )
+        })
 }
 
 fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
@@ -263,9 +297,12 @@ fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
         .downcast_ref::<HttpError>()
         .is_some_and(|http| http.status == 404)
     {
-        format!("{error}. Check that base_path is the TRS API root")
+        format!(
+            "{}. Check that base_path is the TRS API root",
+            printable(&error.to_string())
+        )
     } else {
-        error.to_string()
+        printable(&error.to_string())
     };
     CommandOutput::failure(message)
 }
@@ -299,18 +336,27 @@ mod tests {
     }
 
     #[test]
-    fn plain_files_print_content_or_url() {
-        let files = [
-            FileWrapper {
-                content: Some("a: 1".into()),
-                ..Default::default()
-            },
-            FileWrapper {
-                url: Some("https://example.org/b.json".into()),
-                ..Default::default()
-            },
-            FileWrapper::default(),
-        ];
-        assert_eq!(plain_files(&files), "a: 1\nhttps://example.org/b.json");
+    fn plain_files_require_one_inline_file() {
+        let inline = FileWrapper {
+            content: Some("a: 1".into()),
+            ..Default::default()
+        };
+        let url_only = FileWrapper {
+            url: Some("https://example.org/b.json".into()),
+            ..Default::default()
+        };
+        assert_eq!(plain_files(std::slice::from_ref(&inline)).unwrap(), "a: 1");
+        assert!(plain_files(&[url_only])
+            .unwrap_err()
+            .to_string()
+            .contains("no inline content"));
+        assert!(plain_files(&[inline.clone(), inline])
+            .unwrap_err()
+            .to_string()
+            .contains("multiple"));
+        assert!(plain_files(&[])
+            .unwrap_err()
+            .to_string()
+            .contains("no test file"));
     }
 }

@@ -253,11 +253,16 @@ fn parse_state(value: &str) -> anyhow::Result<TesState> {
         .and_then(|state| state.strip_suffix('"'))
         .unwrap_or(trimmed);
     let normalized = unquoted.to_ascii_uppercase().replace(' ', "_");
-    serde_json::from_value(serde_json::Value::String(normalized)).map_err(|_| {
-        anyhow::anyhow!(
-            "Invalid state '{value}': expected UNKNOWN, QUEUED, INITIALIZING, RUNNING, PAUSED, COMPLETE, EXECUTOR_ERROR, SYSTEM_ERROR, CANCELED, CANCELING, or PREEMPTED"
-        )
-    })
+    // `TesState` reads states that it doesn't know as `Unknown`; a filter
+    // must name a state exactly.
+    serde_json::from_value::<TesState>(serde_json::Value::String(normalized.clone()))
+        .ok()
+        .filter(|state| state.to_string() == normalized)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid state '{value}': expected UNKNOWN, QUEUED, INITIALIZING, RUNNING, PAUSED, COMPLETE, EXECUTOR_ERROR, SYSTEM_ERROR, CANCELED, CANCELING, or PREEMPTED"
+            )
+        })
 }
 
 // Helper functions
@@ -358,22 +363,33 @@ pub async fn export_all(
     let tes = match TES::new(config).await {
         Ok(tes) => tes,
         Err(error) => {
-            writeln!(stderr, "{error}")?;
+            writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
             return Ok(std::process::ExitCode::FAILURE);
         }
     };
-    let mut pager = ga4gh_sdk::clients::pagination::Pager::new(
+    let pager = ga4gh_sdk::clients::pagination::Pager::new(
         &tes.transport,
         ServiceKind::Tes,
         query.into(),
         options,
     )
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    write_jsonl(pager, stdout, stderr).await
+}
+
+/// Write each page's records as JSONL; report limits and failures with a
+/// resume checkpoint on stderr.
+pub(crate) async fn write_jsonl(
+    mut pager: ga4gh_sdk::clients::pagination::Pager,
+    stdout: &mut dyn std::io::Write,
+    stderr: &mut dyn std::io::Write,
+) -> anyhow::Result<std::process::ExitCode> {
     loop {
         match pager.next_page().await {
             Ok(Some(page)) => {
                 for record in page.items {
-                    serde_json::to_writer(&mut *stdout, &record)?;
+                    let line = serde_json::to_string(&record)?;
+                    stdout.write_all(crate::registry::json_printable(&line).as_bytes())?;
                     writeln!(stdout)?;
                 }
                 stdout.flush()?;
@@ -384,18 +400,18 @@ pub async fn export_all(
                     writeln!(
                         stderr,
                         "Listing stopped at configured limit; resume checkpoint: {}",
-                        serde_json::to_string(&checkpoint)?
+                        crate::registry::json_printable(&serde_json::to_string(&checkpoint)?)
                     )?;
                     return Ok(std::process::ExitCode::FAILURE);
                 }
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             Err(error) => {
-                writeln!(stderr, "{error}")?;
+                writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
                 writeln!(
                     stderr,
                     "Resume checkpoint: {}",
-                    serde_json::to_string(&error.checkpoint)?
+                    crate::registry::json_printable(&serde_json::to_string(&error.checkpoint)?)
                 )?;
                 return Ok(std::process::ExitCode::FAILURE);
             }
@@ -417,5 +433,9 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("PREEMPTED"));
+        // `TesState` reads unknown names as `Unknown`; only `UNKNOWN` itself is a
+        // valid filter.
+        assert_eq!(parse_state("unknown").unwrap(), TesState::Unknown);
+        assert!(parse_state("SUSPENDED").is_err());
     }
 }

@@ -11,8 +11,8 @@ the [README](../README.md#installation).
 | --- | --- | --- | --- |
 | Service Info | `ServiceInfo` | No direct command | `ServiceInfo` |
 | TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES |
-| DRS | Objects and access URLs | `drs get`, `access` | Not yet |
-| WES | Runs and attachments | Not yet ([#105](https://github.com/ga4gh/ga4gh-sdk/issues/105)) | Not yet |
+| DRS | Objects, access URLs, bulk, and `drs://` URIs | `drs get`, `access` | `DRS`, `DrsResolver` |
+| WES | Runs and attachments | `wes run`, `list`, `get`, `status`, `cancel` | `WES`, `Run` |
 | TRS | Tools and descriptors | `trs tools`, `tool`, `versions`, `version`, `descriptor`, `files`, `tests` | Not yet |
 | Service Registry | `ServiceRegistry` | `registry list`, `get`, `types` | Not yet |
 
@@ -76,13 +76,13 @@ The file can hold credentials, so keep it private, for example with
 
 ## Command-line tool
 
-The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`), DRS
-commands (`get`, `access`), TRS commands (`tools`, `tool`, `versions`,
-`version`, `descriptor`, `files`, `tests`), and Service Registry commands
-(`list`, `get`, `types`). It reads the matching `TES`, `DRS`, `TRS`, or
-`REGISTRY` configuration section. The [CLI README](../cli/README.md) describes
-each command, its output and exit codes. `WES` and `ServiceInfo` are available
-from the Rust library below.
+The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`), WES
+commands (`run`, `list`, `get`, `status`, `cancel`), DRS commands (`get`,
+`access`), TRS commands (`tools`, `tool`, `versions`, `version`, `descriptor`,
+`files`, `tests`), and Service Registry commands (`list`, `get`, `types`). It
+reads the matching `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` configuration
+section. The [CLI README](../cli/README.md) describes each command, its output
+and exit codes. `ServiceInfo` is available from the Rust library below.
 
 ## Rust library
 
@@ -226,6 +226,15 @@ let access = drs.get_access_url("my-object-id", "my-access-id").await?;
 // Use access.url and any access headers to fetch the bytes; do not log signed URLs.
 ```
 
+`get_object_once` and `get_access_url_once` return `Resolution::Pending` while the
+server prepares an answer (`202 Accepted`); `resolve_object` and `resolve_access_url`
+wait for it within an `Operation` budget. `get_bulk_objects` and
+`get_bulk_access_urls` use the DRS 1.4 bulk endpoints and report an outcome per ID
+under a `BulkPolicy`. `uri::DrsResolver` plans access for hostname-based `drs://`
+URIs. The `_raw` variants (`get_object_raw`, `get_access_url_raw`,
+`resolve_reference_raw`, `get_bulk_objects_raw`, `get_bulk_access_urls_raw`) keep the
+server's JSON, including fields that the models don't know.
+
 ### TRS
 
 ```rust
@@ -242,6 +251,44 @@ for tool in tools {
     println!("{}", tool.id);
 }
 ```
+
+### Models
+
+The request and response models (`clients::<api>::models`) are generated from
+the specs. Servers often send more than the spec defines; the models keep it:
+
+- Every model struct has a field `extra` (a `serde_json::Map`) with the
+  fields that its spec doesn't define, at every level. Writing a model back,
+  for example a task that was read, sends them again. To add a field of your
+  own, insert it into `extra`. Don't use names of fields that the model
+  defines: the JSON would then have the key twice.
+- Enums keep values that the spec doesn't define in their `Unrecognized`
+  variant, for example `DescriptorType::Unrecognized("JUPYTER")`, and write
+  them back unchanged. `Display` gives the value as received. TRS clients
+  send an unrecognized descriptor type as one encoded path segment and reject
+  empty values, `.` and `..`.
+- TES and WES task and run states are the exception: a state that the spec
+  doesn't define reads as `TesState::Unknown` or `State::Unknown`, which both
+  specs define as the safe default, and is written back as `UNKNOWN`. The
+  server's value is lost; the Python `TesTask.to_dict()` still has it. The TES
+  CLI and the Python bindings still reject unknown state names as list
+  filters.
+
+```rust
+use ga4gh_sdk::clients::tes::models::{TesExecutor, TesTask};
+
+let mut task = TesTask::new(vec![TesExecutor::new(
+    "alpine".to_owned(),
+    vec!["echo".to_owned(), "hello".to_owned()],
+)]);
+task.extra.insert("x-queue".to_owned(), serde_json::json!("long"));
+```
+
+Build models with their `new` function or with `..Default::default()`, so that
+fields added later, such as `extra`, don't break your code. For WES,
+`RunRequest.extra` fields are sent as further parts of the `multipart/form-data`
+request: strings as they are, other values as JSON. Names of parts that the
+request already has are an error.
 
 ### Errors
 

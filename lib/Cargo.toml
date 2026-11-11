@@ -12,8 +12,8 @@ license-file.workspace = true
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-serde = { version = "^1.0", features = ["derive"] }
-serde_derive = "^1.0"
+serde = { version = "^1.0.181", features = ["derive"] }
+serde_derive = "^1.0.181"
 serde_json = "^1.0"
 uuid = { version = "^1.0", features = ["serde", "v4"] }
 log = "0.4"
@@ -26,6 +26,9 @@ tokio-util = { version = "0.7", features = ["rt", "io"] }
 httpdate = "1"
 futures-util = "0.3"
 sha2 = "0.10"
+# Maintained fork of serde_yaml; keep the existing Rust import path.
+serde_yaml = { package = "yaml_serde", version = "0.10" }
+percent-encoding = "2"
 
 [dependencies.reqwest]
 version = "^0.11"

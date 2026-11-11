@@ -33,6 +33,10 @@ pub struct ImageData {
     pub checksum: Option<Vec<models::Checksum>>,
     #[serde(rename = "image_type", skip_serializing_if = "Option::is_none")]
     pub image_type: Option<models::ImageType>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ImageData {
@@ -45,6 +49,7 @@ impl ImageData {
             updated: None,
             checksum: None,
             image_type: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

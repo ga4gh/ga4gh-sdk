@@ -269,6 +269,52 @@ fn files_and_tests_print_json_or_plain_content() {
 }
 
 #[test]
+fn plain_tests_reject_url_only_wrappers_without_printing_a_false_file() {
+    let service = service_info(1);
+    let test_files = get(
+        &format!("tools/{TOOL_ID}/versions/v1/PLAIN_CWL/tests"),
+        &json!([{"url": "https://example.org/test.yml"}]).to_string(),
+    );
+    let home = home_with_trs_config();
+
+    let output = run(
+        &home,
+        &["trs", "tests", TOOL_ID, "v1", "--type", "CWL", "--plain"],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no inline content"));
+    service.assert();
+    test_files.assert();
+}
+
+#[test]
+fn json_output_and_server_errors_escape_terminal_controls() {
+    let service = service_info(2);
+    let mut body = tool();
+    body["name"] = json!("workflow\u{202e}name");
+    let tool_mock = get(&format!("tools/{TOOL_ID}"), &body.to_string());
+    let failed = mock("GET", format!("{ROOT}/tools/missing").as_str())
+        .with_status(400)
+        .with_body("bad\u{1b}[31mresponse")
+        .create();
+    let home = home_with_trs_config();
+
+    let output = run(&home, &["trs", "tool", TOOL_ID]);
+    assert!(!stdout(&output).contains('\u{202e}'));
+    assert_eq!(stdout_json(&output)["name"], "workflow\u{202e}name");
+    let output = run(&home, &["trs", "tool", "missing"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains('\u{1b}'));
+    assert!(stderr.contains("\\u{1b}"), "{stderr}");
+    service.assert();
+    tool_mock.assert();
+    failed.assert();
+}
+
+#[test]
 fn invalid_arguments_fail_before_contacting_the_registry() {
     let service = service_info(0);
     let home = home_with_trs_config();
@@ -285,6 +331,24 @@ fn invalid_arguments_fail_before_contacting_the_registry() {
         (
             vec!["trs", "tools", "--limit", "ten"],
             "Invalid limit 'ten'",
+        ),
+        (vec!["trs", "tool", ".."], "TOOL_ID must not be empty"),
+        (
+            vec!["trs", "version", "t", "."],
+            "VERSION_ID must not be empty",
+        ),
+        (
+            vec![
+                "trs",
+                "descriptor",
+                "t",
+                "v",
+                "--type",
+                "CWL",
+                "--path",
+                "..",
+            ],
+            "path must not be empty",
         ),
     ] {
         let output = run(&home, &args);

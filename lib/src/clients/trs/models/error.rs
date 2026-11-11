@@ -19,6 +19,10 @@ pub struct Error {
     pub code: i32,
     #[serde(rename = "message", skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Error {
@@ -26,6 +30,7 @@ impl Error {
         Error {
             code,
             message: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

@@ -44,6 +44,10 @@ pub struct RunRequest {
     /// REQUIRED The workflow CWL or WDL document. When `workflow_attachments` is used to attach files, the `workflow_url` may be a relative path to one of the attachments.
     #[serde(rename = "workflow_url")]
     pub workflow_url: String,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl RunRequest {
@@ -62,6 +66,7 @@ impl RunRequest {
             workflow_engine: None,
             workflow_engine_version: None,
             workflow_url,
+            extra: serde_json::Map::new(),
         }
     }
 }
