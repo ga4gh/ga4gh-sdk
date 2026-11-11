@@ -52,12 +52,13 @@ services, or any other name for a custom service:
   "TES": {
     "base_path": "https://example.org/ga4gh/tes/v1",
     "basic_auth": {"username": "alice", "password": "change-me"},
-    "oauth_access_token": "my-token"
+    "oauth_access_token": "my-token",
+    "timeouts": {"discovery": 30, "submission": 300}
   },
   "MY_SERVICE": {
     "base_path": "https://example.org/my-service/v1",
     "oauth_access_token_env": "MY_SERVICE_TOKEN",
-    "timeout_seconds": 30
+    "queue": "long"
   }
 }
 ```
@@ -70,10 +71,13 @@ services, or any other name for a custom service:
   variable that holds the access token, so that the token needn't be in the
   file. Use it in place of `oauth_access_token`, not together with it. If the
   variable isn't set, reading the section is an error.
+- `timeouts` (object, optional): time limits in seconds, as positive numbers:
+  `connect`, `request`, `discovery` and `submission`. Limits that the object
+  doesn't name keep their defaults; see [Timeouts](#timeouts).
 - Any other key: kept with its JSON value in `Configuration::extra` (Python:
   `Configuration.get_extra()`), for settings that the SDK doesn't use itself,
   such as those of a downstream crate. In the example, `extra` holds
-  `timeout_seconds`. Rust's `Debug` output shows only the keys, but `extra`
+  `queue`. Rust's `Debug` output shows only the keys, but `extra`
   and `get_extra()` themselves return the values as they are, so don't log
   them if they can hold credentials. The file doesn't set the other
   `Configuration` fields: `user_agent`, `bearer_access_token` and `api_key`
@@ -101,8 +105,67 @@ commands (`run`, `list`, `get`, `status`, `cancel`), DRS commands (`get`,
 `access`), TRS commands (`tools`, `tool`, `versions`, `version`, `descriptor`,
 `files`, `tests`), and Service Registry commands (`list`, `get`, `types`). It
 reads the matching `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` configuration
-section. The [CLI README](../cli/README.md) describes each command, its output
-and exit codes. `ServiceInfo` is available from the Rust library below.
+section, including its `timeouts`. The [CLI README](../cli/README.md) describes
+each command, its output and exit codes. `ServiceInfo` is available from the
+Rust library below.
+
+## Timeouts
+
+Every request has a time limit. `Configuration` holds them as `Timeouts`; the
+Rust clients, the CLI and the Python bindings read them from there:
+
+| Limit | Default | Applies to |
+| --- | --- | --- |
+| `connect` | 10 s | Opening each connection, including TLS, within any of the limits below. |
+| `request` | 60 s | Each request that none of the limits below applies to, from sending it to reading the whole response. |
+| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`. |
+| `submission` | 60 s | One TES task or WES run submission: `TES::create`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. The CLI's `wes run` allows 300 s unless the section sets a `submission` other than 60. |
+
+`discovery` and `submission` replace `request` for their requests, so they can
+be longer or shorter than `request`. Calls that take an `Operation`, such as
+`WES::run_workflow_streaming` and `Transport::send_once`, use its deadline in
+the same way. Waiting (`WaitOptions`), paging (`PagingOptions`) and DRS
+resolution have a budget of their own for the whole call; each of their
+requests also has the `request` limit, and whichever ends first stops it.
+Other settings are not time limits of requests and don't depend on these: the
+`max_age` of capability snapshots says how long cached service info counts as
+current, and the `Retry-After` delays of retries stay within the call's budget.
+
+A submission is sent once and never repeated. If it runs out of time, or loses
+its connection, after it was sent, it fails with `AmbiguousSubmissionError`
+(Python: `RuntimeError` with "submission may have been accepted"): the service
+may have created the task or run, so look for it, for example by its tags,
+before you submit it again. A submission that runs out of time before it was
+sent fails with `OperationError` and sent nothing.
+
+Set the limits in Rust with `Configuration::with_timeouts`, in a configuration
+file section with `timeouts` (see [above](#configuration-file)), and in Python
+with `Configuration.set_timeouts()`:
+
+```rust
+use ga4gh_sdk::utils::timeouts::Timeouts;
+use std::time::Duration;
+
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_timeouts(Timeouts {
+        discovery: Duration::from_secs(30),
+        submission: Duration::from_secs(300),
+        ..Default::default()
+    });
+let tes = TES::new(&config).await?;
+```
+
+A client reads the limits when it is built: change them in the
+`Configuration` before you build the client or `Transport`.
+`Transport::with_timeouts(&config, connect, request)` builds a transport with
+other `connect` and `request` limits. For other HTTP settings, such as TLS
+roots, a proxy or default headers, build a `reqwest::Client`, wrap it with
+`Transport::with_client(&config, client)` and pass the transport to
+`TES::with_transport`, `WES::with_transport`, `DRS::with_transport` or
+`TRS::with_transport` (and `TES::discover_with_transport`,
+`WES::discover_with_transport`). The client's own connect and request timeouts
+then replace `connect` and `request`; `discovery` and `submission` still come
+from the transport's configuration.
 
 ## Rust library
 
@@ -119,7 +182,8 @@ serde_json = "1"
 ```
 
 TES, WES, DRS, and TRS clients check the service's `service-info` when created
-and return an error if the endpoint isn't reachable or has the wrong type.
+and return an error if the endpoint isn't reachable or has the wrong type. The
+check and all other requests have time limits; see [Timeouts](#timeouts).
 
 ### Configuration
 
@@ -150,7 +214,7 @@ let config = Configuration::from_file(ServiceType::TES)?;
 
 // A custom section and its other keys
 let config = Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))?;
-let timeout = config.extra.get("timeout_seconds").and_then(|value| value.as_u64());
+let queue = config.extra.get("queue").and_then(|value| value.as_str());
 ```
 
 `ServiceType` is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm.

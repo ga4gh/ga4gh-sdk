@@ -51,7 +51,7 @@ pytest
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. See [Reading the configuration file](#reading-the-configuration-file). |
+| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys; `set_timeouts()` and `get_timeouts()` set and give the time limits of requests. See [Reading the configuration file](#reading-the-configuration-file) and [Timeouts](#timeouts). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
@@ -118,12 +118,41 @@ from GA4GH import Configuration, ServiceType
 config = Configuration("https://example.org")
 config.from_file(ServiceType.TES)
 config.from_file("MY_SERVICE")
-timeout = config.get_extra().get("timeout_seconds")
+queue = config.get_extra().get("queue")
 ```
 
 A section can name an environment variable for its token with
 `oauth_access_token_env`. A missing section or an unset variable raises
 `ValueError`, a missing file `FileNotFoundError`.
+
+## Timeouts
+
+`config.set_timeouts()` sets time limits of requests, in seconds, as keyword
+arguments; `config.get_timeouts()` returns all four as a `dict`. A section of
+the configuration file sets them with its `timeouts` object:
+
+```python
+from GA4GH import Configuration, TES
+
+config = Configuration("https://example.org/ga4gh/tes/v1")
+config.set_timeouts(discovery=30, submission=300)
+config.get_timeouts()
+# {'connect': 10.0, 'discovery': 30.0, 'request': 60.0, 'submission': 300.0}
+tes = TES(config)
+```
+
+- `connect` (default 10): opening each connection.
+- `request` (default 60): each request that the limits below don't apply to.
+- `discovery` (default 10): the service check of `TES(config)`, `AsyncTES`,
+  `WES(config)` and `DRS(config)`, in place of `request`.
+- `submission` (default 60): `TES.create()`, `AsyncTES.create()` and
+  `WES.run()`, including uploads, in place of `request`. A submission that runs
+  out of time after it was sent raises `RuntimeError` with "submission may have
+  been accepted"; look for the task or run before you submit it again.
+
+Clients and `Transport` read the limits when they are built, so set them first.
+Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
+timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
 
 ## Network behavior
 
@@ -330,7 +359,8 @@ print(run.task(tasks.task_logs[0].id).stderr)
   with `/` separators, such as `tools/echo.cwl`; absolute paths, `..`, backslashes,
   colons and repeated filenames raise `ValueError` before a request. Refer to an
   attachment in `workflow_url` by its filename. The upload and the server's answer must
-  finish within 60 seconds.
+  finish within the `submission` limit of the configuration, 60 seconds by default
+  (see [Timeouts](#timeouts)).
 - `Run` addresses a run on the server by its `id`. `Run.status()` returns a `WesState`,
   `Run.cancel()` cancels the run and returns `None`, and `Run.log()` returns a `RunLog`.
   `Run.tasks(page_size=None, page_token=None)` returns a `TaskListResponse` with

@@ -164,8 +164,14 @@ the server's `next_page` URL within the same tools API root, and returns an
 opaque `files_zip` response without extraction or text conversion. These helpers
 compose with a configured `Transport` independently of the basic TRS client.
 
-The default client uses a 10-second connection budget and 60-second request
-budget. Use `with_timeouts` or inject a client to change them. For a multi-attempt
+By default, connecting may take 10 seconds and a request 60 seconds; the
+service-info check of the TES, WES, DRS and TRS clients may take 10 seconds and a
+TES task or WES run submission 60 seconds. Set them with
+`Configuration::with_timeouts` (or the `timeouts` object of a configuration file
+section); `Transport::with_timeouts` sets only the first two. The clients'
+`with_transport` constructors take a ready `Transport`, such as one with an
+injected client. The [usage guide](docs/usage.md#timeouts) says which limit
+applies to which request. For a multi-attempt
 operation, `RequestOptions` holds one absolute deadline, a local cancellation
 token, body bounds and an explicit replay classification. Retries are opt-in,
 capped at 32 attempts, and use exponential backoff with jitter; 429/503 honor
