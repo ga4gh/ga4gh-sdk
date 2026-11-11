@@ -102,7 +102,11 @@ jobs:
           if [[ "$RUNNER_OS" == Linux ]]; then
             # The README promises glibc 2.34 or newer; fail if a dependency
             # starts to need a newer symbol version.
-            glibc="$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu | tail -n 1)"
+            glibc="$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu | tail -n 1)" || true
+            if [[ -z "$glibc" ]]; then
+              echo "::error::No glibc symbol versions found in $binary"
+              exit 1
+            fi
             echo "Newest glibc symbol version: $glibc"
             if [[ "$(printf '%s\n' GLIBC_2.34 "$glibc" | sort -V | tail -n 1)" != GLIBC_2.34 ]]; then
               echo "::error::The binary needs $glibc, newer than the documented GLIBC_2.34"
