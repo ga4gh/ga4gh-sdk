@@ -112,7 +112,8 @@ Docker may download the Alpine image on the first run.
 The [CLI README](cli/README.md) describes all CLI commands. The
 [usage guide](docs/usage.md) covers configuration, authentication, and the
 Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, `TRS`, and `ServiceRegistry`
-clients. The CLI also has [Service Registry commands](cli/README.md#service-registry-commands).
+clients. The CLI also has [WES commands](cli/README.md#wes-examples) and
+[Service Registry commands](cli/README.md#service-registry-commands).
 
 ## Advanced transport
 
@@ -141,6 +142,11 @@ reads as `ReadOnly` (including appropriate lookup POSTs). A non-replayable
 operation gets one attempt and reports lost-response ambiguity for reconciliation.
 `send_once` also covers multipart headers/body and permits an explicit larger
 upload budget. Dropping a future or canceling its token stops local I/O.
+If cancellation or an expired deadline prevents the send future from being
+polled, submission returns an inspectable `OperationError` and makes no attempt.
+Once the send future is polled, interruption remains an
+`AmbiguousSubmissionError`: the server may have accepted the request, so reconcile
+remote state before resubmitting. Local interruption never cancels a remote job.
 
 DRS `get_object_once` and `get_access_url_once` return `Resolution::Ready` or
 `Pending` with a credential-free resume reference. The immediate convenience
@@ -201,10 +207,11 @@ At a partially consumed or truncated page, a checkpoint replays that page.
 Mutable listings provide neither snapshot isolation nor exactly-once processing;
 callers reconcile replays. Credentials are supplied separately when resuming.
 
-The CLI streams `tes list --all --format jsonl` through caller-owned writers,
-with one JSON object per stdout line. `--max-pages` and `--max-items` bound work;
-limits or later failures preserve emitted records, report a resume checkpoint on
-stderr and return a nonzero exit code. Reusable CLIs use `dispatch_to` or
+The CLI streams `tes list --all --format jsonl` and `wes list --all --format
+jsonl` through caller-owned writers, with one JSON object per stdout line.
+`--max-pages` and `--max-items` bound work; limits or later failures preserve
+emitted records, report a resume checkpoint on stderr and return a nonzero exit
+code. Reusable CLIs use `dispatch_to` or
 `dispatch_with_config_to`; existing buffered dispatch remains available for
 ordinary commands.
 
@@ -215,6 +222,25 @@ validated before I/O, nested relative filenames stay intact, and one absolute
 operation budget covers preparation, upload and response. A consumed source
 is never replayed; cancellation or a lost response after transmission reports
 that submission may have been accepted. The existing bytes API remains usable.
+`clients::bundle::PreparedBundle::prepare` stages a CWL workflow and its declared
+TRS descriptors without submitting it. It validates paths/collisions and the
+static `run`, `$import` and `$include` dependency graph, verifies advertised
+SHA-256 digests, and computes local digests over original staged bytes. Version
+metadata (`is_production`, `meta_version`) and retrieved digests are preserved;
+an explicit TRS version is not assumed immutable. Unsupported checksums fail by
+default; explicit opt-in records them as unverified. The small MVP supports a
+primary Workflow in CWL v1.0/v1.1/v1.2; packed/fragment, external and dynamic
+dependencies are rejected before submission.
+
+Preparation exposes a reviewable request plan and a credential-free provenance
+manifest. Wrapper URLs require an explicit `DescriptorFetcher`; the provided
+anonymous allowlist accepts only bare HTTP(S) origins, never reuses registry
+credentials, and never follows redirects.
+`submit` is a separate explicit call and uploads the same immutable staged bytes
+that were hashed, returning a run plus manifest/execution linkage. Workflow
+parameters, bearer tokens and signed descriptor URLs are excluded from provenance.
+See the [named Toil integration check](tests/README.md) for an actual CWL execution.
+
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).

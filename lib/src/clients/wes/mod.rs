@@ -14,7 +14,6 @@ use crate::utils::configuration::Configuration;
 /// Existing import path for the shared path-segment encoder.
 pub use crate::utils::transport::urlencode;
 use crate::utils::transport::{HttpStatusError, Transport};
-use log::error;
 use serde_json::from_str;
 use serde_json::json;
 
@@ -43,27 +42,15 @@ impl Run {
     pub async fn status(&self) -> Result<State, Box<dyn std::error::Error>> {
         let run_id = &self.id;
         let url = format!("runs/{}/status", urlencode(run_id));
-        let response = self.transport.get(&url, None).await;
-        match response {
-            Ok(resp_str) => {
-                let status: serde_json::Value = from_str(&resp_str)?;
-                // The spec says GET /runs/{run_id}/status returns RunStatus which has run_id and state.
-                let state_str = status
-                    .get("state")
-                    .and_then(|s| s.as_str())
-                    .ok_or("Missing state field")?;
-                let state: State = serde_json::from_value(json!(state_str))?;
-                Ok(state)
-            }
-            Err(e) => {
-                let err_msg = format!("HTTP request failed: {}", e);
-                error!("{}", err_msg);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    err_msg,
-                )))
-            }
-        }
+        let resp_str = self.transport.get(&url, None).await?;
+        let status: serde_json::Value = from_str(&resp_str)?;
+        // The spec says GET /runs/{run_id}/status returns RunStatus which has run_id and state.
+        let state_str = status
+            .get("state")
+            .and_then(|s| s.as_str())
+            .ok_or("Missing state field")?;
+        let state: State = serde_json::from_value(json!(state_str))?;
+        Ok(state)
     }
 
     /// Cancels the run.
@@ -71,20 +58,15 @@ impl Run {
         let id = &self.id;
         let id = urlencode(id);
         let url = format!("runs/{}/cancel", id);
-        let response = self.transport.post(&url, None).await;
-        match response {
-            Ok(resp_str) => {
-                crate::utils::acknowledgement::execution_id(
-                    &resp_str,
-                    "run_id",
-                    "WES cancellation",
-                    Some(&self.id),
-                )?;
-                let run_id: RunId = from_str(&resp_str)?;
-                Ok(run_id)
-            }
-            Err(e) => Err(format!("HTTP request failed: {}", e).into()),
-        }
+        let resp_str = self.transport.post(&url, None).await?;
+        crate::utils::acknowledgement::execution_id(
+            &resp_str,
+            "run_id",
+            "WES cancellation",
+            Some(&self.id),
+        )?;
+        let run_id: RunId = from_str(&resp_str)?;
+        Ok(run_id)
     }
 
     /// Fetches the details of the run (including logs and outputs).
@@ -233,38 +215,26 @@ impl WES {
         next_page_token: Option<String>,
         page_size: Option<i64>,
     ) -> Result<RunListResponse, Box<dyn std::error::Error>> {
-        let response = self
+        let resp_str = self
             .transport
             .get("runs", paging_params(next_page_token, page_size))
-            .await;
-
-        match response {
-            Ok(resp_str) => {
-                // Starter Kit WES 0.2.0 returns a bare array, while WES 1.0.1
-                // and 1.1.0 specify an object with `runs` and `next_page_token`.
-                #[derive(serde::Deserialize)]
-                #[serde(untagged)]
-                enum RunListBody {
-                    Standard(RunListResponse),
-                    StarterKit(Vec<RunListResponseRunsInner>),
-                }
-                let list = match from_str::<RunListBody>(&resp_str)? {
-                    RunListBody::Standard(list) => list,
-                    RunListBody::StarterKit(runs) => RunListResponse {
-                        runs: Some(runs),
-                        next_page_token: None,
-                    },
-                };
-                Ok(list)
-            }
-            Err(e) => {
-                error!("HTTP request failed: {:?}", e);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("HTTP request failed: {:?}", e),
-                )))
-            }
+            .await?;
+        // Starter Kit WES 0.2.0 returns a bare array, while WES 1.0.1
+        // and 1.1.0 specify an object with `runs` and `next_page_token`.
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum RunListBody {
+            Standard(RunListResponse),
+            StarterKit(Vec<RunListResponseRunsInner>),
         }
+        let list = match from_str::<RunListBody>(&resp_str)? {
+            RunListBody::Standard(list) => list,
+            RunListBody::StarterKit(runs) => RunListResponse {
+                runs: Some(runs),
+                next_page_token: None,
+            },
+        };
+        Ok(list)
     }
 
     /// Get run full details (wrapper around Run::log for convenience from client)
@@ -838,5 +808,40 @@ mod tests {
         );
         let err = run.get_task("missing").await.unwrap_err();
         assert!(err.to_string().contains("404"), "{err}");
+    }
+    #[tokio::test]
+    async fn test_run_and_list_errors_keep_the_http_error() {
+        let base = format!("{}/http-errors", server_url());
+        let _status = mock("GET", "/http-errors/runs/gone/status")
+            .with_status(404)
+            .with_body("status not found")
+            .create();
+        let _cancel = mock("POST", "/http-errors/runs/gone/cancel")
+            .with_status(409)
+            .with_body("already finished")
+            .create();
+        let _list = mock("GET", "/http-errors/runs")
+            .with_status(503)
+            .with_body("list unavailable")
+            .create();
+        let wes = wes_for(&base);
+        let run = Run::new("gone".to_string(), wes.transport.clone());
+        let errors = [
+            (run.status().await.unwrap_err(), 404, "status not found"),
+            (run.cancel().await.unwrap_err(), 409, "already finished"),
+            (
+                wes.list_runs(None, None).await.unwrap_err(),
+                503,
+                "list unavailable",
+            ),
+        ];
+        for (error, status, body) in errors {
+            let http = error
+                .downcast_ref::<crate::utils::transport::HttpError>()
+                .unwrap_or_else(|| panic!("not an HttpError: {error}"));
+            assert_eq!(http.status, status);
+            assert_eq!(error.to_string(), http.to_string());
+            assert!(error.to_string().contains(body), "{error}");
+        }
     }
 }
