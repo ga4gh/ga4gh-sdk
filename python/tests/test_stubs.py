@@ -1,6 +1,7 @@
 """The type stubs in `GA4GH.pyi` match the module."""
 
 import ast
+import enum
 import inspect
 from pathlib import Path
 
@@ -63,7 +64,7 @@ def runtime_members(cls):
     Dunder methods that the stub declares, such as `TesState.__str__`, count if the class
     defines them itself.
     """
-    if issubclass(cls, GA4GH.TesState):
+    if issubclass(cls, enum.Enum):
         names = {state.name for state in cls}
     else:
         names = {name for name in vars(cls) if not name.startswith("_")}
@@ -97,7 +98,7 @@ def test_stub_declares_every_member(name):
 
 
 @pytest.mark.parametrize(
-    "name", sorted(set(stub_class_nodes()) - {"TesState", "ServiceType"})
+    "name", sorted(set(stub_class_nodes()) - {"TesState", "WesState", "ServiceType"})
 )
 def test_stub_parameters_match(name):
     cls = getattr(GA4GH, name)
