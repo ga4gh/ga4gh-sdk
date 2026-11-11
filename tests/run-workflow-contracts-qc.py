@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
 """Exercise QC on two independent local WES processes. This is not a federation test."""
-import json, os, pathlib, socket, subprocess, sys, tempfile, time, urllib.request
+import os
+import pathlib
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
 root=pathlib.Path(__file__).resolve().parents[1]
 env_dir=pathlib.Path(os.environ.get('GA4GH_TOIL_ENV_DIR',str(root/'target/toil-qc-venv')))
-if not (env_dir/'bin/toil').exists():
+venv_python=env_dir/'bin/python'
+if not venv_python.exists():
  subprocess.run([sys.executable,'-m','venv',str(env_dir)],check=True)
- subprocess.run([str(env_dir/'bin/python'),'-m','pip','install','toil[server,cwl,aws]==9.3.0','ipython==9.6.0'],check=True)
-if subprocess.run([str(env_dir/'bin/python'),'-c','import IPython'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
- subprocess.run([str(env_dir/'bin/python'),'-m','pip','install','ipython==9.6.0'],check=True)
-work=root/'target/phase2-qc';work.mkdir(parents=True,exist_ok=True)
+# A reused venv must match the direct versions documented for this suite.
+version_check='from importlib.metadata import version; assert version("toil") == "9.3.0"; assert version("ipython") == "9.6.0"'
+if not (env_dir/'bin/toil').exists() or subprocess.run(
+ [str(venv_python),'-c',version_check],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL
+).returncode:
+ subprocess.run([str(venv_python),'-m','pip','install','toil[server,cwl,aws]==9.3.0','ipython==9.6.0'],check=True)
+work=root/'target/workflow-contracts-qc';work.mkdir(parents=True,exist_ok=True)
 servers=[];logs=[];urls=[]
 try:
  for index in range(2):
@@ -27,8 +37,8 @@ try:
     time.sleep(.25)
   else:raise RuntimeError('Toil readiness timeout')
  evidence=work/'evidence.json';env=os.environ.copy();env['GA4GH_QC_WES_URLS']=','.join(urls);env['GA4GH_QC_EVIDENCE']=str(evidence)
- subprocess.run(['cargo','test','-p','ga4gh-lib','--features','workflow-contracts','--test','qc_workflow','real_qc_on_two_wes_instances','--locked','--','--ignored','--nocapture'],env=env,cwd=root,check=True)
- subprocess.run([str(env_dir/'bin/python'),str(root/'examples/qc-demo/view_report.py'),str(evidence)],check=True)
+ subprocess.run(['cargo','test','-p','ga4gh-lib','--features','workflow-contracts','--test','workflow_contracts_qc','real_qc_on_two_wes_instances','--locked','--','--ignored','--nocapture'],env=env,cwd=root,check=True)
+ subprocess.run([str(env_dir/'bin/python'),str(root/'examples/sequence-qc/view_report.py'),str(evidence)],check=True)
  print('QC evidence:',evidence)
 finally:
  for server in servers:server.terminate()
