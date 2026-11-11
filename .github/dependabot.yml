@@ -4,3 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Hook revisions in `.pre-commit-config.yaml`
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
