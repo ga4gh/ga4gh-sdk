@@ -251,8 +251,8 @@ impl TES {
     /// checks as [`Self::create`].
     ///
     /// The POST is sent once, within the `submission` limit of the transport's
-    /// configuration. If it runs out of time or loses its connection after it
-    /// was sent, the error is an
+    /// configuration. If it runs out of time or loses its connection after its
+    /// request started, the error is an
     /// [`AmbiguousSubmissionError`](crate::utils::operation::AmbiguousSubmissionError):
     /// the service may have created the task.
     pub async fn create_value(&self, task: Value) -> Result<Task, Box<dyn std::error::Error>> {

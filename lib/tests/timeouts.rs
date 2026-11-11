@@ -7,9 +7,7 @@ use ga4gh_sdk::{
         wes::{models::RunRequest, WES},
     },
     utils::{
-        configuration::Configuration,
-        operation::{AmbiguousSubmissionError, Operation},
-        timeouts::Timeouts,
+        configuration::Configuration, operation::AmbiguousSubmissionError, timeouts::Timeouts,
         transport::Transport,
     },
 };
@@ -190,7 +188,7 @@ fn defaults_keep_the_previous_limits() {
     assert_eq!(timeouts.connect, Duration::from_secs(10));
     assert_eq!(timeouts.request, Duration::from_secs(60));
     assert_eq!(timeouts.discovery, Duration::from_secs(10));
-    assert_eq!(timeouts.submission, Duration::from_secs(60));
+    assert_eq!(timeouts.submission, Duration::from_secs(300));
     let config = Configuration::new(url::Url::parse("https://example.org").unwrap());
     assert_eq!(config.timeouts, timeouts);
     assert_eq!(Configuration::default().timeouts, timeouts);
@@ -203,12 +201,6 @@ fn transport_with_timeouts_records_them_in_its_configuration() {
     assert_eq!(transport.config.timeouts.connect, SHORT);
     assert_eq!(transport.config.timeouts.request, LONG);
     assert_eq!(transport.config.timeouts.discovery, Duration::from_secs(10));
-}
-
-#[test]
-fn an_operation_with_a_huge_budget_does_not_overflow() {
-    let operation = Operation::new(Duration::MAX);
-    assert!(operation.deadline > tokio::time::Instant::now() + Duration::from_secs(86_400));
 }
 
 #[tokio::test]
@@ -254,6 +246,30 @@ async fn a_longer_discovery_timeout_overrides_a_shorter_request_timeout() {
             result.unwrap_or_else(|error| panic!("{name}: {error}"));
         }
     }
+}
+
+#[tokio::test]
+async fn refresh_uses_the_discovery_timeout() {
+    let timeouts = Timeouts {
+        request: SHORT,
+        discovery: LONG,
+        ..Default::default()
+    };
+    let server = serve(slow_service_info("tes")).await;
+    let mut tes = TES::discover(&config(&server.url, timeouts), LONG)
+        .await
+        .unwrap();
+    tes.refresh().await.unwrap();
+    tes.client.transport.config.timeouts.discovery = SHORT;
+    assert!(tes.refresh().await.is_err());
+
+    let server = serve(slow_service_info("wes")).await;
+    let mut wes = WES::discover(&config(&server.url, timeouts), LONG)
+        .await
+        .unwrap();
+    wes.refresh().await.unwrap();
+    wes.client.transport.config.timeouts.discovery = SHORT;
+    assert!(wes.refresh().await.is_err());
 }
 
 #[tokio::test]

@@ -7,7 +7,9 @@ answers with a running task of that ID after the given delay, for tests of
 concurrent and cancelled calls, as does ``GET /slow-<seconds>/service-info``
 with the service info (``GET /failing-<seconds>/service-info`` with a 503); if the
 client closes the connection before,
-``GET /__disconnects__`` lists the request's path.
+``GET /__disconnects__`` lists the request's path. Below ``/hang``,
+``service-info`` answers at once and every other request gets no answer until
+the client leaves (at most 30 seconds), for tests of timed-out submissions.
 """
 
 import base64
@@ -202,6 +204,12 @@ class Handler(BaseHTTPRequestHandler):
         if url.path.startswith("/failing-") and url.path.endswith("/service-info"):
             time.sleep(float(url.path.split("/")[1].removeprefix("failing-")))
             self._reply(503, {"msg": "unavailable"})
+            return
+        if url.path == "/hang/service-info":
+            self._reply(200, SERVICE_INFO)
+            return
+        if url.path.startswith("/hang/"):
+            self._client_left_within(30)
             return
         if url.path.startswith("/slow-") and url.path.endswith("/service-info"):
             if self._client_left_within(float(url.path.split("/")[1].removeprefix("slow-"))):

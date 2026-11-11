@@ -195,7 +195,7 @@ impl WES {
     ///
     /// The request is sent once, within the `submission` limit of the
     /// transport's configuration, including the upload. If it runs out of time
-    /// or loses its connection after it was sent, the error is an
+    /// or loses its connection after its request started, the error is an
     /// [`AmbiguousSubmissionError`](crate::utils::operation::AmbiguousSubmissionError):
     /// the service may have created the run. For a deadline or cancellation of
     /// your own, use [`Self::run_workflow_streaming`].

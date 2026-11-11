@@ -46,22 +46,10 @@ fn timeouts_from_value(value: &Value) -> Result<Timeouts, String> {
         .ok_or("timeouts must be an object of numbers of seconds")?;
     let mut timeouts = Timeouts::default();
     for (key, value) in fields {
-        let limit = match key.as_str() {
-            "connect" => &mut timeouts.connect,
-            "request" => &mut timeouts.request,
-            "discovery" => &mut timeouts.discovery,
-            "submission" => &mut timeouts.submission,
-            _ => {
-                return Err(format!(
-                    "Unknown timeout '{key}'; use connect, request, discovery or submission"
-                ))
-            }
-        };
-        *limit = value
-            .as_f64()
-            .and_then(|seconds| std::time::Duration::try_from_secs_f64(seconds).ok())
-            .filter(|duration| !duration.is_zero())
-            .ok_or_else(|| format!("timeouts.{key} must be a positive number of seconds"))?;
+        // A non-number is as invalid as a negative one; NaN gives the same message.
+        timeouts
+            .set_seconds(key, value.as_f64().unwrap_or(f64::NAN))
+            .map_err(|error| format!("Invalid timeouts: {error}"))?;
     }
     Ok(timeouts)
 }
@@ -711,23 +699,23 @@ mod tests {
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","timeouts":{"read":30}}}"#,
-                "Unknown timeout 'read'",
+                "Invalid timeouts: unknown timeout 'read'",
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","timeouts":{"request":"30"}}}"#,
-                "timeouts.request must be a positive number of seconds",
+                "Invalid timeouts: request must be a positive number of seconds",
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","timeouts":{"connect":0}}}"#,
-                "timeouts.connect must be a positive number of seconds",
+                "Invalid timeouts: connect must be a positive number of seconds",
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","timeouts":{"discovery":-1}}}"#,
-                "timeouts.discovery must be a positive number of seconds",
+                "Invalid timeouts: discovery must be a positive number of seconds",
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","timeouts":{"submission":1e300}}}"#,
-                "timeouts.submission must be a positive number of seconds",
+                "Invalid timeouts: submission must be a positive number of seconds",
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"GA4GH_SDK_TEST_TOKEN_UNSET"}}"#,
@@ -797,7 +785,7 @@ mod tests {
              bearer_access_token: Some(<redacted>), \
              api_key: Some(ApiKey { prefix: Some(\"Token\"), key: <redacted> }), \
              extra: {\"client_secret\": <redacted>}, \
-             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 60s } }"
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s } }"
         );
     }
 
@@ -813,7 +801,7 @@ mod tests {
              bearer_access_token: None, \
              api_key: None, \
              extra: {}, \
-             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 60s } }"
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s } }"
         );
     }
 

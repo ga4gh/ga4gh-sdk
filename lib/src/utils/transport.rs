@@ -312,7 +312,8 @@ impl Transport {
 
     /// Inject a configured client, for connection budgets, TLS and downstream use.
     ///
-    /// The client's own connect and request timeouts apply; the `discovery` and
+    /// The client's own connect and request timeouts apply, and
+    /// `config.timeouts.connect` and `request` are not used; the `discovery` and
     /// `submission` limits still come from `config.timeouts`.
     pub fn with_client(config: &Configuration, client: Client) -> Self {
         Self {
@@ -336,7 +337,7 @@ impl Transport {
 
     /// Sends a GET request within `timeout`, in place of the request timeout,
     /// including reading the response. The connect timeout still applies.
-    pub async fn get_within(
+    pub(crate) async fn get_within(
         &self,
         endpoint: &str,
         timeout: std::time::Duration,

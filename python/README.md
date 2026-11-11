@@ -135,9 +135,9 @@ the configuration file sets them with its `timeouts` object:
 from GA4GH import Configuration, TES
 
 config = Configuration("https://example.org/ga4gh/tes/v1")
-config.set_timeouts(discovery=30, submission=300)
+config.set_timeouts(discovery=30, submission=600)
 config.get_timeouts()
-# {'connect': 10.0, 'discovery': 30.0, 'request': 60.0, 'submission': 300.0}
+# {'connect': 10.0, 'discovery': 30.0, 'request': 60.0, 'submission': 600.0}
 tes = TES(config)
 ```
 
@@ -145,9 +145,9 @@ tes = TES(config)
 - `request` (default 60): each request that the limits below don't apply to.
 - `discovery` (default 10): the service check of `TES(config)`, `AsyncTES`,
   `WES(config)` and `DRS(config)`, in place of `request`.
-- `submission` (default 60): `TES.create()`, `AsyncTES.create()` and
+- `submission` (default 300): `TES.create()`, `AsyncTES.create()` and
   `WES.run()`, including uploads, in place of `request`. A submission that runs
-  out of time after it was sent raises `RuntimeError` with "submission may have
+  out of time after its request started raises `RuntimeError` with "submission may have
   been accepted"; look for the task or run before you submit it again.
 
 Clients and `Transport` read the limits when they are built, so set them first.
@@ -359,7 +359,7 @@ print(run.task(tasks.task_logs[0].id).stderr)
   with `/` separators, such as `tools/echo.cwl`; absolute paths, `..`, backslashes,
   colons and repeated filenames raise `ValueError` before a request. Refer to an
   attachment in `workflow_url` by its filename. The upload and the server's answer must
-  finish within the `submission` limit of the configuration, 60 seconds by default
+  finish within the `submission` limit of the configuration, 300 seconds by default
   (see [Timeouts](#timeouts)).
 - `Run` addresses a run on the server by its `id`. `Run.status()` returns a `WesState`,
   `Run.cancel()` cancels the run and returns `None`, and `Run.log()` returns a `RunLog`.

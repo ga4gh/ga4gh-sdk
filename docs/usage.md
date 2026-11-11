@@ -53,7 +53,7 @@ built-in services, or any other name for a custom service:
     "base_path": "https://example.org/ga4gh/tes/v1",
     "basic_auth": {"username": "alice", "password": "change-me"},
     "oauth_access_token": "my-token",
-    "timeouts": {"discovery": 30, "submission": 300}
+    "timeouts": {"discovery": 30, "submission": 600}
   },
   "MY_SERVICE": {
     "base_path": "https://example.org/my-service/v1",
@@ -119,7 +119,7 @@ Rust clients, the CLI and the Python bindings read them from there:
 | `connect` | 10 s | Opening each connection, including TLS, within any of the limits below. |
 | `request` | 60 s | Each request that none of the limits below applies to, from sending it to reading the whole response. |
 | `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`. |
-| `submission` | 60 s | One TES task or WES run submission: `TES::create`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. The CLI's `wes run` allows 300 s unless the section sets a `submission` other than 60. |
+| `submission` | 300 s | One TES task or WES run submission: `TES::create`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. |
 
 `discovery` and `submission` replace `request` for their requests, so they can
 be longer or shorter than `request`. Calls that take an `Operation`, such as
@@ -131,12 +131,14 @@ Other settings are not time limits of requests and don't depend on these: the
 `max_age` of capability snapshots says how long cached service info counts as
 current, and the `Retry-After` delays of retries stay within the call's budget.
 
-A submission is sent once and never repeated. If it runs out of time, or loses
-its connection, after it was sent, it fails with `AmbiguousSubmissionError`
-(Python: `RuntimeError` with "submission may have been accepted"): the service
-may have created the task or run, so look for it, for example by its tags,
-before you submit it again. A submission that runs out of time before it was
-sent fails with `OperationError` and sent nothing.
+A submission is sent once and never repeated. If it runs out of time, or
+loses its connection, after its request started, it fails with
+`AmbiguousSubmissionError` (Python: `RuntimeError` with "submission may have
+been accepted"): the service may have created the task or run, so look for it,
+for example by its tags, before you submit it again. This includes failures
+while connecting, which the SDK doesn't tell apart. Only a submission that ran
+out of time or was cancelled before its request started fails with
+`OperationError`; it sent nothing.
 
 Set the limits in Rust with `Configuration::with_timeouts`, in a configuration
 file section with `timeouts` (see [above](#configuration-file)), and in Python
@@ -149,7 +151,7 @@ use std::time::Duration;
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_timeouts(Timeouts {
         discovery: Duration::from_secs(30),
-        submission: Duration::from_secs(300),
+        submission: Duration::from_secs(600),
         ..Default::default()
     });
 let tes = TES::new(&config).await?;

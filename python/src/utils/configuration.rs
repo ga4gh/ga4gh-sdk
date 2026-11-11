@@ -1,11 +1,11 @@
 use crate::utils::convert::{check_extra_args, to_python};
 use crate::ServiceSection;
 use ga4gh_sdk::utils::configuration::Configuration;
+use ga4gh_sdk::utils::timeouts::Timeouts;
 use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 use serde_json::Value;
-use std::time::Duration;
 use url::Url;
 
 #[pyclass(name = "Configuration", module = "GA4GH", subclass)]
@@ -59,23 +59,17 @@ impl PyConfiguration {
         submission: Option<f64>,
     ) -> PyResult<()> {
         let mut timeouts = self.inner.timeouts;
-        for (name, seconds, limit) in [
-            ("connect", connect, &mut timeouts.connect),
-            ("request", request, &mut timeouts.request),
-            ("discovery", discovery, &mut timeouts.discovery),
-            ("submission", submission, &mut timeouts.submission),
-        ] {
+        for (name, seconds) in Timeouts::NAMES
+            .into_iter()
+            .zip([connect, request, discovery, submission])
+        {
             if let Some(seconds) = seconds {
-                *limit = Duration::try_from_secs_f64(seconds)
-                    .ok()
-                    .filter(|duration| !duration.is_zero())
-                    .ok_or_else(|| {
-                        PyValueError::new_err(format!(
-                            "{name} must be a positive number of seconds"
-                        ))
-                    })?;
+                timeouts
+                    .set_seconds(name, seconds)
+                    .map_err(PyValueError::new_err)?;
             }
         }
+        // All or nothing: a rejected value leaves every limit as it was.
         self.inner.timeouts = timeouts;
         Ok(())
     }
@@ -83,16 +77,7 @@ impl PyConfiguration {
     /// Returns the time limits of requests in seconds, as a `dict` with `connect`,
     /// `request`, `discovery` and `submission`.
     pub fn get_timeouts(&self) -> std::collections::BTreeMap<&'static str, f64> {
-        let timeouts = self.inner.timeouts;
-        [
-            ("connect", timeouts.connect),
-            ("request", timeouts.request),
-            ("discovery", timeouts.discovery),
-            ("submission", timeouts.submission),
-        ]
-        .into_iter()
-        .map(|(name, limit)| (name, limit.as_secs_f64()))
-        .collect()
+        self.inner.timeouts.as_seconds().into_iter().collect()
     }
 
     /// Returns the other keys of the configuration file section as a `dict`.

@@ -8,7 +8,7 @@ import pytest
 
 from GA4GH import TES, Configuration
 
-DEFAULTS = {"connect": 10.0, "request": 60.0, "discovery": 10.0, "submission": 60.0}
+DEFAULTS = {"connect": 10.0, "request": 60.0, "discovery": 10.0, "submission": 300.0}
 
 
 def test_defaults():
@@ -51,7 +51,7 @@ def test_from_file_reads_timeouts(tmp_path, monkeypatch):
             {
                 "TES": {
                     "base_path": "https://example.org/ga4gh/tes/v1",
-                    "timeouts": {"discovery": 30, "submission": 300},
+                    "timeouts": {"discovery": 30, "submission": 600},
                 }
             }
         )
@@ -59,7 +59,7 @@ def test_from_file_reads_timeouts(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     config = Configuration("https://wrong.example")
     config.from_file("TES")
-    assert config.get_timeouts() == {**DEFAULTS, "discovery": 30.0, "submission": 300.0}
+    assert config.get_timeouts() == {**DEFAULTS, "discovery": 30.0, "submission": 600.0}
     assert config.get_extra() == {}
 
 
@@ -71,7 +71,20 @@ def test_discovery_timeout_limits_the_service_check(server):
         TES(config)
     assert time.monotonic() - start < 1.5
 
-    # A discovery limit longer than the request limit replaces it.
+    # A discovery limit longer than the request limit replaces it: the check
+    # takes 0.5 s, five times the request limit, and still succeeds.
     config = Configuration(f"{server.root}/slow-0.5")
     config.set_timeouts(request=0.1, discovery=5)
-    assert TES(config).config.get_timeouts()["discovery"] == 5.0
+    TES(config)
+
+
+def test_a_timed_out_submission_may_have_been_accepted(server):
+    config = Configuration(f"{server.root}/hang")
+    config.set_timeouts(submission=0.3)
+    tes = TES(config)
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="submission may have been accepted"):
+        tes.create({"executors": [{"image": "alpine", "command": ["true"]}]})
+    assert time.monotonic() - start < 5
+    # Sent once, not repeated.
+    assert server.paths().count("/hang/tasks") == 1

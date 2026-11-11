@@ -166,13 +166,14 @@ compose with a configured `Transport` independently of the basic TRS client.
 
 By default, connecting may take 10 seconds and a request 60 seconds; the
 service-info check of the TES, WES, DRS and TRS clients may take 10 seconds and a
-TES task or WES run submission 60 seconds. Set them with
+TES task or WES run submission, including uploads, 300 seconds. Set them with
 `Configuration::with_timeouts` (or the `timeouts` object of a configuration file
 section); `Transport::with_timeouts` sets only the first two. The clients'
 `with_transport` constructors take a ready `Transport`, such as one with an
 injected client. The [usage guide](docs/usage.md#timeouts) says which limit
-applies to which request. For a multi-attempt
-operation, `RequestOptions` holds one absolute deadline, a local cancellation
+applies to which request.
+
+For a multi-attempt operation, `RequestOptions` holds one absolute deadline, a local cancellation
 token, body bounds and an explicit replay classification. Retries are opt-in,
 capped at 32 attempts, and use exponential backoff with jitter; 429/503 honor
 delta/date `Retry-After` within that same deadline. Mark only protocol-defined
