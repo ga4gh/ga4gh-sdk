@@ -34,6 +34,10 @@ pub struct TesInput {
     /// Indicate that a file resource could be accessed using a streaming interface, ie a FUSE mounted s3 object. This flag indicates that using a streaming mount, as opposed to downloading the whole file to the local scratch space, may be faster despite the latency and overhead. This does not mean that the backend will use a streaming interface, as it may not be provided by the vendor, but if the capacity is avalible it can be used without degrading the performance of the underlying program.
     #[serde(rename = "streamable", skip_serializing_if = "Option::is_none")]
     pub streamable: Option<bool>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesInput {
@@ -47,6 +51,7 @@ impl TesInput {
             r#type: None,
             content: None,
             streamable: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

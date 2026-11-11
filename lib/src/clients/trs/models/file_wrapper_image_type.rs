@@ -15,11 +15,32 @@ use serde::{Deserialize, Serialize};
 
 /// FileWrapperImageType : Optionally return additional information on the type of file this is
 /// Optionally return additional information on the type of file this is
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum FileWrapperImageType {
     ImageType(models::ImageType),
     DescriptorType(models::DescriptorType),
+}
+
+// Both enums keep unknown values in `Unrecognized`, so a derived untagged
+// `Deserialize` would read every descriptor type as an unknown image type.
+// Known values of either enum come first; other values are image types.
+impl<'de> Deserialize<'de> for FileWrapperImageType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let image_type =
+            models::ImageType::deserialize(&value).map_err(serde::de::Error::custom)?;
+        if !matches!(image_type, models::ImageType::Unrecognized(_)) {
+            return Ok(Self::ImageType(image_type));
+        }
+        match models::DescriptorType::deserialize(&value).map_err(serde::de::Error::custom)? {
+            models::DescriptorType::Unrecognized(_) => Ok(Self::ImageType(image_type)),
+            descriptor_type => Ok(Self::DescriptorType(descriptor_type)),
+        }
+    }
 }
 
 impl Default for FileWrapperImageType {

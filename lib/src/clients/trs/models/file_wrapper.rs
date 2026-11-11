@@ -27,6 +27,10 @@ pub struct FileWrapper {
     /// Optional url to the underlying content, should include version information, and can include a git hash.  Note that this URL should resolve to the raw unwrapped content that would otherwise be available in content. One of url or content is required.
     #[serde(rename = "url", skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl FileWrapper {
@@ -37,6 +41,7 @@ impl FileWrapper {
             checksum: None,
             image_type: None,
             url: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

@@ -1,7 +1,7 @@
 use ga4gh_sdk::{
     clients::{
         drs::{
-            bulk::{BulkKey, BulkPolicy, BulkReport, ObjectOutcome},
+            bulk::{BulkDialect, BulkKey, BulkPolicy, BulkReport, ObjectOutcome},
             models::BulkAccessUrl,
             DRS,
         },
@@ -11,7 +11,7 @@ use ga4gh_sdk::{
 };
 use mockito::{mock, server_url, Matcher};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::{collections::BTreeSet, time::Duration};
 fn client(path: &str) -> DRS {
     let config = Configuration::new(url::Url::parse(&format!("{}{path}", server_url())).unwrap());
     DRS {
@@ -71,6 +71,7 @@ async fn mixed_reordered_outcomes_and_duplicate_input_are_correlated_by_identity
     assert!(report.outcomes[&key("d")].is_success());
     assert_eq!(report.outcomes[&key("b")].failure_codes, vec![403]);
     assert_eq!(report.outcomes[&key("c")].failure_codes, vec![404]);
+    assert_eq!(report.dialects, BTreeSet::from([BulkDialect::Standard]));
     request.assert();
 }
 #[tokio::test]
@@ -297,4 +298,269 @@ async fn credential_contexts_and_global_request_bound_are_isolated() {
         .values()
         .all(|outcome| outcome.errors.iter().any(|e| e.contains("bound exhausted"))));
     first.assert();
+}
+
+const GEN3_FOUND: &str = "dg.C78ne/b2d9ad49-979d-4de2-9f7f-b3d054593de0";
+const GEN3_MISSING: &str = "dg.C78ne/00000000-0000-0000-0000-000000000000";
+/// Recorded from `POST https://caninedc.org/ga4gh/drs/v1/objects` on 2026-11-10.
+const GEN3_REPLY: &str = include_str!("../../tests/fixtures/drs/gen3-caninedc-bulk-objects.json");
+
+#[tokio::test]
+async fn gen3_reply_is_correlated_without_fabricating_created_time() {
+    // Request IDs are sent in sorted order, not in input order.
+    let request = mock("POST", "/gen3/objects")
+        .match_body(Matcher::Json(
+            json!({"bulk_object_ids":[GEN3_MISSING, GEN3_FOUND]}),
+        ))
+        .with_body(GEN3_REPLY)
+        .expect(2)
+        .create();
+    let ids = [GEN3_FOUND.to_string(), GEN3_MISSING.to_string()];
+    let client = client("/gen3");
+
+    let typed = client
+        .get_bulk_objects(&ids, &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    assert_eq!(typed.dialects, BTreeSet::from([BulkDialect::Gen3]));
+    assert_eq!(typed.outcomes[&key(GEN3_MISSING)].failure_codes, vec![404]);
+    let found = &typed.outcomes[&key(GEN3_FOUND)];
+    assert!(found.resolved.is_empty());
+    assert_eq!(found.errors.len(), 1, "{:?}", found.errors);
+    assert!(
+        found.errors[0].contains("created_time is null"),
+        "{:?}",
+        found.errors
+    );
+    assert!(typed.diagnostics.is_empty(), "{:?}", typed.diagnostics);
+
+    let raw = client
+        .get_bulk_objects_raw(&ids, &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    assert_eq!(raw.dialects, BTreeSet::from([BulkDialect::Gen3]));
+    let found = &raw.outcomes[&key(GEN3_FOUND)];
+    assert!(found.is_success());
+    assert_eq!(found.resolved[0]["id"], GEN3_FOUND);
+    assert!(found.resolved[0]["created_time"].is_null());
+    assert_eq!(raw.outcomes[&key(GEN3_MISSING)].failure_codes, vec![404]);
+    request.assert();
+}
+
+#[tokio::test]
+async fn standard_field_wins_when_a_reply_uses_both_dialects() {
+    let request = mock("POST", "/both/objects")
+        .with_body(
+            json!({"resolved_drs_object":[object("a")],"resolved_drs_objects":[object("b")]})
+                .to_string(),
+        )
+        .expect(1)
+        .create();
+    let report = client("/both")
+        .get_bulk_objects(
+            &["a".into(), "b".into()],
+            &[],
+            &BulkPolicy::default(),
+            &budget(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.dialects, BTreeSet::from([BulkDialect::Standard]));
+    assert!(report.outcomes[&key("a")].is_success());
+    assert!(report.outcomes[&key("b")].resolved.is_empty());
+    assert!(report.outcomes[&key("b")].errors[0].contains("omitted"));
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.contains("resolved_drs_objects") && d.contains("ignored")));
+    request.assert();
+}
+
+#[tokio::test]
+async fn dialects_from_separate_chunks_are_reported_together() {
+    let standard = mock("POST", "/mixed-dialects/objects")
+        .match_body(Matcher::Json(json!({"bulk_object_ids":["a"]})))
+        .with_body(json!({"resolved_drs_object":[object("a")]}).to_string())
+        .expect(1)
+        .create();
+    let gen3 = mock("POST", "/mixed-dialects/objects")
+        .match_body(Matcher::Json(json!({"bulk_object_ids":["b"]})))
+        .with_body(json!({"resolved_drs_objects":[object("b")]}).to_string())
+        .expect(1)
+        .create();
+    let policy = BulkPolicy {
+        chunk_size: 1,
+        concurrency: 2,
+        ..Default::default()
+    };
+    let report = client("/mixed-dialects")
+        .get_bulk_objects(&["b".into(), "a".into()], &[], &policy, &budget())
+        .await
+        .unwrap();
+
+    assert!(report.outcomes[&key("a")].is_success());
+    assert!(report.outcomes[&key("b")].is_success());
+    assert_eq!(
+        report.dialects,
+        BTreeSet::from([BulkDialect::Standard, BulkDialect::Gen3])
+    );
+    standard.assert();
+    gen3.assert();
+}
+
+#[tokio::test]
+async fn starter_kit_experimental_reply_is_not_interpreted() {
+    // Starter Kit DRS `1.3.0experimental` (develop 2b76a63) reads `selection`
+    // and reports failures in an `unresolved_drs_object` map.
+    let request = mock("POST", "/starter-kit/objects")
+        .match_body(Matcher::Json(json!({"bulk_object_ids":["a"]})))
+        .with_body(
+            json!({"summary":{"requested":0,"resolved":0,"unresolved":0},
+                "resolved_drs_object":[],"unresolved_drs_object":{"a":404}})
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let report = client("/starter-kit")
+        .get_bulk_objects(&["a".into()], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    let outcome = &report.outcomes[&key("a")];
+    assert!(outcome.failure_codes.is_empty());
+    assert!(
+        outcome.errors[0].contains("omitted"),
+        "{:?}",
+        outcome.errors
+    );
+    assert!(report.dialects.is_empty());
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.contains("unresolved_drs_object,")));
+    request.assert();
+
+    // Its bulk access reply is a bare array without object or access IDs.
+    let access = BulkKey {
+        object_id: "a".into(),
+        access_id: Some("x".into()),
+    };
+    let request = mock("POST", "/starter-kit-access/objects/access")
+        .with_body(json!([{"url":"https://store.example/a"}]).to_string())
+        .expect(1)
+        .create();
+    let report = client("/starter-kit-access")
+        .get_bulk_access_urls(
+            std::slice::from_ref(&access),
+            &[],
+            &BulkPolicy::default(),
+            &budget(),
+        )
+        .await
+        .unwrap();
+    assert!(report.outcomes[&access].resolved.is_empty());
+    assert!(report.outcomes[&access].errors[0].contains("must be an object"));
+    assert!(report.dialects.is_empty());
+    request.assert();
+}
+
+#[tokio::test]
+async fn gen3_field_is_read_only_for_object_lookups_with_an_array() {
+    let access = BulkKey {
+        object_id: "a".into(),
+        access_id: Some("x".into()),
+    };
+    let request = mock("POST", "/gen3-access/objects/access")
+        .with_body(
+            json!({"resolved_drs_objects":[
+                {"drs_object_id":"a","drs_access_id":"x","url":"https://store/a"}
+            ]})
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let report = client("/gen3-access")
+        .get_bulk_access_urls(
+            std::slice::from_ref(&access),
+            &[],
+            &BulkPolicy::default(),
+            &budget(),
+        )
+        .await
+        .unwrap();
+    assert!(report.outcomes[&access].resolved.is_empty());
+    assert!(report.outcomes[&access].errors[0].contains("omitted"));
+    assert!(report.dialects.is_empty());
+    request.assert();
+
+    let request = mock("POST", "/gen3-shape/objects")
+        .with_body(json!({"resolved_drs_objects":{"id":"a"}}).to_string())
+        .expect(1)
+        .create();
+    let report = client("/gen3-shape")
+        .get_bulk_objects(&["a".into()], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    assert!(report.dialects.is_empty());
+    assert!(report.diagnostics.iter().any(|d| d.contains("array")));
+    request.assert();
+
+    let request = mock("POST", "/gen3-null/objects")
+        .with_body(
+            json!({"resolved_drs_object":null,"resolved_drs_objects":[object("a")]}).to_string(),
+        )
+        .expect(1)
+        .create();
+    let report = client("/gen3-null")
+        .get_bulk_objects(&["a".into()], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    assert!(report.outcomes[&key("a")].is_success());
+    assert_eq!(report.dialects, BTreeSet::from([BulkDialect::Gen3]));
+    request.assert();
+}
+
+#[tokio::test]
+async fn raw_bulk_reports_keep_fields_unknown_to_the_models() {
+    let mut extended = object("a");
+    extended["extension"] = json!({"kept": true});
+    let objects = mock("POST", "/raw/objects")
+        .with_body(json!({"resolved_drs_object": [extended.clone()]}).to_string())
+        .expect(1)
+        .create();
+    let access = mock("POST", "/raw/objects/access")
+        .with_body(
+            json!({"resolved_drs_object_access_urls": [{
+                "drs_object_id": "a", "drs_access_id": "x",
+                "url": "https://store.example/a", "extension": 1
+            }]})
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let client = client("/raw");
+    let report = client
+        .get_bulk_objects_raw(&["a".into()], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    assert_eq!(report.outcomes[&key("a")].resolved, vec![extended]);
+    let pair = BulkKey {
+        object_id: "a".into(),
+        access_id: Some("x".into()),
+    };
+    let report = client
+        .get_bulk_access_urls_raw(
+            std::slice::from_ref(&pair),
+            &[],
+            &BulkPolicy::default(),
+            &budget(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.outcomes[&pair].resolved[0]["extension"], json!(1));
+    assert!(client
+        .get_bulk_access_urls_raw(&[key("a")], &[], &BulkPolicy::default(), &budget())
+        .await
+        .is_err());
+    objects.assert();
+    access.assert();
 }

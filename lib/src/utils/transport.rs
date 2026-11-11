@@ -298,7 +298,7 @@ fn is_dot_segment(segment: &str) -> bool {
     dots == 1 || dots == 2
 }
 
-// note: could implement custom certs handling, such as in-TEE generated ephemerial certs
+// note: could implement custom certs handling, such as in-TEE generated ephemeral certs
 #[derive(Clone)]
 pub struct Transport {
     pub config: Configuration,
@@ -368,8 +368,15 @@ impl Transport {
                 .deadline
                 .saturating_duration_since(tokio::time::Instant::now()),
         );
+        // The async body runs only when Operation::run polls the send future.
+        // A token/deadline check outside that future would leave a race where
+        // run rejects the operation before any attempt has begun.
+        let mut attempted = false;
         let result = operation
-            .run(async { response_text(request.send().await?, limits).await })
+            .run(async {
+                attempted = true;
+                response_text(request.send().await?, limits).await
+            })
             .await;
         match result {
             Ok(Ok(body)) => Ok(body),
@@ -377,9 +384,10 @@ impl Transport {
             Ok(Err(error)) => Err(Box::new(AmbiguousSubmissionError {
                 reason: error.to_string(),
             })),
-            Err(error) => Err(Box::new(AmbiguousSubmissionError {
+            Err(error) if attempted => Err(Box::new(AmbiguousSubmissionError {
                 reason: error.to_string(),
             })),
+            Err(error) => Err(Box::new(error)),
         }
     }
 
@@ -401,13 +409,18 @@ impl Transport {
             1
         };
         for attempt in 1..=attempts {
+            let mut attempted = false;
             let result = options
                 .operation
-                .run(self.request_response(method.clone(), endpoint, data.clone(), params.clone()))
+                .run(async {
+                    attempted = true;
+                    self.request_response(method.clone(), endpoint, data.clone(), params.clone())
+                        .await
+                })
                 .await;
             let response = match result {
                 Ok(Ok(response)) => response,
-                Err(error) if options.safety == ReplaySafety::NonReplayable => {
+                Err(error) if attempted && options.safety == ReplaySafety::NonReplayable => {
                     return Err(Box::new(AmbiguousSubmissionError {
                         reason: error.to_string(),
                     }))

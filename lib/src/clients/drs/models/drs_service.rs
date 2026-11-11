@@ -20,6 +20,10 @@ pub struct DrsService {
     pub max_bulk_request_length: i32,
     #[serde(rename = "type")]
     pub r#type: Box<models::DrsServiceType>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl DrsService {
@@ -27,6 +31,7 @@ impl DrsService {
         DrsService {
             max_bulk_request_length,
             r#type: Box::new(r#type),
+            extra: serde_json::Map::new(),
         }
     }
 }

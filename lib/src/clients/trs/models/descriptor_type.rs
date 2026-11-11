@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 /// DescriptorType : The type of descriptor that represents this version of the tool. Note that these files can also include associated Docker/container files  and test parameters that further describe a version of a tool.
 /// The type of descriptor that represents this version of the tool. Note that these files can also include associated Docker/container files  and test parameters that further describe a version of a tool.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum DescriptorType {
     #[serde(rename = "CWL")]
     Cwl,
@@ -27,6 +27,9 @@ pub enum DescriptorType {
     Galaxy,
     #[serde(rename = "SMK")]
     Smk,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
 }
 
 impl std::fmt::Display for DescriptorType {
@@ -37,6 +40,7 @@ impl std::fmt::Display for DescriptorType {
             Self::Nfl => write!(f, "NFL"),
             Self::Galaxy => write!(f, "GALAXY"),
             Self::Smk => write!(f, "SMK"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
         }
     }
 }

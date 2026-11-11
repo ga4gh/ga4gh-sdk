@@ -19,11 +19,18 @@ pub struct TesCreateTaskResponse {
     /// Task identifier assigned by the server.
     #[serde(rename = "id")]
     pub id: String,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesCreateTaskResponse {
     /// CreateTaskResponse describes a response from the CreateTask endpoint. It will include the task ID that can be used to look up the status of the job.
     pub fn new(id: String) -> TesCreateTaskResponse {
-        TesCreateTaskResponse { id }
+        TesCreateTaskResponse {
+            id,
+            extra: serde_json::Map::new(),
+        }
     }
 }

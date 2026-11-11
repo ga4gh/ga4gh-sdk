@@ -25,6 +25,8 @@
 pub mod drs;
 pub mod registry;
 pub mod tes;
+pub mod trs;
+pub mod wes;
 
 use clap::{ArgMatches, Command};
 use ga4gh_sdk::clients::ServiceType;
@@ -66,6 +68,8 @@ pub fn command() -> Command {
         .arg_required_else_help(true)
         .subcommand(drs::command())
         .subcommand(tes::command())
+        .subcommand(trs::command())
+        .subcommand(wes::command())
         .subcommand(registry::command())
 }
 
@@ -78,6 +82,8 @@ pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutp
     let service_type = match matches.subcommand() {
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
+        Some(("trs", _)) => ServiceType::TRS,
+        Some(("wes", _)) => ServiceType::WES,
         Some(("registry", _)) => ServiceType::REGISTRY,
         _ => return Ok(None),
     };
@@ -97,6 +103,8 @@ pub async fn dispatch_with_config(
     match matches.subcommand() {
         Some(("drs", sub)) => drs::run(sub, config).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
+        Some(("trs", sub)) => trs::run(sub, config).await.map(Some),
+        Some(("wes", sub)) => wes::run(sub, config).await.map(Some),
         Some(("registry", sub)) => registry::run(sub, config).await.map(Some),
         _ => Ok(None),
     }
@@ -112,6 +120,8 @@ pub async fn dispatch_to(
     let service_type = match matches.subcommand() {
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
+        Some(("trs", _)) => ServiceType::TRS,
+        Some(("wes", _)) => ServiceType::WES,
         Some(("registry", _)) => ServiceType::REGISTRY,
         _ => return Ok(None),
     };
@@ -127,12 +137,15 @@ pub async fn dispatch_with_config_to(
     stdout: &mut dyn std::io::Write,
     stderr: &mut dyn std::io::Write,
 ) -> anyhow::Result<Option<ExitCode>> {
-    if let Some(("tes", sub)) = matches.subcommand() {
+    if let Some((service @ ("tes" | "wes"), sub)) = matches.subcommand() {
         if let Some(("list", list)) = sub.subcommand() {
             if list.get_flag("all") {
-                return tes::export_all(list, config, stdout, stderr)
-                    .await
-                    .map(Some);
+                let exit_code = if service == "tes" {
+                    tes::export_all(list, config, stdout, stderr).await
+                } else {
+                    wes::export_all(list, config, stdout, stderr).await
+                };
+                return exit_code.map(Some);
             }
         }
     }

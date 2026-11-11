@@ -40,6 +40,10 @@ pub struct TesResources {
         skip_serializing_if = "Option::is_none"
     )]
     pub backend_parameters_strict: Option<bool>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesResources {
@@ -53,6 +57,7 @@ impl TesResources {
             zones: None,
             backend_parameters: None,
             backend_parameters_strict: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
