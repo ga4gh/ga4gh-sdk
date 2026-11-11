@@ -80,7 +80,7 @@ fn saved_plan_is_the_request_that_create_will_submit() {
     let mut with_unknown_version = saved;
     with_unknown_version["format_version"] = json!(2);
     assert!(RerunPlan::from_value(with_unknown_version).is_err());
-    assert!(serde_json::from_value::<Choices>(json!({"pipline":"qc"})).is_err());
+    assert!(serde_json::from_value::<Choices>(json!({"unsupported_choice":"qc"})).is_err());
 }
 
 #[test]
