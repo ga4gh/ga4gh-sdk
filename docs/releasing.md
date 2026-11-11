@@ -65,13 +65,26 @@ environments limited to `v*` tags. Both require approval by
 Two tag rulesets allow only those two users to create `v*` tags and prevent
 updates or deletion. Verify these protections before each release.
 
-Before the first tag, sign in to the `ga4gh` account on PyPI and add a pending
+For the demonstrator release, `pavelnikonorov` will temporarily own the
+`ga4gh-sdk` project on PyPI. Before the first tag, sign in to that PyPI account
+and add a pending
 [trusted publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
 for project `ga4gh-sdk`: GitHub owner `ga4gh`, repository `ga4gh-sdk`, workflow
-`release.yml`, environment `pypi`. On TestPyPI, sign in to its `ga4gh` account
-and add the same pending publisher with environment `testpypi`. A pending
+`release.yml`, environment `pypi`. The GitHub owner is the repository's
+organization, regardless of which PyPI account owns the project. If rehearsing
+the upstream release on TestPyPI, configure its pending publisher separately
+under the `pavelnikonorov` TestPyPI account, with environment `testpypi`.
+PyPI and TestPyPI have separate accounts and project ownership. A pending
 publisher does not reserve the project name; each index creates and assigns
 the project only after its first successful upload.
+
+After the demonstrator presentation, transfer each published project from
+`pavelnikonorov` to `ga4gh`: invite `ga4gh` as an **Owner** in the project's
+Collaborators settings, have that account accept, and verify that it can manage
+the project and its trusted publisher. Only then remove `pavelnikonorov` as an
+Owner if the team wants sole ownership under `ga4gh`. Repeat on TestPyPI if the
+upstream project was created there. The personal-account ownership remains
+temporary until the transfer is confirmed.
 
 ## Making a release
 
