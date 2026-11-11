@@ -12,8 +12,8 @@ license-file.workspace = true
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-serde = { version = "^1.0", features = ["derive"] }
-serde_derive = "^1.0"
+serde = { version = "^1.0.181", features = ["derive"] }
+serde_derive = "^1.0.181"
 serde_json = "^1.0"
 uuid = { version = "^1.0", features = ["serde", "v4"] }
 log = "0.4"

@@ -48,6 +48,10 @@ pub struct Tool {
     /// A list of versions for this tool.
     #[serde(rename = "versions")]
     pub versions: Vec<models::ToolVersion>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Tool {
@@ -71,6 +75,7 @@ impl Tool {
             has_checker: None,
             checker_url: None,
             versions,
+            extra: serde_json::Map::new(),
         }
     }
 }

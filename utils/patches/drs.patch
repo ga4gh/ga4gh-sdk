@@ -15,12 +15,12 @@ Hand edits of the DRS 1.4.0 models, applied by utils/build_models.sh.
 +    pub available: Option<bool>,
      #[serde(rename = "authorizations", skip_serializing_if = "Option::is_none")]
      pub authorizations: Option<Box<models::AccessMethodAuthorizations>>,
- }
-@@ -37,6 +40,7 @@
+     /// Fields that the spec doesn't define, kept as received, so that writing
+@@ -41,6 +44,7 @@
              access_url: None,
              access_id: None,
              region: None,
 +            available: None,
              authorizations: None,
+             extra: serde_json::Map::new(),
          }
-     }

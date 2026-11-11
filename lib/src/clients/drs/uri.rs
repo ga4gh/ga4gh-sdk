@@ -206,7 +206,7 @@ fn plan(
     }
     Ok(AccessPlan {
         object_id: id,
-        method: method.r#type,
+        method: method.r#type.clone(),
         region: method.region.clone(),
         url,
         headers,
@@ -269,6 +269,7 @@ impl DrsResolver {
             AccessUrl {
                 url: direct.url.clone(),
                 headers: direct.headers.clone(),
+                extra: direct.extra.clone(),
             }
         } else if let Some(access_id) = &method.access_id {
             match operation
@@ -311,6 +312,7 @@ impl DrsResolver {
             AccessUrl {
                 url: direct.url.clone(),
                 headers: direct.headers.clone(),
+                extra: direct.extra.clone(),
             }
         } else if let Some(access_id) = &method.access_id {
             client

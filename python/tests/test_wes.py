@@ -341,8 +341,8 @@ def test_get_rejects_empty_id(server, wes_config):
 @pytest.mark.parametrize(
     "call",
     [
-        lambda wes, transport: wes.get("bad"),
-        lambda wes, transport: Run("bad", transport).log(),
+        lambda wes, transport: wes.get("malformed"),
+        lambda wes, transport: Run("malformed", transport).log(),
         lambda wes, transport: Run("bad", transport).tasks(),
         lambda wes, transport: Run("bad", transport).task("t"),
     ],
@@ -352,9 +352,12 @@ def test_invalid_responses_raise_runtime_error(wes_config, call):
         call(WES(wes_config), Transport(wes_config))
 
 
-def test_unknown_run_state_raises_runtime_error(wes_config):
-    with pytest.raises(RuntimeError, match="run status"):
-        Run("bad", Transport(wes_config)).status()
+def test_unknown_run_state_reads_as_unknown(wes_config):
+    run = Run("bad", Transport(wes_config))
+    assert run.status() is WesState.UNKNOWN
+    log = run.log()
+    assert log.state is WesState.UNKNOWN
+    assert log.to_dict() == {"run_id": "bad", "state": "NOT_A_STATE"}
 
 
 def test_invalid_run_list_raises_runtime_error(server):

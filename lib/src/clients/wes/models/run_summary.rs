@@ -29,6 +29,10 @@ pub struct RunSummary {
     /// Arbitrary key/value tags added by the client during run creation
     #[serde(rename = "tags")]
     pub tags: std::collections::HashMap<String, String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl RunSummary {
@@ -40,6 +44,7 @@ impl RunSummary {
             start_time: None,
             end_time: None,
             tags,
+            extra: serde_json::Map::new(),
         }
     }
 }
