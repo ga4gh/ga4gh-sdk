@@ -15,12 +15,15 @@ use serde::{Deserialize, Serialize};
 
 /// TesFileType : Define if input/output element is a file or a directory. It is not required that the user provide this value, but it is required that the server fill in the value once the information is avalible at run time.
 /// Define if input/output element is a file or a directory. It is not required that the user provide this value, but it is required that the server fill in the value once the information is avalible at run time.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum TesFileType {
     #[serde(rename = "FILE")]
     File,
     #[serde(rename = "DIRECTORY")]
     Directory,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
 }
 
 impl std::fmt::Display for TesFileType {
@@ -28,6 +31,7 @@ impl std::fmt::Display for TesFileType {
         match self {
             Self::File => write!(f, "FILE"),
             Self::Directory => write!(f, "DIRECTORY"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
         }
     }
 }

@@ -34,6 +34,10 @@ pub struct TesTaskLog {
     /// System logs are any logs the system decides are relevant, which are not tied directly to an Executor process. Content is implementation specific: format, size, etc.  System logs may be collected here to provide convenient access.  For example, the system may include the name of the host where the task is executing, an error message that caused a SYSTEM_ERROR state (e.g. disk is full), etc.  System logs are only included in the FULL task view.
     #[serde(rename = "system_logs", skip_serializing_if = "Option::is_none")]
     pub system_logs: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesTaskLog {
@@ -49,6 +53,7 @@ impl TesTaskLog {
             end_time: None,
             outputs,
             system_logs: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

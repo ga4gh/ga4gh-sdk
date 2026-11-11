@@ -22,11 +22,19 @@ pub struct ServiceOrganization {
     /// URL of the website of the organization (RFC 3986 format)
     #[serde(rename = "url")]
     pub url: String,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ServiceOrganization {
     /// Organization providing the service
     pub fn new(name: String, url: String) -> ServiceOrganization {
-        ServiceOrganization { name, url }
+        ServiceOrganization {
+            name,
+            url,
+            extra: serde_json::Map::new(),
+        }
     }
 }
