@@ -337,10 +337,11 @@ All commands treat values from a service the same way:
   without such characters are printed unchanged.
 - `tes get`, `wes get`, `drs get` and `drs access` print the server's JSON as
   received. A response that isn't valid JSON is reported as an error on
-  stderr, with exit code 1. JSON strings can't hold raw C0 control characters
-  such as ESC, but they can hold other control and bidirectional formatting
-  characters, which these commands print as they are; pipe the output to
-  `jq -a .` to show them escaped.
+  stderr, with exit code 1. JSON can't hold raw control characters such as
+  ESC, except tabs, line breaks and carriage returns between values, but its
+  strings can hold other control and bidirectional formatting characters.
+  These commands print all of them as they are; pipe the output to `jq -a .`
+  to show it reformatted, with such characters escaped.
 - `tes list --all --format jsonl` and `wes list --all --format jsonl` write
   each record with JSON escapes, such as `\u001b`, which decode to the
   original value. `registry get` uses JSON escapes in the same way.
@@ -363,5 +364,7 @@ Built-in commands return stdout, stderr, and an exit code in `CommandOutput`,
 so the downstream binary can write or reformat their output; `stderr` and the
 text parts of `stdout` are already escaped as described above.
 `ga4gh_cli::printable()` escapes a value in the same way for a downstream
-binary's own text output. See the
+binary's own text output. SDK log messages can hold a service's response, so
+a downstream binary that writes logs should pass them through `printable()`
+too, as the `ga4gh-cli` binary does in [its logger setup](src/main.rs). See the
 [downstream CLI test](tests/downstream_cli.rs) for a working example.
