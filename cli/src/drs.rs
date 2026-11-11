@@ -48,11 +48,11 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     };
     match (name, access_id) {
         ("get", None) => match drs.get_object_raw(object_id).await {
-            Ok(object) => Ok(CommandOutput::success(object)),
+            Ok(object) => Ok(CommandOutput::json(object)),
             Err(error) => Ok(CommandOutput::failure(error)),
         },
         ("access", Some(access_id)) => match drs.get_access_url_raw(object_id, access_id).await {
-            Ok(access_url) => Ok(CommandOutput::success(access_url)),
+            Ok(access_url) => Ok(CommandOutput::json(access_url)),
             Err(error) => Ok(CommandOutput::failure(error)),
         },
         _ => anyhow::bail!("Unrecognized DRS command: {name}"),
