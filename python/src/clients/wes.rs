@@ -247,7 +247,8 @@ impl PyRunRequest {
         }
         // Unknown fields go as further form parts, but the SDK refuses one that would
         // add `workflow_attachment` parts; say so before the request, with the argument
-        // that takes files.
+        // that takes files. The SDK's other reserved parts (`RESERVED_PARTS`) are model
+        // fields and never reach `extra`; keep this check in step with that list.
         if request.extra.contains_key("workflow_attachment") {
             return Err(PyValueError::new_err(
                 "Invalid run request: workflow_attachment is not a request field; \

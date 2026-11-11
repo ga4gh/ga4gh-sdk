@@ -199,11 +199,13 @@ def test_run_from_request_object_and_other_mapping(server, wes_config):
 
 
 def test_run_sends_extension_fields_as_form_parts(server, wes_config):
-    request = {**RUN_REQUEST, "x_priority": "high", "x_limits": {"cpus": 2}}
+    request = {**RUN_REQUEST, "x_priority": "high", "x_limits": {"cpus": 2}, "x_retries": 3, "x_dry_run": True}
     WES(wes_config).run(request)
     fields = text_fields(server.last())
     assert fields["x_priority"] == "high"
     assert json.loads(fields["x_limits"]) == {"cpus": 2}
+    assert fields["x_retries"] == "3"
+    assert fields["x_dry_run"] == "true"
 
 
 def test_run_from_file_path(server, wes_config, tmp_path):
