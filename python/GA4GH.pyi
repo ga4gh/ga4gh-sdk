@@ -320,6 +320,8 @@ class RunRequest:
     """A WES run request: a workflow to run, with its parameters.
 
     Keeps the request's full JSON, including fields that the WES models don't know.
+    `WES.run()` sends those fields as further form parts: strings as they are, other
+    values as JSON.
     """
 
     def __init__(self, request: RunRequest | Mapping[str, Any] | str) -> None: ...
