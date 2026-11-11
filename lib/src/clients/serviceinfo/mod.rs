@@ -35,28 +35,44 @@ impl ServiceInfo {
         self.get_at("service-info").await
     }
 
-    /// Retrieves service information from a path relative to the configured API root.
+    /// Retrieves service information from a path relative to the configured API root,
+    /// within the `discovery` limit of the configuration's
+    /// [`Timeouts`](crate::utils::timeouts::Timeouts).
     pub async fn get_at(
         &self,
         endpoint: &str,
     ) -> Result<models::Service, Box<dyn std::error::Error>> {
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            self.transport.get(endpoint, None),
-        )
-        .await?;
-        match response {
-            Ok(response_body) => match serde_json::from_str::<models::Service>(&response_body) {
-                Ok(service) => Ok(service),
-                Err(e) => {
-                    log::error!("Failed to deserialize response. Error: {}", e);
-                    Err(e.into())
-                }
-            },
+        fetch(&self.transport, endpoint).await
+    }
+}
+
+/// Fetches service info from `endpoint` within the discovery timeout of the
+/// transport's configuration, which replaces its request timeout.
+pub(crate) async fn fetch_raw(
+    transport: &Transport,
+    endpoint: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    transport
+        .get_within(endpoint, transport.config.timeouts.discovery)
+        .await
+}
+
+/// Fetches and parses service info as [`fetch_raw`] does.
+pub(crate) async fn fetch(
+    transport: &Transport,
+    endpoint: &str,
+) -> Result<models::Service, Box<dyn std::error::Error>> {
+    match fetch_raw(transport, endpoint).await {
+        Ok(response_body) => match serde_json::from_str::<models::Service>(&response_body) {
+            Ok(service) => Ok(service),
             Err(e) => {
-                log::error!("Error getting response: {}", e);
-                Err(e)
+                log::error!("Failed to deserialize response. Error: {}", e);
+                Err(e.into())
             }
+        },
+        Err(e) => {
+            log::error!("Error getting response: {}", e);
+            Err(e)
         }
     }
 }

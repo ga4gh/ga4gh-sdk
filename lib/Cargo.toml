@@ -24,11 +24,15 @@ async-trait = "0.1.81"
 dirs = "5.0.1"
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 httpdate = "1"
-futures-util = "0.3"
 sha2 = "0.10"
+futures-util = "0.3"
 # Maintained fork of serde_yaml; keep the existing Rust import path.
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 percent-encoding = "2"
+
+num-bigint = { version = "0.4", optional = true }
+num-rational = { version = "0.4", optional = true }
+jsonschema = { version = "0.61", default-features = false, optional = true }
 
 [dependencies.reqwest]
 version = "^0.11"
@@ -45,5 +49,6 @@ name = "ga4gh_sdk"
 path = "src/lib.rs"
 
 [features]
+workflow-contracts = ["dep:jsonschema", "dep:num-bigint", "dep:num-rational"]
 integration_tests = []
 wes_docker_integration_tests = []

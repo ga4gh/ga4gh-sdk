@@ -472,3 +472,259 @@ fn malformed_creation_acknowledgements_fail_once_with_empty_stdout() {
         request.assert();
     }
 }
+
+/// A task ID from the server with a terminal sequence and a line break.
+const CONTROL_ID: &str = "t1\u{1b}[2K\nforged";
+/// `CONTROL_ID` as a path segment, as the SDK sends it.
+const CONTROL_ID_PATH: &str = "t1%1B%5B2K%0Aforged";
+
+/// Asserts that text output has no raw control or bidirectional characters.
+fn assert_escaped(text: &str) {
+    assert!(
+        !text
+            .chars()
+            .any(|c| (c.is_control() && c != '\n')
+                || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')),
+        "raw control character in {text:?}"
+    );
+}
+
+#[test]
+fn server_text_is_escaped_in_text_output() {
+    let prefix = "/escape";
+    let _service = service_info_mock("/escape/service-info");
+    let _create = mock("POST", "/escape/tasks")
+        .with_status(200)
+        .with_body(json!({"id": CONTROL_ID}).to_string())
+        .create();
+    let _list = mock("GET", Matcher::Regex(r"^/escape/tasks(\?.*)?$".into()))
+        .with_status(200)
+        .with_body(
+            json!({
+                "tasks": [{"id": CONTROL_ID, "state": "QUEUED"}],
+                "next_page_token": "n\u{202E}x",
+            })
+            .to_string(),
+        )
+        .create();
+    // Later requests use the original ID, not the escaped one.
+    let status = mock(
+        "GET",
+        format!("{prefix}/tasks/{CONTROL_ID_PATH}?view=MINIMAL").as_str(),
+    )
+    .with_status(200)
+    .with_body(json!({"id": CONTROL_ID, "state": "RUNNING"}).to_string())
+    .create();
+    let cancel = mock(
+        "POST",
+        format!("{prefix}/tasks/{CONTROL_ID_PATH}:cancel").as_str(),
+    )
+    .with_status(200)
+    .with_body(json!({"note": "ok\u{1b}[31m"}).to_string())
+    .create();
+    let _failure = mock("GET", "/escape/tasks/broken?view=FULL")
+        .with_status(500)
+        .with_body("down\u{1b}]0;title\u{7}")
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}{prefix}",
+        mockito::server_url()
+    )));
+    let task_file = home.path().join("task.json");
+
+    let created = home.run(&["tes", "create", task_file.to_str().unwrap()], None);
+    assert!(created.status.success(), "{}", stderr(&created));
+    assert_eq!(stdout(&created), "t1\\u{1b}[2K\\nforged\n");
+
+    let listed = home.run(&["tes", "list"], None);
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    let table = stdout(&listed);
+    assert_escaped(&table);
+    assert!(table.contains("t1\\u{1b}[2K\\nforged"), "{table}");
+    assert!(table.contains("Next page token: n\\u{202e}x\n"), "{table}");
+    // Header, one task and the token; the table ends with an empty line.
+    assert_eq!(
+        table.lines().filter(|line| !line.is_empty()).count(),
+        3,
+        "{table}"
+    );
+
+    let state = home.run(&["tes", "status", CONTROL_ID], None);
+    assert!(state.status.success(), "{}", stderr(&state));
+    assert_eq!(stdout(&state), "RUNNING\n");
+    status.assert();
+
+    let canceled = home.run(&["tes", "cancel", CONTROL_ID], None);
+    assert!(canceled.status.success(), "{}", stderr(&canceled));
+    assert_escaped(&stdout(&canceled));
+    assert_eq!(
+        stdout(&canceled),
+        "STATUS: Object {\"note\": String(\"ok\\u{1b}[31m\")}\n"
+    );
+    cancel.assert();
+
+    let failed = home.run(&["tes", "get", "broken", "FULL"], None);
+    assert_eq!(failed.status.code(), Some(1));
+    let message = stderr(&failed);
+    assert_escaped(&message);
+    assert!(message.contains("down\\u{1b}]0;title\\u{7}"), "{message}");
+}
+
+#[test]
+fn create_json_recovers_the_opaque_id_for_followup_requests() {
+    let _service = service_info_mock("/create-json/service-info");
+    let _create = mock("POST", "/create-json/tasks")
+        .with_status(200)
+        .with_body(json!({"id": CONTROL_ID}).to_string())
+        .create();
+    let status = mock(
+        "GET",
+        format!("/create-json/tasks/{CONTROL_ID_PATH}?view=MINIMAL").as_str(),
+    )
+    .with_status(200)
+    .with_body(json!({"id": CONTROL_ID, "state": "RUNNING"}).to_string())
+    .expect(1)
+    .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/create-json",
+        mockito::server_url()
+    )));
+
+    let created = home.run(
+        &[
+            "tes",
+            "create",
+            home.path().join("task.json").to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    assert!(created.status.success(), "{}", stderr(&created));
+    let create_json = stdout(&created);
+    assert!(!create_json.contains('\u{1b}'));
+    let id = serde_json::from_str::<Value>(&create_json).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(id, CONTROL_ID);
+    let state = home.run(&["tes", "status", &id], None);
+    assert!(state.status.success(), "{}", stderr(&state));
+    status.assert();
+}
+
+#[test]
+fn json_output_keeps_server_values() {
+    let _service = service_info_mock("/escape-json/service-info");
+    let task = json!({"id": CONTROL_ID, "state": "QUEUED", "name": "a\u{202E}b"});
+    let body = task.to_string();
+    let _get = mock(
+        "GET",
+        format!("/escape-json/tasks/{CONTROL_ID_PATH}?view=FULL").as_str(),
+    )
+    .with_status(200)
+    .with_body(&body)
+    .create();
+    let _list = mock("GET", "/escape-json/tasks")
+        .with_status(200)
+        .with_body(json!({"tasks": [task.clone()]}).to_string())
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/escape-json",
+        mockito::server_url()
+    )));
+
+    let got = home.run(&["tes", "get", CONTROL_ID, "FULL"], None);
+    assert!(got.status.success(), "{}", stderr(&got));
+    let got_json = stdout(&got);
+    assert!(!got_json.contains('\u{202e}'));
+    assert_eq!(serde_json::from_str::<Value>(&got_json).unwrap(), task);
+    assert_eq!(got_json.replace("\\u202e", "\u{202e}"), body);
+
+    let exported = home.run(&["tes", "list", "--all", "--format", "jsonl"], None);
+    assert!(exported.status.success(), "{}", stderr(&exported));
+    let record: Value = serde_json::from_str(stdout(&exported).trim()).unwrap();
+    assert_eq!(record["id"], CONTROL_ID);
+    assert_eq!(record["name"], "a\u{202E}b");
+}
+
+#[test]
+fn get_reports_a_body_that_is_not_json() {
+    let _service = service_info_mock("/escape-raw/service-info");
+    let _get = mock("GET", "/escape-raw/tasks/t1?view=FULL")
+        .with_status(200)
+        .with_body("\u{1b}]0;title\u{7}ok")
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/escape-raw",
+        mockito::server_url()
+    )));
+    let output = home.run(&["tes", "get", TASK_ID, "FULL"], None);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty(), "{}", stdout(&output));
+    let message = stderr(&output);
+    assert_escaped(&message);
+    assert!(message.contains("not valid JSON"), "{message}");
+}
+
+#[test]
+fn log_messages_are_escaped() {
+    let _service = mock("GET", "/escape-log/service-info")
+        .with_status(500)
+        .with_body("down\u{202E}x\nforged")
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/escape-log",
+        mockito::server_url()
+    )));
+    for log_level in LOG_LEVELS {
+        let output = home.run(&["tes", "list"], log_level);
+        assert_eq!(output.status.code(), Some(1), "{log_level:?}");
+        let message = stderr(&output);
+        assert_escaped(&message);
+        assert!(
+            !message.lines().any(|line| line.starts_with("forged")),
+            "{log_level:?}: {message}"
+        );
+        assert!(message.contains("down\\u{202e}x\\nforged"), "{message}");
+    }
+}
+
+#[test]
+fn undefined_states_read_as_unknown_except_in_get_and_jsonl() {
+    let _service = service_info_mock("/undefined-state/service-info");
+    let task = json!({"id": TASK_ID, "state": "SUSPENDED"});
+    let body = task.to_string();
+    let _task = mock("GET", "/undefined-state/tasks/t1")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body(&body)
+        .create();
+    let _list = mock("GET", "/undefined-state/tasks")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body(json!({"tasks": [task]}).to_string())
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/undefined-state",
+        mockito::server_url()
+    )));
+
+    let state = home.run(&["tes", "status", TASK_ID], None);
+    assert!(state.status.success(), "{}", stderr(&state));
+    assert_eq!(stdout(&state), "UNKNOWN\n");
+    let listed = home.run(&["tes", "list"], None);
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    let table = stdout(&listed);
+    assert!(
+        table.contains(&format!("{TASK_ID:<25} {:<15}\n", "Unknown")),
+        "{table}"
+    );
+    let got = home.run(&["tes", "get", TASK_ID, "FULL"], None);
+    assert!(got.status.success(), "{}", stderr(&got));
+    assert_eq!(stdout(&got), body);
+    let exported = home.run(&["tes", "list", "--all", "--format", "jsonl"], None);
+    assert!(exported.status.success(), "{}", stderr(&exported));
+    let record: Value = serde_json::from_str(stdout(&exported).trim()).unwrap();
+    assert_eq!(record["state"], "SUSPENDED");
+}
