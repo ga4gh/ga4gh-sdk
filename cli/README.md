@@ -118,6 +118,19 @@ ga4gh-cli tes create "$(cat examples/tes-hello.json)"
 cat examples/tes-hello.json | ga4gh-cli tes create -
 ```
 
+Whatever the source, the CLI sends the task as the JSON it parsed from the
+input, including fields that the SDK's TES model doesn't know, at the task
+level or nested, for example in an executor. Explicit `null`s are kept, and
+integers stay integers. Numbers are read as 64-bit integers or as
+double-precision floats, so an integer beyond that range or a decimal with
+more digits than a double holds is sent rounded. Whitespace and key order may
+differ from the input. Whether the service accepts or uses an additional field is up to
+the service; it may reject the task. Before contacting the service, the CLI
+checks the input: input that isn't valid JSON fails with `Failed to parse
+JSON`, and a task that doesn't match the TES model, such as an executor
+without `image`, fails with `Invalid TES task`. Both print the reason to
+stderr and exit with code 1 without sending a request.
+
 By default the command prints the new task ID as text. For scripts that must
 recover an opaque ID exactly, use `tes create --format json`: it prints
 `{"id":"..."}` with JSON escapes and does not need a subsequent list request.
