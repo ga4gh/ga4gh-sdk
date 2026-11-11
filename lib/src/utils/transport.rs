@@ -287,6 +287,9 @@ impl fmt::Debug for Transport {
 impl Transport {
     /// Creates a new `Transport` instance with the given configuration.
     ///
+    /// The HTTP client uses the `connect` and `request` limits of
+    /// `config.timeouts`; see [`Timeouts`](crate::utils::timeouts::Timeouts).
+    ///
     /// # Arguments
     ///
     /// * `config` - The configuration for the transport.
@@ -295,17 +298,23 @@ impl Transport {
     ///
     /// A new `Transport` instance.
     pub fn new(config: &Configuration) -> Self {
-        Transport {
-            config: config.clone(),
-            client: Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .expect("default HTTP client initialization failed"),
-        }
+        Self::build(config).expect("default HTTP client initialization failed")
+    }
+
+    // A client with the connect and request timeouts of `config.timeouts`.
+    fn build(config: &Configuration) -> reqwest::Result<Self> {
+        Client::builder()
+            .connect_timeout(config.timeouts.connect)
+            .timeout(config.timeouts.request)
+            .build()
+            .map(|client| Self::with_client(config, client))
     }
 
     /// Inject a configured client, for connection budgets, TLS and downstream use.
+    ///
+    /// The client's own connect and request timeouts apply, and
+    /// `config.timeouts.connect` and `request` are not used; the `discovery` and
+    /// `submission` limits still come from `config.timeouts`.
     pub fn with_client(config: &Configuration, client: Client) -> Self {
         Self {
             config: config.clone(),
@@ -313,16 +322,33 @@ impl Transport {
         }
     }
 
+    /// Creates a transport with these connect and request timeouts in place of
+    /// those of `config.timeouts`, and records them there.
     pub fn with_timeouts(
         config: &Configuration,
         connect: std::time::Duration,
         request: std::time::Duration,
     ) -> reqwest::Result<Self> {
-        Client::builder()
-            .connect_timeout(connect)
-            .timeout(request)
-            .build()
-            .map(|client| Self::with_client(config, client))
+        let mut config = config.clone();
+        config.timeouts.connect = connect;
+        config.timeouts.request = request;
+        Self::build(&config)
+    }
+
+    /// Sends a GET request within `timeout`, in place of the request timeout,
+    /// including reading the response. The connect timeout still applies.
+    pub(crate) async fn get_within(
+        &self,
+        endpoint: &str,
+        timeout: std::time::Duration,
+    ) -> Result<String, Box<dyn Error>> {
+        let request = self
+            .request_builder(reqwest::Method::GET, endpoint)?
+            .timeout(timeout);
+        let operation = crate::utils::operation::Operation::new(timeout);
+        operation
+            .run(async { response_text(request.send().await?, BodyLimits::default()).await })
+            .await?
     }
 
     /// Sends exactly once under an absolute operation budget, including body I/O.

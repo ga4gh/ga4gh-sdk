@@ -237,7 +237,8 @@ async fn discover(
     artifact: &str,
     max_age: Duration,
 ) -> Result<(Service, CapabilitySnapshot), Box<dyn Error>> {
-    let raw: Value = serde_json::from_str(&transport.get("service-info", None).await?)?;
+    let raw: Value =
+        serde_json::from_str(&super::serviceinfo::fetch_raw(transport, "service-info").await?)?;
     let service: Service = if artifact == "wes" {
         super::wes::service_from_info(raw.clone())?
     } else {
@@ -262,15 +263,25 @@ fn ensure_strict(diagnostics: &[Diagnostic], strict: bool) -> Result<(), Box<dyn
     Ok(())
 }
 impl TES {
+    /// Creates a client and a capability snapshot from one service-info
+    /// request, within the `discovery` limit of `config.timeouts`.
     pub async fn discover(
         config: &Configuration,
         max_age: Duration,
     ) -> Result<Discovered<Self>, Box<dyn Error>> {
-        let transport = Transport::new(config);
+        Self::discover_with_transport(Transport::new(config), max_age).await
+    }
+
+    /// Like [`Self::discover`], with a ready `transport`, for example one from
+    /// [`Transport::with_client`]. The client's configuration is the transport's.
+    pub async fn discover_with_transport(
+        transport: Transport,
+        max_age: Duration,
+    ) -> Result<Discovered<Self>, Box<dyn Error>> {
         let (service, capabilities) = discover(&transport, "tes", max_age).await?;
         Ok(Discovered {
             client: Self {
-                config: config.clone(),
+                config: transport.config.clone(),
                 transport,
                 service: Ok(service),
             },
@@ -279,15 +290,25 @@ impl TES {
     }
 }
 impl WES {
+    /// Creates a client and a capability snapshot from one service-info
+    /// request, within the `discovery` limit of `config.timeouts`.
     pub async fn discover(
         config: &Configuration,
         max_age: Duration,
     ) -> Result<Discovered<Self>, Box<dyn Error>> {
-        let transport = Transport::new(config);
+        Self::discover_with_transport(Transport::new(config), max_age).await
+    }
+
+    /// Like [`Self::discover`], with a ready `transport`, for example one from
+    /// [`Transport::with_client`]. The client's configuration is the transport's.
+    pub async fn discover_with_transport(
+        transport: Transport,
+        max_age: Duration,
+    ) -> Result<Discovered<Self>, Box<dyn Error>> {
         let (service, capabilities) = discover(&transport, "wes", max_age).await?;
         Ok(Discovered {
             client: Self {
-                config: config.clone(),
+                config: transport.config.clone(),
                 transport,
                 service: Ok(service),
             },

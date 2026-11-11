@@ -34,7 +34,8 @@ are errors rather than being ignored.
         "base_path": "http://localhost:8000/ga4gh/tes/v1"
     },
     "WES": {
-        "base_path": "https://wes.example.org/ga4gh/wes/v1"
+        "base_path": "https://wes.example.org/ga4gh/wes/v1",
+        "timeouts": {"discovery": 30, "submission": 600}
     },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
@@ -55,6 +56,16 @@ must add the deployed service prefix, such as `/ga4gh/tes/v1`,
 `/ga4gh/wes/v1` or `/ga4gh/drs/v1` in the example above. A service behind a
 gateway keeps its whole prefix, for example
 `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+
+`timeouts` sets time limits in seconds for the commands of that section:
+`connect` (default 10), `request` (default 60), `discovery` (the service-info
+check, default 10) and `submission` (`tes create` and `wes run`, including
+uploads, default 300). A submission is sent once; if it runs out of time
+after its request started, the error says that it may have been accepted, so look
+for the task or run before you submit it again. The
+[usage guide](../docs/usage.md#timeouts) has the details. Downstream binaries
+that call `dispatch_with_config()` set them with
+`Configuration::with_timeouts`.
 
 ### Authentication
 
