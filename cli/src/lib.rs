@@ -24,8 +24,12 @@
 
 pub mod drs;
 pub mod registry;
+mod render;
 pub mod tes;
+pub mod trs;
 pub mod wes;
+
+pub use render::printable;
 
 use clap::{ArgMatches, Command};
 use ga4gh_sdk::clients::ServiceType;
@@ -48,12 +52,43 @@ impl CommandOutput {
         }
     }
 
+    /// Error messages can hold a service's response body, so they are always
+    /// shown with [`render::printable`].
     fn failure(message: impl std::fmt::Display) -> Self {
         Self {
             stdout: String::new(),
-            stderr: format!("{message}\n"),
+            stderr: format!("{}\n", render::printable(&message.to_string())),
             exit_code: ExitCode::FAILURE,
         }
+    }
+
+    /// Preserves the JSON value while escaping terminal controls inside its
+    /// strings. A body that is not JSON is reported as a failure.
+    fn json(body: String) -> Self {
+        // Validate syntax without materialising a Value: a valid extension
+        // may contain deeply nested fields or numbers outside f64's range.
+        match serde_json::from_str::<serde::de::IgnoredAny>(&body) {
+            Ok(_) => Self::success(render::json_printable(&body)),
+            Err(error) => Self::failure(format!("The response is not valid JSON: {error}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::CommandOutput;
+
+    #[test]
+    fn valid_large_numbers_and_deep_extensions_are_preserved() {
+        let nested = format!("{}0{}", "[".repeat(150), "]".repeat(150));
+        let body = format!("{{\"large\":1e400,\"nested\":{nested}}}");
+        let output = CommandOutput::json(body.clone());
+        assert!(output.stderr.is_empty(), "{}", output.stderr);
+        assert_eq!(output.stdout, body);
+
+        let invalid = CommandOutput::json(format!("{body} forged"));
+        assert!(invalid.stdout.is_empty());
+        assert!(invalid.stderr.contains("not valid JSON"));
     }
 }
 
@@ -67,6 +102,7 @@ pub fn command() -> Command {
         .arg_required_else_help(true)
         .subcommand(drs::command())
         .subcommand(tes::command())
+        .subcommand(trs::command())
         .subcommand(wes::command())
         .subcommand(registry::command())
 }
@@ -80,6 +116,7 @@ pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutp
     let service_type = match matches.subcommand() {
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
+        Some(("trs", _)) => ServiceType::TRS,
         Some(("wes", _)) => ServiceType::WES,
         Some(("registry", _)) => ServiceType::REGISTRY,
         _ => return Ok(None),
@@ -100,6 +137,7 @@ pub async fn dispatch_with_config(
     match matches.subcommand() {
         Some(("drs", sub)) => drs::run(sub, config).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
+        Some(("trs", sub)) => trs::run(sub, config).await.map(Some),
         Some(("wes", sub)) => wes::run(sub, config).await.map(Some),
         Some(("registry", sub)) => registry::run(sub, config).await.map(Some),
         _ => Ok(None),
@@ -116,6 +154,7 @@ pub async fn dispatch_to(
     let service_type = match matches.subcommand() {
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
+        Some(("trs", _)) => ServiceType::TRS,
         Some(("wes", _)) => ServiceType::WES,
         Some(("registry", _)) => ServiceType::REGISTRY,
         _ => return Ok(None),

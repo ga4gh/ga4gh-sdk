@@ -15,6 +15,9 @@ fn plain(descriptor_type: DescriptorType) -> DescriptorTypeWithPlain {
         DescriptorType::Nfl => DescriptorTypeWithPlain::PlainNfl,
         DescriptorType::Galaxy => DescriptorTypeWithPlain::PlainGalaxy,
         DescriptorType::Smk => DescriptorTypeWithPlain::PlainSmk,
+        DescriptorType::Unrecognized(value) => {
+            DescriptorTypeWithPlain::Unrecognized(format!("PLAIN_{value}"))
+        }
     }
 }
 
@@ -40,7 +43,7 @@ async fn test_workflowhub_lists_tools_and_fetches_a_descriptor() {
         .iter()
         .find_map(|tool| {
             tool.versions.iter().find_map(|version| {
-                let descriptor_type = *version.descriptor_type.as_ref()?.first()?;
+                let descriptor_type = version.descriptor_type.as_ref()?.first()?.clone();
                 Some((tool, version, descriptor_type))
             })
         })

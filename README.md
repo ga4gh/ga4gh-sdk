@@ -34,6 +34,10 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
+As for `TES`, the error type of `DRS::service` is now
+`Box<dyn Error + Send + Sync>`, so a `DRS` client can move between threads;
+`DRS::new` stores only a successful service-info response.
+
 The WES models follow WES 1.1.0 and use the schema names of the spec:
 `WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
 `State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
@@ -43,6 +47,30 @@ items are `RunListResponseRunsInner` and deprecated task log items are
 `RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
 endpoints. As for `TES`, the error type of `WES::service` is now
 `Box<dyn Error + Send + Sync>`, so a `WES` client can move between threads.
+
+All models now keep what their spec doesn't define (see
+[Models](docs/usage.md#models)). This breaks some code:
+
+- Model structs have a new public field, `extra`. Struct literals of models
+  must set it or end with `..Default::default()`; prefer the models' `new`
+  functions.
+- Enums have a new variant, `Unrecognized(String)`, and are no longer `Copy`.
+  `match` statements need an arm for it, and code that copies an enum value
+  must `.clone()` it. `TesState` and the WES `State` are not affected: they
+  stay `Copy` and read unknown states as `Unknown`, which is now their last
+  variant (this changes their `Ord` order). They write such states back as
+  `UNKNOWN`.
+- Model enums of a single property, such as the DRS `access_method::Type`,
+  now implement `Display`.
+- `extra` keys with the name of a field of the model are sent twice in the
+  JSON; only WES `run_workflow` rejects them.
+- Unknown fields are no longer dropped: serializing a model, or
+  `ga4gh-cli registry get`, now includes the fields that the server added.
+- WES `run_workflow` sends `RunRequest.extra` as further form parts; names of
+  the request's own parts are an error.
+- TRS methods that take a descriptor type encode it as a path segment and
+  reject `Unrecognized` values that are empty, `.` or `..`.
+- `TesTask::new(executors)` now sets `executors`; it used to ignore them.
 
 ## Installation
 
@@ -106,6 +134,10 @@ task_id=$(ga4gh-cli tes create examples/tes-hello.json)
 ga4gh-cli tes status "$task_id"
 ga4gh-cli tes list
 ```
+
+For scripts that need to preserve arbitrary server-provided IDs, use
+`ga4gh-cli tes create examples/tes-hello.json --format json` and parse its
+`id` field. The text output above is intended for ordinary IDs.
 
 Docker may download the Alpine image on the first run.
 
@@ -179,6 +211,30 @@ receive fabricated per-access attribution. A 202 retains pending keys and delay;
 resume through the same bulk API with caller-supplied credentials/Passports.
 There is no singular or anonymous fallback. Compatibility is verified against
 protocol fixtures, without a claim of broad real-service interoperability.
+
+Bulk requests always use the published DRS 1.4/1.5 shape. For object lookups,
+the SDK also reads one documented Gen3 (indexd) reply difference: resolved
+objects in `resolved_drs_objects` instead of `resolved_drs_object`.
+`BulkReport::dialects` lists the shapes (`Standard`, `Gen3`) seen in a call's
+replies, merged over all chunks. If a reply has both arrays, the standard one
+wins and a diagnostic is added; a `null` array counts as absent.
+Gen3 objects can carry `created_time: null`, which the typed `DrsObject` cannot
+represent. `get_bulk_objects` reports such an entry as an error in its outcome
+and never invents a timestamp; `get_bulk_objects_raw` returns each requested
+resolved entry as JSON, correlated by `id`. Single-object `get_object` has the
+same limit for these objects; use `get_object_raw`. The Gen3 bulk access reply
+is not read in another shape, because it was not verified without credentials.
+Checked against CanineDC on 2026-11-10; see the [opt-in live check](tests/README.md#gen3-drs-caninedc).
+
+The GA4GH Starter Kit DRS bulk routes (`1.3.0experimental`) are not supported.
+In its [`develop` branch at `2b76a63`](https://github.com/ga4gh/ga4gh-starter-kit-drs/blob/2b76a635161daa5bfbed669a9e2755fed31503cd/src/main/java/org/ga4gh/starterkit/drs/controller/Objects.java)
+(read on 2026-11-10, not run), they expect `selection` instead of
+`bulk_object_ids`, report failures in an `unresolved_drs_object` map, and
+return bulk access URLs as a bare array without object or access IDs, which
+cannot be correlated safely. The SDK sends only standard requests. In a reply,
+it ignores the `unresolved_drs_object` map, adds a diagnostic and records no
+dialect. Because the Starter Kit does not read `bulk_object_ids`, its resolved
+array stays empty and the requested IDs are reported as omitted.
 
 ## Service composition
 
@@ -305,8 +361,8 @@ The basic `list_tools` method returns a page without headers. Use
 `clients::trs::responses` with the client's transport for server-provided paging
 URLs and opaque `format=zip` downloads (see the advanced transport API above).
 Authentication isn't supported yet: the SDK's transport doesn't send
-the configured tokens, so only public registries and tools work. The CLI has
-no TRS commands yet.
+the configured tokens, so only public registries and tools work. The CLI's
+`trs` commands use this client; see the [CLI README](cli/README.md#trs-examples).
 
 ## Testing
 Unit tests run by default. Integration suites are opt-in.
@@ -339,6 +395,8 @@ the form of bug reports, feature requests, discussions, ideas, fixes, or other
 code changes. Please read [these guidelines][contributing] if you want to
 contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
+
+For local checks, coverage, and hooks, see the [development guide](docs/development.md).
 
 ## License
 

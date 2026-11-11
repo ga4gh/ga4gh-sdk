@@ -52,6 +52,10 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+`make check` runs these four checks, with `--locked`. See
+[the development guide](docs/development.md) for the other `make` targets,
+the pre-commit hooks, coverage, lints, and the CI jobs.
+
 `cargo test --workspace` runs the default unit and documentation tests.
 Integration suites are opt-in. Stable rustfmt also formats the generated models.
 Some default tests start mock HTTP servers on loopback, so the test environment
