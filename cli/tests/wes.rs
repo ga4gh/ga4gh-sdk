@@ -165,6 +165,43 @@ fn run_submits_a_multipart_request_and_prints_the_run_id() {
 }
 
 #[test]
+fn run_json_recovers_the_opaque_id_for_followup_requests() {
+    let prefix = "/run-json/ga4gh/wes/v1";
+    let _service = service_info(prefix);
+    let run_id = "r1\u{1b}[2K\nforged";
+    let submit = mock("POST", format!("{prefix}/runs").as_str())
+        .with_status(200)
+        .with_body(json!({"run_id": run_id}).to_string())
+        .expect(1)
+        .create();
+    let status = mock(
+        "GET",
+        format!("{prefix}/runs/r1%1B%5B2K%0Aforged/status").as_str(),
+    )
+    .with_status(200)
+    .with_body(json!({"run_id": run_id, "state": "RUNNING"}).to_string())
+    .expect(1)
+    .create();
+    let home = home_with_wes_config(prefix);
+    let mut args = RUN_ARGS.to_vec();
+    args.extend(["v1.2", "--format", "json"]);
+    let output = run(&home, &args);
+    assert_success(&output);
+    let rendered = stdout(&output);
+    assert!(!rendered.contains('\u{1b}'));
+    let id = serde_json::from_str::<Value>(&rendered).unwrap()["run_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(id, run_id);
+    let state = run(&home, &["wes", "status", &id]);
+    assert_success(&state);
+    assert_eq!(stdout(&state), "RUNNING\n");
+    submit.assert();
+    status.assert();
+}
+
+#[test]
 fn run_reads_params_inline_from_stdin_or_defaults_to_an_empty_object() {
     let prefix = "/params/ga4gh/wes/v1";
     let _service = service_info(prefix);

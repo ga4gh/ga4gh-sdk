@@ -149,7 +149,7 @@ def test_query_parameters_are_encoded_and_appended(server, config):
     transport = Transport(config)
     transport.get("tasks/task-1?view=MINIMAL", {"name": "a b&c=d"})
     assert server.last()["query"] == {"view": ["MINIMAL"], "name": ["a b&c=d"]}
-    transport.get("tasks/task-1?", {"view": "BASIC", "skip": [None]})
+    transport.get("tasks/task-1?", {"view": "BASIC", "skip": None, "empty": []})
     assert server.last()["query"] == {"view": ["BASIC"]}
     transport.get("tasks/task-1#top", {"view": "FULL"})
     assert server.last()["query"] == {"view": ["FULL"]}
@@ -157,7 +157,9 @@ def test_query_parameters_are_encoded_and_appended(server, config):
     assert server.last()["query"] == {}
 
 
-@pytest.mark.parametrize("params", ['["a"]', {"nested": {"a": 1}}, {"list": [{"a": 1}]}])
+@pytest.mark.parametrize(
+    "params", ['["a"]', {"nested": {"a": 1}}, {"list": [{"a": 1}]}, {"list": ["a", None]}]
+)
 def test_invalid_query_parameters(config, params):
     with pytest.raises(ValueError, match="params"):
         Transport(config).get("tasks", params)
