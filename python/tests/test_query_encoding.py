@@ -36,26 +36,24 @@ def test_transport_sends_shared_cases(
     assert server.last()["raw_query"] == query
 
 
-def test_transport_skips_null_list_items(server: MockServer, config: Configuration) -> None:
-    """`Transport.get()` leaves out `None` items of a list."""
-    Transport(config).get("tasks", {"tag_value": ["x", None, "y"]})
-    assert server.last()["raw_query"] == "tag_value=x&tag_value=y"
-
-
 @pytest.mark.parametrize(
     "params",
     [
         pytest.param({"filter": {"a": 1}}, id="object"),
         pytest.param({"k": [["a"]]}, id="nested-list"),
         pytest.param({"k": [{"a": 1}]}, id="object-item"),
+        pytest.param({"k": ["x", None, "y"]}, id="null-item"),
     ],
 )
 def test_transport_rejects_unsupported_values_before_sending(
     server: MockServer, config: Configuration, params: dict
 ) -> None:
-    """`Transport.get()` raises `ValueError` and sends nothing for other values."""
+    """`Transport.get()` raises `ValueError` and sends nothing for other values.
+
+    A `None` item is an error too: TES pairs `tag_key` and `tag_value` items by position.
+    """
     before = len(server.paths())
-    with pytest.raises(ValueError, match="'(filter|k)'"):
+    with pytest.raises(ValueError, match="^Invalid params: query parameter '(filter|k)' must be"):
         Transport(config).get("tasks", params)
     assert len(server.paths()) == before
 

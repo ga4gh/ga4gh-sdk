@@ -155,7 +155,9 @@ pub async fn get_task(tes: &TES, view: TesView, id: &str) -> Result<PyTesTask, S
 
 /// The endpoint that lists tasks with `params`.
 pub fn list_endpoint(params: Option<PyListTasksParams>) -> PyResult<String> {
-    // Not `TES::list_tasks`: reqwest's query encoder cannot repeat tag lists.
+    // Not `TES::list_tasks`: `ListTasksResponse` keeps the full response JSON.
+    // `with_query` encodes repeated tags as `TES::list_tasks` does, with the
+    // policy in `ga4gh_sdk::utils::query`.
     let params = params
         .map(|params| serde_json::to_value(params.inner))
         .transpose()

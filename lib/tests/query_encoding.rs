@@ -42,12 +42,13 @@ fn shared_cases() -> Vec<(&'static str, Value, &'static str)> {
     ]
 }
 
-/// Values outside the shared policy: lists with `null`, objects and nested lists.
+/// Values outside the shared policy: objects, nested lists and lists with `null`.
 fn unsupported_cases() -> Vec<(&'static str, Value)> {
     vec![
         ("null-item", json!({"tag_value": ["x", null, "y"]})),
         ("object", json!({"filter": {"a": 1}})),
         ("nested-list", json!({"k": [["a"]]})),
+        ("object-item", json!({"k": [{"a": 1}]})),
     ]
 }
 
@@ -83,6 +84,10 @@ async fn transport_rejects_unsupported_values_before_sending() {
             .downcast_ref::<std::io::Error>()
             .unwrap_or_else(|| panic!("{name}: {error}"));
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{name}");
+        assert!(
+            error.to_string().starts_with("query parameter '"),
+            "{name}: {error}"
+        );
         request.assert();
     }
 }
@@ -132,19 +137,16 @@ async fn pager_encodes_its_token_like_other_parameters() {
 }
 
 #[tokio::test]
-async fn pager_encodes_unsupported_values_its_own_way() {
-    let expected = [
-        ("null-item", "tag_value=x&tag_value=y"),
-        ("object", "filter=%7B%22a%22%3A1%7D"),
-        ("nested-list", "k=%5B%22a%22%5D"),
-    ];
-    for ((name, params), (_, query)) in unsupported_cases().into_iter().zip(expected) {
+async fn pager_rejects_unsupported_values_before_sending() {
+    for (name, params) in unsupported_cases() {
         let request = mock("GET", format!("/qpu-{name}/tasks").as_str())
-            .match_query(Matcher::Exact(query.to_owned()))
-            .with_body(r#"{"tasks":[]}"#)
-            .expect(1)
+            .match_query(Matcher::Any)
+            .expect(0)
             .create();
-        first_page(&format!("/qpu-{name}"), params).await.unwrap();
+        let error = first_page(&format!("/qpu-{name}"), params)
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("query parameter '"), "{name}: {error}");
         request.assert();
     }
 }
