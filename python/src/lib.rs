@@ -1,4 +1,3 @@
-#![allow(non_snake_case)] // allow the Python module to be named as GA4GH instead of ga4gh; should be the first line.
 //! This module provides Python bindings for the GA4GH SDK using PyO3.
 //! It exposes several key structs and their methods to Python, allowing for interaction with GA4GH services.
 //!
@@ -28,7 +27,7 @@
 //! # Example
 //!
 //! ```python
-//! from GA4GH import Configuration, ListTasksParams, TES, TesState, Transport
+//! from ga4gh_sdk import Configuration, ListTasksParams, TES, TesState, Transport
 //!
 //! config = Configuration("http://localhost:8000/ga4gh/tes/v1")
 //! tes = TES(config)
@@ -48,7 +47,7 @@
 //!   async classes run their requests on the same runtime.
 //! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`.
 
-use ga4gh_sdk::clients::ServiceType;
+use ::ga4gh_sdk::clients::ServiceType;
 use pyo3::prelude::*;
 
 pub mod clients;
@@ -63,7 +62,7 @@ use crate::utils::transport::PyTransport;
 
 /// A built-in section of the configuration file, for `Configuration.from_file()`.
 /// Other sections are named by a `str`.
-#[pyclass(name = "ServiceType", module = "GA4GH", eq, eq_int)]
+#[pyclass(name = "ServiceType", module = "ga4gh_sdk", eq, eq_int)]
 #[derive(Clone, PartialEq, Eq)]
 pub enum PyServiceType {
     TES,
@@ -119,7 +118,7 @@ impl From<ServiceSection> for ServiceType {
 }
 
 #[pymodule]
-fn GA4GH(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn ga4gh_sdk(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyServiceType>()?;
     m.add_class::<PyConfiguration>()?;
     m.add_class::<PyServiceInfo>()?;

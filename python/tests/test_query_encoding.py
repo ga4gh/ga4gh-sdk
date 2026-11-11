@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from GA4GH import AsyncTES, Configuration, ListTasksParams, TES, Transport, WES
+from ga4gh_sdk import AsyncTES, Configuration, ListTasksParams, TES, Transport, WES
 
 from .conftest import MockServer
 

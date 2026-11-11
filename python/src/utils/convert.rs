@@ -67,12 +67,12 @@ pub fn os_error(py: Python<'_>, error: std::io::Error, path: &Path) -> PyErr {
 
 /// Defines a Python class, such as a `str` enum, from Python source.
 ///
-/// The source runs in a namespace of its own whose `__name__` is `GA4GH`.
+/// The source runs in a namespace of its own whose `__name__` is `ga4gh_sdk`.
 /// `PyModule::from_code_bound` would register a module in `sys.modules` and, under the
-/// name `GA4GH`, overwrite the package's attributes.
+/// name `ga4gh_sdk`, overwrite the package's attributes.
 pub fn define_class(py: Python<'_>, source: &str, name: &str) -> PyResult<Py<PyType>> {
     let namespace = PyDict::new_bound(py);
-    namespace.set_item("__name__", "GA4GH")?;
+    namespace.set_item("__name__", "ga4gh_sdk")?;
     py.run_bound(source, Some(&namespace), None)?;
     Ok(namespace
         .get_item(name)?
