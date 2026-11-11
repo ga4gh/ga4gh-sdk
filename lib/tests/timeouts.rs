@@ -26,6 +26,7 @@ use tokio::{
 const SHORT: Duration = Duration::from_millis(150);
 const DELAY: Duration = Duration::from_millis(600);
 const LONG: Duration = Duration::from_secs(5);
+const NATIVE_WES_INFO: &str = r#"{"version":"9.3.0","workflow_type_versions":{"CWL":{"workflow_type_version":["v1.2"]}},"supported_wes_versions":["1.0.0"],"supported_filesystem_protocols":["file"],"workflow_engine_versions":{"toil":"9.3.0"},"default_workflow_engine_parameters":[],"system_state_counts":{},"tags":{}}"#;
 
 /// How the test server answers one request.
 #[derive(Clone, Copy)]
@@ -246,6 +247,34 @@ async fn a_longer_discovery_timeout_overrides_a_shorter_request_timeout() {
             result.unwrap_or_else(|error| panic!("{name}: {error}"));
         }
     }
+}
+
+#[tokio::test]
+async fn native_wes_service_info_uses_discovery_timeout_and_ready_transport() {
+    let server = serve(vec![(
+        "/service-info",
+        Reply::After(DELAY, NATIVE_WES_INFO),
+    )])
+    .await;
+    let config = config(
+        &server.url,
+        Timeouts {
+            request: SHORT,
+            discovery: LONG,
+            ..Default::default()
+        },
+    );
+
+    let wes = WES::new(&config).await.unwrap();
+    assert_eq!(wes.service.as_ref().unwrap().r#type.version, "1.0.0");
+
+    let discovered = WES::discover(&config, LONG).await.unwrap();
+    assert_eq!(discovered.capabilities.raw["version"], "9.3.0");
+
+    let transport = Transport::with_client(&config, ga4gh_sdk::reqwest::Client::new());
+    let wes = WES::from_transport(transport).await.unwrap();
+    assert_eq!(wes.service.as_ref().unwrap().r#type.version, "1.0.0");
+    assert_eq!(server.requests.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]

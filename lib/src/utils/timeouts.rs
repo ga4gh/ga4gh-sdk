@@ -5,8 +5,9 @@
 //! TES, WES, DRS and TRS clients read it from there. `connect` limits opening each
 //! connection. Each request then has one of these limits:
 //!
-//! - service-info requests of `new`, `with_transport`, `discover`, `refresh` and
-//!   `TRS::service_info`: `discovery`, in place of `request`;
+//! - service-info requests of `new`, `with_transport`, `WES::from_transport`,
+//!   `discover`, `refresh` and `TRS::service_info`: `discovery`, in place of
+//!   `request`;
 //! - task and run submissions of `TES::create`, `TES::create_value`,
 //!   `WES::run_workflow` and `WES::run_workflow_with_attachments`: `submission`,
 //!   in place of `request`;

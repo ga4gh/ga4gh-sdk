@@ -89,11 +89,13 @@ with `config.from_file("MY_SERVICE")`. `Configuration::from_path(path, "TES")`
 reads a section from another file. Files written for earlier versions read as
 before; their `extra` is empty.
 
-The SDK reads `basic_auth` and `oauth_access_token` but **doesn't send them
-yet**: requests carry no `Authorization` header (see
-[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). Until that changes, the
-SDK and the CLI work only with services that allow anonymous access, or behind
-a proxy that adds credentials.
+Default SDK clients and CLI service commands read `basic_auth` and
+`oauth_access_token` but **do not send them yet** (see
+[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). They need an anonymous
+service or an authenticating proxy. The experimental `workflow submit` CLI
+command sends a configured OAuth bearer token; Rust callers can also supply an
+authenticated client through `WES::from_transport()`. Cross-surface consistency
+is tracked in [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
@@ -118,7 +120,7 @@ Rust clients, the CLI and the Python bindings read them from there:
 | --- | --- | --- |
 | `connect` | 10 s | Opening each connection, including TLS, within any of the limits below. |
 | `request` | 60 s | Each request that none of the limits below applies to, from sending it to reading the whole response. |
-| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`. |
+| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`. |
 | `submission` | 300 s | One TES task or WES run submission: `TES::create`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. |
 
 `discovery` and `submission` replace `request` for their requests, so they can
@@ -163,7 +165,8 @@ A client reads the limits when it is built: change them in the
 other `connect` and `request` limits. For other HTTP settings, such as TLS
 roots, a proxy or default headers, build a `reqwest::Client`, wrap it with
 `Transport::with_client(&config, client)` and pass the transport to
-`TES::with_transport`, `WES::with_transport`, `DRS::with_transport` or
+`TES::with_transport`, `WES::with_transport` (also available as
+`WES::from_transport`), `DRS::with_transport` or
 `TRS::with_transport` (and `TES::discover_with_transport`,
 `WES::discover_with_transport`). The client's own connect and request timeouts
 then replace `connect` and `request`; `discovery` and `submission` still come
