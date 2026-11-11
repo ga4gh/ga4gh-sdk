@@ -66,6 +66,10 @@ pub struct ServiceInfo {
     pub auth_instructions_url: String,
     #[serde(rename = "tags")]
     pub tags: std::collections::HashMap<String, String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ServiceInfo {
@@ -104,6 +108,7 @@ impl ServiceInfo {
             system_state_counts,
             auth_instructions_url,
             tags,
+            extra: serde_json::Map::new(),
         }
     }
 }

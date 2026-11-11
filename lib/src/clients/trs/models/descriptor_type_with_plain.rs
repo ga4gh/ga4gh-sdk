@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 /// DescriptorTypeWithPlain : The output type of the descriptor. Plain types return the raw text while the \"non-plain\" types return the application/json
 /// The output type of the descriptor. Plain types return the raw text while the \"non-plain\" types return the application/json
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum DescriptorTypeWithPlain {
     #[serde(rename = "CWL")]
     Cwl,
@@ -37,6 +37,9 @@ pub enum DescriptorTypeWithPlain {
     PlainGalaxy,
     #[serde(rename = "PLAIN_SMK")]
     PlainSmk,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
 }
 
 impl std::fmt::Display for DescriptorTypeWithPlain {
@@ -52,6 +55,7 @@ impl std::fmt::Display for DescriptorTypeWithPlain {
             Self::PlainNfl => write!(f, "PLAIN_NFL"),
             Self::PlainGalaxy => write!(f, "PLAIN_GALAXY"),
             Self::PlainSmk => write!(f, "PLAIN_SMK"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
         }
     }
 }

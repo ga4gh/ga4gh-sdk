@@ -22,6 +22,10 @@ pub struct WorkflowTypeVersion {
         skip_serializing_if = "Option::is_none"
     )]
     pub workflow_type_version: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl WorkflowTypeVersion {
@@ -29,6 +33,7 @@ impl WorkflowTypeVersion {
     pub fn new() -> WorkflowTypeVersion {
         WorkflowTypeVersion {
             workflow_type_version: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

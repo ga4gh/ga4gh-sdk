@@ -22,6 +22,10 @@ pub struct TesListTasksResponse {
     /// Token used to return the next page of results. This value can be used in the `page_token` field of the next ListTasks request.
     #[serde(rename = "next_page_token", skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesListTasksResponse {
@@ -30,6 +34,7 @@ impl TesListTasksResponse {
         TesListTasksResponse {
             tasks,
             next_page_token: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

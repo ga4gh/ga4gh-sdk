@@ -18,10 +18,17 @@ pub struct PostAccessUrlRequest {
     /// the encoded JWT GA4GH Passport that contains embedded Visas.  The overall JWT is signed as are the individual Passport Visas.
     #[serde(rename = "passports", skip_serializing_if = "Option::is_none")]
     pub passports: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl PostAccessUrlRequest {
     pub fn new() -> PostAccessUrlRequest {
-        PostAccessUrlRequest { passports: None }
+        PostAccessUrlRequest {
+            passports: None,
+            extra: serde_json::Map::new(),
+        }
     }
 }

@@ -20,6 +20,10 @@ pub struct RunStatus {
     pub run_id: String,
     #[serde(rename = "state", skip_serializing_if = "Option::is_none")]
     pub state: Option<models::State>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl RunStatus {
@@ -28,6 +32,7 @@ impl RunStatus {
         RunStatus {
             run_id,
             state: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

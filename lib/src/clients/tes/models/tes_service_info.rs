@@ -55,6 +55,10 @@ pub struct TesServiceInfo {
         skip_serializing_if = "Option::is_none"
     )]
     pub tes_resources_backend_parameters: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesServiceInfo {
@@ -79,6 +83,7 @@ impl TesServiceInfo {
             version,
             storage: None,
             tes_resources_backend_parameters: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

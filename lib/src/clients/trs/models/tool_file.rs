@@ -22,6 +22,10 @@ pub struct ToolFile {
     pub file_type: Option<FileType>,
     #[serde(rename = "checksum", skip_serializing_if = "Option::is_none")]
     pub checksum: Option<Box<models::Checksum>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ToolFile {
@@ -30,11 +34,12 @@ impl ToolFile {
             path: None,
             file_type: None,
             checksum: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
 ///
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum FileType {
     #[serde(rename = "TEST_FILE")]
     TestFile,
@@ -46,6 +51,22 @@ pub enum FileType {
     Containerfile,
     #[serde(rename = "OTHER")]
     Other,
+    /// A value that the spec doesn't define, kept as received.
+    #[serde(untagged)]
+    Unrecognized(String),
+}
+
+impl std::fmt::Display for FileType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::TestFile => write!(f, "TEST_FILE"),
+            Self::PrimaryDescriptor => write!(f, "PRIMARY_DESCRIPTOR"),
+            Self::SecondaryDescriptor => write!(f, "SECONDARY_DESCRIPTOR"),
+            Self::Containerfile => write!(f, "CONTAINERFILE"),
+            Self::Other => write!(f, "OTHER"),
+            Self::Unrecognized(value) => write!(f, "{}", value),
+        }
+    }
 }
 
 impl Default for FileType {
