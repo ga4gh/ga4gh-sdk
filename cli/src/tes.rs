@@ -1,3 +1,4 @@
+use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
@@ -116,7 +117,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             Err(error) => return Ok(service_failure(error.as_ref())),
         };
         match tes.create(testask).await {
-            Ok(task) => return Ok(CommandOutput::success(format!("{}\n", task.id))),
+            Ok(task) => return Ok(CommandOutput::success(format!("{}\n", printable(&task.id)))),
             Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
@@ -226,7 +227,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         let task = Task::new(id, transport);
         match task.cancel().await {
             Ok(output) => {
-                return Ok(CommandOutput::success(format!("STATUS: {output:?}\n")));
+                let status = printable(&format!("{output:?}"));
+                return Ok(CommandOutput::success(format!("STATUS: {status}\n")));
             }
             Err(error) => return Ok(CommandOutput::failure(error)),
         }
@@ -282,7 +284,7 @@ fn tes_state_to_str(state: &Option<TesState>) -> &str {
 fn format_task(task: &TesTask) -> String {
     format!(
         "{:<25} {:<15}\n",
-        task.id.as_deref().unwrap_or("None"),
+        printable(task.id.as_deref().unwrap_or("None")),
         tes_state_to_str(&task.state)
     )
 }
@@ -299,7 +301,7 @@ fn format_tasks_response(response: &TesListTasksResponse) -> String {
         .as_deref()
         .filter(|token| !token.is_empty())
     {
-        table.push_str(&format!("Next page token: {token}\n"));
+        table.push_str(&format!("Next page token: {}\n", printable(token)));
     }
     table
 }
@@ -358,7 +360,7 @@ pub async fn export_all(
     let tes = match TES::new(config).await {
         Ok(tes) => tes,
         Err(error) => {
-            writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
+            writeln!(stderr, "{}", printable(&error.to_string()))?;
             return Ok(std::process::ExitCode::FAILURE);
         }
     };
@@ -384,7 +386,7 @@ pub(crate) async fn write_jsonl(
             Ok(Some(page)) => {
                 for record in page.items {
                     let line = serde_json::to_string(&record)?;
-                    stdout.write_all(crate::registry::json_printable(&line).as_bytes())?;
+                    stdout.write_all(json_printable(&line).as_bytes())?;
                     writeln!(stdout)?;
                 }
                 stdout.flush()?;
@@ -395,18 +397,18 @@ pub(crate) async fn write_jsonl(
                     writeln!(
                         stderr,
                         "Listing stopped at configured limit; resume checkpoint: {}",
-                        crate::registry::json_printable(&serde_json::to_string(&checkpoint)?)
+                        json_printable(&serde_json::to_string(&checkpoint)?)
                     )?;
                     return Ok(std::process::ExitCode::FAILURE);
                 }
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             Err(error) => {
-                writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
+                writeln!(stderr, "{}", printable(&error.to_string()))?;
                 writeln!(
                     stderr,
                     "Resume checkpoint: {}",
-                    crate::registry::json_printable(&serde_json::to_string(&error.checkpoint)?)
+                    json_printable(&serde_json::to_string(&error.checkpoint)?)
                 )?;
                 return Ok(std::process::ExitCode::FAILURE);
             }

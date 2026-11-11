@@ -164,7 +164,9 @@ ga4gh-cli tes cancel 'running-task-id'
 ```
 
 All five TES commands exit with code 0 on success and code 1 on request or
-server errors. Missing commands or arguments use Clap's exit code 2.
+server errors. Missing commands or arguments use Clap's exit code 2. Task IDs,
+page tokens and error messages are text output, so control characters in them
+are escaped (see [Text and JSON output](#text-and-json-output)).
 
 ### DRS examples
 
@@ -179,7 +181,8 @@ ga4gh-cli drs access 'object-id' 'access-id'
 
 Both commands print the server's JSON unchanged. The `access` result may
 contain headers needed to fetch the bytes. Service failures print an error to
-stderr and exit with code 1; missing arguments use exit code 2.
+stderr, escaped as described in [Text and JSON output](#text-and-json-output),
+and exit with code 1; missing arguments use exit code 2.
 
 ### WES examples
 
@@ -322,6 +325,28 @@ success and code 1 on request or server errors. A 404 from `list` or `types`
 adds a hint to check `base_path`; from `get`, a 404 means that no service has
 that ID.
 
+## Text and JSON output
+
+All commands treat values from a service the same way:
+
+- Text output, such as tables, bare task and run IDs, page tokens and error
+  messages on stderr, shows control and bidirectional formatting characters as
+  Rust escapes, such as `\n`, `\u{1b}` or `\u{202e}`. Other characters,
+  including backslashes, are printed as they are, so an escaped value can't be
+  told apart from a value that contains the same backslash sequence. Values
+  without such characters are printed unchanged.
+- `tes get`, `wes get`, `drs get` and `drs access` print the server's JSON as
+  received.
+- `tes list --all --format jsonl` and `wes list --all --format jsonl` write
+  each record with JSON escapes, such as `\u001b`, which decode to the
+  original value. `registry get` uses JSON escapes in the same way.
+
+Escaping changes only what is printed. The SDK keeps the values it received,
+and commands send the IDs given to them unchanged. If an ID that `tes create`,
+`wes run` or a table prints contains escapes, take the original value from
+the JSONL export, for example with
+`ga4gh-cli tes list --all --format jsonl | jq -r .id`.
+
 ## Extending the CLI in Rust
 
 The `ga4gh-cli` package also exposes a Rust library. A downstream binary can
@@ -330,5 +355,6 @@ add its own Clap 4 subcommands to `ga4gh_cli::command()`. Call
 `ga4gh_cli::dispatch_with_config()` to supply a service configuration directly.
 Both return `None` when the downstream binary should handle its own command.
 Built-in commands return stdout, stderr, and an exit code in `CommandOutput`,
-so the downstream binary can write or reformat their output. See the
+so the downstream binary can write or reformat their output; `stderr` and the
+text parts of `stdout` are already escaped as described above. See the
 [downstream CLI test](tests/downstream_cli.rs) for a working example.

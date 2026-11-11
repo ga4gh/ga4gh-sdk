@@ -24,6 +24,7 @@
 
 pub mod drs;
 pub mod registry;
+mod render;
 pub mod tes;
 pub mod wes;
 
@@ -48,10 +49,12 @@ impl CommandOutput {
         }
     }
 
+    /// Error messages can hold a service's response body, so they are always
+    /// shown with [`render::printable`].
     fn failure(message: impl std::fmt::Display) -> Self {
         Self {
             stdout: String::new(),
-            stderr: format!("{message}\n"),
+            stderr: format!("{}\n", render::printable(&message.to_string())),
             exit_code: ExitCode::FAILURE,
         }
     }
