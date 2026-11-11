@@ -89,12 +89,24 @@ impl From<PyServiceType> for ServiceType {
 
 /// A section of the configuration file: a `ServiceType`, or the name of any other
 /// section as a `str`, which becomes `ServiceType::Custom`.
-#[derive(FromPyObject)]
 pub enum ServiceSection {
-    #[pyo3(transparent)]
     BuiltIn(PyServiceType),
-    #[pyo3(transparent)]
     Custom(String),
+}
+
+impl<'py> FromPyObject<'py> for ServiceSection {
+    fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(service_type) = value.extract::<PyServiceType>() {
+            return Ok(ServiceSection::BuiltIn(service_type));
+        }
+        if let Ok(name) = value.extract::<String>() {
+            return Ok(ServiceSection::Custom(name));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "service_type must be a ServiceType or a str, not {}",
+            value.get_type().qualname()?
+        )))
+    }
 }
 
 impl From<ServiceSection> for ServiceType {

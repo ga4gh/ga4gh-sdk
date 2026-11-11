@@ -24,6 +24,9 @@ pub enum ServiceType {
     WES,
     REGISTRY,
     /// Another service, by the name of its section in the configuration file.
+    ///
+    /// `Custom("TES")` reads the same section as `TES`, but the two don't compare
+    /// equal; use the built-in variants for built-in services.
     Custom(String),
 }
 

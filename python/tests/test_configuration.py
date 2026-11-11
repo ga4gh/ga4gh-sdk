@@ -25,7 +25,7 @@ def write_config(tmp_path, monkeypatch):
     return write
 
 
-def test_existing_file_reads_unchanged(write_config):
+def test_built_in_sections_have_empty_extra(write_config):
     write_config(
         {
             "TES": {
@@ -33,6 +33,7 @@ def test_existing_file_reads_unchanged(write_config):
                 "basic_auth": {"username": "alice", "password": "change-me"},
                 "oauth_access_token": "my-token",
             },
+            "WES": {"base_path": "https://example.org/ga4gh/wes/v1"},
             "REGISTRY": {"base_path": "https://example.org/ga4gh/registry/v1"},
         }
     )
@@ -40,6 +41,9 @@ def test_existing_file_reads_unchanged(write_config):
     config.from_file(ServiceType.TES)
     assert config.get_base_path() == "https://example.org/ga4gh/tes/v1"
     assert config.get_extra() == {}
+
+    config.from_file(ServiceType.WES)
+    assert config.get_base_path() == "https://example.org/ga4gh/wes/v1"
 
     config.from_file(ServiceType.REGISTRY)
     assert config.get_base_path() == "https://example.org/ga4gh/registry/v1"
@@ -93,5 +97,5 @@ def test_missing_custom_section_is_value_error(write_config):
 def test_section_must_be_service_type_or_str(write_config):
     write_config({"TES": {"base_path": "https://example.org/ga4gh/tes/v1"}})
     config = Configuration("https://wrong.example")
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="must be a ServiceType or a str, not int"):
         config.from_file(1)

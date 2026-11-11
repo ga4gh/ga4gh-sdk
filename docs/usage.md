@@ -73,7 +73,11 @@ services, or any other name for a custom service:
 - Any other key: kept with its JSON value in `Configuration::extra` (Python:
   `Configuration.get_extra()`), for settings that the SDK doesn't use itself,
   such as those of a downstream crate. In the example, `extra` holds
-  `timeout_seconds`.
+  `timeout_seconds`. Rust's `Debug` output shows only the keys, but `extra`
+  and `get_extra()` themselves return the values as they are, so don't log
+  them if they can hold credentials. The file doesn't set the other
+  `Configuration` fields: `user_agent`, `bearer_access_token` and `api_key`
+  in a section end up in `extra` as well.
 
 A missing file or section, or a field of the wrong type, is an error. Rust
 reads a custom section with `ServiceType::Custom("MY_SERVICE".into())`, Python

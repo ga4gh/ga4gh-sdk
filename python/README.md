@@ -51,7 +51,7 @@ pytest
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`. See [Reading the configuration file](#reading-the-configuration-file). |
+| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. See [Reading the configuration file](#reading-the-configuration-file). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
@@ -109,7 +109,8 @@ For a task that is still running, call `task.cancel()`.
 the [usage guide](../docs/usage.md#configuration-file)). Name a built-in
 section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`, `REGISTRY`), and
 any other section with a `str`. `config.get_extra()` returns the keys of the
-section that the SDK doesn't use itself, as a `dict`:
+section that the SDK doesn't use itself, as a `dict` with the values as they are
+in the file, so don't log it if it can hold credentials:
 
 ```python
 from GA4GH import Configuration, ServiceType

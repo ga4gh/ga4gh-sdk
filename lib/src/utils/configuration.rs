@@ -38,12 +38,17 @@ const SECTION_KEYS: [&str; 4] = [
 
 /// Reads a token from the environment variable `name`.
 fn token_from_env(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|error| match error {
+    std::env::var(name).map_err(|error| var_error_message(name, &error))
+}
+
+/// Describes why the environment variable `name` can't be read, without its value.
+fn var_error_message(name: &str, error: &std::env::VarError) -> String {
+    match error {
         std::env::VarError::NotPresent => format!("Environment variable '{name}' is not set"),
         std::env::VarError::NotUnicode(_) => {
             format!("Environment variable '{name}' is not valid Unicode")
         }
-    })
+    }
 }
 
 /// Returns the URL without its user, password, query and fragment. The path stays.
@@ -67,6 +72,9 @@ fn display_url(url: &Url) -> String {
 ///
 /// The `Configuration` struct is responsible for specifying details of the Endpoint where the requests are made.
 /// It provides methods for making constructing new configuration, changing the base url, and specifying a default configuration.
+///
+/// Build it with `new()`, `default()`, `from_file()` or `from_path()` and the `with_*`
+/// methods rather than a struct literal, which breaks when a field is added.
 #[derive(Clone)]
 pub struct Configuration {
     /// The API root; endpoint paths are resolved below it, with or without a trailing slash.
@@ -507,27 +515,56 @@ mod tests {
 
     #[test]
     fn test_from_path_reads_token_from_named_environment_variable() {
-        // Unique to this test, so tests running in parallel don't interfere.
-        std::env::set_var("GA4GH_SDK_TEST_TOKEN_FROM_FILE", "env-token");
+        // PATH is set wherever tests run; setting a variable here would race with
+        // other test threads that read the environment.
+        let expected = std::env::var("PATH").unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         std::fs::write(
             &path,
-            r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"GA4GH_SDK_TEST_TOKEN_FROM_FILE"}}"#,
+            r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"PATH"}}"#,
         )
         .unwrap();
         let config = Configuration::from_path(&path, "custom").unwrap();
-        assert_eq!(config.oauth_access_token.as_deref(), Some("env-token"));
+        assert_eq!(config.oauth_access_token, Some(expected.clone()));
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+
+        // `null` means unset, for both keys.
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org","oauth_access_token":null,"oauth_access_token_env":"PATH"}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(config.oauth_access_token, Some(expected));
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org","oauth_access_token":"token","oauth_access_token_env":null}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(config.oauth_access_token.as_deref(), Some("token"));
         assert!(config.extra.is_empty(), "{:?}", config.extra);
     }
 
     #[test]
+    fn test_var_error_message_hides_value() {
+        let error = std::env::VarError::NotUnicode("SENTINEL_TOKEN".into());
+        assert_eq!(
+            var_error_message("MY_TOKEN", &error),
+            "Environment variable 'MY_TOKEN' is not valid Unicode"
+        );
+    }
+
+    #[test]
     fn test_with_oauth_access_token_from_env() {
-        std::env::set_var("GA4GH_SDK_TEST_TOKEN_BUILDER", "builder-token");
         let config = Configuration::default()
-            .with_oauth_access_token_from_env("GA4GH_SDK_TEST_TOKEN_BUILDER")
+            .with_oauth_access_token_from_env("PATH")
             .unwrap();
-        assert_eq!(config.oauth_access_token.as_deref(), Some("builder-token"));
+        assert_eq!(
+            config.oauth_access_token,
+            Some(std::env::var("PATH").unwrap())
+        );
 
         let error = Configuration::default()
             .with_oauth_access_token_from_env("GA4GH_SDK_TEST_TOKEN_BUILDER_UNSET")
