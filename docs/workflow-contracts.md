@@ -8,13 +8,16 @@ adds local validation, result evidence and comparison around an explicit WES
 submission. It is not another execution service.
 It adds no fields to standard WES requests and performs no execution binding or
 TES command generation. The workflow engine owns staging and execution.
+The [example file map](../examples/sequence-qc/README.md) and
+[upstream schema provenance](../lib/src/workflow/schemas/README.md) identify the
+inputs used below.
 
 ## Prepare and explicitly submit
 
 ```sh
 pin=45d41324353cb4900fdd999c307c2e36a3f2a410
 cargo run -p ga4gh-cli -- workflow prepare \
-  examples/qc-demo/profile.json examples/qc-demo/request.json public-sequence-qc@1 \
+  examples/sequence-qc/profile.json examples/sequence-qc/request.json public-sequence-qc@1 \
   --profile-revision "$pin" --vocabulary-revision "$pin" > prepared.json
 ```
 
@@ -47,13 +50,14 @@ Downstream CLI callers can instead supply a `Configuration` through
 For OAuth, set `oauth_access_token` to the current token. The CLI injects a
 sensitive bearer header into the shared transport; it does not implement login
 or token refresh. Other schemes use `WES::from_transport` with a caller-owned
-authenticated client (the broader configuration/auth work remains #31):
+authenticated client (shared transport authentication remains #31; cross-surface
+integration is tracked in #203):
 
 ```sh
 cargo run -p ga4gh-cli -- workflow submit \
-  examples/qc-demo/profile.json examples/qc-demo/request.json public-sequence-qc@1 \
+  examples/sequence-qc/profile.json examples/sequence-qc/request.json public-sequence-qc@1 \
   --profile-revision "$pin" --vocabulary-revision "$pin" \
-  --attachment main.cwl=examples/qc-demo/main.cwl
+  --attachment main.cwl=examples/sequence-qc/main.cwl
 ```
 
 Add `--descriptor-digest sha256:<digest>` to bind the primary upload. Preparation
@@ -108,7 +112,7 @@ or caller-owned context. The result format is evidence transport, not a generic
 secret-discovery or redaction system.
 
 `html_viewer_metadata` exposes declared HTML viewer metadata. The small adapter
-in `examples/qc-demo/view_report.py` feeds the **known public demo reports** to
+in `examples/sequence-qc/view_report.py` feeds the **known public demo reports** to
 IPython's existing `HTML` viewer. It does not authorize arbitrary remote content.
 Other hints remain schema metadata; CrateGen continues to own RO-Crate conversion.
 
@@ -145,7 +149,7 @@ not signed attestations. Conclusions cover only the selected outputs and policy.
 
 ## Demonstration and evidence boundary
 
-`tests/run-phase2-qc.py` starts two independent local Toil WES 9.3.0 processes and
+`tests/run-workflow-contracts-qc.py` starts two independent local Toil WES 9.3.0 processes and
 runs a public synthetic sequence-QC CWL workflow with a pinned Python image. It
 prepares parameters, explicitly uploads the bound descriptor, waits for COMPLETE,
 projects metrics and the report, verifies golden report bytes, compares the two

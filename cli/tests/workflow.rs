@@ -14,9 +14,9 @@ fn run(args: &[&str], home: &Path) -> std::process::Output {
 fn real_cli_preparation_rejects_bad_params_without_configuration_and_emits_reviewable_json() {
     let temp = tempfile::tempdir().unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let schema = root.join("examples/qc-demo/profile.json");
-    let request = root.join("examples/qc-demo/request.json");
-    let invalid = root.join("examples/qc-demo/invalid-request.json");
+    let schema = root.join("examples/sequence-qc/profile.json");
+    let request = root.join("examples/sequence-qc/request.json");
+    let invalid = root.join("examples/sequence-qc/invalid-request.json");
     let pin = "45d41324353cb4900fdd999c307c2e36a3f2a410";
     let args = |file: &Path| {
         vec![
@@ -68,7 +68,7 @@ fn real_cli_preparation_rejects_bad_params_without_configuration_and_emits_revie
 fn cli_output_projection_keeps_complete_with_missing_delivery() {
     let temp = tempfile::tempdir().unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let schema = root.join("examples/qc-demo/profile.json");
+    let schema = root.join("examples/sequence-qc/profile.json");
     let log = temp.path().join("log.json");
     std::fs::write(&log,json!({"state":"COMPLETE","outputs":{"metrics":{"sequence_count":3,"total_length":12,"mean_length":4.0}}}).to_string()).unwrap();
     let pin = "45d41324353cb4900fdd999c307c2e36a3f2a410";
@@ -119,9 +119,9 @@ fn explicit_cli_submission_uploads_the_reviewed_request_once() {
         .expect(1)
         .create();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let schema = root.join("examples/qc-demo/profile.json");
-    let request = root.join("examples/qc-demo/request.json");
-    let descriptor = root.join("examples/qc-demo/main.cwl");
+    let schema = root.join("examples/sequence-qc/profile.json");
+    let request = root.join("examples/sequence-qc/request.json");
+    let descriptor = root.join("examples/sequence-qc/main.cwl");
     let attachment = format!("main.cwl={}", descriptor.display());
     let pin = "45d41324353cb4900fdd999c307c2e36a3f2a410";
     let output = run(
@@ -180,8 +180,8 @@ async fn downstream_workflow_submission_uses_supplied_config() {
         Configuration::new(Url::parse(&format!("{}/injected-wes", mockito::server_url())).unwrap())
             .with_oauth_access_token("injected-token".into());
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let schema = root.join("examples/qc-demo/profile.json");
-    let request = root.join("examples/qc-demo/request.json");
+    let schema = root.join("examples/sequence-qc/profile.json");
+    let request = root.join("examples/sequence-qc/request.json");
     let pin = "45d41324353cb4900fdd999c307c2e36a3f2a410";
     let matches = command()
         .try_get_matches_from([

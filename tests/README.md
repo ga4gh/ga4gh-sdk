@@ -85,17 +85,22 @@ attachment handling remains unsupported for this bundle scenario.
 ```sh
 cargo test -p ga4gh-lib --features workflow-contracts --test workflow_contracts
 cargo test -p ga4gh-cli --test workflow
-python3 tests/run-phase2-qc.py
+python3 tests/run-workflow-contracts-qc.py
 ```
 
 The first two commands exercise offline Draft 2020-12 validation, pinned upstream
 fixtures, actual CLI JSON/errors, partial output delivery and comparison policies.
-The optional Python harness requires Python 3.12+, Rust on PATH and a working Docker
-context with this checkout shared into its VM. It installs Toil 9.3.0 and IPython
-9.6.0, starts two independent loopback-only WES processes, submits the same
-sequence-QC CWL descriptor in its pinned Python container, verifies metrics and
-golden report bytes, compares their results and supplies both reports to IPython.
-Evidence is written to `target/phase2-qc/evidence.json`; servers stop on exit.
+The [fixture README](fixtures/io-profile/README.md) records their upstream revision
+and checksums; the [example README](../examples/sequence-qc/README.md) maps the
+workflow, request, profile, policy and viewer adapter. The optional Python
+harness requires Python 3.12+, Rust on PATH and a working Docker context with
+this checkout shared into its VM. It installs Toil 9.3.0 and IPython 9.6.0,
+checking those versions when reusing an environment. Their transitive Python
+dependencies are not locked. The harness starts two independent loopback-only
+WES processes, submits the same sequence-QC CWL descriptor in its pinned Python
+container, verifies metrics and golden report bytes, compares their results and
+supplies both reports to IPython. Evidence is written to
+`target/workflow-contracts-qc/evidence.json`; servers stop on exit.
 `GA4GH_TOIL_ENV_DIR` can reuse an environment. The optional
 `GA4GH_QC_NO_CONTAINER=1` mode executes on the host and must be reported separately.
 This suite uses native WES discovery; it makes no external-node/federation claim.
