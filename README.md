@@ -311,6 +311,14 @@ that were hashed, returning a run plus manifest/execution linkage. Workflow
 parameters, bearer tokens and signed descriptor URLs are excluded from provenance.
 See the [named Toil integration check](tests/README.md) for an actual CWL execution.
 
+## Experimental workflow contracts
+
+Enable `ga4gh-lib/workflow-contracts` for pinned local I/O validation, immutable
+WES invocation plans, typed results with selected artifact evidence, and explicit
+scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
+`results`, `verify` and `compare`. See the [workflow guide](docs/workflow-contracts.md)
+for the public sequence-QC example, offline commands and evidence boundaries.
+
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).

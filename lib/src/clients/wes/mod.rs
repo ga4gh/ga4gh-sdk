@@ -149,18 +149,23 @@ pub struct WES {
 impl WES {
     /// Creates a new `WES` instance.
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
-        let transport = Transport::new(config);
+        Self::from_transport(Transport::new(config)).await
+    }
+
+    /// Discover using a caller-owned transport, including its authenticated client.
+    pub async fn from_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        let config = transport.config.clone();
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             transport.get("service-info", None),
         )
         .await?;
         let service = response
-            .and_then(|body| from_str::<Service>(&body).map_err(Into::into))
+            .and_then(|body| service_from_info(serde_json::from_str(&body)?))
             .map_err(|error| access_error(error.as_ref()))?;
 
         let instance = WES {
-            config: config.clone(),
+            config,
             transport,
             service: Ok(service),
         };
@@ -243,6 +248,56 @@ impl WES {
         let run = Run::new(id.to_string(), self.transport.clone());
         run.log().await
     }
+}
+
+// WES 1.0 service-info predates common GA4GH discovery fields. Keep this
+// compatibility projection outside generated models, and reject unrelated JSON.
+pub(crate) fn service_from_info(
+    raw: serde_json::Value,
+) -> Result<Service, Box<dyn std::error::Error>> {
+    if let Ok(service) = serde_json::from_value::<Service>(raw.clone()) {
+        return Ok(service);
+    }
+    #[derive(serde::Deserialize)]
+    struct NativeInfo {
+        workflow_type_versions: std::collections::HashMap<String, serde_json::Value>,
+        supported_wes_versions: Vec<String>,
+        supported_filesystem_protocols: Vec<String>,
+        workflow_engine_versions: std::collections::HashMap<String, String>,
+        default_workflow_engine_parameters: Vec<serde_json::Value>,
+        system_state_counts: std::collections::HashMap<String, i64>,
+        #[serde(default)]
+        auth_instructions_url: String,
+        tags: std::collections::HashMap<String, String>,
+    }
+    let info: NativeInfo = serde_json::from_value(raw)?;
+    if info.supported_wes_versions.is_empty()
+        || info.workflow_type_versions.is_empty()
+        || info.workflow_type_versions.values().any(|v| {
+            !v.get("workflow_type_version")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|a| !a.is_empty() && a.iter().all(serde_json::Value::is_string))
+        })
+    {
+        return Err("invalid native WES service-info".into());
+    }
+    let _ = (
+        info.supported_filesystem_protocols,
+        info.workflow_engine_versions,
+        info.default_workflow_engine_parameters,
+        info.system_state_counts,
+        info.auth_instructions_url,
+        info.tags,
+    );
+    Ok(Service {
+        r#type: Box::new(crate::clients::serviceinfo::models::ServiceType {
+            group: "org.ga4gh".into(),
+            artifact: "wes".into(),
+            version: info.supported_wes_versions[0].clone(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
 }
 
 #[cfg(test)]

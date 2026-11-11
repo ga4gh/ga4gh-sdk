@@ -28,6 +28,7 @@ mod render;
 pub mod tes;
 pub mod trs;
 pub mod wes;
+pub mod workflow;
 
 pub use render::printable;
 
@@ -104,6 +105,7 @@ pub fn command() -> Command {
         .subcommand(tes::command())
         .subcommand(trs::command())
         .subcommand(wes::command())
+        .subcommand(workflow::command())
         .subcommand(registry::command())
 }
 
@@ -113,6 +115,9 @@ pub fn command() -> Command {
 /// Config and input errors are returned as `Err`. Service request failures return
 /// a `CommandOutput` with an error message and a failure exit code.
 pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
+    if let Some(("workflow", sub)) = matches.subcommand() {
+        return workflow::run(sub, None).await.map(Some);
+    }
     let service_type = match matches.subcommand() {
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
@@ -136,6 +141,7 @@ pub async fn dispatch_with_config(
 ) -> anyhow::Result<Option<CommandOutput>> {
     match matches.subcommand() {
         Some(("drs", sub)) => drs::run(sub, config).await.map(Some),
+        Some(("workflow", sub)) => workflow::run(sub, Some(config)).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
         Some(("trs", sub)) => trs::run(sub, config).await.map(Some),
         Some(("wes", sub)) => wes::run(sub, config).await.map(Some),
@@ -151,6 +157,12 @@ pub async fn dispatch_to(
     stdout: &mut dyn std::io::Write,
     stderr: &mut dyn std::io::Write,
 ) -> anyhow::Result<Option<ExitCode>> {
+    if let Some(("workflow", sub)) = matches.subcommand() {
+        let output = workflow::run(sub, None).await?;
+        stdout.write_all(output.stdout.as_bytes())?;
+        stderr.write_all(output.stderr.as_bytes())?;
+        return Ok(Some(output.exit_code));
+    }
     let service_type = match matches.subcommand() {
         Some(("drs", _)) => ServiceType::DRS,
         Some(("tes", _)) => ServiceType::TES,
