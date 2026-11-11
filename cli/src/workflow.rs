@@ -50,7 +50,7 @@ pub fn command() -> Command {
         }
     };
     Command::new("workflow")
-        .about("Prepare, project and compare pinned workflow contracts")
+        .about("Client-side workflow contracts; submission uses WES")
         .subcommand_required(true)
         .subcommand(invocation("prepare"))
         .subcommand(invocation("submit"))
@@ -97,7 +97,12 @@ fn read(path: &str) -> anyhow::Result<Vec<u8>> {
 fn load<T: serde::de::DeserializeOwned>(path: &str) -> anyhow::Result<T> {
     Ok(serde_json::from_slice(&read(path)?)?)
 }
-pub async fn run(args: &ArgMatches) -> anyhow::Result<CommandOutput> {
+/// Run a workflow command. Submission uses the supplied configuration when present;
+/// the standalone CLI reads its WES section when no configuration is supplied.
+pub async fn run(
+    args: &ArgMatches,
+    service_config: Option<&Configuration>,
+) -> anyhow::Result<CommandOutput> {
     let result: Result<Value, Box<dyn std::error::Error>> = async {
         let (name, m) = args.subcommand().ok_or("missing workflow command")?;
         let get = |key: &str| {
@@ -129,7 +134,10 @@ pub async fn run(args: &ArgMatches) -> anyhow::Result<CommandOutput> {
                 if name == "prepare" {
                     Ok(serde_json::to_value(invocation)?)
                 } else {
-                    let config = Configuration::from_file(ServiceType::WES)?;
+                    let config = match service_config {
+                        Some(config) => config.clone(),
+                        None => Configuration::from_file(ServiceType::WES)?,
+                    };
                     let mut headers = ga4gh_sdk::reqwest::header::HeaderMap::new();
                     if config.basic_auth.is_some() || config.api_key.is_some() { return Err("workflow CLI supports OAuth bearer auth; use a caller-owned transport for other schemes".into()); }
                     if let Some(token)=config.oauth_access_token.as_ref().or(config.bearer_access_token.as_ref()) {

@@ -3,6 +3,9 @@
 Enable the library's `workflow-contracts` feature. The CLI enables it for the
 `workflow` subcommands. This optional client-side layer consumes the I/O Profile
 and UI vocabulary at revision `45d41324353cb4900fdd999c307c2e36a3f2a410`.
+The separate `wes` commands operate the WES service API directly; `workflow`
+adds local validation, result evidence and comparison around an explicit WES
+submission. It is not another execution service.
 It adds no fields to standard WES requests and performs no execution binding or
 TES command generation. The workflow engine owns staging and execution.
 
@@ -39,6 +42,8 @@ with `clients::bundle::PreparedBundle`. A checksum supplied as context does not
 prove which bytes an engine fetches later from a mutable remote URL.
 
 Explicit CLI submission uses the `WES` section of `~/.ga4gh-cli/config.json`.
+Downstream CLI callers can instead supply a `Configuration` through
+`ga4gh_cli::dispatch_with_config()`.
 For OAuth, set `oauth_access_token` to the current token. The CLI injects a
 sensitive bearer header into the shared transport; it does not implement login
 or token refresh. Other schemes use `WES::from_transport` with a caller-owned
