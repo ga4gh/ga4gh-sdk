@@ -211,6 +211,10 @@ impl CliContext {
     /// other sections never receive it. An unset or empty variable leaves the
     /// sections without a token. To send a token to another service, name a
     /// variable in its section with `oauth_access_token_env`.
+    ///
+    /// Sections match by their exact name (`service_type.as_str()`, case
+    /// sensitive). Another call replaces the variable and its sections; an
+    /// empty list means that the variable is never read.
     pub fn with_token_env(
         mut self,
         name: impl Into<String>,
