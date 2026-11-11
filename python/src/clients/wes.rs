@@ -396,7 +396,8 @@ impl PyRunLog {
         PyRunRequest::parse(self.raw.get("request")?.clone()).ok()
     }
 
-    /// The run's state as a `WesState`; `UNKNOWN` if the run has none.
+    /// The run's state as a `WesState`; `UNKNOWN` if the run has none or one
+    /// that WES 1.1 does not define.
     #[getter]
     fn state(&self, py: Python<'_>) -> PyResult<PyObject> {
         state_to_python(py, self.inner.state.unwrap_or_default())
@@ -466,7 +467,8 @@ impl PyRunSummary {
         self.inner.run_id.clone()
     }
 
-    /// The run's state as a `WesState`; `UNKNOWN` if the run has none.
+    /// The run's state as a `WesState`; `UNKNOWN` if the run has none or one
+    /// that WES 1.1 does not define.
     #[getter]
     fn state(&self, py: Python<'_>) -> PyResult<PyObject> {
         state_to_python(py, self.inner.state.unwrap_or_default())

@@ -50,6 +50,10 @@ pub struct TesTask {
     /// Date + time the task was created, in RFC 3339 format. This is set by the system, not the client.
     #[serde(rename = "creation_time", skip_serializing_if = "Option::is_none")]
     pub creation_time: Option<String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesTask {
@@ -63,11 +67,12 @@ impl TesTask {
             inputs: None,
             outputs: None,
             resources: None,
-            executors: None,
+            executors: Some(executors),
             volumes: None,
             tags: None,
             logs: None,
             creation_time: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

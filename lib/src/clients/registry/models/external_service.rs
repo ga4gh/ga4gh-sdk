@@ -50,6 +50,10 @@ pub struct ExternalService {
     /// Base URL of the service ([RFC 3986](https://tools.ietf.org/html/rfc3986) format).  For REST API services, this is the URL to which all endpoints should be relative. In particular, services implementing GA4GH specifications defined in OAS format (as per the `type` field) should respond to requests constructed by appending relative paths from the specification to this base URL (e.g. `{url}/service-info`). See [API Server and Base URL](https://swagger.io/docs/specification/api-host-and-base-path/) for more information on specifying base URLs in OAS 3.
     #[serde(rename = "url")]
     pub url: String,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ExternalService {
@@ -75,6 +79,7 @@ impl ExternalService {
             environment: None,
             version,
             url,
+            extra: serde_json::Map::new(),
         }
     }
 }

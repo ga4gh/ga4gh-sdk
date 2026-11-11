@@ -115,6 +115,23 @@ when looking up a listed service whose ID contains `/`; the SDK encodes that
 slash as `%2F` to keep the ID in one URL path segment. The strict check is
 therefore unsuitable for that deployment until its lookup accepts such IDs.
 
+## Gen3 DRS (CanineDC)
+
+This ignored smoke test reads CanineDC, a public Gen3 data commons, without
+credentials. It needs network access to `caninedc.org`:
+
+```sh
+cargo test -p ga4gh-lib --test drs_gen3_public -- --ignored
+```
+
+It sends one service-info request and one bulk `POST /objects` request for a
+documented public object and one unknown ID, allows one bulk attempt within a
+30-second budget, and checks that the reply uses the Gen3 dialect, that the
+object resolves by its ID, and that the unknown ID gets 404. It requests no
+access URLs and downloads no bytes. Access URLs need credentials on this
+service (`POST /objects/access` returned 401 anonymously on 2026-11-10), so
+Gen3 bulk access behavior is unverified.
+
 ## Test fixtures
 
 - [`sample.tes`](sample.tes) comes from the Funnel task examples and is used by
@@ -122,3 +139,8 @@ therefore unsuitable for that deployment until its lookup accepts such IDs.
 - [`grape.tes`](grape.tes) is an alternative TES task document. It is not used
   by the current tests and contains nonstandard placeholders such as
   `${AWS_ACCESS_KEY_ID}` that would need substitution before submission.
+- [`fixtures/drs/gen3-caninedc-bulk-objects.json`](fixtures/drs/gen3-caninedc-bulk-objects.json)
+  is the anonymous CanineDC reply to `POST /ga4gh/drs/v1/objects` for one
+  public object and one unknown ID, recorded on 2026-11-10 and reformatted
+  with sorted keys. It contains public metadata only and is used by
+  [`drs_bulk.rs`](../lib/tests/drs_bulk.rs).

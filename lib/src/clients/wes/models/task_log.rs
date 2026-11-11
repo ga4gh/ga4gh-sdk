@@ -46,6 +46,10 @@ pub struct TaskLog {
     /// An optional URL pointing to an extended task definition defined by a [TES api](https://github.com/ga4gh/task-execution-schemas)
     #[serde(rename = "tes_uri", skip_serializing_if = "Option::is_none")]
     pub tes_uri: Option<String>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TaskLog {
@@ -62,6 +66,7 @@ impl TaskLog {
             system_logs: None,
             id,
             tes_uri: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
