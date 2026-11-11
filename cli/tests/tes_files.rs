@@ -194,6 +194,36 @@ fn files_lists_selectors_and_hides_url_secrets() {
 }
 
 #[test]
+fn error_logs_are_shown_without_rust_log() {
+    // Bind a free port and release it, so that connections to it are refused.
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let home = TempDir::new().unwrap();
+    fs::create_dir(home.path().join(".ga4gh-cli")).unwrap();
+    let config = json!({"TES": {"base_path": format!("http://127.0.0.1:{port}")}});
+    fs::write(
+        home.path().join(".ga4gh-cli/config.json"),
+        config.to_string(),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"))
+        .args(["tes", "files", "t1"])
+        .env("HOME", home.path())
+        .env_remove("RUST_LOG")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains(" ERROR ga4gh_sdk"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn debug_logs_omit_redirected_signed_urls() {
     let prefix = "/save-redirect";
     let storage = format!("{}{prefix}/storage", mockito::server_url());

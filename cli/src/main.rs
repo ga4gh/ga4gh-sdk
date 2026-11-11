@@ -11,6 +11,10 @@ async fn main() -> anyhow::Result<ExitCode> {
     // strings of pre-signed output URLs. They log at debug level only when
     // `RUST_LOG` names them.
     let filters = std::env::var("RUST_LOG").unwrap_or_default();
+    if filters.is_empty() {
+        // env_logger's default level applies only when no filter is set.
+        logger.filter_level(log::LevelFilter::Error);
+    }
     for module in ["reqwest", "hyper", "hyper_util"] {
         if !filters.contains(module) {
             logger.filter_module(module, log::LevelFilter::Info);

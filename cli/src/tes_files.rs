@@ -650,7 +650,11 @@ async fn download_s3(
     // `with_client_options` replaces the client settings that `from_env`
     // read, such as `AWS_ALLOW_HTTP`, so they are read here again.
     let mut options = object_store::ClientOptions::new();
-    for (key, value) in std::env::vars() {
+    // `vars_os`, since `vars` panics on any variable that isn't Unicode.
+    for (key, value) in std::env::vars_os() {
+        let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
+            continue;
+        };
         if !key.starts_with("AWS_") {
             continue;
         }
