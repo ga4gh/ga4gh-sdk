@@ -423,7 +423,10 @@ All commands treat values from a service the same way:
   to show it reformatted, with such characters escaped.
 - `tes list --all --format jsonl` and `wes list --all --format jsonl` write
   each record with JSON escapes, such as `\u001b`, which decode to the
-  original value. `registry get` uses JSON escapes in the same way.
+  original value. `registry get` and the JSON output of the `trs` commands
+  use JSON escapes in the same way.
+- `trs descriptor --plain` and `trs tests --plain` print the file content as
+  received, since it is meant to be saved as a file.
 
 Escaping changes only what is printed. The SDK keeps the values it received,
 and commands send the IDs given to them unchanged. If an ID that `tes create`,
