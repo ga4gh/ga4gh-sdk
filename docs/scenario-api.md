@@ -70,12 +70,15 @@ separately identifies normative cases and provider-specific profiles.
 ## OCI distribution and hosted boundary
 
 ```sh
-docker build --tag ga4gh-scenario-api:0.1.0 testbed
-docker run --rm -p 127.0.0.1:8815:8815 ga4gh-scenario-api:0.1.0
+docker build --tag ga4gh-scenario-api:0.1.1 testbed
+docker run --rm -p 127.0.0.1:8815:8815 ga4gh-scenario-api:0.1.1
 # Export a standard content-addressed OCI archive, with verified layer diff IDs:
-docker image save --output /tmp/scenario.docker.tar ga4gh-scenario-api:0.1.0
+docker image save --output /tmp/scenario.docker.tar ga4gh-scenario-api:0.1.1
 python3 testbed/export-oci.py /tmp/scenario.docker.tar /tmp/scenario.oci.tar
-docker image load --input /tmp/scenario.oci.tar
+# Docker loads its own save format; OCI layout archives need an OCI-aware importer.
+docker image load --input /tmp/scenario.docker.tar
+# Or import the OCI archive with Skopeo:
+skopeo copy oci-archive:/tmp/scenario.oci.tar docker-daemon:ga4gh-scenario-api:0.1.1
 ```
 
 The image uses a digest-pinned Python base and an unprivileged user. The archive
@@ -85,6 +88,11 @@ ENTRYPOINT. `unpackaged-source` explicitly identifies local source runs. An OCI
 release archive can be pinned and downloaded in CI without a hosted API dependency.
 
 An optional LAN source listener uses `--host 0.0.0.0`; use only synthetic data.
+For clients on another host, also set `--public-base-url` to the HTTP(S) origin
+that routes back to this server. DRS artifact URLs use this configured origin,
+not the request's `Host` header; keep it on the same trusted service. Without
+an explicit origin, a wildcard listener advertises `127.0.0.1` and supports
+local clients only.
 Browser clients can add exact `--cors-origin https://client.example` values;
 there is no permissive wildcard. HTTP is for local/internal testing. Public
 hosting, TLS, operator authentication, resource quotas beyond this in-memory

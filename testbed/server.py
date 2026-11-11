@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 ROOT = Path(__file__).resolve().parent
 BINARY = bytes(range(256)) + b'\x00GA4GH\xff\n'
 TERMINAL = {'COMPLETE', 'EXECUTOR_ERROR', 'SYSTEM_ERROR', 'CANCELED', 'CANCELED'}
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 MAX_BODY = 1024 * 1024
 
 def digest(data):
@@ -63,8 +63,29 @@ class Session:
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
-    def __init__(self, address, cors=()):
+    def __init__(self, address, cors=(), public_base_url=None):
         super().__init__(address, Handler)
+        if public_base_url is None:
+            host = self.server_address[0]
+            if host in ('', '0.0.0.0', '::'):
+                host = '127.0.0.1'
+            if ':' in host:
+                host = '[' + host + ']'
+            public_base_url = f'http://{host}:{self.server_port}'
+        try:
+            parsed = urlsplit(public_base_url)
+            parsed.port  # Reject an invalid explicit port before serving requests.
+            valid = (parsed.scheme in ('http', 'https') and parsed.hostname
+                     and parsed.username is None and parsed.password is None
+                     and parsed.path in ('', '/') and '?' not in public_base_url
+                     and '#' not in public_base_url
+                     and not any(char.isspace() or ord(char) < 32 for char in public_base_url))
+        except ValueError:
+            valid = False
+        if not valid:
+            self.server_close()
+            raise ValueError('public base URL must be an HTTP(S) origin without credentials or a path')
+        self.public_base_url = public_base_url.rstrip('/')
         self.sessions = {}
         self.guard = threading.Lock()
         self.cors = set(cors)
@@ -339,7 +360,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif route[1:] == ['fixture', 'access', 'fixture-access']:
                     if s.tick >= s.artifact_expires:
                         raise Problem(403, 'artifact access expired')
-                    self.respond(200, {'url': 'http://' + self.headers['Host'] + '/sessions/' + parts[1] + '/drs/v1/artifacts/fixture.bin', 'headers': ['Authorization: Bearer ' + s.token]})
+                    self.respond(200, {'url': self.server.public_base_url + '/sessions/' + parts[1] + '/drs/v1/artifacts/fixture.bin', 'headers': ['Authorization: Bearer ' + s.token]})
                 else:
                     raise Problem(404, 'unknown fixture')
                 return
@@ -378,8 +399,8 @@ class Handler(BaseHTTPRequestHandler):
 
     do_GET = do_POST = do_DELETE = do_OPTIONS = handle_request
 
-def make_server(host='127.0.0.1', port=0, cors=(), image_digest='unpackaged-source'):
-    server = Server((host, port), cors)
+def make_server(host='127.0.0.1', port=0, cors=(), image_digest='unpackaged-source', public_base_url=None):
+    server = Server((host, port), cors, public_base_url)
     server.image_digest = image_digest
     return server
 
@@ -389,8 +410,9 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=8815)
     parser.add_argument('--cors-origin', action='append', default=[])
     parser.add_argument('--image-digest', default='unpackaged-source')
+    parser.add_argument('--public-base-url', help='trusted external HTTP(S) origin for DRS artifact URLs')
     args = parser.parse_args()
-    server = make_server(args.host, args.port, args.cors_origin, args.image_digest)
+    server = make_server(args.host, args.port, args.cors_origin, args.image_digest, args.public_base_url)
     print(json.dumps({'listening': list(server.server_address), 'version': VERSION}), flush=True)
     try:
         server.serve_forever()

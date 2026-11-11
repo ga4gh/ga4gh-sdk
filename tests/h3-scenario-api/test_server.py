@@ -128,6 +128,33 @@ class ScenarioAPI(unittest.TestCase):
         self.assertEqual(wrapper['checksum'][0]['checksum'],api.digest(wrapper['content'].encode()))
         self.assertNotIn('url', wrapper)
 
+    def test_drs_access_url_ignores_untrusted_host(self):
+        s = self.session()
+        self.control(s, {'action': 'advance'})
+        status, access, _ = self.call(
+            s['base_path'] + '/drs/v1/objects/fixture/access/fixture-access',
+            token=s['token'], headers={'Host': 'attacker.invalid'},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(urlsplit(access['url']).netloc, urlsplit(self.base).netloc)
+        self.assertNotIn('attacker.invalid', json.dumps(access))
+
+    def test_public_origin_configuration_and_wildcard_default(self):
+        server = api.make_server(host='0.0.0.0')
+        try:
+            self.assertEqual(server.public_base_url, 'http://127.0.0.1:' + str(server.server_port))
+        finally:
+            server.server_close()
+        server = api.make_server(public_base_url='https://api.example.org/')
+        try:
+            self.assertEqual(server.public_base_url, 'https://api.example.org')
+        finally:
+            server.server_close()
+        for invalid in ('https://user:password@example.org/private',
+                        'https://api.example.org:invalid', 'https://api.example.org?'):
+            with self.assertRaises(ValueError):
+                api.make_server(public_base_url=invalid)
+
     def test_unsupported_versions_and_arbitrary_replay_text_rejected(self):
         s=self.session()
         self.assertEqual(self.multipart(s,version="unsupported-secret-text")[0],422)
