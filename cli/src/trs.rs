@@ -1,4 +1,4 @@
-use crate::registry::{json_printable, printable};
+use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgMatches, Command};
 use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain, FileWrapper};

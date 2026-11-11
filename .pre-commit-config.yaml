@@ -6,6 +6,8 @@
 # commands. See `docs/development.md`.
 #
 # Formatting and spelling hooks skip generated models and their patches.
+# Pinned upstream inputs retain their exact bytes; the exceptions below name
+# individual files only. See their upstream provenance and checksum records.
 # Structural checks still scan them for merge markers and oversized files.
 # A change to generated Rust models also triggers the local Rust hooks, which
 # format and lint the whole workspace (see docs/development.md).
@@ -24,7 +26,13 @@ repos:
       - id: check-toml
       - id: check-yaml
       - id: end-of-file-fixer
-        exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
+        exclude: >-
+          (?x)^(
+            lib/src/clients/[^/]+/models/|utils/patches/
+            |lib/src/workflow/schemas/ga4gh\-io\-profile\.schema\.json$
+            |tests/fixtures/io\-profile/invalid\.schema\.json$
+            |tests/fixtures/io\-profile/valid\.schema\.json$
+          )
       - id: trailing-whitespace
         exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
   # Schemas of GitHub's files: issue forms and their `config.yml`, workflows
@@ -43,7 +51,7 @@ repos:
       # shellcheck if it is installed (as on GitHub-hosted runners)
       - id: actionlint
   - repo: https://github.com/crate-ci/typos
-    rev: 7f9d0819ca1c008ade73f4b41fa9d258d48f605b  # frozen: v1.51.1
+    rev: 4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85  # frozen: v1.52.0
     hooks:
       - id: typos
         exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)

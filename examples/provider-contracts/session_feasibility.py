@@ -5,6 +5,9 @@ The subprocess controller is a feasibility stand-in for a TES runner adapter.
 import argparse, signal, datetime, http.server, json, os, pathlib, secrets, socket, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
 from urllib.parse import urlparse
 
+if not __debug__:
+    raise SystemExit("Run the feasibility checks without Python optimization (-O)")
+
 
 def timestamp(value):
     return datetime.datetime.fromtimestamp(value, datetime.timezone.utc).isoformat()
@@ -182,7 +185,7 @@ def serve(port, report, config):
                     except PermissionError:
                         return self.reply(403, {"error": "forbidden"})
                 parts = path.strip("/").split("/")
-                if len(parts) < 3:
+                if parts[:2] != ["v1", "sessions"] or len(parts) not in (3, 4):
                     return self.reply(404, {"error": "not_found"})
                 s = provider.sessions.get(parts[2])
                 if s is None or s["owner"] != owner:
@@ -192,17 +195,27 @@ def serve(port, report, config):
                     "stopped",
                 ):
                     provider.cleanup(s, "expired")
-                operation = parts[3] if len(parts) > 3 else "inspect"
-                if operation == "renew" and self.command == "POST":
+                if len(parts) == 3:
+                    if self.command != "GET":
+                        return self.reply(405, {"error": "method_not_allowed"})
+                    return self.reply(200, provider.view(s))
+                operation = parts[3]
+                if operation == "renew":
+                    if self.command != "POST":
+                        return self.reply(405, {"error": "method_not_allowed"})
                     if s["state"] in ("stopped", "expired"):
                         return self.reply(409, {"error": "lease_not_active"})
                     s["expires_epoch"] = time.time() + 2
                     s["expires_at"] = timestamp(s["expires_epoch"])
                     return self.reply(200, provider.view(s))
-                if operation == "stop" and self.command == "POST":
+                if operation == "stop":
+                    if self.command != "POST":
+                        return self.reply(405, {"error": "method_not_allowed"})
                     provider.cleanup(s, "stopped")
                     return self.reply(200, provider.view(s))
                 if operation == "view":
+                    if self.command != "GET":
+                        return self.reply(405, {"error": "method_not_allowed"})
                     if not s["route_enabled"]:
                         return self.reply(
                             410 if s["state"] in ("expired", "stopped") else 503,
@@ -220,7 +233,7 @@ def serve(port, report, config):
                         return self.wfile.write(body)
                     except OSError:
                         return self.reply(503, {"error": "application_unavailable"})
-                return self.reply(200, provider.view(s))
+                return self.reply(404, {"error": "not_found"})
 
     def shutdown(*_):
         with provider.lock:
@@ -312,6 +325,10 @@ def test(output=None):
             )
             identifier = session["session_id"]
             path = "/v1/sessions/" + identifier
+            assert request(base, "/other/path/" + identifier, token)[0] == 404
+            assert request(base, path + "/unknown", token)[0] == 404
+            assert request(base, path + "/view", token, {})[0] == 405
+            assert request(base, path + "/renew", token)[0] == 405
             assert request(base, path, other)[0] == 403
             assert request(base, path + "/view", other)[0] == 403
             assert request(base, path + "/view", token)[0] == 503
@@ -376,6 +393,7 @@ def test(output=None):
                 "limitations": [
                     "Local subprocess controller, not an integrated TES backend",
                     "Static test bearer auth, not production identity/proxy federation",
+                    "Capability discovery, lease generation CAS and durable idempotency are not implemented by the prototype",
                     "Provider restart recovery and termination-failure retry require the backend implementation",
                 ],
             }

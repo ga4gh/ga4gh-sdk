@@ -38,6 +38,13 @@ digest. It contains no secret value, authentication header, wrapping token,
 redemption token or credential-bearing URL. A wrapping token is a bearer
 capability and must receive the same protection as the secret.
 
+Before implementation, the broker and runner must agree on a versioned digest
+algorithm: which original request fields are included, how JSON is canonicalized,
+and whether any mutable or credential-bearing values are excluded. The digest
+must be calculated from the same client intent at authorization and launch; a
+user-supplied digest alone is not proof of that binding. The feasibility script
+uses a fixed fixture digest and does not test cross-component canonicalization.
+
 The authenticated provider exposes capability discovery and an authorization
 operation which returns a credential-free requirement/grant handle. Before
 launch it confirms supported runner/identity mechanism and allowed engine/path.
@@ -93,7 +100,8 @@ the run; evidence contains no credentials.
 
 The test verifies credential absence in its local public request/sidecar and
 provenance fixtures. It **does not** establish credential absence in a deployed
-TES/gateway store, attest a Kubernetes Pod or implement a production issuer.
+TES/gateway store, attest a Kubernetes Pod, verify a digest against a real TES
+request or implement a production issuer.
 The local test issuer is explicitly outside user task metadata.
 
 ## Completion gates and implementation boundaries
@@ -102,6 +110,8 @@ Do not close #100 as delivered until operators agree the runner identity and
 secret-engine contract and demonstrate the complete path:
 
 - Verify actual requester authorization and task -> Pod UID -> attested subject binding.
+- Ratify and test the versioned execution-intent digest across authorization,
+  gateway launch records and the runner.
 - Reject an unsupported runner before creating protected work.
 - Prove the selected grant's allowed workload succeeds and a different workload cannot redeem it.
 - Inspect real persisted FULL task views, gateway provenance and operational logs for handoff leakage.

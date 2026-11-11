@@ -59,8 +59,9 @@ cookies and signed URLs do not belong in the handle.
 Creation uses an idempotency key stored with its result; an uncertain create
 response is reconciled by that key. Renewal uses compare-and-swap on
 `lease_generation`; stop/expiry wins over concurrent renewals. The reference
-prototype has one serialized controller and deliberately does not claim durable
-idempotency or restart recovery.
+prototype has one serialized controller. It does not implement capability
+discovery, lease generation CAS, durable idempotency or restart recovery; those
+properties remain requirements for the provider implementation.
 
 ## Cleanup and partial failure
 

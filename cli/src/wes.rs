@@ -1,4 +1,4 @@
-use crate::registry::printable;
+use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::pagination::{Pager, PagingOptions};
@@ -16,9 +16,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
-/// Time allowed for preparing, uploading and acknowledging one submission.
-const SUBMISSION_BUDGET: Duration = Duration::from_secs(300);
-
 /// Build the WES command and its subcommands.
 pub fn command() -> Command {
     Command::new("wes")
@@ -32,6 +29,13 @@ pub fn command() -> Command {
                 .arg(arg!(--type <TYPE> "The workflow type, such as CWL, WDL or NFL").required(true))
                 .arg(arg!(--type_version <VERSION> "The version of the workflow type, such as v1.2").required(true))
                 .arg(arg!(--params [PARAMS] "Workflow parameters: JSON file, inline JSON object, or - for stdin"))
+                .arg(
+                    clap::Arg::new("format")
+                        .long("format")
+                        .help("Output text or a JSON object containing the original ID")
+                        .value_parser(["text", "json"])
+                        .default_value("text"),
+                )
                 .arg(
                     arg!(-a --attachment [PATH] "A file to upload, at the relative path the run sees")
                         .action(ArgAction::Append)
@@ -117,37 +121,32 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             let id = id_argument(sub)?;
             let wes = match WES::new(config).await {
                 Ok(wes) => wes,
-                Err(error) => return Ok(failure(error)),
+                Err(error) => return Ok(CommandOutput::failure(error)),
             };
-            // Not Run::log: the server's JSON is printed unchanged, with
-            // fields that the SDK models lack.
+            // Not Run::log: keep the server's JSON fields that the SDK
+            // models lack. The output renderer escapes terminal controls.
             let path = format!("runs/{}", urlencode(id));
             Ok(match wes.transport.get(&path, None).await {
-                Ok(log) => CommandOutput::success(log),
-                Err(error) => failure(error),
+                Ok(log) => CommandOutput::json(log),
+                Err(error) => CommandOutput::failure(error),
             })
         }
         Some(("status", sub)) => {
             let run = Run::new(id_argument(sub)?.to_string(), Transport::new(config));
             Ok(match run.status().await {
                 Ok(state) => CommandOutput::success(format!("{state}\n")),
-                Err(error) => failure(error),
+                Err(error) => CommandOutput::failure(error),
             })
         }
         Some(("cancel", sub)) => {
             let run = Run::new(id_argument(sub)?.to_string(), Transport::new(config));
             Ok(match run.cancel().await {
                 Ok(_) => CommandOutput::success(format!("{}\n", printable(&run.id))),
-                Err(error) => failure(error),
+                Err(error) => CommandOutput::failure(error),
             })
         }
         _ => Ok(CommandOutput::success(String::new())),
     }
-}
-
-/// Error messages can hold the server's response body, so they are escaped.
-fn failure(error: impl std::fmt::Display) -> CommandOutput {
-    CommandOutput::failure(printable(&error.to_string()))
 }
 
 fn id_argument(sub: &ArgMatches) -> anyhow::Result<&String> {
@@ -181,16 +180,25 @@ async fn submit(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Comm
 
     let wes = match WES::new(config).await {
         Ok(wes) => wes,
-        Err(error) => return Ok(failure(error)),
+        Err(error) => return Ok(CommandOutput::failure(error)),
     };
-    let operation = Operation::new(SUBMISSION_BUDGET);
+    // Preparing, uploading and acknowledging the run, within the submission limit.
+    let operation = Operation::new(config.timeouts.submission);
     Ok(
         match wes
             .run_workflow_streaming(request, attachments, &operation)
             .await
         {
-            Ok(run) => CommandOutput::success(format!("{}\n", printable(&run.id))),
-            Err(error) => failure(error),
+            Ok(run) => {
+                let output = if sub.get_one::<String>("format").map(String::as_str) == Some("json")
+                {
+                    json_printable(&serde_json::json!({"run_id": run.id}).to_string())
+                } else {
+                    printable(&run.id)
+                };
+                CommandOutput::success(format!("{output}\n"))
+            }
+            Err(error) => CommandOutput::failure(error),
         },
     )
 }
@@ -285,11 +293,11 @@ async fn list(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Comman
     let page_token = sub.get_one::<String>("page_token").cloned();
     let wes = match WES::new(config).await {
         Ok(wes) => wes,
-        Err(error) => return Ok(failure(error)),
+        Err(error) => return Ok(CommandOutput::failure(error)),
     };
     Ok(match wes.list_runs(page_token, page_size).await {
         Ok(response) => CommandOutput::success(format_runs(&response)),
-        Err(error) => failure(error),
+        Err(error) => CommandOutput::failure(error),
     })
 }
 

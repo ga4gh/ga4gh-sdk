@@ -51,7 +51,7 @@ pytest
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root or read it from `~/.ga4gh-cli/config.json`. |
+| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys; `set_timeouts()` and `get_timeouts()` set and give the time limits of requests. See [Reading the configuration file](#reading-the-configuration-file) and [Timeouts](#timeouts). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
@@ -102,6 +102,57 @@ Use `TesTask.from_json(text)` when the task starts as JSON text.
 For a task that is still running, call `task.cancel()`.
 `from_file` replaces the API root. `Task.status()` and `Task.cancel()` are methods;
 `id` and `status` on tasks returned by `list()` and `get()` are attributes.
+
+## Reading the configuration file
+
+`config.from_file()` reads a section of `~/.ga4gh-cli/config.json` (format in
+the [usage guide](../docs/usage.md#configuration-file)). Name a built-in
+section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`, `REGISTRY`), and
+any other section with a `str`. `config.get_extra()` returns the keys of the
+section that the SDK doesn't use itself, as a `dict` with the values as they are
+in the file, so don't log it if it can hold credentials:
+
+```python
+from GA4GH import Configuration, ServiceType
+
+config = Configuration("https://example.org")
+config.from_file(ServiceType.TES)
+config.from_file("MY_SERVICE")
+queue = config.get_extra().get("queue")
+```
+
+A section can name an environment variable for its token with
+`oauth_access_token_env`. A missing section or an unset variable raises
+`ValueError`, a missing file `FileNotFoundError`.
+
+## Timeouts
+
+`config.set_timeouts()` sets time limits of requests, in seconds, as keyword
+arguments; `config.get_timeouts()` returns all four as a `dict`. A section of
+the configuration file sets them with its `timeouts` object:
+
+```python
+from GA4GH import Configuration, TES
+
+config = Configuration("https://example.org/ga4gh/tes/v1")
+config.set_timeouts(discovery=30, submission=600)
+config.get_timeouts()
+# {'connect': 10.0, 'discovery': 30.0, 'request': 60.0, 'submission': 600.0}
+tes = TES(config)
+```
+
+- `connect` (default 10): opening each connection.
+- `request` (default 60): each request that the limits below don't apply to.
+- `discovery` (default 10): the service check of `TES(config)`, `AsyncTES`,
+  `WES(config)` and `DRS(config)`, in place of `request`.
+- `submission` (default 300): `TES.create()`, `AsyncTES.create()` and
+  `WES.run()`, including uploads, in place of `request`. A submission that runs
+  out of time after its request started raises `RuntimeError` with "submission may have
+  been accepted"; look for the task or run before you submit it again.
+
+Clients and `Transport` read the limits when they are built, so set them first.
+Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
+timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
 
 ## Network behavior
 
@@ -299,16 +350,18 @@ print(run.task(tasks.task_logs[0].id).stderr)
   `os.PathLike`); as for `TES.create()`, a `str` is always a path, so pass JSON text as
   `RunRequest.from_json(text)`. `workflow_type`, `workflow_type_version`, `workflow_url`
   and `workflow_params` are required; `workflow_params` must be a JSON object.
-  The request goes to the server as the fields of
-  the WES `RunRequest` form; fields that the WES models don't know are kept in the
-  `RunRequest` but not sent.
+  The request goes to the server as the fields of the WES `RunRequest` form. Fields
+  that the WES models don't know, such as a server's extension fields, go as further
+  form parts: strings as they are, other values as JSON. A `workflow_attachment` field
+  raises `ValueError` before a request; pass files with `attachments` instead.
 - `attachments` maps filenames to contents, as `bytes` (or `bytearray`) or as the path of
   a file (`os.PathLike`, such as `pathlib.Path`), which is streamed rather than read into
   memory. A list of `(filename, content)` pairs works too. Filenames are relative paths
   with `/` separators, such as `tools/echo.cwl`; absolute paths, `..`, backslashes,
   colons and repeated filenames raise `ValueError` before a request. Refer to an
   attachment in `workflow_url` by its filename. The upload and the server's answer must
-  finish within 60 seconds.
+  finish within the `submission` limit of the configuration, 300 seconds by default
+  (see [Timeouts](#timeouts)).
 - `Run` addresses a run on the server by its `id`. `Run.status()` returns a `WesState`,
   `Run.cancel()` cancels the run and returns `None`, and `Run.log()` returns a `RunLog`.
   `Run.tasks(page_size=None, page_token=None)` returns a `TaskListResponse` with
@@ -572,7 +625,15 @@ The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=
   pass `json.dumps(text)` to send a JSON string.
 - `params` holds query parameters, as a `dict` or a JSON object string. Values are
   strings, numbers, booleans or lists of these; a list repeats the parameter
-  (`{"tag_key": ["a", "b"]}` gives `tag_key=a&tag_key=b`), and `None` leaves it out.
+  (`{"tag_key": ["a", "b"]}` gives `tag_key=a&tag_key=b`), and `None` or an empty
+  list leaves it out. Keys are sorted. Keys and values are form encoded (a space
+  becomes `+`), as in the Rust SDK, and are appended after a query already in
+  `endpoint`.
+  - Other values, such as a `dict`, a nested list or `None` inside a list, raise
+    `ValueError` before a request is sent.
+  - **Behavior change:** earlier versions left out `None` list items. Remove them
+    yourself, keeping `tag_key` and `tag_value` items aligned, since TES pairs them
+    by position.
 - `fields` is a list of `(name, value)` text parts; `files` is a list of
   `(name, filename, content)` or `(name, filename, content, content_type)` tuples, with
   `content` as `bytes`. Names may repeat, as for WES `workflow_attachment`.

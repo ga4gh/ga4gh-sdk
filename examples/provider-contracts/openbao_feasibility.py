@@ -2,6 +2,9 @@
 """Real OpenBao JWT + KV-v2 feasibility. Local test issuer, not a production TES identity adapter."""
 import base64, hashlib, json, os, pathlib, secrets, subprocess, sys, tempfile, time, urllib.error, urllib.request
 
+if not __debug__:
+    raise SystemExit("Run the feasibility checks without Python optimization (-O)")
+
 IMAGE = "openbao/openbao@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f"
 
 
@@ -258,6 +261,7 @@ def main():
                 "public_fixture_records_credential_free": True,
                 "limitations": [
                     "No production runner attestation or requester authorization integration",
+                    "Execution-intent digest is a fixed fixture, not a canonicalized TES request",
                     "Record inspection covers local fixtures, not deployed TES persistence",
                     "KV read revocation cannot revoke a value already disclosed; no dynamic-credential revocation claim",
                 ],
