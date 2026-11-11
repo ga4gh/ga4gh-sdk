@@ -1,0 +1,133 @@
+name: CLI binaries
+
+# Builds the ga4gh-cli binary for each release platform and packs it with the
+# licence and README into one archive per platform. Called by CI (build only)
+# and by Release (build, then attach to the GitHub release).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  binary:
+    name: Build CLI (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux binaries are built on Ubuntu 22.04 (glibc 2.35) and need the
+          # OpenSSL 3 shared library at run time; the glibc check below keeps
+          # the documented floor of 2.34 (RHEL 9).
+          - platform: Linux x86-64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: Linux aarch64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - platform: macOS x86-64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: macOS arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - platform: Windows x86-64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            # Link the C runtime statically, so the binary runs without the
+            # Visual C++ Redistributable.
+            rustflags: -C target-feature=+crt-static
+          - platform: Windows arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            rustflags: -C target-feature=+crt-static
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the OpenSSL headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libssl-dev pkg-config
+      - name: Install rustup
+        # Not every runner image ships rustup; the toolchain itself comes from
+        # rust-toolchain.toml either way.
+        if: runner.os == 'Windows'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          if command -v rustup > /dev/null; then
+            exit 0
+          fi
+          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/rustup-init.exe" \
+            "https://static.rust-lang.org/rustup/dist/$TARGET/rustup-init.exe"
+          "$RUNNER_TEMP/rustup-init.exe" -y --no-modify-path --profile minimal --default-toolchain none
+          printf '%s\n' "$USERPROFILE\.cargo\bin" >> "$GITHUB_PATH"
+      - name: Install the toolchain
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add "$TARGET"
+      - name: Build the CLI
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked --package ga4gh-cli --target "$TARGET"
+      - name: Pack the archive
+        id: pack
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            binary="target/$TARGET/release/ga4gh-cli.exe"
+          else
+            binary="target/$TARGET/release/ga4gh-cli"
+          fi
+          # Running the binary is the smoke test: it must start on the runner
+          # and report the workspace version.
+          "$binary" --help > /dev/null
+          version_output="$("$binary" --version)"
+          echo "$version_output"
+          version="${version_output#ga4gh-cli }"
+          if [[ -z "$version" || "$version" == "$version_output" ]]; then
+            echo "::error::Unexpected version output: $version_output"
+            exit 1
+          fi
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            # The README promises glibc 2.34 or newer; fail if a dependency
+            # starts to need a newer symbol version.
+            glibc="$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu | tail -n 1)" || true
+            if [[ -z "$glibc" ]]; then
+              echo "::error::No glibc symbol versions found in $binary"
+              exit 1
+            fi
+            echo "Newest glibc symbol version: $glibc"
+            if [[ "$(printf '%s\n' GLIBC_2.34 "$glibc" | sort -V | tail -n 1)" != GLIBC_2.34 ]]; then
+              echo "::error::The binary needs $glibc, newer than the documented GLIBC_2.34"
+              exit 1
+            fi
+          fi
+          name="ga4gh-cli-$version-$TARGET"
+          staging="$RUNNER_TEMP/$name"
+          mkdir -p "$staging" dist
+          cp "$binary" LICENSE README.md "$staging/"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            archive="$name.zip"
+            (cd "$RUNNER_TEMP" && 7z a -tzip "$GITHUB_WORKSPACE/dist/$archive" "$name" > /dev/null)
+          else
+            archive="$name.tar.gz"
+            tar -C "$RUNNER_TEMP" -czf "dist/$archive" "$name"
+          fi
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "$archive" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/${{ steps.pack.outputs.archive }}
+          if-no-files-found: error
