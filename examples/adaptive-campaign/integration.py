@@ -43,7 +43,7 @@ async def demonstrate(provider_path, evidence_dir=None):
     provider_path = Path(provider_path).resolve()
     if not provider_path.exists():
         raise SystemExit("integration requires examples/portable-execution/provider.py (see --providers)")
-    import GA4GH  # Fail before launching services if the optional binding is unavailable.
+    import ga4gh_sdk  # Fail before launching services if the optional binding is unavailable.
     import temporalio
     root = Path(evidence_dir) if evidence_dir else Path(tempfile.mkdtemp(prefix="h3-campaign-evidence-"))
     root.mkdir(parents=True, exist_ok=True)
@@ -52,7 +52,7 @@ async def demonstrate(provider_path, evidence_dir=None):
     provider_module = load_provider(provider_path)
     cluster = provider_module.Cluster(root / "providers").start()
     workers, logs = [], []
-    summary = {"temporal_python": temporalio.__version__, "binding": str(GA4GH.__file__),
+    summary = {"temporal_python": temporalio.__version__, "binding": str(ga4gh_sdk.__file__),
                "scope": "local cooperating TES endpoints and real host CPU subprocesses",
                "policy": POLICY_VERSION, "evidence": str(root), "checks": []}
     try:

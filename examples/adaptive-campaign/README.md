@@ -179,9 +179,12 @@ optional Temporal package is installed:
 python tests/run-h3-campaign.py
 ```
 
-When the native GA4GH binding is also installed, the adapter checks include one
-actual dispatch and cancellation through the local CPU/TES provider. This guards
-the task argument contract against changes to the Python API.
+Install the native binding as described in the
+[Python guide](../../python/README.md); its import name is `ga4gh_sdk`.
+The earlier `GA4GH` import is no longer shipped. With the binding installed,
+the adapter checks include one actual dispatch and cancellation through the local
+CPU/TES provider. This guards the task argument contract against changes to the
+Python API.
 
 The opt-in demonstration starts the official native Temporal development service,
 real CPU provider processes, and fresh controller worker processes. On first use

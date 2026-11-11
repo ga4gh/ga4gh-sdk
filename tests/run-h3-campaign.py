@@ -81,7 +81,7 @@ class AdapterContracts(unittest.TestCase):
             self.assertEqual(Activities().dispatch(self.trial())["kind"], "NOT_DISPATCHED_DEADLINE")
             client.assert_not_called()
 
-    @unittest.skipUnless(importlib.util.find_spec("GA4GH"), "optional native TES binding not installed")
+    @unittest.skipUnless(importlib.util.find_spec("ga4gh_sdk"), "optional native TES binding not installed")
     def test_dispatch_through_current_native_tes_creates_one_owned_task(self):
         from activities import Activities, read_json
         from datetime import datetime, timedelta, timezone

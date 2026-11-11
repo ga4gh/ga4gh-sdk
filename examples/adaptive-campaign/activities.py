@@ -18,7 +18,7 @@ def read_json(url):
 
 def tes_client(provider):
     # Optional native dependency. See the repository Python binding guide.
-    from GA4GH import Configuration, TES
+    from ga4gh_sdk import Configuration, TES
     return TES(Configuration(provider["url"] + "/v1"))
 
 
@@ -114,7 +114,7 @@ class Activities:
     @activity.defn
     def cancel(self, trial: dict) -> dict:
         try:
-            from GA4GH import Configuration, Task, Transport
+            from ga4gh_sdk import Configuration, Task, Transport
             task = Task(trial["remote_id"], Transport(Configuration(trial["provider"]["url"] + "/v1")))
             task.cancel()
             return {"request": "ACKNOWLEDGED", "terminal": False}
