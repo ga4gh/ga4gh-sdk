@@ -177,8 +177,9 @@ pickled and copied, including the attributes of subclass instances.
 
 Its fields are properties: `id`, `state`, `name`, `description`, `creation_time`,
 `inputs`, `outputs`, `resources`, `executors`, `volumes`, `tags` and `logs`. Missing
-fields are `None`, except `state`, which is `TesState.UNKNOWN` then. Nested values, such
-as executors, come as `dict`s and `list`s. The `status` property is the same as `state` and
+fields are `None`, except `state`, which is `TesState.UNKNOWN` then. A state that TES
+1.1 doesn't define is also `TesState.UNKNOWN`; `to_dict()` keeps the server's value.
+Nested values, such as executors, come as `dict`s and `list`s. The `status` property is the same as `state` and
 is kept for compatibility. Data objects such as `TesTask` have properties; `Task`, which
 asks the server, has methods (`Task.status()`).
 
@@ -341,8 +342,10 @@ and `json()` as JSON text.
 - `TaskLog`: `id`, `name`, `cmd`, `start_time`, `end_time`, `stdout`, `stderr`,
   `exit_code`, `system_logs` and `tes_uri`.
 
-Missing fields are `None`, except `state`, which is `WesState.UNKNOWN` then. Nested
-values, such as `run_log`, come as `dict`s and `list`s. `WesState` is a `str` enum of the
+Missing fields are `None`, except `state`, which is `WesState.UNKNOWN` then. A state
+that WES 1.1 does not define also reads as `WesState.UNKNOWN`; `to_dict()` keeps
+the server's original value. Nested values, such as `run_log`, come as `dict`s
+and `list`s. `WesState` is a `str` enum of the
 WES states (`UNKNOWN`, `QUEUED`, `INITIALIZING`, `RUNNING`, `PAUSED`, `COMPLETE`,
 `EXECUTOR_ERROR`, `SYSTEM_ERROR`, `CANCELED`, `CANCELING`, `PREEMPTED`) that works like
 `TesState`, but is a separate class.

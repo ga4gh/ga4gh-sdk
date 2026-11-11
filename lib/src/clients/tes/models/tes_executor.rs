@@ -40,6 +40,10 @@ pub struct TesExecutor {
     /// Default behavior of running an array of executors is that execution stops on the first error. If `ignore_error` is `True`, then the runner will record error exit codes, but will continue on to the next tesExecutor.
     #[serde(rename = "ignore_error", skip_serializing_if = "Option::is_none")]
     pub ignore_error: Option<bool>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesExecutor {
@@ -54,6 +58,7 @@ impl TesExecutor {
             stderr: None,
             env: None,
             ignore_error: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

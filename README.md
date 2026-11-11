@@ -48,6 +48,30 @@ items are `RunListResponseRunsInner` and deprecated task log items are
 endpoints. As for `TES`, the error type of `WES::service` is now
 `Box<dyn Error + Send + Sync>`, so a `WES` client can move between threads.
 
+All models now keep what their spec doesn't define (see
+[Models](docs/usage.md#models)). This breaks some code:
+
+- Model structs have a new public field, `extra`. Struct literals of models
+  must set it or end with `..Default::default()`; prefer the models' `new`
+  functions.
+- Enums have a new variant, `Unrecognized(String)`, and are no longer `Copy`.
+  `match` statements need an arm for it, and code that copies an enum value
+  must `.clone()` it. `TesState` and the WES `State` are not affected: they
+  stay `Copy` and read unknown states as `Unknown`, which is now their last
+  variant (this changes their `Ord` order). They write such states back as
+  `UNKNOWN`.
+- Model enums of a single property, such as the DRS `access_method::Type`,
+  now implement `Display`.
+- `extra` keys with the name of a field of the model are sent twice in the
+  JSON; only WES `run_workflow` rejects them.
+- Unknown fields are no longer dropped: serializing a model, or
+  `ga4gh-cli registry get`, now includes the fields that the server added.
+- WES `run_workflow` sends `RunRequest.extra` as further form parts; names of
+  the request's own parts are an error.
+- TRS methods that take a descriptor type encode it as a path segment and
+  reject `Unrecognized` values that are empty, `.` or `..`.
+- `TesTask::new(executors)` now sets `executors`; it used to ignore them.
+
 ## Installation
 
 These instructions install the SDK from this source repository.

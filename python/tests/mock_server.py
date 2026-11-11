@@ -43,7 +43,8 @@ ROUTES = {
     ("GET", "/api/tasks/task-1"): (200, TASK),
     ("GET", "/api/tasks"): (200, {"tasks": [TASK], "next_page_token": "next"}),
     ("GET", "/api/tasks/task-1/provenance"): (200, {"events": ["created"]}),
-    ("GET", "/api/tasks/bad"): (200, {"id": "bad", "state": "NOT_A_STATE"}),
+    ("GET", "/api/tasks/bad"): (200, {"id": "bad", "executors": "not a list"}),
+    ("GET", "/api/tasks/new-state"): (200, {"id": "new-state", "state": "SUSPENDED"}),
     ("POST", "/api/tasks"): (200, {"id": "task-1"}),
     ("POST", "/api/runs"): (200, {"run_id": "run-1"}),
     ("POST", "/api/tasks/task-1:cancel"): (200, {}),
@@ -284,6 +285,7 @@ ROUTES.update(
         ("GET", "/wes/runs/run-1/tasks/task-1"): (200, TASK_LOG),
         ("GET", "/wes/runs/no-state"): (200, {"run_id": "no-state"}),
         ("GET", "/wes/runs/bad"): (200, {"run_id": "bad", "state": "NOT_A_STATE"}),
+        ("GET", "/wes/runs/malformed"): (200, ["not", "an", "object"]),
         # A WES 0.2.0 server (GA4GH Starter Kit) lists runs as a bare array.
         ("GET", "/starter-kit/service-info"): (200, WES_SERVICE_INFO),
         ("GET", "/starter-kit/runs"): (200, [RUN_SUMMARY]),

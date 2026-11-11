@@ -1215,7 +1215,7 @@ impl PyAccessPlan {
     /// The type of the access method, such as `"https"` or `"s3"`.
     #[getter]
     fn method(&self) -> PyResult<String> {
-        access_type_name(self.inner.method)
+        access_type_name(&self.inner.method)
     }
 
     #[getter]
@@ -1255,7 +1255,7 @@ impl PyAccessPlan {
     }
 }
 
-fn access_type_name(method: Type) -> PyResult<String> {
+fn access_type_name(method: &Type) -> PyResult<String> {
     match serde_json::to_value(method) {
         Ok(Value::String(name)) => Ok(name),
         _ => Err(PyRuntimeError::new_err("Unknown access method type")),
@@ -1263,12 +1263,15 @@ fn access_type_name(method: Type) -> PyResult<String> {
 }
 
 fn parse_access_type(name: &str) -> PyResult<Type> {
-    serde_json::from_value(Value::String(name.to_lowercase())).map_err(|_| {
-        PyValueError::new_err(format!(
-            "Invalid access method type: {name:?}; expected s3, gs, ftp, gsiftp, globus, \
+    serde_json::from_value::<Type>(Value::String(name.to_lowercase()))
+        .ok()
+        .filter(|method| !matches!(method, Type::Unrecognized(_)))
+        .ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "Invalid access method type: {name:?}; expected s3, gs, ftp, gsiftp, globus, \
              htsget, https or file"
-        ))
-    })
+            ))
+        })
 }
 
 /// Turns hostname-based DRS URIs into `AccessPlan`s.

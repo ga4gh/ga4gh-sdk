@@ -33,6 +33,10 @@ pub struct TesOutput {
     pub path_prefix: Option<String>,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub r#type: Option<models::TesFileType>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TesOutput {
@@ -45,6 +49,7 @@ impl TesOutput {
             path,
             path_prefix: None,
             r#type: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

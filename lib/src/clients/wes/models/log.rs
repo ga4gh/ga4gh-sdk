@@ -40,6 +40,10 @@ pub struct Log {
     /// System logs are any logs the system decides are relevant, which are not tied directly to a workflow. Content is implementation specific: format, size, etc.  System logs may be collected here to provide convenient access.  For example, the system may include an error message that caused a SYSTEM_ERROR state (e.g. disk is full), etc.
     #[serde(rename = "system_logs", skip_serializing_if = "Option::is_none")]
     pub system_logs: Option<Vec<String>>,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Log {
@@ -54,6 +58,7 @@ impl Log {
             stderr: None,
             exit_code: None,
             system_logs: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
