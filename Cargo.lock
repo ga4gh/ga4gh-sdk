@@ -589,6 +589,7 @@ dependencies = [
  "ga4gh-lib",
  "log",
  "mockito",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
