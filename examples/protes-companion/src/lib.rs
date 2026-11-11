@@ -308,8 +308,9 @@ impl RerunPlan {
         &self.removed_gateway_tags
     }
 }
-/// Submit the exact immutable prepared JSON. Generated models may omit downstream
-/// or newer TES fields, so no deserialize/reserialize step is allowed here.
+/// Submit the prepared JSON value without serializing it through generated
+/// models that may omit downstream or newer TES fields. The SDK validates the
+/// value and sends it once.
 pub async fn create_plan(
     client: &ga4gh_sdk::clients::tes::TES,
     plan: &RerunPlan,
