@@ -73,8 +73,10 @@ pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
   with the status and the (bounded) body.
 - A custom section in the configuration file (any name besides the built-in
   ones) can hold the service's settings; read it with
-  `Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))` and
-  find unknown keys in `Configuration::extra`. See the
+  `CliContext::load_config(ServiceType::Custom("MY_SERVICE".into()))` from
+  the binary's own file (see [below](#a-cli-with-added-subcommands)), or
+  with `Configuration::from_file`, which reads `ga4gh-cli`'s file, and find
+  unknown keys in `Configuration::extra`. See the
   [usage guide](usage.md#configuration-file).
 
 ## A model that extends `TesTask`
@@ -115,7 +117,10 @@ configuration file and token variable. A `ga4gh_cli::CliContext` holds them;
 ```rust
 CliContext::new("downstream-cli", env!("CARGO_PKG_VERSION"))
     .with_about("CLI for GA4GH services, with service extensions")
-    .with_token_env("DOWNSTREAM_CLI_TOKEN")
+    .with_token_env(
+        "DOWNSTREAM_CLI_TOKEN",
+        [ServiceType::TES, ServiceType::Custom("QUOTA".into())],
+    )
 ```
 
 | Setting | Default for `CliContext::new(name, …)` | `ga4gh-cli` (`CliContext::default()`) | Example |
@@ -123,16 +128,23 @@ CliContext::new("downstream-cli", env!("CARGO_PKG_VERSION"))
 | Name and `bin_name` | `name` | `ga4gh-cli` | `downstream-cli` |
 | Version (`--version`) | as given | the CLI crate's version | the example crate's version |
 | Configuration file | `~/.<name>/config.json`; `with_config_path` sets another | `~/.ga4gh-cli/config.json` | `~/.downstream-cli/config.json` |
-| Token variable | none; `with_token_env` sets one | none | `DOWNSTREAM_CLI_TOKEN` |
+| Token variable | none; `with_token_env` sets one and its sections | none | `DOWNSTREAM_CLI_TOKEN` for `TES` and `QUOTA` |
 
-The token variable holds an OAuth access token for every section of the
-file that sets no credentials (`basic_auth`, `oauth_access_token` or
-`oauth_access_token_env`); credentials in a section take precedence. An
-unset or empty variable leaves those sections without a token. Since one
-variable serves all such sections, the token goes to each of their services;
-to send different tokens to different services, name a variable per section
-with `oauth_access_token_env`. Like the configured tokens, it is sent only
-where the SDK sends credentials (see [Not covered yet](#not-covered-yet)).
+The name, version and help text are `&'static str`, usually literals or
+`env!` values. For the default configuration file, the name must be usable
+as a directory name (not empty, `.` or `..`, and without `/` or `\`);
+otherwise, set the path with `with_config_path`.
+
+The token variable holds an OAuth access token for the sections listed with
+it, typically the binary's own services. It applies only to listed sections
+that set no credentials (`basic_auth`, `oauth_access_token` or
+`oauth_access_token_env`); credentials in a section take precedence, and
+sections that aren't listed never receive the token. An unset or empty
+variable leaves the sections without a token. (An empty variable named by
+`oauth_access_token_env` gives an empty token instead.) To send a token to
+another service, name a variable in its section with
+`oauth_access_token_env`. Like the configured tokens, it is sent only where
+the SDK sends credentials (see [Not covered yet](#not-covered-yet)).
 
 [`cli::command`](../examples/downstream-sdk/src/cli.rs) starts from the
 context's command tree and adds `tes usage <ID>` and a top-level `quota`:

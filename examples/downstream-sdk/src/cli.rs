@@ -27,11 +27,15 @@ pub const QUOTA_SECTION: &str = "QUOTA";
 
 /// The binary's settings: its name and version, the configuration file
 /// `~/.downstream-cli/config.json` (the default for the name) and the token
-/// variable [`TOKEN_ENV`].
+/// variable [`TOKEN_ENV`] for the sections of its own services, `TES` and
+/// `QUOTA`. Other sections never receive that token.
 pub fn context() -> CliContext {
     CliContext::new(BIN_NAME, env!("CARGO_PKG_VERSION"))
         .with_about("CLI for GA4GH services, with service extensions")
-        .with_token_env(TOKEN_ENV)
+        .with_token_env(
+            TOKEN_ENV,
+            [ServiceType::TES, ServiceType::Custom(QUOTA_SECTION.into())],
+        )
 }
 
 /// Builds the SDK's command tree for [`context`], plus `tes usage <ID>` and
@@ -134,6 +138,11 @@ pub async fn run_extension(
 /// The SDK's [`CommandOutput`] helpers escape the output and set the exit
 /// code as for the built-in commands: [`CommandOutput::json`] for the
 /// response, [`CommandOutput::failure`] for an error.
+///
+/// `Transport::new` doesn't send configured credentials yet
+/// ([#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)); a service that
+/// needs them takes a client with an `Authorization` header through
+/// `Transport::with_client`.
 pub async fn quota(config: &Configuration) -> CommandOutput {
     match Transport::new(config).get("quota", None).await {
         Ok(body) => CommandOutput::json(body),

@@ -53,27 +53,26 @@ fn default_context_is_the_ga4gh_cli() {
     let context = CliContext::default();
     assert_eq!(context.name(), "ga4gh-cli");
     assert_eq!(context.version(), env!("CARGO_PKG_VERSION"));
+    assert_eq!(context.about(), Some("CLI for GA4GH services"));
     assert_eq!(context.token_env(), None);
     let command = context.command();
     assert_eq!(command.get_name(), ga4gh_cli::command().get_name());
     assert_eq!(command.get_version(), ga4gh_cli::command().get_version());
-    if let Some(home) = dirs::home_dir() {
-        assert_eq!(
-            context.config_path().unwrap(),
-            home.join(".ga4gh-cli/config.json")
-        );
-    }
+    let home = dirs::home_dir().expect("the tests need a home directory");
+    assert_eq!(
+        context.config_path().unwrap(),
+        home.join(".ga4gh-cli/config.json")
+    );
 }
 
 #[test]
 fn config_path_defaults_to_a_directory_named_after_the_binary() {
-    if let Some(home) = dirs::home_dir() {
-        let context = CliContext::new("other-cli", "1.0.0");
-        assert_eq!(
-            context.config_path().unwrap(),
-            home.join(".other-cli/config.json")
-        );
-    }
+    let home = dirs::home_dir().expect("the tests need a home directory");
+    let context = CliContext::new("other-cli", "1.0.0");
+    assert_eq!(
+        context.config_path().unwrap(),
+        home.join(".other-cli/config.json")
+    );
     for name in ["", ".", "..", "a/b", "a\\b"] {
         let error = CliContext::new(name, "1.0.0").config_path().unwrap_err();
         assert!(
@@ -125,7 +124,7 @@ fn missing_file_context(dir: &Path) -> CliContext {
 }
 
 #[test]
-fn token_variable_fills_sections_without_credentials() {
+fn token_variable_fills_listed_sections_without_credentials() {
     const VAR: &str = "GA4GH_CLI_TEST_CONTEXT_TOKEN_FILLS";
     let dir = tempfile::tempdir().unwrap();
     let path = write_config(
@@ -133,15 +132,36 @@ fn token_variable_fills_sections_without_credentials() {
         json!({
             "TES": {"base_path": "https://tes.example.org/"},
             "WES": {"base_path": "https://wes.example.org/", "oauth_access_token": "from-file"},
-            "DRS": {"base_path": "https://drs.example.org/", "basic_auth": {"username": "user"}}
+            "DRS": {"base_path": "https://drs.example.org/", "basic_auth": {"username": "user"}},
+            "TRS": {"base_path": "https://trs.example.org/"},
+            "MY_SERVICE": {"base_path": "https://my.example.org/"}
         }),
     );
     std::env::set_var(VAR, "from-env");
-    let context = context(&path).with_token_env(VAR);
+    let context = context(&path).with_token_env(
+        VAR,
+        [
+            ServiceType::TES,
+            ServiceType::WES,
+            ServiceType::DRS,
+            ServiceType::Custom("MY_SERVICE".into()),
+        ],
+    );
     assert_eq!(context.token_env(), Some(VAR));
+    assert_eq!(
+        context.token_sections(),
+        ["TES", "WES", "DRS", "MY_SERVICE"]
+    );
 
     let tes = context.load_config(ServiceType::TES).unwrap();
     assert_eq!(tes.oauth_access_token.as_deref(), Some("from-env"));
+    let custom = context
+        .load_config(ServiceType::Custom("MY_SERVICE".into()))
+        .unwrap();
+    assert_eq!(custom.oauth_access_token.as_deref(), Some("from-env"));
+    // Sections that aren't listed never receive the token.
+    let trs = context.load_config(ServiceType::TRS).unwrap();
+    assert_eq!(trs.oauth_access_token, None);
     // Credentials in the section take precedence over the variable.
     let wes = context.load_config(ServiceType::WES).unwrap();
     assert_eq!(wes.oauth_access_token.as_deref(), Some("from-file"));
@@ -165,7 +185,7 @@ fn unset_or_empty_token_variable_leaves_the_section_unauthenticated() {
     std::env::set_var(EMPTY, "");
     for var in [UNSET, EMPTY] {
         let config = context(&path)
-            .with_token_env(var)
+            .with_token_env(var, [ServiceType::TES])
             .load_config(ServiceType::TES)
             .unwrap();
         assert_eq!(config.oauth_access_token, None, "{var}");
@@ -186,7 +206,7 @@ fn non_unicode_token_variable_is_an_error_without_its_value() {
     );
     std::env::set_var(VAR, std::ffi::OsStr::from_bytes(b"SENTINEL\xff"));
     let error = context(&path)
-        .with_token_env(VAR)
+        .with_token_env(VAR, [ServiceType::TES])
         .load_config(ServiceType::TES)
         .unwrap_err()
         .to_string();
@@ -321,7 +341,7 @@ async fn workflow_submission_uses_the_context_file_and_token_variable() {
     let base_path = format!("{}/context-wes", mockito::server_url());
     let path = write_config(dir.path(), json!({"WES": {"base_path": base_path}}));
     std::env::set_var(VAR, "token-from-variable");
-    let context = context(&path).with_token_env(VAR);
+    let context = context(&path).with_token_env(VAR, [ServiceType::WES]);
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let schema = root.join("examples/sequence-qc/profile.json");
     let request = root.join("examples/sequence-qc/request.json");

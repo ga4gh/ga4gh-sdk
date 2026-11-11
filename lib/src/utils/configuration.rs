@@ -271,6 +271,7 @@ impl Configuration {
     ///
     /// This function will return an error if the configuration file is missing or malformed.
     pub fn from_file(service_type: ServiceType) -> Result<Self, Box<dyn std::error::Error>> {
+        // `ga4gh_cli::CliContext::default()` reads the same file; keep the two in step.
         let path = dirs::home_dir()
             .ok_or("Home directory not found")?
             .join(".ga4gh-cli/config.json");

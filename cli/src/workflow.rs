@@ -106,9 +106,9 @@ pub async fn run(
     run_with_context(args, service_config, &CliContext::default()).await
 }
 
-/// Like [`run`], but without a supplied configuration, submission reads the
+/// Like [`run`]; without a supplied configuration, submission reads the
 /// WES section of `context`'s configuration file.
-pub async fn run_with_context(
+pub(crate) async fn run_with_context(
     args: &ArgMatches,
     service_config: Option<&Configuration>,
     context: &CliContext,

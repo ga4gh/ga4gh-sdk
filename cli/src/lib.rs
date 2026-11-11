@@ -138,10 +138,11 @@ mod output_tests {
 /// ```no_run
 /// use clap::Command;
 /// use ga4gh_cli::CliContext;
+/// use ga4gh_sdk::clients::ServiceType;
 /// # async fn example() -> anyhow::Result<std::process::ExitCode> {
 /// let context = CliContext::new("my-cli", env!("CARGO_PKG_VERSION"))
 ///     .with_about("CLI for my services")
-///     .with_token_env("MY_CLI_TOKEN");
+///     .with_token_env("MY_CLI_TOKEN", [ServiceType::Custom("MY_SERVICE".into())]);
 /// let matches = context.command().subcommand(Command::new("custom")).get_matches();
 /// let mut stdout = std::io::stdout();
 /// match context.dispatch_to(&matches, &mut stdout, &mut std::io::stderr()).await? {
@@ -159,6 +160,7 @@ pub struct CliContext {
     about: Option<&'static str>,
     config_path: Option<PathBuf>,
     token_env: Option<String>,
+    token_sections: Vec<String>,
 }
 
 impl Default for CliContext {
@@ -174,7 +176,9 @@ impl CliContext {
     /// `env!("CARGO_PKG_VERSION")`.
     ///
     /// The configuration file defaults to `~/.<name>/config.json`, and no
-    /// token variable is read.
+    /// token variable is read. The texts are `&'static str`, as Clap's
+    /// command names are without its `string` feature; they are usually
+    /// literals or `env!` values.
     pub fn new(name: &'static str, version: &'static str) -> Self {
         Self {
             name,
@@ -182,6 +186,7 @@ impl CliContext {
             about: None,
             config_path: None,
             token_env: None,
+            token_sections: Vec::new(),
         }
     }
 
@@ -198,15 +203,24 @@ impl CliContext {
     }
 
     /// Reads an OAuth access token from the environment variable `name` for
-    /// sections that set no credentials.
+    /// the given sections, such as the binary's own services, when they set
+    /// no credentials.
     ///
-    /// The token applies to every service section that sets none of
-    /// `basic_auth`, `oauth_access_token` and `oauth_access_token_env`; an
-    /// unset or empty variable leaves those sections without a token. Name a
-    /// variable per section with `oauth_access_token_env` to send different
-    /// tokens to different services.
-    pub fn with_token_env(mut self, name: impl Into<String>) -> Self {
+    /// The token applies only to the listed sections, and only if they set
+    /// none of `basic_auth`, `oauth_access_token` and `oauth_access_token_env`;
+    /// other sections never receive it. An unset or empty variable leaves the
+    /// sections without a token. To send a token to another service, name a
+    /// variable in its section with `oauth_access_token_env`.
+    pub fn with_token_env(
+        mut self,
+        name: impl Into<String>,
+        sections: impl IntoIterator<Item = ServiceType>,
+    ) -> Self {
         self.token_env = Some(name.into());
+        self.token_sections = sections
+            .into_iter()
+            .map(|section| section.as_str().to_owned())
+            .collect();
         self
     }
 
@@ -220,9 +234,19 @@ impl CliContext {
         self.version
     }
 
+    /// The description that `--help` shows, if set.
+    pub fn about(&self) -> Option<&'static str> {
+        self.about
+    }
+
     /// The token variable set with [`with_token_env`](Self::with_token_env).
     pub fn token_env(&self) -> Option<&str> {
         self.token_env.as_deref()
+    }
+
+    /// The sections that the token variable applies to.
+    pub fn token_sections(&self) -> &[String] {
+        &self.token_sections
     }
 
     /// The path of the configuration file.
@@ -241,6 +265,8 @@ impl CliContext {
                 self.name
             );
         }
+        // For `ga4gh-cli`, the same file as `Configuration::from_file` in the
+        // library reads; keep the two in step.
         let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
         Ok(home.join(format!(".{}", self.name)).join("config.json"))
     }
@@ -257,10 +283,14 @@ impl CliContext {
     /// variable is set but not valid Unicode.
     pub fn load_config(&self, service_type: ServiceType) -> anyhow::Result<Configuration> {
         let path = self.config_path()?;
-        let mut config = Configuration::from_path(&path, service_type.as_str())
+        let section = service_type.as_str();
+        let mut config = Configuration::from_path(&path, section)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Some(name) = &self.token_env {
-            if config.basic_auth.is_none() && config.oauth_access_token.is_none() {
+            if self.token_sections.iter().any(|listed| listed == section)
+                && config.basic_auth.is_none()
+                && config.oauth_access_token.is_none()
+            {
                 match std::env::var(name) {
                     Ok(token) if !token.is_empty() => config.oauth_access_token = Some(token),
                     Ok(_) | Err(std::env::VarError::NotPresent) => {}

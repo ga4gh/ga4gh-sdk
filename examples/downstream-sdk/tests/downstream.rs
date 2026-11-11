@@ -304,6 +304,7 @@ async fn cli_run_reads_the_config_file_for_added_and_built_in_commands() {
         home.path().join(".downstream-cli/config.json"),
         json!({
             "TES": {"base_path": api_root("cli-run")},
+            "WES": {"base_path": "https://wes.example.org/ga4gh/wes/v1"},
             "QUOTA": {
                 "base_path": format!("{}/cli-run-quota/", mockito::server_url()),
                 "oauth_access_token": "from-file"
@@ -317,7 +318,8 @@ async fn cli_run_reads_the_config_file_for_added_and_built_in_commands() {
     std::env::set_var("HOME", home.path());
     std::env::set_var(cli::TOKEN_ENV, "from-env");
 
-    // The token variable fills in sections without credentials only.
+    // The token variable fills in the binary's own sections without
+    // credentials, and no others.
     let context = cli::context();
     let tes = context.load_config(ServiceType::TES).unwrap();
     assert_eq!(tes.oauth_access_token.as_deref(), Some("from-env"));
@@ -325,6 +327,8 @@ async fn cli_run_reads_the_config_file_for_added_and_built_in_commands() {
         .load_config(ServiceType::Custom(cli::QUOTA_SECTION.into()))
         .unwrap();
     assert_eq!(quota.oauth_access_token.as_deref(), Some("from-file"));
+    let wes = context.load_config(ServiceType::WES).unwrap();
+    assert_eq!(wes.oauth_access_token, None);
 
     for (args, expected) in [
         (vec!["tes", "usage", "task-1"], "task-1\t-\t5\n"),
@@ -341,4 +345,18 @@ async fn cli_run_reads_the_config_file_for_added_and_built_in_commands() {
         assert!(stdout.contains(expected), "{args:?}: {stdout}");
         assert!(stderr.is_empty(), "{args:?}");
     }
+
+    // Without its section, `quota` fails with an error that names it.
+    std::fs::write(
+        home.path().join(".downstream-cli/config.json"),
+        json!({"TES": {"base_path": api_root("cli-run")}}).to_string(),
+    )
+    .unwrap();
+    let matches = cli::command()
+        .try_get_matches_from([cli::BIN_NAME, "quota"])
+        .unwrap();
+    let error = cli::run(&matches, &mut Vec::new(), &mut Vec::new())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("'QUOTA'"), "{error}");
 }
