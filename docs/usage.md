@@ -44,8 +44,8 @@ host, which usually fails with `404 Not Found`.
 
 The CLI, Rust `Configuration::from_file` and Python `Configuration.from_file()`
 read `~/.ga4gh-cli/config.json`. The file holds one object per service, keyed by
-the section name: `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` for the built-in
-services, or any other name for a custom service:
+the section name: `TES`, `WES`, `DRS`, `TRS`, `AAI`, or `REGISTRY` for
+built-in services, or any other name for a custom service:
 
 ```json
 {

@@ -474,7 +474,7 @@ text parts of `stdout` are already escaped as described above.
 binary's own text output. SDK log messages can hold a service's response, so
 a downstream binary that writes logs should pass them through `printable()`
 too, as the `ga4gh-cli` binary does in [its logger setup](src/main.rs). See the
-[downstream CLI test](tests/downstream_cli.rs) for a working example.
-A downstream command can read its own section of the configuration file with
+[downstream CLI test](tests/downstream_cli.rs) for a working example. A
+downstream command can read its own section of the configuration file with
 `Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))`; keys
 that the SDK doesn't use itself are in `Configuration::extra`.
