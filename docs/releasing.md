@@ -23,10 +23,10 @@ release; that comes with the CLI binaries
    | macOS arm64 | `macosx_*_arm64` |
    | Windows x86-64 | `win_amd64` |
 
-   The Linux wheels bundle the OpenSSL library that the HTTP client links
-   against. Elsewhere (for example musl-based Linux such as Alpine, or glibc
-   older than 2.28), pip builds from the sdist, which needs the Rust toolchain
-   and the OpenSSL headers (see the [Python guide](../python/README.md#prerequisites)).
+   Python wheels use rustls with native system certificate roots, without
+   bundling OpenSSL. Elsewhere (for example musl-based Linux such as Alpine,
+   or glibc older than 2.28), pip builds from the sdist, which needs the Rust
+   toolchain (see the [Python guide](../python/README.md#prerequisites)).
    CI runs the same build on every pull request, without publishing.
 3. **Publish package** uploads all files with
    [trusted publishing](https://docs.pypi.org/trusted-publishers/): there is no
@@ -51,25 +51,27 @@ The maturin version is pinned in `wheels.yml` and in the `python` job of
 
 The repository variable `PYPI_INDEX` (`pypi` or `testpypi`) overrides the
 default, for example to try a release of `ga4gh/ga4gh-sdk` on TestPyPI first.
-The run then shows a warning. Delete the variable afterwards, or the next tag
-goes to TestPyPI, too.
+For an upstream TestPyPI rehearsal, use a distinct pre-release workspace
+version and tag, such as `0.1.0-dev.1` and `v0.1.0-dev.1`. The workflow rejects
+an upstream TestPyPI upload of a stable version. An immutable tag cannot later
+be reused to publish the same version to PyPI. The run shows a warning; delete
+the variable afterwards, or the next tag goes to TestPyPI, too.
 
 ## One-time setup
 
-Maintainers of `ga4gh/ga4gh-sdk` set this up once before the first tag:
+The `ga4gh/ga4gh-sdk` repository already has `pypi` and `testpypi`
+environments limited to `v*` tags. Both require approval by
+`pavelnikonorov` or `uniqueg` and prevent self-approval; neither needs secrets.
+Two tag rulesets allow only those two users to create `v*` tags and prevent
+updates or deletion. Verify these protections before each release.
 
-1. On PyPI, add a pending
-   [trusted publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
-   for the project `ga4gh-sdk` with owner `ga4gh`, repository `ga4gh-sdk`,
-   workflow `release.yml` and environment `pypi`. Do the same on TestPyPI with
-   environment `testpypi`, so that the name is reserved there for this
-   repository, too.
-2. In the repository settings, create the environments `pypi` and `testpypi`.
-   Limit them to tags matching `v*` (deployment branches and tags) and add
-   required reviewers, so that every upload needs a maintainer's approval.
-   Neither environment needs secrets.
-3. Protect `v*` tags with a tag ruleset, so that only maintainers can create
-   them and nobody can move or delete them.
+Before the first tag, sign in to the `ga4gh` account on PyPI and add a pending
+[trusted publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
+for project `ga4gh-sdk`: GitHub owner `ga4gh`, repository `ga4gh-sdk`, workflow
+`release.yml`, environment `pypi`. On TestPyPI, sign in to its `ga4gh` account
+and add the same pending publisher with environment `testpypi`. A pending
+publisher does not reserve the project name; each index creates and assigns
+the project only after its first successful upload.
 
 ## Making a release
 
@@ -101,12 +103,11 @@ publisher and `ga4gh-sdk` is kept for this repository:
    example `0.1.0-dev.1`, and run `cargo update --workspace`. Commit the
    version, `Cargo.lock` and the package name on the fork's `main`, tag that
    commit with `v0.1.0-dev.1` and push the tag to the fork.
-4. Check that the run publishes to TestPyPI (the environment link in the run
-   still points to `ga4gh-sdk`), then install from there:
+4. Check that the run publishes to TestPyPI, then install from there:
 
    ```sh
    python -m pip install --index-url https://test.pypi.org/simple/ ga4gh-sdk-<your-user>==0.1.0.dev1
-   python -c 'import GA4GH; print(GA4GH.TES.__name__)'
+   python -c 'import ga4gh_sdk; print(ga4gh_sdk.TES.__name__)'
    ```
 
 5. Delete the test tag in the fork afterwards.

@@ -56,10 +56,9 @@ jobs:
           maturin-version: v1.15.0
           working-directory: python
           target: ${{ matrix.target }}
-          # manylinux_2_28 (glibc 2.28) ships OpenSSL 1.1.1, which the native-tls
-          # backend of reqwest links against; maturin bundles it into the wheel.
+          # The Python build uses rustls and native certificate roots; no
+          # OpenSSL development package or bundled libssl is required.
           manylinux: '2_28'
-          before-script-linux: dnf install -y openssl-devel
           args: --release --locked --out dist
       - name: Import the wheel
         if: matrix.smoke
@@ -73,7 +72,22 @@ jobs:
           fi
           "$venv_python" -m pip install --no-index --no-deps python/dist/*.whl
           cd "$RUNNER_TEMP"
-          "$venv_python" -c 'import GA4GH; print(GA4GH.TES.__name__, GA4GH.Configuration.__name__)'
+          "$venv_python" -c 'import ga4gh_sdk; print(ga4gh_sdk.TES.__name__, ga4gh_sdk.Configuration.__name__)'
+      - name: Check Linux wheel excludes OpenSSL libraries
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from glob import glob
+          from zipfile import ZipFile
+
+          wheels = glob('python/dist/*.whl')
+          assert len(wheels) == 1, wheels
+          with ZipFile(wheels[0]) as wheel:
+              linked = [name for name in wheel.namelist()
+                        if 'libssl' in name.lower() or 'libcrypto' in name.lower()]
+          assert not linked, f'OpenSSL libraries were bundled: {linked}'
+          PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-wheel-${{ matrix.id }}
@@ -104,7 +118,7 @@ jobs:
           python -m venv "$RUNNER_TEMP/sdist"
           "$RUNNER_TEMP/sdist/bin/python" -m pip install python/dist/*.tar.gz
           cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/sdist/bin/python" -c 'import GA4GH; print(GA4GH.TES.__name__)'
+          "$RUNNER_TEMP/sdist/bin/python" -c 'import ga4gh_sdk; print(ga4gh_sdk.TES.__name__)'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-sdist

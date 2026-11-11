@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from GA4GH import TES, Configuration
+from ga4gh_sdk import TES, Configuration
 
 DEFAULTS = {"connect": 10.0, "request": 60.0, "discovery": 10.0, "submission": 300.0}
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from GA4GH import Configuration
+from ga4gh_sdk import Configuration
 
 
 class MockServer:
