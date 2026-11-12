@@ -389,7 +389,10 @@ content without a JSON wrapper. `trs tests --plain` prints one inline test file;
 if the server returns several files or only a URL, omit `--plain` to inspect
 their JSON instead. The commands exit with code 0 on success and 1 on request
 or server errors; missing arguments use exit code 2. `--zip` never replaces
-an existing file, doesn't extract the archive, and downloads at most 64 MiB.
+an existing file, doesn't extract the archive, and downloads at most 64 MiB;
+the file appears under its name only when it is complete (until then, it is a
+hidden `.<name>.partial-<pid>` file in the same directory, which an interrupted
+download may leave behind).
 A tag must not be empty or contain a comma, because the registry receives all
 tags as one comma-separated value. Error messages and JSON
 output escape terminal control and bidirectional formatting characters.

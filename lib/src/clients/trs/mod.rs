@@ -1021,6 +1021,26 @@ mod tests {
         }
     }
 
+    // The shared query encoding percent-encodes the separating comma
+    // (`tags=a%2Cb`); servers decode the value before splitting it.
+    #[tokio::test]
+    async fn test_list_tools_sends_tags_with_an_encoded_comma() {
+        let m = mock("GET", path("tags-wire", "tools").as_str())
+            .match_query(Matcher::Exact("tags=a%2Cb".into()))
+            .with_status(200)
+            .with_body("[]")
+            .expect(2)
+            .create();
+        let filter = ToolFilter {
+            tags: vec!["a".into(), "b".into()],
+            ..Default::default()
+        };
+        for client in clients("tags-wire") {
+            assert!(client.list_tools(&filter).await.unwrap().is_empty());
+        }
+        m.assert();
+    }
+
     #[test]
     fn test_tool_filter_query() {
         assert_eq!(ToolFilter::default().query().unwrap(), None);

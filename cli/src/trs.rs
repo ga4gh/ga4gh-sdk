@@ -212,7 +212,7 @@ fn tool_filter(filter: ToolFilter) -> anyhow::Result<Box<ToolFilter>> {
 }
 
 // The archive never replaces an existing file; checked here so that the
-// registry isn't contacted, and again when the file is created.
+// registry isn't contacted, and again when the archive is linked into place.
 fn new_file_arg(path: PathBuf) -> anyhow::Result<PathBuf> {
     if path.exists() {
         anyhow::bail!(
@@ -223,23 +223,59 @@ fn new_file_arg(path: PathBuf) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-// Writes the whole archive or nothing: a failed write removes the new file.
-fn write_new_file(path: &Path, bytes: &[u8]) -> Result<String, Box<dyn Error>> {
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| format!("Can't create {}: {error}", path.display()))?;
-    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-        drop(file);
-        let _ = std::fs::remove_file(path);
-        return Err(format!("Can't write {}: {error}", path.display()).into());
+/// A new file that appears under its final name only when it is complete.
+///
+/// The content goes to a hidden temporary file next to the target, created
+/// before the download so that an unwritable location fails early. `finish`
+/// hard-links it to the target, which fails if the target exists, so nothing
+/// is replaced. The temporary file is removed when this value is dropped, also
+/// after errors; only an interrupted process can leave it behind.
+struct NewFile {
+    target: PathBuf,
+    temp: PathBuf,
+    file: std::fs::File,
+}
+
+impl NewFile {
+    fn create(target: &Path) -> Result<Self, Box<dyn Error>> {
+        let name = target
+            .file_name()
+            .ok_or_else(|| format!("{} is not a file path", target.display()))?;
+        let mut temp_name = std::ffi::OsString::from(".");
+        temp_name.push(name);
+        temp_name.push(format!(".partial-{}", std::process::id()));
+        let temp = target.with_file_name(temp_name);
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|error| format!("Can't create {}: {error}", temp.display()))?;
+        Ok(Self {
+            target: target.to_path_buf(),
+            temp,
+            file,
+        })
     }
-    Ok(format!(
-        "Wrote {} bytes to {}\n",
-        bytes.len(),
-        printable(&path.display().to_string())
-    ))
+
+    fn finish(mut self, bytes: &[u8]) -> Result<String, Box<dyn Error>> {
+        self.file
+            .write_all(bytes)
+            .and_then(|()| self.file.sync_all())
+            .map_err(|error| format!("Can't write {}: {error}", self.temp.display()))?;
+        std::fs::hard_link(&self.temp, &self.target)
+            .map_err(|error| format!("Can't create {}: {error}", self.target.display()))?;
+        Ok(format!(
+            "Wrote {} bytes to {}\n",
+            bytes.len(),
+            printable(&self.target.display().to_string())
+        ))
+    }
+}
+
+impl Drop for NewFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.temp);
+    }
 }
 
 fn segment_arg(name: &str, value: String) -> anyhow::Result<String> {
@@ -285,10 +321,12 @@ async fn execute(trs: &TRS, request: Request) -> Result<String, Box<dyn Error>> 
             descriptor_type,
             zip: Some(path),
         } => {
+            // Before the download, so that an unusable path fails early.
+            let file = NewFile::create(&path)?;
             let archive = trs
                 .get_files_zip(&tool, &version, descriptor_type, ZIP_LIMIT)
                 .await?;
-            write_new_file(&path, &archive)
+            file.finish(&archive)
         }
         Request::Files {
             tool,
@@ -384,7 +422,7 @@ fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_descriptor_type, plain_files, with_plain, write_new_file};
+    use super::{parse_descriptor_type, plain_files, with_plain, NewFile};
     use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain, FileWrapper};
 
     #[test]
@@ -399,17 +437,37 @@ mod tests {
     }
 
     #[test]
-    fn write_new_file_keeps_existing_files() {
+    fn new_file_appears_complete_and_keeps_existing_files() {
         let directory = tempfile::TempDir::new().unwrap();
         let path = directory.path().join("workflow.zip");
-        assert!(write_new_file(&path, b"PK new")
+        let entries = || std::fs::read_dir(directory.path()).unwrap().count();
+        let file = NewFile::create(&path).unwrap();
+        assert!(!path.exists());
+        assert!(file
+            .finish(b"PK new")
             .unwrap()
             .starts_with("Wrote 6 bytes to "));
         assert_eq!(std::fs::read(&path).unwrap(), b"PK new");
+        assert_eq!(entries(), 1);
+
         // The file appeared after the arguments were checked.
-        let error = write_new_file(&path, b"PK other").unwrap_err().to_string();
+        let file = NewFile::create(&path).unwrap();
+        let error = file.finish(b"PK other").unwrap_err().to_string();
         assert!(error.contains("Can't create"), "{error}");
         assert_eq!(std::fs::read(&path).unwrap(), b"PK new");
+        assert_eq!(entries(), 1);
+
+        // A dropped file (e.g. after a failed download) leaves nothing.
+        drop(NewFile::create(&directory.path().join("other.zip")).unwrap());
+        assert_eq!(entries(), 1);
+    }
+
+    #[test]
+    fn new_file_fails_early_for_unusable_paths() {
+        let directory = tempfile::TempDir::new().unwrap();
+        for path in [directory.path().join("missing/workflow.zip"), "".into()] {
+            assert!(NewFile::create(&path).is_err(), "{path:?}");
+        }
     }
 
     #[test]

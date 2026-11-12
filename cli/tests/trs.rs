@@ -357,6 +357,8 @@ fn files_zip_writes_no_file_if_the_download_fails() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains(expected), "{stderr}");
         assert!(!archive.exists());
+        // No temporary file is left either; only the config directory.
+        assert_eq!(fs::read_dir(home.path()).unwrap().count(), 1);
     }
     service.assert();
     not_zip.assert();
