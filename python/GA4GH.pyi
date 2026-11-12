@@ -33,7 +33,8 @@ class Configuration:
     """The API root and settings for connecting to a GA4GH service.
 
     `from_file()` reads a section of `~/.ga4gh-cli/config.json`, named by a
-    `ServiceType` or by a `str`; `get_extra()` returns the section's other keys.
+    `ServiceType` or by a `str`; in a file with profiles, of the default
+    profile. `get_extra()` returns the section's other keys.
     """
 
     def __init__(self, base_path: str) -> None: ...
