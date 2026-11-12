@@ -6,7 +6,21 @@ use std::process::ExitCode;
 async fn main() -> anyhow::Result<ExitCode> {
     // Log messages can hold a service's response body, so they are escaped
     // like the rest of the text output.
-    env_logger::Builder::from_default_env()
+    let mut logger = env_logger::Builder::from_default_env();
+    // The HTTP libraries log full URLs at debug level, including the query
+    // strings of pre-signed output URLs. They log at debug level only when
+    // `RUST_LOG` names them.
+    let filters = std::env::var("RUST_LOG").unwrap_or_default();
+    if filters.is_empty() {
+        // env_logger's default level applies only when no filter is set.
+        logger.filter_level(log::LevelFilter::Error);
+    }
+    for module in ["reqwest", "hyper", "hyper_util"] {
+        if !filters.contains(module) {
+            logger.filter_module(module, log::LevelFilter::Info);
+        }
+    }
+    logger
         .format(|buf, record| {
             writeln!(
                 buf,

@@ -14,9 +14,12 @@ bash run-integration-tests.sh
 ```
 
 The script starts Funnel if its `/healthz` endpoint is not healthy, waits for
-that endpoint, then runs the `integration_tests` feature suite.
-It waits up to 60 seconds by default; set `FUNNEL_STARTUP_TIMEOUT_SECONDS`
-to change the limit. It does not stop a Funnel process that it starts.
+that endpoint, then runs the `integration_tests` feature suites of the
+library and of the CLI. The CLI suite runs a task and reads its stdout with
+`tes files`, `tes log` and `tes save`; downloads of output files from HTTP and
+S3 storage are checked against mock servers in the default CLI tests.
+The script waits up to 60 seconds for Funnel by default; set
+`FUNNEL_STARTUP_TIMEOUT_SECONDS` to change the limit. It does not stop a Funnel process that it starts.
 
 ## Starter Kit WES
 
