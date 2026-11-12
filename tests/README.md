@@ -6,17 +6,33 @@ services described in each section.
 
 ## Funnel/TES
 
-Install the `funnel` executable using the [Funnel developer guide](https://ohsu-comp-bio.github.io/funnel/docs/development/developers/)
-and make sure `curl` is available. The suite uses `localhost:8000`.
+On Linux or macOS, download the matching archive from the
+[Funnel 0.11.14 release](https://github.com/calypr/funnel/releases/tag/v0.11.14).
+Extract the `funnel` executable and add its directory to `PATH`. CI uses this release.
+Make sure `curl` and a Docker daemon are available. The suite uses `localhost:8000`.
 
 ```sh
 bash run-integration-tests.sh
 ```
 
 The script starts Funnel if its `/healthz` endpoint is not healthy, waits for
-that endpoint, then runs the `integration_tests` feature suite.
+that endpoint, then runs the `integration_tests` feature suites of the library
+and of the CLI.
 It waits up to 60 seconds by default; set `FUNNEL_STARTUP_TIMEOUT_SECONDS`
 to change the limit. It does not stop a Funnel process that it starts.
+
+The CLI suite, [`funnel_cli.rs`](../cli/tests/funnel_cli.rs), runs the
+`ga4gh-cli` binary with a temporary home directory whose config points to
+Funnel. It runs a task without inputs or outputs to completion with
+`tes create`, `tes status`, `tes get` and `tes list`. The list checks cover
+matching and nonmatching tag filters. The suite also cancels a running task
+with `tes cancel` and checks that an unknown task returns a non-zero exit
+status, empty stdout, and HTTP 404 on stderr.
+
+Funnel needs network access to pull `alpine:3.22` for these tasks. Each state
+polling loop has a 180-second deadline; an in-flight CLI request can extend
+that wait by its configured timeout. The other `tes` tests of the CLI run
+against mock servers in the default `cargo test`.
 
 ## Starter Kit WES
 
