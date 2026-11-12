@@ -358,13 +358,18 @@ let archive = trs
     .await?;
 ```
 
-The client follows TRS 2.0.2. `tags` are registry-specific and sent as one
+The client uses one set of models generated from TRS 2.0.2; it does not select
+models at runtime based on the server's `service-info` version. It accepts a
+TRS 2.0.1 service-info response and a tool version without the new optional
+`description` field. The `tags` filter and ZIP download depend on the server
+implementing those capabilities; they are not guaranteed on 2.0.1 servers.
+`tags` are registry-specific and sent as one
 comma-separated value (the comma is percent-encoded, as `%2C`), so a tag
 must not be empty or contain a comma.
 `ToolVersion.description` holds the description of a version, if the registry
-sends one. `get_files_zip` reads the whole archive into memory and returns it as bytes,
-without extracting it;
-a body larger than the limit, or one that isn't a ZIP archive, is an error.
+sends one. `get_files_zip` reads the whole response into memory and returns it
+as bytes without extracting it; a body larger than the limit, or one without a
+ZIP file signature, is an error. The archive's contents are not fully validated.
 
 ### Models
 

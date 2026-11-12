@@ -418,9 +418,10 @@ impl TRS {
     ///
     /// The archive is read into memory, at most `limit` bytes; a larger body
     /// fails with a [`BodyLimitError`](crate::utils::transport::BodyLimitError).
-    /// A body that isn't a ZIP archive (for example the JSON file list of a
-    /// registry that ignores `format`) is an error. The archive isn't
-    /// extracted. To stream large archives instead, use
+    /// A response without a ZIP file signature (for example the JSON file
+    /// list of a registry that ignores `format`) is an error. This does not
+    /// validate the archive's contents or extract it. To stream large
+    /// archives instead, use
     /// [`responses::files_zip`] with `self.transport`.
     pub async fn get_files_zip(
         &self,
@@ -435,8 +436,9 @@ impl TRS {
         let response =
             responses::files_zip(&self.transport, id, version_id, descriptor_type).await?;
         let body = read_bounded(response, limit).await?.body;
-        // Every ZIP archive, also an empty one, starts with a `PK` signature.
-        if !body.starts_with(b"PK") {
+        // Local-file and empty-archive signatures. A bare `PK` prefix is not
+        // enough to distinguish an archive from an arbitrary response body.
+        if !body.starts_with(b"PK\x03\x04") && !body.starts_with(b"PK\x05\x06") {
             return Err("TRS response is not a ZIP archive".into());
         }
         Ok(body)
@@ -586,6 +588,29 @@ mod tests {
             assert_eq!(trs.service.unwrap().r#type.artifact, "trs");
         }
         m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_old_trs_service_and_version_without_description() {
+        let mut info = service_info_json("trs");
+        info["type"]["version"] = serde_json::json!("2.0.1");
+        let service = get_mock("trs-201", "service-info", &info.to_string());
+        let mut version = version_json();
+        version.as_object_mut().unwrap().remove("description");
+        let response = get_mock("trs-201", &tool_version(""), &version.to_string());
+        for client in clients("trs-201") {
+            let trs = TRS::new(&client.config).await.unwrap();
+            assert_eq!(trs.service.as_ref().unwrap().r#type.version, "2.0.1");
+            assert_eq!(
+                trs.get_version(TOOL_ID, VERSION_ID)
+                    .await
+                    .unwrap()
+                    .description,
+                None
+            );
+        }
+        service.assert();
+        response.assert();
     }
 
     #[tokio::test]
@@ -1092,6 +1117,12 @@ mod tests {
             .with_body(r#"[{"path":"main.cwl"}]"#)
             .expect(2)
             .create();
+        let fake_zip = mock("GET", path("zip-fake", &tool_version("CWL/files")).as_str())
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_body("PK not an archive")
+            .expect(2)
+            .create();
         let missing = mock("GET", path("zip-404", &tool_version("CWL/files")).as_str())
             .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
             .with_status(404)
@@ -1105,6 +1136,13 @@ mod tests {
             assert!(error.is::<BodyLimitError>(), "{error}");
         }
         for client in clients("zip-json") {
+            let error = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("not a ZIP archive"), "{error}");
+        }
+        for client in clients("zip-fake") {
             let error = client
                 .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
                 .await
@@ -1127,6 +1165,7 @@ mod tests {
         }
         too_large.assert();
         not_zip.assert();
+        fake_zip.assert();
         missing.assert();
     }
 
