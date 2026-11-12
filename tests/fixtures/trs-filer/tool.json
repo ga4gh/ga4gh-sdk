@@ -1,0 +1,55 @@
+{
+  "organization": "GA4GH SDK integration",
+  "name": "echo-workflow",
+  "description": "Echoes a message",
+  "toolclass": {
+    "name": "Workflow",
+    "description": "A workflow"
+  },
+  "tags": [
+    "ga4gh-sdk-integration",
+    "cwl"
+  ],
+  "versions": [
+    {
+      "name": "1.0.0",
+      "description": "First release",
+      "is_production": false,
+      "descriptor_type": [
+        "CWL"
+      ],
+      "files": [
+        {
+          "tool_file": {
+            "path": "main.cwl",
+            "file_type": "PRIMARY_DESCRIPTOR"
+          },
+          "file_wrapper": {
+            "content": "cwlVersion: v1.2\nclass: Workflow\ninputs:\n  message: string\nsteps:\n  echo:\n    run: tools/echo.cwl\n    in: {message: message}\n    out: []\noutputs: []\n"
+          },
+          "type": "CWL"
+        },
+        {
+          "tool_file": {
+            "path": "tools/echo.cwl",
+            "file_type": "SECONDARY_DESCRIPTOR"
+          },
+          "file_wrapper": {
+            "content": "cwlVersion: v1.2\nclass: CommandLineTool\nbaseCommand: echo\ninputs:\n  message: {type: string, inputBinding: {position: 1}}\noutputs: []\n"
+          },
+          "type": "CWL"
+        },
+        {
+          "tool_file": {
+            "path": "inputs.schema.json",
+            "file_type": "OTHER"
+          },
+          "file_wrapper": {
+            "content": "{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\"}}}"
+          },
+          "type": "CWL"
+        }
+      ]
+    }
+  ]
+}

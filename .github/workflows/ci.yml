@@ -106,7 +106,7 @@ jobs:
                 lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
                 lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs)
             elif [[ "$SUITE" == trs-filer ]]; then
-              paths=("${common[@]}" tests/run-trs-filer-integration.sh
+              paths=("${common[@]}" tests/run-trs-filer-integration.sh tests/fixtures/trs-filer/
                 lib/src/clients/trs/ lib/src/clients/serviceinfo/ lib/src/utils/
                 lib/src/clients/mod.rs lib/src/lib.rs lib/tests/trs_filer.rs
                 cli/Cargo.toml cli/src/ cli/tests/trs_filer.rs)
