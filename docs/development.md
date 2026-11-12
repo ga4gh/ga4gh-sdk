@@ -101,23 +101,30 @@ cargo llvm-cov report --html --open \
   --ignore-filename-regex 'lib/src/clients/[^/]+/models/'
 ```
 
-In CI, the `coverage` job uploads `coverage/lcov.info` to
-[Codecov](https://codecov.io/gh/ga4gh/ga4gh-sdk), which shows the coverage
-of `main` in the README badge and, on pull requests, the change in coverage
-as a comment and as the `codecov/project` and `codecov/patch` statuses.
-[`codecov.yml`](../codecov.yml) makes these statuses informational: they
-never fail, and `CI passed` remains the only required check. The upload
-authenticates with an OIDC token of the workflow run, so the repository needs
-no Codecov secret; uploads from forks need no token. A failed upload doesn't
-fail the job; the job summary and the `coverage` artifact are then still
-there.
+In CI, the `codecov` job uploads `coverage/lcov.info` from the `coverage`
+job to [Codecov](https://codecov.io/gh/ga4gh/ga4gh-sdk), which shows the
+coverage of `main` in the README badge and, on pull requests, the change in
+coverage as a comment and as the `codecov/project` and `codecov/patch`
+statuses. [`codecov.yml`](../codecov.yml) makes these statuses
+informational: they never fail, and `CI passed` remains the only required
+check.
+
+The upload authenticates with an OIDC token of the workflow run, so the
+repository needs no Codecov secret; uploads from forks need no token. This
+needs a one-time setup by an organization admin: the Codecov GitHub app
+installed for the repository, and the repository enabled on Codecov.
+Dependabot pull requests get no OIDC token, so they get no Codecov report.
+A failed upload doesn't fail the job: the job summary and the `coverage`
+artifact of the `coverage` job are then still there, and the job log of
+`codecov` shows the reason.
 
 ## Lints
 
 `make clippy` checks all workspace targets. The CI lint job runs the same
-command and checks formatting. Documentation lint enforcement is not part of
-CI yet; it needs a policy for generated models and the existing undocumented
-public API before it can become a useful gate.
+command and checks formatting. Documentation lint enforcement remains in
+[#87](https://github.com/ga4gh/ga4gh-sdk/issues/87); it needs a policy for
+generated models and the existing undocumented public API before it can become
+a useful gate.
 
 ## CI
 
@@ -131,7 +138,8 @@ on pushes to `main` and on manual dispatch:
 | `build` | Build | Lockfile check, builds of library, CLI and Python wheel |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
-| `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact and on Codecov |
+| `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
+| `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
 | `passed` | CI passed | Fails unless all jobs above succeeded |
 
