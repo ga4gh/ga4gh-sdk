@@ -1,0 +1,40 @@
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+#
+# Builds the MkDocs site (`mkdocs.yml`) with the Rust API reference of
+# `cargo doc`, as the `docs` job of `.github/workflows/ci.yml` does
+
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    # As in CI's `docs` job
+    python: "3.13"
+  jobs:
+    # The `docs` dependency group of `python/pyproject.toml`; pip installs
+    # dependency groups since 25.1
+    install:
+      - python -m pip install --upgrade "pip>=25.1"
+      - python -m pip install --group "python/pyproject.toml:docs"
+    # The Rust API reference (`target/doc/`), which `docs/hooks.py` adds to
+    # the site. rustup is pinned by its checksum; it installs the toolchain
+    # of `rust-toolchain.toml` when Cargo first runs
+    pre_build:
+      - >-
+        curl --fail --location --silent --show-error --proto "=https"
+        --output "$HOME/rustup-init"
+        https://static.rust-lang.org/rustup/archive/1.29.3/x86_64-unknown-linux-gnu/rustup-init
+      - echo "b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55  $HOME/rustup-init" | sha256sum --check
+      - chmod +x "$HOME/rustup-init"
+      - >-
+        "$HOME/rustup-init" -y --no-modify-path --profile minimal
+        --default-toolchain none
+      - >-
+        "$HOME/.cargo/bin/cargo" doc --no-deps --locked
+        -p ga4gh-lib -p ga4gh-cli
+
+mkdocs:
+  configuration: mkdocs.yml
+  # Fail on all warnings, e.g., of broken links and anchors
+  fail_on_warning: true
