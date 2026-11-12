@@ -357,7 +357,7 @@ let archive = trs
     .await?;
 ```
 
-The client selects a TRS 2.0.1 or 2.0.2 response profile from the API version
+The client selects a TRS 2.0.1 or 2.0.2 API profile from the API version
 in `service-info.type.version`. An unknown declaration uses the 2.0.1 read
 contract and records compatibility as unverified. Use `TrsOptions` to require
 a known declaration or select a profile explicitly. Selection belongs to each
@@ -370,9 +370,10 @@ must not be empty or contain a comma. A declared version is evidence of intended
 support, not proof that the server implements filtering correctly.
 
 `ToolVersion::description()` returns a string description when present; the
-original value remains in `extra` and in serialized JSON. The 2.0.2 decoder
-rejects a description with a non-string, non-null value. The 2.0.1 decoder
-keeps any description value as extension data.
+original value remains in `extra` and in serialized JSON. If a registry sends
+a non-string value, `description()` returns `None` while the raw value stays
+available in `extra` under either profile. This tolerance is limited to an
+optional field; malformed JSON and invalid required fields still return errors.
 The existing public model fields remain unchanged.
 
 `get_files_zip` reads the response into memory and returns bytes without

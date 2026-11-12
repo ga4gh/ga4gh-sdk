@@ -24,14 +24,15 @@ The operation contract is:
 
 | Operations | 2.0.1 profile | 2.0.2 profile |
 | --- | --- | --- |
-| Tool, version, lists, and tool pages | 2.0.1 decoding; unknown fields stay in `extra`. | 2.0.2 validation, including nested version descriptions; same public result types. |
+| Tool, version, lists, and tool pages | Shared public models; unknown fields stay in `extra`. | Same models and decoding; the optional version description is available as a string through `description()` when valid. |
 | Tag-filtered tools/pages | Rejected unless the caller enables a known backport. | Allowed unless the caller disables support. |
 | Tool classes, descriptors, file lists, test files | Shared request and model paths. | Same paths and models; these contracts did not change. |
 | ZIP download | Available with bounded bytes and a signature check. | Same behavior. |
 
-Local HTTP tests exercise common operations under both profiles and the version
-boundaries above. Public registry smoke tests cover selected read operations;
-they do not establish tag filtering or every response shape on those servers.
+Local HTTP tests exercise common operations under both profiles, version
+boundaries, and nonconforming optional descriptions. Public registry smoke tests
+cover selected read operations; they do not establish tag filtering or every
+response shape on those servers.
 
 ## Selection and capabilities
 
@@ -48,8 +49,8 @@ software version in the top-level `version` field.
 Default fallback retains interoperability with registries that advertise an
 unrecognized version. It is unverified interpretation, not inferred semantic
 version compatibility. Applications that require a recognized declaration should use
-`RequireKnown`. Reading a response never changes the selection or retries with
-an older decoder after a failure.
+`RequireKnown`. Reading a response never changes the selection or retries an
+operation after a decoding failure.
 
 Missing required service-info fields, malformed JSON, authentication failures,
 and timeouts remain errors, including with `Explicit`. For a known deployment
@@ -72,11 +73,11 @@ use ga4gh_sdk::compatibility::{CapabilityOverride, VersionPolicy};
 use ga4gh_sdk::utils::{configuration::Configuration, transport::BodyLimits};
 
 # async fn example(config: &Configuration) -> Result<(), Box<dyn std::error::Error>> {
-let client = TRS::with_options(config, TrsOptions {
-    version: VersionPolicy::Explicit(TrsVersion::V2_0_1),
+let options = TrsOptions::default()
+    .with_version(VersionPolicy::Explicit(TrsVersion::V2_0_1))
     // Enable only after establishing support on this specific deployment.
-    tag_filter: CapabilityOverride::Enabled,
-}).await?;
+    .with_tag_filter(CapabilityOverride::Enabled);
+let client = TRS::with_options(config, options).await?;
 let selection = client.compatibility().selection();
 assert_eq!(selection.profile(), TrsVersion::V2_0_1);
 let filter = ToolFilter { tags: vec!["genomics".into()], ..Default::default() };
@@ -89,9 +90,9 @@ if let Some(next) = page.next_page()? {
 # }
 ```
 
-Pass `&TRS` to typed pagination helpers to keep the same profile and capability
-policy on every page. Their older `&Transport` form remains available; it uses
-the unverified 2.0.1 baseline and disallows tags. Both forms reject pagination
+Pass `&TRS` to typed pagination helpers to keep the same capability policy on
+every page. Their older `&Transport` form remains available; it uses the shared
+models without an established tag-filter capability. Both forms reject pagination
 URLs outside the configured tools endpoint and retain opaque query tokens.
 
 The [CLI](../cli/README.md#trs-examples) exposes the same options, and so does
@@ -100,33 +101,35 @@ the [Python `TRS` class](../python/README.md#using-trs) (`api_version`,
 
 ## Models and failures
 
-The public `trs::models` structs retain their 2.0.1 shape. The 2.0.2 decoder
-validates its wire model, then projects the original JSON into those public
-structs. New fields remain in `extra`; `ToolVersion::description()` is a string
-accessor over the preserved `description` value. Unknown fields and string enum
-variants follow the existing extension-preservation contract.
+The public `trs::models` path re-exports the generated 2.0.1 models stored under
+`trs/wire/v2_0_1/models/`. Both profiles decode into these types. TRS 2.0.2
+adds an optional `ToolVersion.description`; it stays in `extra` and is
+available through `description()` when it is a string. Unknown fields and
+string enum variants retain the existing extension-preservation behavior.
 
-For example, `description: {"provider": 42}` is extension data under 2.0.1,
-but an error under 2.0.2, where the property is a string. As with other optional
-fields, the SDK also accepts `null`; the original description value stays in
-`extra` and in serialized JSON. This holds for single
-versions, version lists, nested versions inside tools, and paginated tools.
-Direct `serde_json::from_value::<ToolVersion>` uses the public model only;
-version-specific validation is a client operation.
+For example, a registry may send `description: {"provider": 42}` even though
+2.0.2 specifies a string. The SDK keeps that raw optional value in `extra`
+and returns the tool or list; `description()` returns `None`. This applies to
+single versions, versions nested in tools, lists, and paginated tools. It does
+not drop an item or claim that the server response conforms to the schema.
+`null` is also retained as an optional value. `RequireKnown` checks only the
+declared API version; it does not make response parsing strict.
 
 TRS JSON reads decode the bounded original response bytes. Invalid UTF-8,
-malformed JSON, missing required fields, and incompatible field types return
-errors. Non-success HTTP responses retain an inspectable `HttpError`; they are
-not disguised as model errors. No fallback decoder, fabricated required field,
-or automatic replay turns an invalid response into success. The existing
+malformed JSON, missing required fields, and incompatible represented field
+types return errors. Non-success HTTP responses retain an inspectable
+`HttpError`; they are not disguised as model errors. No fabricated required
+field or automatic replay turns an invalid response into success. The existing
 Dockstore exception for non-string service-info timestamps stays limited to
 that discovery path.
 
-Generated deserialization checks required fields and Rust-represented types.
-It is not a complete OpenAPI validator: format constraints and every semantic
-relationship are not checked. Existing optional fields accept JSON `null`;
-typed serialization is not byte-for-byte preservation of a response. Text
-and raw ZIP helpers retain their existing decoding/streaming contracts.
+Generated deserialization checks required fields and Rust-represented types;
+it is not a complete OpenAPI validator. The non-string optional description is
+a documented interoperability exception, not a claim of schema conformance.
+Format constraints and every semantic relationship are not checked. Typed
+serialization preserves unknown JSON values but does not promise byte-for-byte
+preservation. Text and raw ZIP helpers retain their existing decoding and
+streaming contracts.
 
 ## Rust source migration
 
@@ -137,82 +140,66 @@ and raw ZIP helpers retain their existing decoding/streaming contracts.
   `without_discovery` for an explicitly configured connection.
 - Existing `ToolVersion` struct literals remain valid. Use `description()` or
   `extra["description"]` for the newly standardized property.
+- Construct `TrsOptions` with `Default` and `with_version`/`with_tag_filter`;
+  it is non-exhaustive so future capability options need not break callers.
 - `ToolFilter` gains `tags`. Existing full struct literals must add this field
   or use `..Default::default()`. Other filter values and method outputs retain
   their existing shapes.
 
 ## Implementation and extension
 
-The design separates three responsibilities:
+The design separates two responsibilities:
 
 - `lib/src/compatibility.rs` owns generic selection policy, provenance,
   capability overrides, and inspectable selection errors. It performs no I/O
-  and has no GA4GH-specific version ordering assumptions.
+  and has no GA4GH-specific version ordering assumptions. Its public types are
+  provisional while TRS is the only adopter; [#217](https://github.com/ga4gh/ga4gh-sdk/issues/217)
+  tracks adoption by other clients.
 - `clients/trs/compatibility.rs` defines supported TRS profiles, the fallback,
   and their capabilities. `TRS` owns this state together with its transport and
-  discovery snapshot. CLI flags translate to these SDK options.
-- `clients/trs/protocol/` contains hand-written response adapters. The `TRS`
-  client and typed pagination helpers call the selected adapter and return
-  public models. The adapters do not own transport or discovery policy.
+  discovery snapshot. CLI flags translate to these SDK options. TRS operations
+  and typed pagination helpers decode into the shared public models. The two
+  current profiles differ in tag-filter support, not response representation.
 
-### Public models and wire models
+### Model layout
 
 TRS keeps the following layout:
 
 ```text
 lib/src/clients/trs/
-├── models/                 Generated 2.0.1 models; public SDK result types
-├── wire/
-│   └── v2_0_2/models/      Generated 2.0.2 models; private response checks
-└── protocol/
-    ├── mod.rs              Dispatch by the selected TRS profile
-    ├── v2_0_1.rs           Decode directly into public models
-    └── v2_0_2.rs           Check 2.0.2 models, then produce public models
+├── mod.rs                  Re-exports wire/v2_0_1/models as trs::models
+├── compatibility.rs        Version profiles and capability rules
+└── wire/v2_0_1/models/     Generated from the pinned 2.0.1 schema
 ```
 
-**Decision:** retain the existing `trs::models` types as the public interface
-for both profiles. The layout is deliberately asymmetric: the 2.0.1 models
-also represent that version's wire contract. A separate copy under
-`wire/v2_0_1/` would duplicate those types without changing current behavior.
-The private 2.0.2 models let the client check the newer response contract
-without changing the fields of public Rust structs. Replacing the public
-models with 2.0.2 models would break downstream full struct literals. Returning
-different public types for each profile would pass version branching to callers.
+The physical location identifies the pinned wire schema; the public import path
+remains `trs::models`. The 2.0.2 schema adds only an optional description to
+generated response models, so a second 16-file model set and a second decode
+pass would add maintenance cost without changing the public result. There is
+no version-specific decoder until a contract needs one. This choice is local
+to TRS: other APIs can choose a different public representation when their
+contracts diverge. If a future profile needs distinct wire types, generate
+its own `wire/vX/models/` set and define an explicit conversion to the public
+API; do not discard information or silently change a public type's meaning.
 
-For the affected tool and version responses, the 2.0.2 adapter first
-deserializes into its private model to check the represented field types and
-required fields. It then converts the **original JSON value** into the public
-model. This preserves extension data without a serialization round trip
-through the private model. New `description` values stay in `extra`, with a
-hand-written `description()` accessor. The checks and their limits are defined
-under [Models and failures](#models-and-failures).
-
-The tradeoff is a second generated model set and an extra deserialization pass
-for these 2.0.2 responses. Both sets use the same generation wrapper, template,
-and TRS patch; `./utils/build_models_wrapper.sh trs` regenerates both. Keep
-hand-written adapters and accessors outside generated directories. See the
-[model generation guide](autogenerate_OAI_models.md#pinned-specs) for sources
-and commands.
-
-This is the current TRS decision, not a requirement to keep every API's public
-models fixed at its oldest version. Other clients can reuse the shared policy
-types while choosing their own models and adapters. If a future contract cannot
-be represented faithfully by existing public types, make an explicit public API
-and migration decision rather than silently discarding or changing its meaning.
+`./utils/build_models_wrapper.sh trs` regenerates the 2.0.1 set. Keep future
+adapters and current accessors outside generated directories. See the
+[model generation guide](autogenerate_OAI_models.md#pinned-specs) for the
+pinned source and regeneration procedure.
 
 ### Adding a profile
 
 1. Compare the new contract's requests, responses, paths, and capabilities with
    retained profiles. Reuse unchanged behavior only where that comparison
    establishes compatibility; a newer version number is not evidence.
-2. Add any required model set to the pinned generation inputs with its own
-   destination and module path. Preserve the inputs for retained versions and
-   verify that regeneration reproduces all affected sets.
+2. Add a pinned versioned model set only if the existing types cannot represent
+   and check the new responses. Give it a separate destination and module path;
+   verify that regeneration reproduces every retained set.
 3. Add the profile and capability rules in the service's compatibility module.
-   Add adapters for actual contract differences. Keep common HTTP behavior in
-   the client and transport; do not copy entire clients or create version
-   directories for identical logic. Never select a fallback decoder because
-   a response failed to decode.
+   Add adapters only for actual contract differences that the shared models
+   cannot represent. Keep common HTTP behavior in the client and transport;
+   do not copy entire clients or create version directories for identical
+   logic. Never select a fallback decoder because a response failed to decode.
 4. Test the new and retained profiles through the public client, including
    changed fields, extension preservation, malformed responses, capabilities,
    and pagination where applicable. Update the support table, user-facing
@@ -220,7 +207,7 @@ and migration decision rather than silently discarding or changing its meaning.
 
 Regression tests live in `lib/tests/trs_compatibility.rs` and
 `cli/tests/trs_compatibility.rs`. They exercise actual HTTP responses and CLI
-subprocesses, including decoder differences, extensions, tag guards,
+subprocesses, including optional metadata tolerance, extensions, tag guards,
 pagination, discovery failures, malformed data, and bounded HTTP errors.
 Live registry tests in `lib/tests/trs_public_registries.rs` provide separate
 interoperability evidence; they do not prove conformance of every deployment.

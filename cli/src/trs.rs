@@ -157,10 +157,9 @@ fn connection_options(sub: &ArgMatches) -> anyhow::Result<TrsOptions> {
         Some("disabled") => CapabilityOverride::Disabled,
         _ => anyhow::bail!("Invalid TRS tag-filter policy"),
     };
-    Ok(TrsOptions {
-        version,
-        tag_filter,
-    })
+    Ok(TrsOptions::default()
+        .with_version(version)
+        .with_tag_filter(tag_filter))
 }
 
 fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {

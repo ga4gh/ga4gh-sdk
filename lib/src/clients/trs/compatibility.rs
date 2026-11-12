@@ -4,11 +4,13 @@ use crate::compatibility::{
 };
 use std::fmt;
 
-/// Wire contracts currently tested by the TRS client.
+/// API contracts currently tested by the TRS client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TrsVersion {
+    /// GA4GH TRS 2.0.1 contract; tag filtering is not specified.
     V2_0_1,
+    /// GA4GH TRS 2.0.2 contract; tag filtering is specified.
     V2_0_2,
 }
 
@@ -24,11 +26,26 @@ impl fmt::Display for TrsVersion {
 /// Selection policy for a TRS connection. Auto uses the 2.0.1 read contract
 /// for unknown declarations and reports that choice as an unverified baseline.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct TrsOptions {
     /// Select from discovery, require a recognized declaration, or override it.
     pub version: VersionPolicy<TrsVersion>,
     /// Override only with independent knowledge of a provider's tag filtering.
     pub tag_filter: CapabilityOverride,
+}
+
+impl TrsOptions {
+    /// Select a version policy for this connection.
+    pub fn with_version(mut self, version: VersionPolicy<TrsVersion>) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Set deployment-specific knowledge of tag-filter support.
+    pub fn with_tag_filter(mut self, tag_filter: CapabilityOverride) -> Self {
+        self.tag_filter = tag_filter;
+        self
+    }
 }
 
 /// Read-only compatibility state for one TRS client.

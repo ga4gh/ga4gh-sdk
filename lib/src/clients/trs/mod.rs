@@ -45,12 +45,11 @@
 //! ```
 
 mod compatibility;
-pub mod models;
-mod protocol;
 pub mod responses;
 mod wire;
 use crate::compatibility::CapabilityOverride;
 pub use compatibility::{TrsCompatibility, TrsOptions, TrsVersion};
+pub use wire::v2_0_1::models;
 
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::trs::models::{
@@ -62,6 +61,16 @@ use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 use std::error::Error;
+
+impl ToolVersion {
+    /// String description when supplied by a registry. TRS 2.0.2 defines it;
+    /// both profiles retain the original value as extension data, even if a
+    /// server supplies a non-string value. Such values return `None` here but
+    /// remain available in `extra` and in serialized JSON.
+    pub fn description(&self) -> Option<&str> {
+        self.extra.get("description").and_then(Value::as_str)
+    }
+}
 
 // Encodes a path parameter as one URL path segment. Empty values and dot
 // segments would change the path that the URL resolves to, so they are
@@ -347,34 +356,19 @@ impl TRS {
         if !filter.tags.is_empty() {
             self.compatibility.tag_filter().require("TRS", "tags")?;
         }
-        let value = self.get_json("tools", params).await?;
-        Ok(self
-            .compatibility
-            .selection()
-            .profile()
-            .decode_tools(value)?)
+        self.get_json("tools", params).await
     }
 
     /// Fetches one tool, including its versions (`GET /tools/{id}`).
     pub async fn get_tool(&self, id: &str) -> Result<Tool, Box<dyn Error>> {
         let path = format!("tools/{}", segment("tool ID", id)?);
-        let value = self.get_json(&path, None).await?;
-        Ok(self
-            .compatibility
-            .selection()
-            .profile()
-            .decode_tool(value)?)
+        self.get_json(&path, None).await
     }
 
     /// Lists the versions of a tool (`GET /tools/{id}/versions`).
     pub async fn list_versions(&self, id: &str) -> Result<Vec<ToolVersion>, Box<dyn Error>> {
         let path = format!("tools/{}/versions", segment("tool ID", id)?);
-        let value = self.get_json(&path, None).await?;
-        Ok(self
-            .compatibility
-            .selection()
-            .profile()
-            .decode_versions(value)?)
+        self.get_json(&path, None).await
     }
 
     /// Fetches one version of a tool (`GET /tools/{id}/versions/{version_id}`).
@@ -384,12 +378,7 @@ impl TRS {
         version_id: &str,
     ) -> Result<ToolVersion, Box<dyn Error>> {
         let path = version_path(id, version_id)?;
-        let value = self.get_json(&path, None).await?;
-        Ok(self
-            .compatibility
-            .selection()
-            .profile()
-            .decode_version(value)?)
+        self.get_json(&path, None).await
     }
 
     /// Fetches the primary descriptor of a tool version
@@ -954,13 +943,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_version_rejects_malformed_description() {
+    async fn test_get_version_preserves_non_string_optional_description() {
         let mut version = version_json();
         version["description"] = serde_json::json!(42);
         let m = get_mock("bad-description", &tool_version(""), &version.to_string());
         for client in clients("bad-description") {
-            let error = client.get_version(TOOL_ID, VERSION_ID).await.unwrap_err();
-            assert!(error.to_string().contains("invalid type"), "{error}");
+            let actual = client.get_version(TOOL_ID, VERSION_ID).await.unwrap();
+            assert_eq!(actual.description(), None);
+            assert_eq!(actual.extra["description"], 42);
         }
         m.assert();
     }

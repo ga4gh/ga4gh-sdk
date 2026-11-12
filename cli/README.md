@@ -322,7 +322,7 @@ The CLI uses the SDK's [TRS compatibility policy](../docs/api_compatibility.md).
 `--api-version auto` (default) recognizes 2.0.1 and 2.0.2. An unknown declaration
 uses the 2.0.1 read contract without assuming tag-filter support.
 `--api-version strict` requires a recognized declaration;
-`--api-version 2.0.1` or `2.0.2` selects a response contract explicitly.
+`--api-version 2.0.1` or `2.0.2` selects an API profile explicitly.
 These flags can appear before or after a TRS subcommand.
 
 `--tag-filter enabled` allows a known deployment's backported tag filter;

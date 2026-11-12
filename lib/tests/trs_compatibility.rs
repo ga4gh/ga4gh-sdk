@@ -93,10 +93,27 @@ async fn independent_clients_use_declared_profiles_and_preserve_extensions() {
 }
 
 #[tokio::test]
-async fn selected_decoder_is_used_for_every_typed_route_without_retry() {
-    for (prefix, profile, succeeds) in [
-        ("routes201", TrsVersion::V2_0_1, true),
-        ("routes202", TrsVersion::V2_0_2, false),
+async fn tool_with_a_2_0_2_description_keeps_the_public_model_and_original_json() {
+    let prefix = "nested-description202";
+    let payload = tool(version(json!("Readable description")));
+    let response = get(prefix, "tools/t", payload.to_string());
+    let actual = explicit(prefix, TrsVersion::V2_0_2)
+        .get_tool("t")
+        .await
+        .unwrap();
+    assert_eq!(
+        actual.versions[0].description(),
+        Some("Readable description")
+    );
+    assert_eq!(serde_json::to_value(actual).unwrap(), payload);
+    response.assert();
+}
+
+#[tokio::test]
+async fn optional_description_is_preserved_across_typed_routes_and_pages() {
+    for (prefix, profile) in [
+        ("routes201", TrsVersion::V2_0_1),
+        ("routes202", TrsVersion::V2_0_2),
     ] {
         let client = explicit(prefix, profile);
         let v = version(json!({"provider_specific": 42}));
@@ -106,7 +123,7 @@ async fn selected_decoder_is_used_for_every_typed_route_without_retry() {
         let single_version = get(prefix, "tools/t/versions/v1", v.to_string());
         let list = mock("GET", format!("/{prefix}/trs/v2/tools").as_str())
             .with_status(200)
-            .with_body(json!([t.clone()]).to_string())
+            .with_body(json!([tool(version(json!("valid"))), t.clone()]).to_string())
             .expect(2)
             .create();
         let next = mock("GET", format!("/{prefix}/trs/v2/tools").as_str())
@@ -114,34 +131,33 @@ async fn selected_decoder_is_used_for_every_typed_route_without_retry() {
             .with_status(200)
             .with_body(json!([t]).to_string())
             .create();
-        assert_eq!(client.get_tool("t").await.is_ok(), succeeds);
-        assert_eq!(client.list_versions("t").await.is_ok(), succeeds);
-        let result = client.get_version("t", "v1").await;
-        if succeeds {
-            let result = result.unwrap();
-            assert_eq!(result.description(), None);
-            assert_eq!(serde_json::to_value(result).unwrap(), v);
-        } else {
-            assert!(result
-                .unwrap_err()
-                .downcast_ref::<serde_json::Error>()
-                .is_some());
-        }
+        let actual = client.get_tool("t").await.unwrap();
+        assert_eq!(actual.versions[0].description(), None);
+        assert_eq!(actual.versions[0].extra["description"], v["description"]);
         assert_eq!(
-            client.list_tools(&ToolFilter::default()).await.is_ok(),
-            succeeds
+            client.list_versions("t").await.unwrap()[0].extra["description"],
+            v["description"]
         );
+        let result = client.get_version("t", "v1").await.unwrap();
+        assert_eq!(result.description(), None);
+        assert_eq!(serde_json::to_value(result).unwrap(), v);
+        let listed = client.list_tools(&ToolFilter::default()).await.unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[1].versions[0].extra["description"], v["description"]);
+        let page = responses::list_tools_page(&client, None, BodyLimits::default())
+            .await
+            .unwrap();
         assert_eq!(
-            responses::list_tools_page(&client, None, BodyLimits::default())
-                .await
-                .is_ok(),
-            succeeds
+            page.tools[1].versions[0].extra["description"],
+            v["description"]
         );
-        assert_eq!(
+        let next_page =
             responses::next_tools_page(&client, "?offset=opaque%2Btoken", BodyLimits::default())
                 .await
-                .is_ok(),
-            succeeds
+                .unwrap();
+        assert_eq!(
+            next_page.tools[0].versions[0].extra["description"],
+            v["description"]
         );
         one.assert();
         versions.assert();
@@ -212,20 +228,14 @@ async fn strict_discovery_and_explicit_override_remain_distinct() {
         .create();
     let error = TRS::with_options(
         &config(prefix),
-        TrsOptions {
-            version: VersionPolicy::RequireKnown,
-            ..Default::default()
-        },
+        TrsOptions::default().with_version(VersionPolicy::RequireKnown),
     )
     .await
     .unwrap_err();
     assert!(error.downcast_ref::<CompatibilityError>().is_some());
     let client = TRS::with_options(
         &config(prefix),
-        TrsOptions {
-            version: VersionPolicy::Explicit(TrsVersion::V2_0_2),
-            ..Default::default()
-        },
+        TrsOptions::default().with_version(VersionPolicy::Explicit(TrsVersion::V2_0_2)),
     )
     .await
     .unwrap();
@@ -242,9 +252,30 @@ async fn strict_discovery_and_explicit_override_remain_distinct() {
         "tools/t/versions/v1",
         version(json!(42)).to_string(),
     );
-    assert!(client.get_version("t", "v1").await.is_err());
+    let actual = client.get_version("t", "v1").await.unwrap();
+    assert_eq!(actual.description(), None);
+    assert_eq!(actual.extra["description"], 42);
     discovery.assert();
     payload.assert();
+}
+
+#[tokio::test]
+async fn require_known_checks_the_declaration_not_optional_response_metadata() {
+    let prefix = "strict-known-description";
+    let discovery = get(prefix, "service-info", info("2.0.2").to_string());
+    let payload = version(json!({"provider_specific": 42}));
+    let response = get(prefix, "tools/t/versions/v1", payload.to_string());
+    let client = TRS::with_options(
+        &config(prefix),
+        TrsOptions::default().with_version(VersionPolicy::RequireKnown),
+    )
+    .await
+    .unwrap();
+    let actual = client.get_version("t", "v1").await.unwrap();
+    assert_eq!(actual.description(), None);
+    assert_eq!(serde_json::to_value(actual).unwrap(), payload);
+    discovery.assert();
+    response.assert();
 }
 
 #[tokio::test]
@@ -294,6 +325,18 @@ async fn tags_require_support_on_requests_and_pagination() {
         CapabilitySupport::CallerEnabled
     );
     allowed.assert();
+
+    let empty_link = mock("GET", "/empty-tag-link/trs/v2/tools")
+        .match_query(Matcher::Exact("tags=".into()))
+        .with_status(200)
+        .with_body("[]")
+        .create();
+    let empty_link_client = explicit("empty-tag-link", TrsVersion::V2_0_1);
+    let page = responses::next_tools_page(&empty_link_client, "?tags=", BodyLimits::default())
+        .await
+        .unwrap();
+    assert!(page.tools.is_empty());
+    empty_link.assert();
 }
 
 #[tokio::test]
@@ -309,10 +352,7 @@ async fn discovery_failure_is_not_an_automatic_bypass() {
             .create();
         let result = TRS::with_options(
             &config(prefix),
-            TrsOptions {
-                version: VersionPolicy::Explicit(TrsVersion::V2_0_1),
-                ..Default::default()
-            },
+            TrsOptions::default().with_version(VersionPolicy::Explicit(TrsVersion::V2_0_1)),
         )
         .await;
         let error = result.unwrap_err();
@@ -369,7 +409,7 @@ async fn malformed_json_and_invalid_utf8_are_errors_not_repaired_data() {
 }
 
 #[tokio::test]
-async fn bounded_bodies_and_http_status_survive_the_selected_decoder() {
+async fn bounded_bodies_and_http_status_survive_typed_reads() {
     let response = mock("GET", "/http-error/trs/v2/tools/t")
         .with_status(503)
         .with_body("unavailable")
@@ -472,10 +512,15 @@ async fn simultaneous_connections_keep_independent_profiles() {
     let (old_result, new_result) =
         tokio::join!(old.get_version("t", "v1"), new.get_version("t", "v1"));
     assert_eq!(old_result.unwrap().extra["description"], 42);
-    assert!(new_result
-        .unwrap_err()
-        .downcast_ref::<serde_json::Error>()
-        .is_some());
+    assert_eq!(new_result.unwrap().extra["description"], 42);
+    assert_eq!(
+        old.compatibility().selection().profile(),
+        TrsVersion::V2_0_1
+    );
+    assert_eq!(
+        new.compatibility().selection().profile(),
+        TrsVersion::V2_0_2
+    );
     old_response.assert();
     new_response.assert();
 }

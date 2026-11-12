@@ -5,6 +5,9 @@
 //! a request. Currently TRS uses this mechanism; other APIs retain their own
 //! behavior until they adopt it. A fallback must not silently remove requested
 //! semantics or enable operations that the selected contract cannot represent.
+//! This public policy API is provisional while TRS is its only consumer;
+//! [#217](https://github.com/ga4gh/ga4gh-sdk/issues/217) tracks adoption by
+//! other clients and may require changes to these types before a stable release.
 
 use std::{error::Error, fmt};
 
@@ -179,8 +182,19 @@ pub enum CompatibilityError {
 impl fmt::Display for CompatibilityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownVersion { api, declared } => write!(f, "{api} API version {:?} is not recognized; select an explicit compatibility profile", declared.as_deref()),
-            Self::Capability { api, capability, support } => write!(f, "{api} capability '{capability}' is not established ({support:?}); use an explicit capability override only for a deployment known to support it"),
+            Self::UnknownVersion { api, declared } => write!(
+                f,
+                "{api} API version {:?} is not recognized; select an explicit compatibility profile",
+                declared.as_deref()
+            ),
+            Self::Capability {
+                api,
+                capability,
+                support,
+            } => write!(
+                f,
+                "{api} capability '{capability}' is not established ({support:?}); use an explicit capability override only for a deployment known to support it"
+            ),
         }
     }
 }
