@@ -1,9 +1,10 @@
 ## Motivation
 
-The models in `lib/src/clients/<api>/models/` are generated from the
-[OpenAPI](https://www.openapis.org/) specification of each GA4GH API. They
-hold the request and response bodies of the API calls. Regenerate them when
-a spec version changes, or generate models for a new API.
+The models in `lib/src/clients/<api>/models/` and private versioned directories
+such as `lib/src/clients/trs/wire/v2_0_2/models/` are generated from the
+[OpenAPI](https://www.openapis.org/) specifications of GA4GH APIs. They
+represent request and response bodies. Regenerate them when a pinned source,
+template, or patch changes, or generate a model set for an additional contract.
 
 The `models/` folders are generated code: every run replaces them. Don't edit
 them by hand. Hand edits go into a patch (see [Hand edits](#hand-edits)), and
@@ -34,8 +35,10 @@ the generated private wire models say 2.1.0. Their pinned source is still the
 `lib/src/clients/trs/wire/v2_0_2/models/`. The wrapper supplies their module path
 with `-m`; both use the same maintained TRS patch. The hand-written adapters
 in `trs/protocol/` validate the selected response contract and return the public
-models. See [API compatibility](api_compatibility.md#implementation-and-extension)
-before adding a version. Treat every `models/` directory as generated code.
+models. See the [model layout decision](api_compatibility.md#public-models-and-wire-models)
+for the public/private boundary and the
+[profile extension steps](api_compatibility.md#adding-a-profile) before adding
+a version. Treat every `models/` directory as generated code.
 
 The models are generated with OpenAPI Generator 7.9.0 and formatted with
 `rustfmt`. Running the wrapper on a clean checkout must not change any file in
@@ -117,13 +120,22 @@ From the root of the repository:
 ./utils/build_models_wrapper.sh
 # Only some APIs
 ./utils/build_models_wrapper.sh wes tes
+# All retained TRS model sets (public 2.0.1 and private 2.0.2)
+./utils/build_models_wrapper.sh trs
 git status lib/src/clients
 ```
 
-To move an API to a new spec version, change its entry in `SPECS` in
-`utils/build_models_wrapper.sh`, run the wrapper for it, update its patch if
-it no longer applies (see below), and adapt the client in
-`lib/src/clients/<api>/mod.rs` to the changed models.
+To add a model set while retaining supported versions, add an entry to `SPECS`
+in `utils/build_models_wrapper.sh` with the API name, pinned source, a separate
+destination, and its Rust module path. Keep the retained entries. The wrapper
+regenerates every matching entry when given that API name. Follow the
+[profile extension steps](api_compatibility.md#adding-a-profile) to integrate
+the generated types with client behavior and tests.
+
+Replace an existing entry only when intentionally changing that model set's
+contract. Check the effect on supported servers and public Rust types first.
+Run the wrapper for the affected API, update its patch if needed (see below),
+and adapt the client and migration guidance to the changed models.
 
 ### Generate models for a single spec, or for another crate
 

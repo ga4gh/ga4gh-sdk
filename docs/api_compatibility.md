@@ -150,24 +150,72 @@ The design separates three responsibilities:
 - `clients/trs/compatibility.rs` defines supported TRS profiles, the fallback,
   and their capabilities. `TRS` owns this state together with its transport and
   discovery snapshot. CLI flags translate to these SDK options.
-- `clients/trs/protocol/` contains hand-written response adapters.
-  `models/` holds generated public 2.0.1 models;
-  `wire/v2_0_2/models/` holds private generated 2.0.2 models. The adapters keep
-  public types separate from wire-contract changes. Generation is described in
-  [the model guide](autogenerate_OAI_models.md).
+- `clients/trs/protocol/` contains hand-written response adapters. The `TRS`
+  client and typed pagination helpers call the selected adapter and return
+  public models. The adapters do not own transport or discovery policy.
 
-This retains the established public model shape instead of replacing it on
-an upgrade or exposing every wire DTO to downstream callers. The cost is an
-extra validation pass for 2.0.2. A generic service trait or dynamic adapter
-registry is unnecessary for the two concrete TRS profiles. Future clients
-can reuse the policy types while defining their own request adapters, response
-models, fallback rules, and unsupported operations.
+### Public models and wire models
 
-To add a profile, compare its requests, responses, paths, and capability rules;
-pin and regenerate its models; add only the adapters required by those
-changes; and test both the new profile and retained profiles. Do not create
-version directories for identical logic. Never use version ordering or a
-failed request as evidence that another contract is compatible.
+TRS keeps the following layout:
+
+```text
+lib/src/clients/trs/
+├── models/                 Generated 2.0.1 models; public SDK result types
+├── wire/
+│   └── v2_0_2/models/      Generated 2.0.2 models; private response checks
+└── protocol/
+    ├── mod.rs              Dispatch by the selected TRS profile
+    ├── v2_0_1.rs           Decode directly into public models
+    └── v2_0_2.rs           Check 2.0.2 models, then produce public models
+```
+
+**Decision:** retain the existing `trs::models` types as the public interface
+for both profiles. The layout is deliberately asymmetric: the 2.0.1 models
+also represent that version's wire contract. A separate copy under
+`wire/v2_0_1/` would duplicate those types without changing current behavior.
+The private 2.0.2 models let the client check the newer response contract
+without changing the fields of public Rust structs. Replacing the public
+models with 2.0.2 models would break downstream full struct literals. Returning
+different public types for each profile would pass version branching to callers.
+
+For the affected tool and version responses, the 2.0.2 adapter first
+deserializes into its private model to check the represented field types and
+required fields. It then converts the **original JSON value** into the public
+model. This preserves extension data without a serialization round trip
+through the private model. New `description` values stay in `extra`, with a
+hand-written `description()` accessor. The checks and their limits are defined
+under [Models and failures](#models-and-failures).
+
+The tradeoff is a second generated model set and an extra deserialization pass
+for these 2.0.2 responses. Both sets use the same generation wrapper, template,
+and TRS patch; `./utils/build_models_wrapper.sh trs` regenerates both. Keep
+hand-written adapters and accessors outside generated directories. See the
+[model generation guide](autogenerate_OAI_models.md#pinned-specs) for sources
+and commands.
+
+This is the current TRS decision, not a requirement to keep every API's public
+models fixed at its oldest version. Other clients can reuse the shared policy
+types while choosing their own models and adapters. If a future contract cannot
+be represented faithfully by existing public types, make an explicit public API
+and migration decision rather than silently discarding or changing its meaning.
+
+### Adding a profile
+
+1. Compare the new contract's requests, responses, paths, and capabilities with
+   retained profiles. Reuse unchanged behavior only where that comparison
+   establishes compatibility; a newer version number is not evidence.
+2. Add any required model set to the pinned generation inputs with its own
+   destination and module path. Preserve the inputs for retained versions and
+   verify that regeneration reproduces all affected sets.
+3. Add the profile and capability rules in the service's compatibility module.
+   Add adapters for actual contract differences. Keep common HTTP behavior in
+   the client and transport; do not copy entire clients or create version
+   directories for identical logic. Never select a fallback decoder because
+   a response failed to decode.
+4. Test the new and retained profiles through the public client, including
+   changed fields, extension preservation, malformed responses, capabilities,
+   and pagination where applicable. Update the support table, user-facing
+   options, and migration notes when those contracts change.
 
 Regression tests live in `lib/tests/trs_compatibility.rs` and
 `cli/tests/trs_compatibility.rs`. They exercise actual HTTP responses and CLI
