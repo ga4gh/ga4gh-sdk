@@ -552,3 +552,21 @@ async fn common_operations_and_zip_are_available_under_both_profiles() {
         archive.assert();
     }
 }
+
+#[tokio::test]
+async fn nullable_descriptions_are_preserved_under_both_profiles() {
+    for (prefix, profile) in [
+        ("nullable201", TrsVersion::V2_0_1),
+        ("nullable202", TrsVersion::V2_0_2),
+    ] {
+        let payload = version(Value::Null);
+        let response = get(prefix, "tools/t/versions/v1", payload.to_string());
+        let actual = explicit(prefix, profile)
+            .get_version("t", "v1")
+            .await
+            .unwrap();
+        assert_eq!(actual.description(), None);
+        assert_eq!(serde_json::to_value(actual).unwrap(), payload);
+        response.assert();
+    }
+}

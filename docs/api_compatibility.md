@@ -106,7 +106,9 @@ accessor over the preserved `description` value. Unknown fields and string enum
 variants follow the existing extension-preservation contract.
 
 For example, `description: {"provider": 42}` is extension data under 2.0.1,
-but an error under 2.0.2, where the property is a string. This holds for single
+but an error under 2.0.2, where the property is a string. As with other optional
+fields, the SDK also accepts `null`; the original description value stays in
+`extra` and in serialized JSON. This holds for single
 versions, version lists, nested versions inside tools, and paginated tools.
 Direct `serde_json::from_value::<ToolVersion>` uses the public model only;
 version-specific validation is a client operation.

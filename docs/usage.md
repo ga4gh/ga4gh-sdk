@@ -372,7 +372,8 @@ support, not proof that the server implements filtering correctly.
 
 `ToolVersion::description()` returns a string description when present; the
 original value remains in `extra` and in serialized JSON. The 2.0.2 decoder
-rejects a non-string description. The 2.0.1 decoder keeps it as extension data.
+rejects a description with a non-string, non-null value. The 2.0.1 decoder
+keeps any description value as extension data.
 The existing public model fields remain unchanged.
 
 `get_files_zip` reads the response into memory and returns bytes without
