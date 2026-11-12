@@ -344,7 +344,6 @@ let config = Configuration::new(Url::parse("https://workflowhub.eu/ga4gh/trs/v2"
 let trs = TRS::new(&config).await?;
 let tools = trs.list_tools(&ToolFilter {
     tool_class: Some("Workflow".to_owned()),
-    tags: vec!["genomics".to_owned()],
     limit: Some(10),
     ..Default::default()
 }).await?;
