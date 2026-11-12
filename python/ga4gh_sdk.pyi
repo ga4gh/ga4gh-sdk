@@ -6,7 +6,7 @@
 import asyncio
 import enum
 import os
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, Generic, Self, TypeAlias, TypeVar, final
 
 _JSONObject: TypeAlias = dict[str, Any]
@@ -36,11 +36,17 @@ class Configuration:
     `ServiceType` or by a `str`; `get_extra()` returns the section's other keys.
     `set_timeouts()` and `get_timeouts()` set and give the time limits of
     requests in seconds; clients and transports read them when they are built.
+    `set_token_provider()` sets a callable that gives a bearer token for each
+    request.
     """
 
     def __init__(self, base_path: str) -> None: ...
     def set_base_path(self, base_path: str) -> None: ...
     def get_base_path(self) -> str: ...
+    def set_basic_auth(self, username: str, password: str | None = None) -> None: ...
+    def set_oauth_access_token(self, token: str) -> None: ...
+    def set_bearer_access_token(self, token: str) -> None: ...
+    def clear_auth(self) -> None: ...
     def get_extra(self) -> _JSONObject: ...
     def set_timeouts(
         self,
@@ -51,6 +57,12 @@ class Configuration:
         submission: float | None = None,
     ) -> None: ...
     def get_timeouts(self) -> dict[str, float]: ...
+    def set_token_provider(
+        self,
+        provider: Callable[[str], str | tuple[str, float]] | None,
+        *,
+        audience: str | None = None,
+    ) -> None: ...
     def from_file(self, service_type: ServiceType | str) -> None: ...
 
 class ServiceInfo:
