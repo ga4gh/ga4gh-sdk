@@ -75,24 +75,6 @@ impl CommandOutput {
     }
 }
 
-#[cfg(test)]
-mod output_tests {
-    use super::CommandOutput;
-
-    #[test]
-    fn valid_large_numbers_and_deep_extensions_are_preserved() {
-        let nested = format!("{}0{}", "[".repeat(150), "]".repeat(150));
-        let body = format!("{{\"large\":1e400,\"nested\":{nested}}}");
-        let output = CommandOutput::json(body.clone());
-        assert!(output.stderr.is_empty(), "{}", output.stderr);
-        assert_eq!(output.stdout, body);
-
-        let invalid = CommandOutput::json(format!("{body} forged"));
-        assert!(invalid.stdout.is_empty());
-        assert!(invalid.stderr.contains("not valid JSON"));
-    }
-}
-
 /// Build the root command. Downstream CLIs can append their own subcommands.
 pub fn command() -> Command {
     Command::new("ga4gh-cli")
@@ -202,5 +184,23 @@ pub async fn dispatch_with_config_to(
             Ok(Some(output.exit_code))
         }
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::CommandOutput;
+
+    #[test]
+    fn valid_large_numbers_and_deep_extensions_are_preserved() {
+        let nested = format!("{}0{}", "[".repeat(150), "]".repeat(150));
+        let body = format!("{{\"large\":1e400,\"nested\":{nested}}}");
+        let output = CommandOutput::json(body.clone());
+        assert!(output.stderr.is_empty(), "{}", output.stderr);
+        assert_eq!(output.stdout, body);
+
+        let invalid = CommandOutput::json(format!("{body} forged"));
+        assert!(invalid.stdout.is_empty());
+        assert!(invalid.stderr.contains("not valid JSON"));
     }
 }
