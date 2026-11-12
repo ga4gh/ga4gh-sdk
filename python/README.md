@@ -725,11 +725,15 @@ The Python test suite runs this file against a mock TRS.
   that isn't a ZIP archive (such as the JSON file list of a registry that ignores
   `format=zip`), raises `RuntimeError`. The archive isn't extracted or checked further.
 - `TRS.list_tool_classes()` returns the registry's tool classes as `dict`s.
+- Credentials set on the configuration (see [Authentication](#authentication)) go with
+  the service info request and every TRS request, including `next_tools_page()`, which
+  only follows URLs at the client's API root.
 - IDs, version IDs and relative paths are sent unchanged, as one percent-encoded URL path
   segment each, so IDs such as Dockstore's `#workflow/github.com/org/repo` work. Empty
   values, `.` and `..` raise `ValueError` before a request.
 - Errors: failed requests, such as a missing tool (`404`), and responses that don't fit the
-  TRS models raise `RuntimeError`; the message has the HTTP status. A version's
+  TRS models raise `RuntimeError`; the message has the HTTP status, not the server's
+  response body. A version's
   `description` (TRS 2.0.2) that isn't a string is kept in the JSON, and the
   `description` property is `None` then.
 

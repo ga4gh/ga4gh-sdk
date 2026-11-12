@@ -118,6 +118,26 @@ def test_client_reports_unreachable_service():
         TRS(Configuration("http://127.0.0.1:1/trs"))
 
 
+def test_configured_credentials_reach_every_trs_request(server):
+    config = Configuration(f"{server.root}/trs")
+    config.set_bearer_access_token("test-bearer")
+    trs = TRS(config)
+
+    def authorization():
+        headers = {name.lower(): value for name, value in server.last()["headers"].items()}
+        return headers.get("authorization")
+
+    assert (server.last()["path"], authorization()) == ("/trs/service-info", "Bearer test-bearer")
+    page = trs.list_tools(limit=1)
+    assert authorization() == "Bearer test-bearer"
+    trs.next_tools_page(page.next_page)
+    assert (server.last()["query"], authorization()) == ({"offset": ["1"], "limit": ["1"]}, "Bearer test-bearer")
+    trs.get_descriptor(TRS_TOOL_ID, TRS_VERSION_ID, "PLAIN_CWL")
+    assert authorization() == "Bearer test-bearer"
+    trs.get_files_zip(TRS_TOOL_ID, TRS_VERSION_ID, "CWL")
+    assert authorization() == "Bearer test-bearer"
+
+
 def test_service_info_is_read_again(server, trs):
     info = trs.service_info()
     assert server.last()["path"] == "/trs/service-info"
