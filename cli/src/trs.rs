@@ -7,7 +7,7 @@ use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::HttpError;
 use std::error::Error;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The largest ZIP archive that `trs files --zip` downloads.
 const ZIP_LIMIT: usize = 64 * 1024 * 1024;
@@ -223,13 +223,18 @@ fn new_file_arg(path: PathBuf) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-fn write_new_file(path: &PathBuf, bytes: &[u8]) -> Result<String, Box<dyn Error>> {
+// Writes the whole archive or nothing: a failed write removes the new file.
+fn write_new_file(path: &Path, bytes: &[u8]) -> Result<String, Box<dyn Error>> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
         .map_err(|error| format!("Can't create {}: {error}", path.display()))?;
-    file.write_all(bytes)?;
+    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(format!("Can't write {}: {error}", path.display()).into());
+    }
     Ok(format!(
         "Wrote {} bytes to {}\n",
         bytes.len(),
