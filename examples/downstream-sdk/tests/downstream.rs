@@ -366,3 +366,45 @@ fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains(cli::TOKEN_ENV));
 }
+
+#[cfg(unix)]
+#[test]
+fn cli_binary_selects_a_profile_for_its_own_command() {
+    let quota = mock("GET", "/cli-run-metered-quota/quota")
+        .match_header("authorization", "Bearer metered-file-token")
+        .with_body(r#"{"cpu_hours":7}"#)
+        .create();
+    let home = tempfile::tempdir().unwrap();
+    let config_dir = home.path().join(".downstream-cli");
+    std::fs::create_dir(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        json!({
+            "profiles": {
+                "default": {"TES": {"base_path": api_root("unused")}},
+                "metered": {"QUOTA": {
+                    "base_path": format!("{}/cli-run-metered-quota/", mockito::server_url()),
+                    "oauth_access_token": "metered-file-token"
+                }}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_downstream-cli"))
+        .args(["--profile", "metered", "quota"])
+        .env("HOME", home.path())
+        .env_remove(cli::TOKEN_ENV)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        r#"{"cpu_hours":7}"#
+    );
+    quota.assert();
+}

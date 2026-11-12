@@ -135,6 +135,7 @@ CliContext::new("downstream-cli", env!("CARGO_PKG_VERSION"))
 | Version (`--version`) | as given | the CLI crate's version | the example crate's version |
 | Configuration file | `~/.<name>/config.json`; `with_config_path` sets another | `~/.ga4gh-cli/config.json` | `~/.downstream-cli/config.json` |
 | Token variable | none; `with_token_env` sets one and its sections | none | `DOWNSTREAM_CLI_TOKEN` for `TES` and `QUOTA` |
+| Profile variable | none; `with_profile_env` sets one | `GA4GH_CLI_PROFILE`; `without_profile_env` turns it off | none |
 
 The name, version and help text are `&'static str`, usually literals or
 `env!` values. For the default configuration file, the name must be usable
@@ -150,6 +151,15 @@ token to another service, name a variable in its section with
 `oauth_access_token_env`. The SDK applies the credential to discovery and
 service requests under the configured API root; see the
 [authentication guide](authentication.md).
+
+The configuration file can hold [profiles](usage.md#profiles). The context's
+command tree has a global `--profile` option; its dispatch methods apply it
+to built-in commands. For an added command, the example calls
+`context().with_profile_from(&matches)` before `load_config()`, so
+`downstream-cli --profile metered quota` reads the `QUOTA` section of
+`metered`. The long option name `--profile` is reserved throughout the
+command tree. A positional argument named `profile` can still be used because
+the global option has the distinct Clap id `ga4gh-cli-profile`.
 
 [`cli::command`](../examples/downstream-sdk/src/cli.rs) starts from the
 context's command tree and adds `tes usage <ID>` and a top-level `quota`:

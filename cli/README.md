@@ -57,6 +57,43 @@ must add the deployed service prefix, such as `/ga4gh/tes/v1`,
 gateway keeps its whole prefix, for example
 `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
 
+### Profiles
+
+The file can hold named profiles for different deployments. Each profile
+contains the same service sections as the file above:
+
+```json
+{
+    "default_profile": "local",
+    "profiles": {
+        "local": {
+            "TES": {"base_path": "http://localhost:8000/ga4gh/tes/v1"}
+        },
+        "remote": {
+            "TES": {
+                "base_path": "https://tes.example.org/ga4gh/tes/v1",
+                "oauth_access_token_env": "REMOTE_TES_TOKEN"
+            }
+        }
+    }
+}
+```
+
+Select a profile with `--profile`, before or after a subcommand, or with
+`GA4GH_CLI_PROFILE`:
+
+```sh
+ga4gh-cli --profile remote tes list
+GA4GH_CLI_PROFILE=remote ga4gh-cli tes list
+```
+
+The option takes precedence over the variable, and the variable over
+`default_profile`. Without any selection, the CLI uses the profile `default`.
+Files without `profiles` retain their existing format and count as that
+`default` profile. An unknown or empty profile name is an error; for an
+unknown name, the error lists available profiles.
+See the [usage guide](../docs/usage.md#profiles) for the file rules.
+
 `timeouts` sets time limits in seconds for the commands of that section:
 `connect` (default 10), `request` (default 60), `discovery` (the service-info
 check, default 10) and `submission` (`tes create` and `wes run`, including
@@ -551,8 +588,8 @@ downstream command that shares the `ga4gh-cli` file can read its own section
 with `Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))`;
 keys that the SDK doesn't use itself are in `Configuration::extra`.
 
-A downstream binary with its own name, version, configuration file or token
-variable describes them in a `ga4gh_cli::CliContext`:
+A downstream binary with its own name, version, configuration file, profile
+variable or token variable describes them in a `ga4gh_cli::CliContext`:
 
 - `CliContext::new("my-cli", env!("CARGO_PKG_VERSION"))` sets the name and
   version; `with_about()` sets the help text.
@@ -560,6 +597,12 @@ variable describes them in a `ga4gh_cli::CliContext`:
   then be usable as a directory name; `with_config_path()` sets another
   path. `load_config()` reads a section from the file, for built-in and
   custom services alike.
+- `with_profile_env("MY_CLI_PROFILE")` reads a selected profile from a
+  variable. `ga4gh-cli` reads `GA4GH_CLI_PROFILE`; other contexts read none
+  unless configured. `with_profile()` selects one directly. The command tree
+  has a global `--profile` option, which `dispatch()` and `dispatch_to()`
+  apply. For a custom command, call `with_profile_from(&matches)` before
+  `load_config()`. The long option name `--profile` is reserved in the tree.
 - `with_token_env("MY_CLI_TOKEN", [ServiceType::Custom("MY_SERVICE".into())])`
   supplies an OAuth access token to the listed sections when they set no
   credentials. Other sections never receive it. If a listed section has no

@@ -22,9 +22,11 @@
 //! # }
 //! ```
 //!
-//! A binary with its own name, version, configuration file or token
-//! variable describes them in a [`CliContext`] and uses its methods in place
-//! of [`command`], [`dispatch`] and [`dispatch_to`]. [`CommandOutput`] and
+//! A binary with its own name, version, configuration file, profile
+//! variable or token variable describes them in a [`CliContext`] and uses
+//! its methods in place of [`command`], [`dispatch`] and [`dispatch_to`].
+//! The command tree has the global option `--profile`, which selects a
+//! profile of the configuration file. [`CommandOutput`] and
 //! [`printable`] give its own commands the output and exit codes of the
 //! built-in ones.
 
@@ -38,11 +40,16 @@ pub mod workflow;
 
 pub use render::printable;
 
-use clap::{ArgMatches, Command};
+use clap::{Arg, ArgMatches, Command};
 use ga4gh_sdk::clients::ServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+/// The id of the global option `--profile`, which selects a profile. It
+/// differs from the long name, so that a downstream subcommand's own argument
+/// `profile` isn't taken for it.
+const PROFILE_ARG: &str = "ga4gh-cli-profile";
 
 /// Output of a command. Callers decide where to write each stream.
 ///
@@ -128,7 +135,7 @@ mod output_tests {
 }
 
 /// The settings of a binary built on this CLI: its name, version, help text,
-/// configuration file and token variable.
+/// configuration file, profile and token variable.
 ///
 /// [`CliContext::default`] describes `ga4gh-cli`. A downstream binary creates
 /// its own and uses its [`command`](Self::command),
@@ -159,15 +166,19 @@ pub struct CliContext {
     version: &'static str,
     about: Option<&'static str>,
     config_path: Option<PathBuf>,
+    profile: Option<String>,
+    profile_env: Option<String>,
     token_env: Option<String>,
     token_sections: Vec<String>,
 }
 
 impl Default for CliContext {
     /// The context of `ga4gh-cli`: configuration in `~/.ga4gh-cli/config.json`,
-    /// no token variable.
+    /// profile variable `GA4GH_CLI_PROFILE`, no token variable.
     fn default() -> Self {
-        Self::new("ga4gh-cli", env!("CARGO_PKG_VERSION")).with_about("CLI for GA4GH services")
+        Self::new("ga4gh-cli", env!("CARGO_PKG_VERSION"))
+            .with_about("CLI for GA4GH services")
+            .with_profile_env("GA4GH_CLI_PROFILE")
     }
 }
 
@@ -175,16 +186,18 @@ impl CliContext {
     /// A context for the binary `name` at `version`, such as
     /// `env!("CARGO_PKG_VERSION")`.
     ///
-    /// The configuration file defaults to `~/.<name>/config.json`, and no
-    /// token variable is read. The texts are `&'static str`, as Clap's
-    /// command names are without its `string` feature; they are usually
-    /// literals or `env!` values.
+    /// The configuration file defaults to `~/.<name>/config.json`, and
+    /// neither a profile variable nor a token variable is read. The texts
+    /// are `&'static str`, as Clap's command names are without its `string`
+    /// feature; they are usually literals or `env!` values.
     pub fn new(name: &'static str, version: &'static str) -> Self {
         Self {
             name,
             version,
             about: None,
             config_path: None,
+            profile: None,
+            profile_env: None,
             token_env: None,
             token_sections: Vec::new(),
         }
@@ -199,6 +212,34 @@ impl CliContext {
     /// Reads the configuration from `path` instead of `~/.<name>/config.json`.
     pub fn with_config_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.config_path = Some(path.into());
+        self
+    }
+
+    /// Selects the profile `name` of the configuration file, in place of the
+    /// profile variable and the file's `default_profile`.
+    ///
+    /// [`dispatch`](Self::dispatch) and [`dispatch_to`](Self::dispatch_to)
+    /// call it with the value of `--profile`, if it is given.
+    pub fn with_profile(mut self, name: impl Into<String>) -> Self {
+        self.profile = Some(name.into());
+        self
+    }
+
+    /// Reads the profile from the environment variable `name` when no
+    /// profile is selected with `--profile` or
+    /// [`with_profile`](Self::with_profile).
+    ///
+    /// An unset variable selects no profile, so the file's `default_profile`
+    /// applies. An empty value is an error.
+    pub fn with_profile_env(mut self, name: impl Into<String>) -> Self {
+        self.profile_env = Some(name.into());
+        self
+    }
+
+    /// Never reads a profile variable, such as `GA4GH_CLI_PROFILE` of
+    /// [`CliContext::default`].
+    pub fn without_profile_env(mut self) -> Self {
+        self.profile_env = None;
         self
     }
 
@@ -243,6 +284,42 @@ impl CliContext {
         self.about
     }
 
+    /// The profile selected with [`with_profile`](Self::with_profile).
+    pub fn profile(&self) -> Option<&str> {
+        self.profile.as_deref()
+    }
+
+    /// The profile variable; see [`with_profile_env`](Self::with_profile_env).
+    pub fn profile_env(&self) -> Option<&str> {
+        self.profile_env.as_deref()
+    }
+
+    /// The profile to read: the one selected with
+    /// [`with_profile`](Self::with_profile), else the value of the profile
+    /// variable, else `None` for the file's default profile.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the selected name is empty or the profile variable is not
+    /// valid Unicode.
+    pub fn selected_profile(&self) -> anyhow::Result<Option<String>> {
+        if let Some(profile) = &self.profile {
+            anyhow::ensure!(!profile.is_empty(), "Profile name must not be empty");
+            return Ok(Some(profile.clone()));
+        }
+        let Some(name) = &self.profile_env else {
+            return Ok(None);
+        };
+        match std::env::var(name) {
+            Ok(profile) if !profile.is_empty() => Ok(Some(profile)),
+            Ok(_) => anyhow::bail!("Environment variable '{name}' has an empty profile name"),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                anyhow::bail!("Environment variable '{name}' is not valid Unicode")
+            }
+        }
+    }
+
     /// The token variable set with [`with_token_env`](Self::with_token_env).
     pub fn token_env(&self) -> Option<&str> {
         self.token_env.as_deref()
@@ -275,21 +352,24 @@ impl CliContext {
         Ok(home.join(format!(".{}", self.name)).join("config.json"))
     }
 
-    /// Reads the section for `service_type` from the configuration file, as
-    /// [`Configuration::from_path`] does, and applies the token variable.
+    /// Reads the section for `service_type` from the selected profile of the
+    /// configuration file, as [`Configuration::from_path_with_profile`] does,
+    /// and applies the token variable.
     ///
     /// The section name is `service_type.as_str()`, such as `TES`, or the name
     /// of a `ServiceType::Custom` section.
     ///
     /// # Errors
     ///
-    /// Fails if the file or section is missing or malformed, or if the token
-    /// variable is missing, empty, or not valid Unicode for a listed section
-    /// without its own credential.
+    /// Fails if the file, profile or section is missing or malformed, if the
+    /// profile name is empty, the profile variable is not valid Unicode, or
+    /// if the token variable is missing, empty, or invalid for a listed
+    /// section without a credential.
     pub fn load_config(&self, service_type: ServiceType) -> anyhow::Result<Configuration> {
         let path = self.config_path()?;
+        let profile = self.selected_profile()?;
         let section = service_type.as_str();
-        let mut config = Configuration::from_path(&path, section)
+        let mut config = Configuration::from_path_with_profile(&path, profile.as_deref(), section)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Some(name) = &self.token_env {
             if self.token_sections.iter().any(|listed| listed == section)
@@ -322,15 +402,29 @@ impl CliContext {
         Ok(config)
     }
 
-    /// Builds the root command with the built-in subcommands. Downstream CLIs
-    /// can append their own subcommands or change built-in ones.
+    /// Builds the root command with the built-in subcommands and the global
+    /// option `--profile`. Downstream CLIs can append their own subcommands or
+    /// change built-in ones.
     pub fn command(&self) -> Command {
+        let mut profile_help =
+            "Profile of the configuration file to use, in place of its default_profile".to_owned();
+        if let Some(name) = &self.profile_env {
+            profile_help.push_str(&format!(" [env: {name}]"));
+        }
         Command::new(self.name)
             .bin_name(self.name)
             .version(self.version)
             .about(self.about)
             .subcommand_required(true)
             .arg_required_else_help(true)
+            .arg(
+                Arg::new(PROFILE_ARG)
+                    .long("profile")
+                    .value_name("NAME")
+                    .global(true)
+                    .value_parser(clap::builder::NonEmptyStringValueParser::new())
+                    .help(profile_help),
+            )
             .subcommand(drs::command())
             .subcommand(tes::command())
             .subcommand(trs::command())
@@ -339,36 +433,56 @@ impl CliContext {
             .subcommand(registry::command())
     }
 
+    /// This context with the profile of `--profile`, if `matches` has one;
+    /// otherwise an unchanged copy. The command parser rejects an empty name.
+    ///
+    /// [`dispatch`](Self::dispatch) and [`dispatch_to`](Self::dispatch_to)
+    /// call it themselves. A downstream binary calls it before
+    /// [`load_config`](Self::load_config) for its own commands, so that
+    /// `--profile` applies to them too.
+    pub fn with_profile_from(&self, matches: &ArgMatches) -> Self {
+        // `try_get_one`, because a downstream command tree may lack the option.
+        match matches.try_get_one::<String>(PROFILE_ARG) {
+            Ok(Some(profile)) => self.clone().with_profile(profile.clone()),
+            _ => self.clone(),
+        }
+    }
+
     /// Runs a built-in command with its service's section of this context's
-    /// configuration file; see [`crate::dispatch`].
+    /// configuration file, in the profile of `--profile` if it is given; see
+    /// [`crate::dispatch`].
     pub async fn dispatch(&self, matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
+        let context = self.with_profile_from(matches);
         if let Some(("workflow", sub)) = matches.subcommand() {
-            return workflow::run_with_context(sub, None, self).await.map(Some);
+            return workflow::run_with_context(sub, None, &context)
+                .await
+                .map(Some);
         }
         let Some(service_type) = built_in_service(matches) else {
             return Ok(None);
         };
-        let config = self.load_config(service_type)?;
+        let config = context.load_config(service_type)?;
         dispatch_with_config(matches, &config).await
     }
 
     /// Runs a built-in command with its service's section of this context's
-    /// configuration file, writing to caller-owned sinks; see
-    /// [`crate::dispatch_to`].
+    /// configuration file, in the profile of `--profile` if it is given,
+    /// writing to caller-owned sinks; see [`crate::dispatch_to`].
     pub async fn dispatch_to(
         &self,
         matches: &ArgMatches,
         stdout: &mut dyn std::io::Write,
         stderr: &mut dyn std::io::Write,
     ) -> anyhow::Result<Option<ExitCode>> {
+        let context = self.with_profile_from(matches);
         if let Some(("workflow", sub)) = matches.subcommand() {
-            let output = workflow::run_with_context(sub, None, self).await?;
+            let output = workflow::run_with_context(sub, None, &context).await?;
             return Ok(Some(output.write_to(stdout, stderr)?));
         }
         let Some(service_type) = built_in_service(matches) else {
             return Ok(None);
         };
-        let config = self.load_config(service_type)?;
+        let config = context.load_config(service_type)?;
         dispatch_with_config_to(matches, &config, stdout, stderr).await
     }
 }
