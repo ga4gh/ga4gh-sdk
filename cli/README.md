@@ -69,18 +69,37 @@ that call `dispatch_with_config()` set them with
 
 ### Authentication
 
-The service commands read `basic_auth` and `oauth_access_token`, but do not yet
-send them with requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)).
-The experimental `workflow submit` is an exception: it sends
-`oauth_access_token` as a bearer token to WES; callers supplying a
-`Configuration` directly can also use `bearer_access_token`. It does not
-support Basic auth or API keys. [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203) tracks consistent
-authentication across the SDK and CLI. For other commands, use services that
-allow anonymous access or a proxy that adds credentials. Keep the file private
-(`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold credentials. To keep
-a token out of the file, name an environment variable that holds it with
-`oauth_access_token_env`; the
-[usage guide](../docs/usage.md#configuration-file) describes all keys.
+All commands that contact a service, including `workflow submit`, send the
+section's credential with every request: `basic_auth` as Basic credentials
+(with an empty password if it has none), or `oauth_access_token` as a bearer
+token. A user and password in `base_path` are sent as Basic credentials, too.
+Set only one of them: with more than one, or with an `api_key`, which isn't
+supported, every command that contacts the service fails before sending
+anything. A `401 Unauthorized` answer is reported with its status, and the
+command exits with status 1. For example:
+
+```json
+{
+    "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "basic_auth": {"username": "alice", "password": "change-me"}
+    },
+    "WES": {
+        "base_path": "https://wes.example.org/ga4gh/wes/v1",
+        "oauth_access_token_env": "WES_TOKEN"
+    }
+}
+```
+
+Keep the file private (`chmod 600 ~/.ga4gh-cli/config.json`), since it can
+hold credentials. To keep a token out of the file, name an environment variable
+that holds it with `oauth_access_token_env`. The CLI doesn't log in or refresh
+tokens; set the current token. Over plain `http` to a host other than
+`localhost` or a loopback address, the CLI logs a warning (shown with
+`RUST_LOG=warn`), as the credential then travels unencrypted. The
+[usage guide](../docs/usage.md#authentication) describes the rules in full;
+[#203](https://github.com/ga4gh/ga4gh-sdk/issues/203) tracks the remaining
+cross-surface work.
 
 ## Usage
 
@@ -406,9 +425,9 @@ the registry's API root:
 
 Replace `registry.example.org` with your registry's host.
 The CLI requests `services`, `services/{id}` and `services/types` below this
-path. Public reads need no token; a deployment that requires authentication
-needs an authenticating proxy until [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)
-adds configured authentication.
+path. Public reads need no token; for a deployment that requires
+authentication, add its credential to the section (see
+[Authentication](#authentication)).
 
 1. To list the services, optionally only those of one type artifact (case
    ignored), run `registry list`:

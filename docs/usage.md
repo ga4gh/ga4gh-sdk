@@ -52,7 +52,6 @@ built-in services, or any other name for a custom service:
   "TES": {
     "base_path": "https://example.org/ga4gh/tes/v1",
     "basic_auth": {"username": "alice", "password": "change-me"},
-    "oauth_access_token": "my-token",
     "timeouts": {"discovery": 30, "submission": 600}
   },
   "MY_SERVICE": {
@@ -65,8 +64,9 @@ built-in services, or any other name for a custom service:
 
 - `base_path` (string, required): the API root described above.
 - `basic_auth` (object, optional): `username` (string) and an optional
-  `password` (string).
-- `oauth_access_token` (string, optional): an access token.
+  `password` (string), sent as `Authorization: Basic`.
+- `oauth_access_token` (string, optional): an access token, sent as
+  `Authorization: Bearer`.
 - `oauth_access_token_env` (string, optional): the name of an environment
   variable that holds the access token, so that the token needn't be in the
   file. Use it in place of `oauth_access_token`, not together with it. If the
@@ -89,15 +89,47 @@ with `config.from_file("MY_SERVICE")`. `Configuration::from_path(path, "TES")`
 reads a section from another file. Files written for earlier versions read as
 before; their `extra` is empty.
 
-Default SDK clients and CLI service commands read `basic_auth` and
-`oauth_access_token` but **do not send them yet** (see
-[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). They need an anonymous
-service or an authenticating proxy. The experimental `workflow submit` CLI
-command sends a configured OAuth bearer token; Rust callers can also supply an
-authenticated client through `WES::from_transport()`. Rust and Python
-callers can instead set a token provider, which the SDK asks for a bearer
-token for each request; see [Token providers](#token-providers). The file
-can't set a token provider. Cross-surface consistency is tracked in
+### Authentication
+
+The SDK clients, the Python bindings and the CLI commands send the
+configured credential with every request to the service, including service
+discovery and submissions. A configuration holds at most one credential:
+
+| Credential | Rust | Python | File | Sent as |
+| --- | --- | --- | --- | --- |
+| Basic | `with_basic_auth` | `set_basic_auth(username, password=None)` | `basic_auth` | `Authorization: Basic` |
+| Bearer token | `with_oauth_access_token`, `with_oauth_access_token_from_env`, or the `bearer_access_token` field | `set_access_token(token)` | `oauth_access_token` or `oauth_access_token_env` | `Authorization: Bearer` |
+| User and password in the API root | `base_path` | `Configuration(base_path)` | `base_path` | `Authorization: Basic` |
+| Token provider | `with_token_provider` | `set_token_provider(provider)` | - | `Authorization: Bearer`; see [Token providers](#token-providers) |
+
+- **One credential:** if more than one is set (for example `basic_auth`
+  together with `oauth_access_token`), every request fails before anything is
+  sent, with an error that names the fields (Rust: `AuthConflictError`). No
+  credential takes precedence. `oauth_access_token` and `bearer_access_token`
+  may both be set only to the same token.
+- **API keys:** `api_key` isn't supported, as the configuration doesn't say
+  which header it belongs in. A configured `api_key` fails every request (Rust:
+  `CredentialError`), as does an empty token or one that an HTTP header can't
+  hold.
+- **401:** a `401 Unauthorized` answer is returned as an HTTP error with its
+  status. With a static credential, the SDK doesn't send the request again.
+- **Destinations:** the credential goes only to the API root, as endpoints
+  outside it are rejected. On a redirect to another host or port, the
+  `Authorization` header is dropped. Over plain `http` to a host other than
+  `localhost` or a loopback address, the SDK logs a warning once per process,
+  as the credential travels unencrypted then; use `https`.
+- **Caller-owned clients:** a Rust client given to `Transport::with_client()` or
+  `WES::from_transport()` also gets the configured credential, which takes
+  the place of an `Authorization` default header of that client. Without a
+  configured credential, its own headers stay as they are.
+- **Errors and logs:** credential values don't appear in errors, logs, `Debug`
+  output or CLI output.
+
+`Transport::request_builder()` adds no credential (except a user and password
+in `base_path`); use `Transport::authorized_request_builder()` for your own
+requests. Fetches of workflow descriptors and result artifacts from other URLs,
+and DRS access URLs, don't carry the service's credential. Remaining
+cross-surface work, such as the redirect contract, is tracked in
 [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
 
 The file can hold credentials, so keep it private, for example with
@@ -202,7 +234,7 @@ use url::Url;
 // No authentication
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?);
 
-// Credentials are stored, but not yet sent with requests (see #31)
+// A bearer token, sent with every request (see Authentication above)
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_oauth_access_token("my-token".to_owned());
 
@@ -288,8 +320,8 @@ contract:
 - **One credential source.** A token provider can't be combined with
   `basic_auth`, `oauth_access_token`, `bearer_access_token`, `api_key` or a
   user or password in `base_path`; requests then fail with an
-  `AuthConflictError` before anything is sent. Without a token provider,
-  nothing changes.
+  `AuthConflictError` before anything is sent. Without a token provider, the
+  static credential is sent; see [Authentication](#authentication).
 - **Injected clients.** A token provider in the configuration of
   `Transport::with_client` applies to that client's requests too; its
   `Authorization` header takes the place of one among the client's default
@@ -480,6 +512,8 @@ request already has are an error.
 Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
 as `ga4gh_sdk::utils::transport::HttpError` (formerly `HttpStatusError`, still
 available under that name), which carries the status code and body. Downcast to
-it to distinguish, for example, a `404` from a network error. With a token
-provider, `ga4gh_sdk::utils::auth::TokenProviderError` and `AuthConflictError`
-mean that nothing was sent; see [Token providers](#token-providers).
+it to distinguish, for example, a `404` from a network error.
+`ga4gh_sdk::utils::auth::AuthConflictError` (more than one credential),
+`CredentialError` (an unsupported or unusable static credential) and, with a
+token provider, `TokenProviderError` mean that nothing was sent; see
+[Authentication](#authentication) and [Token providers](#token-providers).

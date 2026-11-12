@@ -382,8 +382,8 @@ drops such non-string values instead of failing.
 The basic `list_tools` method returns a page without headers. Use
 `clients::trs::responses` with the client's transport for server-provided paging
 URLs and opaque `format=zip` downloads (see the advanced transport API above).
-Authentication isn't supported yet: the SDK's transport doesn't send
-the configured tokens, so only public registries and tools work. The CLI's
+The transport sends the configured credential, as for the other clients; see
+[Authentication](docs/usage.md#authentication). The CLI's
 `trs` commands use this client; see the [CLI README](cli/README.md#trs-examples).
 
 ## Testing
