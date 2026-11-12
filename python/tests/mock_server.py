@@ -118,6 +118,7 @@ PENDING = (202, {}, {"Retry-After": "1"})
 
 ROUTES.update(
     {
+        ("GET", "/api/auth-failure"): (401, {"msg": "authentication required"}),
         ("GET", "/drs/service-info"): (200, DRS_SERVICE_INFO),
         ("GET", "/drs/objects/obj-1"): (200, DRS_OBJECT),
         ("GET", "/drs/objects/obj-1/access/https-1"): (200, ACCESS_URL),
@@ -214,6 +215,9 @@ class Handler(BaseHTTPRequestHandler):
                 "body": base64.b64encode(body).decode(),
             }
         )
+        if self.command == "GET" and url.path == "/api/auth-echo":
+            self._reply(401, {"echo": self.headers.get("Authorization")})
+            return
         if self.command == "GET" and url.path.startswith("/api/tasks/slow-"):
             task_id = url.path.rsplit("/", 1)[1]
             if self._client_left_within(float(task_id.removeprefix("slow-"))):

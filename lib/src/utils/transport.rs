@@ -33,7 +33,7 @@
 /// let response = transport.delete("users/1").await;
 /// };
 /// ```
-use crate::utils::configuration::Configuration;
+use crate::utils::configuration::{AuthError, Configuration, ConfiguredAuth};
 use crate::utils::query::query_pairs;
 use reqwest::multipart::Form;
 use reqwest::Client;
@@ -192,30 +192,27 @@ pub fn urlencode<T: AsRef<str>>(value: T) -> String {
 }
 
 /// An HTTP response whose status is not successful.
-#[derive(Debug)]
+///
+/// `body` is the untrusted server response and may contain credentials echoed
+/// by the server. Access it explicitly when needed, but do not log or display
+/// it without reviewing its contents. `Display` and `Debug` omit the body.
 pub struct HttpError {
     pub status: reqwest::StatusCode,
     pub body: String,
 }
 
+impl fmt::Debug for HttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpError")
+            .field("status", &self.status)
+            .field("body", &"<untrusted response omitted>")
+            .finish()
+    }
+}
+
 impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const MAX_BODY_CHARS: usize = 300;
-        let end = self
-            .body
-            .char_indices()
-            .nth(MAX_BODY_CHARS)
-            .map_or(self.body.len(), |(index, _)| index);
-        write!(
-            f,
-            "Request failed with status: {}. Response: {}",
-            self.status,
-            &self.body[..end]
-        )?;
-        if end < self.body.len() {
-            write!(f, "... [truncated]")?;
-        }
-        Ok(())
+        write!(f, "Request failed with status: {}", self.status)
     }
 }
 
@@ -293,7 +290,8 @@ fn is_dot_segment(segment: &str) -> bool {
 #[derive(Clone)]
 pub struct Transport {
     pub config: Configuration,
-    pub client: reqwest::Client,
+    client: reqwest::Client,
+    apply_configured_auth: bool,
 }
 
 impl fmt::Debug for Transport {
@@ -321,25 +319,53 @@ impl Transport {
         Self::build(config).expect("default HTTP client initialization failed")
     }
 
-    // A client with the connect and request timeouts of `config.timeouts`.
+    // SDK-owned clients never follow redirects implicitly: a redirect can
+    // leave the configured API root or replay a submission.
     fn build(config: &Configuration) -> reqwest::Result<Self> {
         Client::builder()
             .connect_timeout(config.timeouts.connect)
             .timeout(config.timeouts.request)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map(|client| Self::with_client(config, client))
+            .map(|client| Self {
+                config: config.clone(),
+                client,
+                apply_configured_auth: true,
+            })
     }
 
     /// Inject a configured client, for connection budgets, TLS and downstream use.
     ///
     /// The client's own connect and request timeouts apply, and
     /// `config.timeouts.connect` and `request` are not used; the `discovery` and
-    /// `submission` limits still come from `config.timeouts`.
+    /// `submission` limits still come from `config.timeouts`. The configured
+    /// credentials are not applied. If both are present, requests fail with
+    /// [`AuthError::CallerOwnedClient`]; use
+    /// [`with_client_and_configured_auth`](Self::with_client_and_configured_auth)
+    /// to opt in. The caller retains responsibility for redirect policy.
     pub fn with_client(config: &Configuration, client: Client) -> Self {
         Self {
             config: config.clone(),
             client,
+            apply_configured_auth: false,
         }
+    }
+
+    /// Explicitly apply configured credentials to a caller-owned HTTP client.
+    /// The caller owns that client's redirect policy and must prevent credential
+    /// forwarding outside the configured API root and replay of submissions.
+    pub fn with_client_and_configured_auth(config: &Configuration, client: Client) -> Self {
+        Self {
+            config: config.clone(),
+            client,
+            apply_configured_auth: true,
+        }
+    }
+
+    /// Read-only access to the underlying HTTP client. Requests made through a
+    /// clone of it do not acquire SDK-configured authentication automatically.
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     /// Creates a transport with these connect and request timeouts in place of
@@ -517,16 +543,30 @@ impl Transport {
 
     /// Shared API-relative request construction. Service-specific callers can
     /// add headers, streaming bodies or custom methods without losing policies.
-    /// Authentication remains controlled by the configured/injected client;
-    /// see #31 for configuration-based authentication support.
+    /// SDK-owned clients apply one configured Basic or bearer credential.
+    /// Caller-owned clients retain their policy; configured credentials require
+    /// [`with_client_and_configured_auth`](Self::with_client_and_configured_auth).
     pub fn request_builder(
         &self,
         method: reqwest::Method,
         endpoint: &str,
-    ) -> Result<reqwest::RequestBuilder, EndpointError> {
+    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+        let auth = self.config.configured_auth()?;
+        if !self.apply_configured_auth && !matches!(auth, ConfiguredAuth::None) {
+            return Err(Box::new(AuthError::CallerOwnedClient));
+        }
         let mut request = self.client.request(method, self.endpoint(endpoint)?);
         if let Some(agent) = &self.config.user_agent {
             request = request.header(reqwest::header::USER_AGENT, agent);
+        }
+        if self.apply_configured_auth {
+            request = match auth {
+                ConfiguredAuth::None => request,
+                ConfiguredAuth::Basic(basic) => {
+                    request.basic_auth(&basic.username, basic.password.as_deref())
+                }
+                ConfiguredAuth::Bearer(token) => request.bearer_auth(token),
+            };
         }
         Ok(request)
     }
@@ -732,22 +772,20 @@ mod tests {
     }
 
     #[test]
-    fn test_http_status_error_truncates_display_but_keeps_body() {
-        let body = "é".repeat(301);
+    fn test_http_status_error_keeps_body_but_omits_it_from_diagnostics() {
+        let body = "Bearer SENTINEL_TOKEN\n".repeat(301);
         let error = HttpStatusError {
             status: reqwest::StatusCode::BAD_GATEWAY,
             body: body.clone(),
         };
         assert_eq!(error.body, body);
-        assert!(error
-            .to_string()
-            .ends_with(&format!("{}... [truncated]", "é".repeat(300))));
-
-        let short = HttpStatusError {
-            status: reqwest::StatusCode::NOT_FOUND,
-            body: "service failure".to_string(),
-        };
-        assert!(short.to_string().ends_with("Response: service failure"));
+        assert_eq!(
+            error.to_string(),
+            "Request failed with status: 502 Bad Gateway"
+        );
+        let debug = format!("{error:?}");
+        assert!(debug.contains("502"), "{debug}");
+        assert!(!debug.contains("SENTINEL_TOKEN"), "{debug}");
     }
 
     #[test]

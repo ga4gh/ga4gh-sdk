@@ -411,7 +411,7 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(error.contains(&status.to_string()), "{error}");
-            assert!(error.contains("service failure"), "{error}");
+            assert!(!error.contains("service failure"), "{error}");
             assert_eq!(error.contains("base_path"), status == 404, "{error}");
         }
     }
@@ -934,8 +934,9 @@ mod tests {
                 .downcast_ref::<crate::utils::transport::HttpError>()
                 .unwrap_or_else(|| panic!("not an HttpError: {error}"));
             assert_eq!(http.status, status);
+            assert_eq!(http.body, body);
             assert_eq!(error.to_string(), http.to_string());
-            assert!(error.to_string().contains(body), "{error}");
+            assert!(!error.to_string().contains(body), "{error}");
         }
     }
 }

@@ -81,7 +81,7 @@ GA4GH_TRS_PUBLIC_TESTS=1 pytest tests/test_trs_public.py
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys; `set_timeouts()` and `get_timeouts()` set and give the time limits of requests. See [Reading the configuration file](#reading-the-configuration-file) and [Timeouts](#timeouts). |
+| `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication) and [Timeouts](#timeouts). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
@@ -95,8 +95,7 @@ The Python API is maintained by hand; a new Rust SDK method or model does not
 appear in Python automatically. For each SDK change, decide whether to expose
 it here, then update the wrapper, this table, and the mock-backed tests and
 examples. CI checks the documented Python behavior, but it cannot infer that
-a new Rust API needs a Python counterpart. The SDK currently stores configured
-credentials without sending them in requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)); use an anonymous service or an authenticating proxy.
+a new Rust API needs a Python counterpart.
 
 ## Usage
 
@@ -153,8 +152,21 @@ queue = config.get_extra().get("queue")
 ```
 
 A section can name an environment variable for its token with
-`oauth_access_token_env`. A missing section or an unset variable raises
-`ValueError`, a missing file `FileNotFoundError`.
+`oauth_access_token_env` or `bearer_access_token_env`. A missing section or an
+unset variable raises `ValueError`, a missing file `FileNotFoundError`.
+
+## Authentication
+
+Set one source before constructing a client: `set_basic_auth(username,
+password=None)`, `set_oauth_access_token(token)`, or
+`set_bearer_access_token(token)`. Use `clear_auth()` before choosing a different
+source. `from_file()` can read these sources from the selected service section.
+The client uses that credential for discovery and later operations; invalid or
+conflicting sources raise an exception before sending the request. The SDK does
+not follow redirects automatically. See the
+[authentication guide](../docs/authentication.md) for file keys, injected
+transport boundaries and errors. Token-provider integration is tracked in
+[#215](https://github.com/ga4gh/ga4gh-sdk/pull/215).
 
 ## Timeouts
 
@@ -251,7 +263,8 @@ for listed in page.tasks:
   `FileNotFoundError` (an `OSError`). Failed requests and responses that don't fit the TES
   models raise `RuntimeError`. If task creation fails after submission, the error may
   mean the server created the task but its acknowledgement was lost or malformed;
-  do not retry automatically.
+  do not retry automatically. HTTP failures include the status in the exception
+  message but omit the server's untrusted response body.
 
 ### Task objects
 

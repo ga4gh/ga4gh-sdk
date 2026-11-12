@@ -230,10 +230,15 @@ async fn dropping_a_response_stops_the_producer() {
 }
 
 #[tokio::test]
-async fn trs_relative_page_link_keeps_configured_url_auth_scoped_to_the_api() {
+async fn trs_relative_page_link_keeps_configured_basic_auth_scoped_to_the_api() {
     use ga4gh_sdk::clients::trs::responses::next_tools_page;
-    let base = server_url().replacen("http://", "http://user:pass@", 1);
-    let transport = Transport::new(&Configuration::new(url::Url::parse(&base).unwrap()));
+    use ga4gh_sdk::utils::configuration::BasicAuth;
+    let transport = Transport::new(
+        &Configuration::new(url::Url::parse(&server_url()).unwrap()).with_basic_auth(BasicAuth {
+            username: "user".into(),
+            password: Some("pass".into()),
+        }),
+    );
     let request = mock("GET", "/tools?offset=opaque")
         .match_header("authorization", "Basic dXNlcjpwYXNz")
         .with_body("[]")
