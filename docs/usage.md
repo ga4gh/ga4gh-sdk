@@ -361,7 +361,8 @@ let archive = trs
 The client follows TRS 2.0.2. `tags` are registry-specific and sent as one
 comma-separated value, so a tag must not be empty or contain a comma.
 `ToolVersion.description` holds the description of a version, if the registry
-sends one. `get_files_zip` returns the archive as bytes without extracting it;
+sends one. `get_files_zip` reads the whole archive into memory and returns it as bytes,
+without extracting it;
 a body larger than the limit, or one that isn't a ZIP archive, is an error.
 
 ### Models

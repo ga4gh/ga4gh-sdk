@@ -384,7 +384,7 @@ fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_descriptor_type, plain_files, with_plain};
+    use super::{parse_descriptor_type, plain_files, with_plain, write_new_file};
     use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain, FileWrapper};
 
     #[test]
@@ -396,6 +396,20 @@ mod tests {
         );
         let error = parse_descriptor_type("PLAIN_CWL").unwrap_err().to_string();
         assert!(error.contains("CWL, WDL, NFL, GALAXY, or SMK"), "{error}");
+    }
+
+    #[test]
+    fn write_new_file_keeps_existing_files() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let path = directory.path().join("workflow.zip");
+        assert!(write_new_file(&path, b"PK new")
+            .unwrap()
+            .starts_with("Wrote 6 bytes to "));
+        assert_eq!(std::fs::read(&path).unwrap(), b"PK new");
+        // The file appeared after the arguments were checked.
+        let error = write_new_file(&path, b"PK other").unwrap_err().to_string();
+        assert!(error.contains("Can't create"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"PK new");
     }
 
     #[test]

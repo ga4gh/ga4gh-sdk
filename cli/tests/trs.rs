@@ -321,6 +321,49 @@ fn files_zip_writes_the_archive_without_overwriting_files() {
 }
 
 #[test]
+fn files_zip_writes_no_file_if_the_download_fails() {
+    let service = service_info(2);
+    let version = format!("{ROOT}/tools/{TOOL_ID}/versions/v2");
+    let not_zip = mock("GET", format!("{version}/CWL/files").as_str())
+        .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+        .with_status(200)
+        .with_body(json!([{"path": "main.cwl"}]).to_string())
+        .expect(1)
+        .create();
+    let missing = mock("GET", format!("{version}/WDL/files").as_str())
+        .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+        .with_status(404)
+        .expect(1)
+        .create();
+    let home = home_with_trs_config();
+    let archive = home.path().join("workflow.zip");
+
+    for (descriptor_type, expected) in [("CWL", "not a ZIP archive"), ("WDL", "404")] {
+        let output = run(
+            &home,
+            &[
+                "trs",
+                "files",
+                TOOL_ID,
+                "v2",
+                "--type",
+                descriptor_type,
+                "--zip",
+                archive.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{stderr}");
+        assert!(!archive.exists());
+    }
+    service.assert();
+    not_zip.assert();
+    missing.assert();
+}
+
+#[test]
 fn plain_tests_reject_url_only_wrappers_without_printing_a_false_file() {
     let service = service_info(1);
     let test_files = get(

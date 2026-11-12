@@ -128,8 +128,10 @@ fn join_tags<S: Serializer>(tags: &[String], serializer: S) -> Result<S::Ok, S::
 ///
 /// Every field is optional; unset fields and an empty `tags` list are not
 /// sent. `offset` is a string because registries may page by values other
-/// than numbers. Use [`ToolFilter::query`] to pass a filter to
-/// [`responses::list_tools_page`].
+/// than numbers. [`ToolFilter::query`] checks the tags and is the supported
+/// way to turn a filter into query parameters, also for
+/// [`responses::list_tools_page`]; serializing a filter directly skips the
+/// check.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ToolFilter {
     /// A tool ID, scoped to the registry.
@@ -427,7 +429,8 @@ impl TRS {
         descriptor_type: DescriptorType,
         limit: usize,
     ) -> Result<Vec<u8>, Box<dyn Error>> {
-        // Same checks and messages as the other methods.
+        // Validate before building the request, with the same messages as
+        // the other methods (`files_zip` checks again, more generally).
         version_path(id, version_id)?;
         let response =
             responses::files_zip(&self.transport, id, version_id, descriptor_type).await?;

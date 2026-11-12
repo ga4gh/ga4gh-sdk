@@ -24,6 +24,9 @@ hand-written types go next to `models/`, for example
 | `trs` | [TRS 2.0.2](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.2) | `utils/patches/trs.patch` |
 | `wes` | [WES 1.1.0](https://github.com/ga4gh/workflow-execution-service-schemas/tree/1.1.0) | `utils/patches/wes.patch` |
 
+The TRS 2.0.2 spec still declares `info.version: 2.1.0`, so the headers of
+the generated TRS models say 2.1.0.
+
 The models are generated with OpenAPI Generator 7.9.0 and formatted with
 `rustfmt`. Running the wrapper on a clean checkout must not change any file in
 `lib/src/clients`. If it does, a spec, the generator or a patch has changed.
