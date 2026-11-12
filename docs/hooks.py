@@ -46,8 +46,9 @@ log = logging.getLogger("mkdocs.hooks.repo_pages")
 INLINE_LINK = re.compile(r"(?P<head>\]\(\s*)(?P<target><[^>]*>|[^)\s]+)")
 # `[label]: target "title"`, but not footnotes (`[^1]: text`)
 REFERENCE = re.compile(r"^(?P<head> {0,3}\[(?!\^)[^\]]+\]:\s*)(?P<target><[^>]*>|\S+)")
-# Inline code spans, which are left as they are
-CODE_SPAN = re.compile(r"(`+).*?\1")
+# Inline code spans, which are left as they are (on one line; a span that
+# wraps keeps its links, and the strict build reports them)
+CODE_SPAN = re.compile(r"(?<!\\)(`+).*?\1")
 FENCE = re.compile(r"^\s*(```+|~~~+)")
 
 
@@ -87,7 +88,7 @@ def _tracked_paths() -> set[str] | None:
     except (OSError, subprocess.CalledProcessError):
         log.info("Git is not available; links to untracked files are rewritten too")
         return None
-    paths = set()
+    paths = {"."}
     for path in result.stdout.decode().split("\0"):
         while path:
             paths.add(path)
@@ -222,6 +223,8 @@ def _github_url(path: str, ref: str) -> str:
     Returns:
         URL of the file (`blob`) or directory (`tree`).
     """
+    if path == ".":
+        return f"{REPO_URL}/tree/{ref}"
     kind = "tree" if (ROOT / path).is_dir() else "blob"
     return f"{REPO_URL}/{kind}/{ref}/{path}"
 

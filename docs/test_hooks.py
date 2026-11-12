@@ -65,6 +65,16 @@ def test_directory() -> None:
     assert _render("[x](lib/src/)") == f"[x]({hooks.REPO_URL}/tree/main/lib/src)"
 
 
+def test_repository_root() -> None:
+    """A link to the repository root goes to its tree."""
+    assert _render("[x](../)", page="docs/usage.md") == f"[x]({hooks.REPO_URL}/tree/main)"
+
+
+def test_escaped_backtick() -> None:
+    """An escaped backtick doesn't start a code span."""
+    assert _render("\\`a [x](LICENSE) `b`") == f"\\`a [x]({BLOB}/LICENSE) `b`"
+
+
 def test_reference_definition() -> None:
     """Reference definitions are rewritten, footnotes are not."""
     assert _render("[x]: LICENSE \"t\"\n[^1]: LICENSE\n") == (
