@@ -362,6 +362,7 @@ for root, reply in BAD_ACKNOWLEDGEMENTS.items():
     ROUTES[("GET", f"/{root}/service-info")] = (200, WES_SERVICE_INFO)
     ROUTES[("POST", f"/{root}/runs")] = reply
 
+
 class Server(ThreadingHTTPServer):
     """A threading HTTP server that queues enough connections for hundreds of clients."""
 

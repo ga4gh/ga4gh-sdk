@@ -316,8 +316,8 @@ pub fn task_path(task: &Task) -> String {
 /// Waits for the task with the library's waiter until it ends, the time runs out or the
 /// settings' operation is cancelled. Never cancels the task.
 ///
-/// The future is not `Send`; `AsyncTask.wait()` uses [`wait_end`] with a `Send` waiter
-/// instead (see `tes_async`).
+/// This is the sync `Task.wait()`. The future is not `Send`, so `AsyncTask.wait()` uses
+/// `tes_async::wait_task_send` instead, which shares [`wait_end`].
 pub async fn wait_task(task: &Task, settings: WaitSettings) -> WaitEnd {
     let WaitSettings { options, view } = settings;
     let result = task.wait(&options).await;
@@ -936,5 +936,94 @@ impl PyTES {
         io(py, |rt| {
             rt.block_on(list_tasks(&self.inner.transport, &endpoint))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ga4gh_sdk::clients::wait::{RemoteHandle, ServiceKind};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A waiter's result for a task that ended in `state`, with its minimal view.
+    fn ended(state: &str) -> WaitResult {
+        WaitResult {
+            handle: RemoteHandle {
+                service: ServiceKind::Tes,
+                api_root: "http://localhost/".to_owned(),
+                id: "task-1".to_owned(),
+            },
+            outcome: WaitOutcome::Complete,
+            last_state: Some(state.to_owned()),
+            last_response: Some(serde_json::json!({ "id": "task-1", "state": state })),
+            details: None,
+            error: None,
+        }
+    }
+
+    /// Runs `future` on a runtime of its own.
+    fn block_on<F: Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn the_minimal_view_reuses_the_last_poll() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        let asked = AtomicBool::new(false);
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Minimal),
+            |_| async {
+                asked.store(true, Ordering::SeqCst);
+                Ok(String::new())
+            },
+        ));
+        assert!(matches!(end, WaitEnd::Task(task) if task.raw["id"] == "task-1"));
+        assert!(!asked.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_failed_view_request_fails_the_wait() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Full),
+            |_| async { Err("HTTP 500".to_owned()) },
+        ));
+        assert!(matches!(end, WaitEnd::Failed(error) if error == "Failed to get task: HTTP 500"));
+    }
+
+    #[test]
+    fn the_deadline_during_the_view_request_keeps_the_final_state() {
+        let options = WaitOptions::new(Duration::from_millis(10));
+        let end = block_on(wait_end(
+            ended("EXECUTOR_ERROR"),
+            &options,
+            Some(TesView::Basic),
+            |_| std::future::pending(),
+        ));
+        assert!(matches!(
+            end,
+            WaitEnd::Timeout(Some(TesState::ExecutorError))
+        ));
+    }
+
+    #[test]
+    fn cancellation_during_the_view_request_interrupts_the_wait() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        options.operation.cancellation.cancel();
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Basic),
+            |_| std::future::pending(),
+        ));
+        assert!(matches!(end, WaitEnd::Interrupted));
     }
 }

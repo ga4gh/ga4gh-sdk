@@ -281,7 +281,7 @@ impl PyAsyncTask {
     ///
     /// Invalid arguments raise `ValueError` when the method is called. Cancelling the
     /// awaiting coroutine stops polling; it doesn't cancel the task. Between polls, the
-    /// wait holds no call thread, so it doesn't delay other async calls.
+    /// wait holds no call thread, so other async calls don't queue behind it.
     #[pyo3(signature = (timeout=None, *, poll_interval=1.0, max_interval=None, view=None))]
     pub fn wait<'py>(
         &self,

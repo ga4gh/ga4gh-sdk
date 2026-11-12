@@ -427,7 +427,8 @@ asyncio.run(main())
   `asyncio.wait_for()`, stops polling; the task on the server goes on. Between polls, a
   pending wait sleeps on the runtime without a call thread (see below); it takes one
   only for each request. So an app can wait for many more tasks than there are call
-  threads, and other async calls, including `cancel()`, don't queue behind the waits.
+  threads, and other async calls, including `cancel()`, queue behind waits only while
+  their polls take all 256 call threads at once.
   The `timeout` also holds while a request waits for a call thread: if the time runs
   out before the first poll, `WaitTimeoutError` has `last_state` `None`.
 - The requests run on the runtime of the sync API without the GIL, so they don't block

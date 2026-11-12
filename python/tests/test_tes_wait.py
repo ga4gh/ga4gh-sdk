@@ -541,10 +541,12 @@ def test_many_async_waits_do_not_delay_other_calls(
             How long the other calls took, in seconds.
         """
         running = async_task(config, "state-RUNNING")
+        # Earlier tests of the module poll the same path on the shared server.
+        before = requests_to(server, path)
         pending = [asyncio.ensure_future(running.wait(poll_interval=10)) for _ in range(waits)]
         try:
             deadline = time.monotonic() + 10
-            while requests_to(server, path) < waits:
+            while requests_to(server, path) - before < waits:
                 assert time.monotonic() < deadline, "the waits did not all poll"
                 await asyncio.sleep(0.05)
             started = time.monotonic()
