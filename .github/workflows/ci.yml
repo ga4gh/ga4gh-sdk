@@ -106,7 +106,8 @@ jobs:
             if [[ "$SUITE" == funnel ]]; then
               paths=("${common[@]}" run-integration-tests.sh lib/src/clients/tes/
                 lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
-                lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs)
+                lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs
+                cli/Cargo.toml cli/src/ cli/tests/funnel_cli.rs)
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
@@ -235,9 +236,22 @@ jobs:
           SKIP: cargo-fmt,cargo-clippy
         run: pre-commit run --all-files --show-diff-on-failure
 
+  # The example crate in `examples/downstream-sdk/`, built against the
+  # library and the CLI as a downstream crate would (see docs/downstream.md)
+  downstream:
+    name: Downstream example
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check, lint and test the example
+        run: make downstream
+
   passed:
     name: CI passed
-    needs: [lint, test, build, python, wheels, integration, coverage, codecov, pre-commit]
+    needs: [lint, test, build, python, wheels, integration, coverage, codecov, pre-commit, downstream]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -257,7 +271,7 @@ jobs:
               print(f'{name}: {result}')
           expected = {
               'lint', 'test', 'build', 'python', 'wheels', 'integration', 'coverage',
-              'codecov', 'pre-commit',
+              'codecov', 'pre-commit', 'downstream',
           }
           expected_results = {name: 'success' for name in expected}
           if os.environ['EVENT_NAME'] == 'pull_request':

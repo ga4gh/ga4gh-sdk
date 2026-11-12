@@ -7,16 +7,11 @@ request templates. The rules for changes and the standard checks are in
 
 ## Engineering and review guidance
 
-| Work | Guide |
-| --- | --- |
-| Design or change SDK behavior | [Engineering principles](engineering_principles.md), with routing by affected contract |
-| Review or publish a change | [Reviewer framework](reviewer_framework.md), including updates to an existing PR |
-| Write instructions or user documentation | [Technical writing](technical_writing.md), with audience-specific guidance |
-| Investigate the initial rollout | [Dated engineering assessment](engineering_assessment.md), with pinned evidence and issue ownership |
-
-Use the principles as decision guidance for the current change. Issues track
-implementation work; the assessment is a historical snapshot. `AGENTS.md` routes
-coding agents to the same guides used by contributors.
+[AGENTS.md](../AGENTS.md) routes contributors and coding agents to the
+engineering principles, reviewer framework, and technical writing guide.
+Read the sections relevant to the current task. The
+[dated assessment](assessments/2026-11-10-engineering.md) is archived evidence;
+linked issues own current remediation status.
 
 ## Prerequisites
 
@@ -54,6 +49,7 @@ bump them, so update this guide when you change them.
 | `make check` | `lint`, `build` and `test`: the standard checks |
 | `make coverage` | Coverage report in `coverage/` (see below) |
 | `make clean-coverage` | Removes coverage data and `coverage/` |
+| `make downstream` | Formatting, Clippy and tests of the [downstream example](downstream.md#checks) |
 | `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
 | `make models` | Runs `utils/build_models_wrapper.sh`; run `make fmt` afterwards |
 | `make pre-commit` | `pre-commit run --all-files` |
@@ -155,6 +151,7 @@ on pushes to `main` and on manual dispatch:
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
+| `downstream` | Downstream example | `make downstream`: builds and tests [`examples/downstream-sdk/`](downstream.md) |
 | `passed` | CI passed | Requires all applicable jobs to succeed; accepts the intentionally skipped wheel matrix on PRs |
 
 `CI passed` is the check to require for merges. A new job must be added to

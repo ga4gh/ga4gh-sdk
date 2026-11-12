@@ -189,7 +189,8 @@ impl PyConfiguration {
 
     /// Reads a section of `~/.ga4gh-cli/config.json`: a `ServiceType`, or the name of
     /// any other section as a `str`. It replaces all settings, including a token
-    /// provider.
+    /// provider. In a file with profiles, the section comes from its default
+    /// profile.
     pub fn from_file(&mut self, service_type: ServiceSection) -> PyResult<()> {
         self.inner = Configuration::from_file(service_type.into()).map_err(|error| {
             let message = error.to_string();

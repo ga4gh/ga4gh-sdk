@@ -50,12 +50,14 @@ The application column defines our adaptation.
 | Start instructions with an action | Use an imperative verb. Name the actor in descriptions when responsibility could be ambiguous. | 5.3; section 3 |
 | Put a necessary condition first | State when the instruction applies before telling the reader to act. | 5.4 |
 | Keep sentences short | Aim for at most 20 words in instructions and 25 in descriptions. Review longer sentences for ambiguity. | 5.1; 6.3 |
-| Keep paragraphs focused | Use one topic per paragraph. Put ordered work in numbered steps. | 6.4–6.5 |
+| Keep paragraphs focused | Use one topic per paragraph. | 6.4–6.5 |
+| Show ordered work as steps | Number actions that the reader must perform in sequence. This is a project convention. | Project convention |
 | Keep instructions out of notes | Put required actions in the procedure. Use notes for supporting information. | 5.5 |
 
 Sentence lengths are editorial targets in this guide. They are not automated
 acceptance limits or a claim to implement STE word-count rules. Keep a necessary
 condition or exception when shortening would change the meaning.
+STE rule 6.6 limits paragraph length; this guide does not adopt that limit.
 
 Preserve API names, commands, paths, JSON keys, code, and quoted specification
 text exactly. Apply prose rules to the surrounding explanation. Identify the
@@ -81,27 +83,25 @@ These elements can appear in ordinary prose. A four-field template is not
 required for each paragraph. This structure is a project convention, not an
 ASD-STE100 requirement.
 
-Use an imperative for a required action within its stated scope. Use “prefer”
-for a default that permits a justified alternative. Use “may” for an option.
+Use an imperative or “must” for a required action within its stated scope.
+Use “prefer” or “should” for a default that permits a justified alternative.
+Use “consider” to prompt a decision without requiring a particular outcome.
+Use “may” for an option; “can” describes a capability, and “need not” removes
+an obligation. Use “avoid” only as a preference; use “must not” for a
+prohibition. Do not use an ambiguous modal verb to introduce a requirement.
 Do not strengthen a recommendation into a requirement during an editorial
-rewrite.
+rewrite. A reviewer treats a preference as a finding only when its stated
+alternative is unjustified or violates another requirement.
 
 Replace unclear qualifiers with decision criteria. For example, “run relevant
 tests” should identify the affected behavior and the evidence needed for it.
 Do not prescribe every possible test for every change.
 
-Example instruction:
-
-> When you change HTTP error handling in a public SDK method, preserve the
-> HTTP status in the returned error. Retain its structured cause for explicit
-> inspection. Keep untrusted bodies and callback text out of default diagnostics.
-> Exercise the public method against a local server that returns an error.
-> Assert that the caller can inspect its status without parsing the message.
-> If the server echoes a secret, verify that formatted errors omit it.
-
-This example applies to methods that return HTTP failures as errors. A method
-that deliberately returns raw HTTP responses has a different contract. See
-[actionable failures](engineering_principles.md#preserve-actionable-failures).
+For example, the [HTTP-error rule](engineering_principles.md#preserve-actionable-failures)
+names its scope (public methods that return an HTTP failure as an error),
+action (retain status and cause), and evidence (inspect them through the public
+method). It also names the raw-response exception. Keep those parts when
+shortening the rule.
 
 Keep instructions separate from task authorization. A clearer procedure does
 not expand the requested scope or authorize publication, remote execution, or
@@ -117,6 +117,18 @@ Use numbered steps for ordered actions. Keep commands copyable from the stated
 directory. Explain the expected result after the action. Show representative
 output only when it helps the reader recognize success; identify variable IDs
 and states.
+
+The [API-root revision](usage.md#api-root-base_path) is the user-procedure
+pilot. This shortened example shows a real change made during its review:
+
+> Before: “Omit embedded credentials, query strings, and fragments from the
+> API root.”
+>
+> After: “Do not put credentials, a query string, or a fragment in `base_path`.
+> The SDK rejects them before it sends a request.”
+
+The revision keeps the prohibition and adds the observable failure. The full
+procedure also gives a configuration example and a next step for a 404 response.
 
 Describe failures that change the user's next action. Distinguish local failure
 from uncertain remote outcomes. For example, cancellation of local observation
@@ -178,16 +190,20 @@ does not block unrelated work. Use the reviewer framework to classify findings.
 ## Adoption and automation
 
 For every documentation or instruction update, review the affected paragraph,
-list, or procedure as a coherent unit. Include existing prose needed to understand
-the change. Revise that text where needed using the adapted STE rules in this
-guide. Then check technical meaning, conditions, exceptions, and requirement strength.
+list, or procedure as a coherent unit. Include existing prose needed to
+understand the change. Revise that text where needed using the adapted STE
+rules in this guide. Check technical meaning, conditions, exceptions, and
+requirement strength. This is a manual review of changed prose, not a CI gate.
 An edit does not require rewriting the whole file or unrelated pages.
 
 Existing documentation is not presumed to satisfy this guide. Plan broader
 rewrites as separate work, and check technical behavior as well as wording.
 
-The initial publication applies the guide to selected engineering rules and the
-API-root procedure. This is a pilot, not a completed rewrite of all documentation.
+The initial publication applies the guide to the
+[actionable-failures rule](engineering_principles.md#preserve-actionable-failures),
+the [configuration-precedence rule](engineering_principles.md#give-state-and-policy-a-clear-owner),
+and the API-root procedure. These are the fixed pilot excerpts for #185. This
+is not a completed rewrite of all documentation.
 Evaluate both audiences before adding automated enforcement. Track publication in
 [#178](https://github.com/ga4gh/ga4gh-sdk/issues/178) and the evaluation in
 [#185](https://github.com/ga4gh/ga4gh-sdk/issues/185), under the rollout in

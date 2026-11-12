@@ -5,14 +5,15 @@ SDK. The [engineering principles](engineering_principles.md) define properties
 to preserve in implementation. The [technical writing guide](technical_writing.md)
 covers documentation and instructions. Apply each guide in proportion to the
 change; repository guidance does not certify the existing implementation.
+The [dated assessment](assessments/2026-11-10-engineering.md) retains examples
+behind several rules; linked issues own their current status.
 
 ## How repository agents use this guide
 
 Coding agents (e.g., Claude, Codex) use `AGENTS.md` as the shared entry point.
-It links to the applicable guides; `CLAUDE.md` imports the same root instructions.
-Load this framework for review or PR preparation and the relevant principles for
-the affected contracts. Use `python/AGENTS.md` for binding-specific work. Keep
-shared rules in one place rather than creating per-tool copies.
+It routes them to this framework for review or PR preparation and to the
+relevant engineering principles for affected contracts. `CLAUDE.md` imports
+the same root instructions. Use `python/AGENTS.md` for binding-specific work.
 
 Use the instructions from the working copy being reviewed. A branch only has
 these rules after it includes them. Instructions guide agents that load them;
@@ -182,11 +183,9 @@ resolve them.
   If they remain in the PR, describe and test them explicitly.
 - Check that docs, scripts, generated output, and CI tell the same story.
   Delete stale commands instead of copying them into new guidance.
-- For documentation and instruction changes, apply the
-  [technical writing guide](technical_writing.md#review-and-verification).
-  Preserve conditions, exceptions, and requirement strength. Verify that a
-  procedure identifies its prerequisites and expected result. Treat language
-  preferences according to their impact, rather than as automatic blockers.
+- For documentation and instruction changes, follow the
+  [technical writing review](technical_writing.md#review-and-verification)
+  for the affected prose. Check technical behavior separately.
 - Use `Closes #N` only when merging the PR will fully satisfy that issue.
   Otherwise use `Refs #N`, track the follow-up, and leave incomplete issue
   checklist items unchecked until their outcome lands.
@@ -210,12 +209,11 @@ and avoid overwriting a shared branch. Resolve conflicts using the current
 contracts, then review the combined tree; a clean merge alone is not evidence
 that the integration is correct.
 
-Preserve accurate rationale and issue-specific evidence in the author's PR
-text. Correct stale claims and clearly distinguish historical checks from
-verification of the current implementation. A short scope table can preserve
-continuity after a substantial integration. The title and leading summary must
-still describe the final change. Explain non-obvious decisions in commit bodies
-so the reason remains available when reading history.
+For validation evidence in an updated PR description, follow the
+[pre-PR publication gate](#pre-pr-publication-gate). A short scope table can
+preserve continuity after a substantial integration. The title and leading
+summary must still describe the final change. Explain non-obvious decisions
+in commit bodies so the reason remains available when reading history.
 
 Explain material maintainer fixes in the PR record: the problem, resulting
 behavior, affected commits or areas, and the evidence that checks the result.
@@ -271,9 +269,10 @@ consequence make the finding actionable.
 
 - [ ] The PR base and issue are correct; stacked dependencies and merge order
   are stated.
-- [ ] The PR title names the change and its scope. Prefer `type(scope): summary`
-  for code changes; put issue references and closing keywords in the body.
-  Recheck the title when review changes the scope.
+- [ ] The PR title names the final change and its scope. Commit subjects must
+  follow the Conventional Commits rule in `AGENTS.md`; PR titles are display
+  summaries, so prefer the same `type(scope): summary` form. Put issue closing
+  keywords in the body. Recheck the title when review changes the scope.
 - [ ] The diff has one coherent purpose. I reviewed it myself for accidental
   changes, generated files, credentials, and stale documentation.
 - [ ] The PR describes behavior changes, migration steps, and any unrelated
@@ -284,9 +283,8 @@ consequence make the finding actionable.
   CI covers the affected crates and the locked graph.
 - [ ] Public API changes have a downstream example or test; docs commands match
   actual paths and prerequisites.
-- [ ] Changed documentation and instructions have been reviewed and revised
-  where needed using the [adapted STE guide](technical_writing.md#review-and-verification),
-  with their technical meaning and conditions preserved.
+- [ ] Affected documentation and instructions received the
+  [technical writing review](technical_writing.md#review-and-verification).
 - [ ] Review threads and issue checkboxes reflect delivered work. Closing
   keywords describe what this merge will complete; follow-up links identify
   work that remains.
@@ -307,7 +305,8 @@ is evidence for a human reviewer, not a substitute for approval.
 
 ```text
 Review this PR against its linked issue, actual base branch, AGENTS.md, and
-affected callers. Do not edit files, post comments, approve, or merge.
+affected callers. Apply the relevant sections of docs/engineering_principles.md.
+Do not edit files, post comments, approve, or merge.
 
 First state what you inspected and which checks you actually ran. Trace the
 main success and failure paths, then inspect public API, trust boundaries,
@@ -315,7 +314,8 @@ serialization, tests, CI coverage, and documentation as relevant.
 
 Report only actionable findings, ordered by impact. For each, include a file
 and line, a concrete failing scenario, user or downstream impact, a minimal
-fix or focused question, and a way to verify it. Label blockers, clarifications,
+fix or focused question, and a way to verify it. Connect trigger, violated
+property, enforcement point, and evidence. Label blockers, clarifications,
 follow-ups, and questions separately. Do not turn an unverified possibility
 into a defect. If no findings remain, say so and name any untested areas.
 ```

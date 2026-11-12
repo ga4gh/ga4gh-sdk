@@ -21,18 +21,35 @@ different directory is shown.
   wrapper must not change `lib/src/clients`.
 - When changing a public Rust, CLI, or Python API, consider the downstream
   extension use cases in [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78).
+  The example crate in `examples/downstream-sdk/` uses these APIs and has
+  its own workspace, so `make check` doesn't build it: run `make downstream`,
+  and update the example and [its guide](docs/downstream.md) with the API.
 - For implementation work, use the routing table in the
-  [engineering principles](docs/engineering_principles.md). Apply the sections
-  relevant to the affected contract; they do not require unrelated refactoring.
+  [engineering principles](docs/engineering_principles.md). Read only the
+  sections that apply to the affected contract. Keep unrelated refactoring
+  outside the task.
 - Before reviewing or updating an existing PR, read the
   [reviewer framework](docs/reviewer_framework.md). For updates, follow its
   procedure for maintaining an existing PR.
-- When adding or updating documentation or repository instructions, read the
-  [technical writing guide](docs/technical_writing.md). Before finishing, review
-  the affected English prose against this project's adaptation of ASD-STE100
-  (STE) and revise it where needed. Preserve technical meaning, conditions,
-  exceptions, and API identifiers.
-  Keep unrelated documentation rewrites outside the task.
+- For documentation or instruction changes, review the affected prose using
+  the [technical writing guide](docs/technical_writing.md#review-and-verification).
+  Preserve technical meaning, conditions, exceptions, and API identifiers.
+  This is a scoped editorial review, not a new CI gate. Leave unrelated prose
+  alone; [#185](https://github.com/ga4gh/ga4gh-sdk/issues/185) evaluates the pilot.
+
+## Core engineering checks
+
+For a code change, use these reminders and read the applicable sections of the
+[engineering principles](docs/engineering_principles.md) for the full rules:
+
+- Identify the affected contract; trace a normal path and a failure path.
+- Keep credentials and authenticated requests within the intended service boundary.
+- Preserve HTTP status and cause for callers; keep secrets out of default diagnostics.
+- Preserve data across parsing, models, and language conversions.
+- Reject invalid configuration instead of silently choosing another value.
+- Do not replay a non-idempotent request without proof that replay is safe.
+- Test at the observable boundary, including downstream and Python paths when affected.
+- Update affected documentation and examples with the behavior change.
 
 ## Before opening a pull request
 

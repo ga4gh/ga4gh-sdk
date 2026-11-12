@@ -1,7 +1,7 @@
 # SDK engineering assessment — 2026-11-10
 
-This is a read-only assessment used to refine the
-[engineering principles](engineering_principles.md).
+This is a frozen, read-only assessment used to refine the
+[engineering principles](../engineering_principles.md).
 It records concrete follow-up candidates separately from the general guidance.
 [Tracking issue #176](https://github.com/ga4gh/ga4gh-sdk/issues/176) owns remediation status; this document preserves the
 assessment evidence rather than duplicating a live task list.
@@ -9,7 +9,8 @@ It is not a claim that the repository has passed an exhaustive audit, or a list
 of prerequisites for an unrelated PR. No source fixes were made in the original
 assessment pass. Findings 1–9 below describe that snapshot, not current defects.
 The [publication reconciliation](#publication-reconciliation--2026-11-12)
-records later outcomes separately.
+records outcomes at its pinned base. Later issue status belongs to the linked
+issues, including after this documentation branch merges a newer `main`.
 
 ## Scope and evidence
 
@@ -20,12 +21,6 @@ records later outcomes separately.
   [`103d773`](https://github.com/ga4gh/ga4gh-sdk/commit/103d7737f9ac665bf76b3b73c4f43150f306e376),
   for TRS/WES bundle preparation and submission. Findings below refer to the
   main snapshot unless explicitly marked otherwise.
-- After [#142](https://github.com/ga4gh/ga4gh-sdk/pull/142) merged, the documentation
-  branch was based on main commit
-  [`4115af9`](https://github.com/ga4gh/ga4gh-sdk/commit/4115af9bb785b7f8441e058d65101dcc106835d0).
-  The diff from the assessment snapshot leaves the source locations for findings
-  1–9 unchanged. The probes were not rerun after that merge; reproduce the relevant
-  case on the implementation branch before fixing it.
 - Structural survey: all service-client families, shared transport and operation
   utilities, configuration, CLI commands, Python wrappers and runtime, model
   generation, manifests, CI, and integration runners. Generated models and test
@@ -273,7 +268,7 @@ their issue owners; it does not duplicate completion status.
 | 6 | [#182](https://github.com/ga4gh/ga4gh-sdk/issues/182) | Resolve query-policy differences and consolidate the shared semantics. |
 | 7 | [#183](https://github.com/ga4gh/ga4gh-sdk/issues/183) | Decide state ownership and compatibility, then track accepted implementation changes separately; reuse #100 and #173 for their existing scope. |
 | 8 | [#184](https://github.com/ga4gh/ga4gh-sdk/issues/184) | Replace tests that mock the tested method, or remove them where real coverage already exists. |
-| 9 | [#94](https://github.com/ga4gh/ga4gh-sdk/issues/94), [#116](https://github.com/ga4gh/ga4gh-sdk/issues/116) | Downstream CI and lint enforcement; triage any remaining gaps in #178. Neither alone proves generated semantics or binding parity. |
+| 9 | [#94](https://github.com/ga4gh/ga4gh-sdk/issues/94), [#116](https://github.com/ga4gh/ga4gh-sdk/issues/116) | Downstream CI and lint enforcement; triage any remaining gaps under #176 or #32. Neither alone proves generated semantics or binding parity. |
 
 These findings are assessment evidence, not a claim that all of them are newly
 discovered. Reuse the existing issues when their acceptance criteria fit, and
@@ -295,7 +290,7 @@ subsequent status.
 | 2. WES error propagation | Status, cancellation, and listing retain `HttpError`. The wider #100 remains open. | `test_run_and_list_errors_keep_the_http_error` in `lib/src/clients/wes/mod.rs` checks classification and raw body access. `WES::with_transport` still converts discovery errors through `access_error`; this is not a completed SDK-wide error migration. |
 | 3. CLI task JSON | [#204](https://github.com/ga4gh/ga4gh-sdk/pull/204) closed #179 after model extension support landed. | `cli/tests/output.rs` checks actual file/inline/stdin request JSON, including extensions, nulls, and numeric representation. |
 | 4. Terminal output | [#195](https://github.com/ga4gh/ga4gh-sdk/pull/195) closed #180. | `cli/tests/output.rs` checks safe rendering and opaque-ID handling. |
-| 5. Pre-send cancellation | [#186](https://github.com/ga4gh/ga4gh-sdk/pull/186) closed #181. | `lib/tests/operation_policy.rs` distinguishes pre-attempt failure from an uncertain submission. |
+| 5. Pre-send cancellation | [#186](https://github.com/ga4gh/ga4gh-sdk/pull/186) closed #181. | `lib/tests/pre_send_submission.rs` checks `interruption_before_submission_is_inspectable_and_sends_no_request` and `cancellation_after_submission_starts_is_ambiguous_without_replay`. |
 | 6. Query policy | [#199](https://github.com/ga4gh/ga4gh-sdk/pull/199) closed #182. | `lib/tests/query_encoding.rs` and `python/tests/test_query_encoding.py` cover shared semantics. |
 | 7. State ownership | Partially addressed; #183 remains open. | [#213](https://github.com/ga4gh/ga4gh-sdk/pull/213) controls TRS connection state; [#202](https://github.com/ga4gh/ga4gh-sdk/pull/202) and [#220](https://github.com/ga4gh/ga4gh-sdk/pull/220) carry injected transport policy. TES/WES/DRS public state and Python typed/raw mutation still need the scoped decisions in #183. |
 | 8. Self-mocked Python tests | [#193](https://github.com/ga4gh/ga4gh-sdk/pull/193) closed #184. | `python/tests/test_all.py` exercises the real wrappers against the local fixture. |

@@ -3,7 +3,8 @@
 This guide covers the configuration file, the `ga4gh-cli` command-line tool
 and the Rust library (`ga4gh-lib`, imported as `ga4gh_sdk`). For the Python
 bindings, see the [Python README](../python/README.md). For installation, see
-the [README](../README.md#installation).
+the [README](../README.md#installation). To build your own SDK or CLI on top
+of this one, see [Build on this SDK](downstream.md).
 
 ## Available interfaces
 
@@ -29,13 +30,15 @@ Before configuring the client, obtain the API root from the service operator
 or the deployment documentation. The example URLs below illustrate the path
 structure. They are not live services.
 
-1. Set `base_path` to the service's full API root.
-2. If the service is behind a gateway or reverse proxy, retain the full path
-   prefix. For example, use `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
-3. Omit embedded credentials, query strings, and fragments from the API root.
+1. Set `base_path` to the service's full API root. If the service is behind a
+   gateway or reverse proxy, keep its full path prefix. For example, use
+   `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+2. Do not put credentials, a query string, or a fragment in `base_path`. The
+   SDK rejects them before it sends a request. Configure credentials as
+   described in [Configured authentication](authentication.md).
 
 A trailing slash is optional. The SDK resolves endpoint paths below the
-configured root. The following table shows the resulting request paths:
+configured root. The following table shows the expected request paths:
 
 | Service | Example `base_path`                  | Requests go to                        |
 | ------- | ------------------------------------ | ------------------------------------- |
@@ -44,6 +47,10 @@ configured root. The following table shows the resulting request paths:
 | DRS     | `https://example.org/ga4gh/drs/v1`   | `…/ga4gh/drs/v1/service-info`, `…/objects` |
 | TRS     | `https://example.org/ga4gh/trs/v2`   | `…/ga4gh/trs/v2/service-info`, `…/tools` |
 | Registry | `https://example.org/ga4gh/registry/v1` | `…/ga4gh/registry/v1/service-info`, `…/services` |
+
+When a client successfully retrieves `service-info`, it has reached that
+endpoint under the configured root. If the response includes service identity
+fields, check that they identify the intended deployment.
 
 A host-only root such as `https://example.org` resolves `service-info` to
 `https://example.org/service-info`. If the service uses a path prefix, that
@@ -108,6 +115,56 @@ configuration file and CLI cannot set one.
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
+
+### Profiles
+
+To switch between sets of services, such as local and remote deployments,
+put the sections into named profiles under a top-level `profiles` object.
+Each profile holds sections with the keys described above, and
+`default_profile` names the profile to use when none is selected:
+
+```json
+{
+  "default_profile": "local",
+  "profiles": {
+    "local": {
+      "TES": {"base_path": "http://localhost:8000/ga4gh/tes/v1"}
+    },
+    "remote": {
+      "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oauth_access_token_env": "REMOTE_TES_TOKEN"
+      },
+      "WES": {"base_path": "https://wes.example.org/ga4gh/wes/v1"}
+    }
+  }
+}
+```
+
+- The CLI uses the profile given with `--profile NAME`, else the one in the
+  environment variable `GA4GH_CLI_PROFILE`, else `default_profile`, else the
+  profile `default`. An empty variable or `--profile ""` is an error, so a
+  mistyped selection cannot silently use another service.
+  `--profile` and the variable apply to the CLI and `ga4gh_cli::CliContext`
+  only, not to the Rust and Python library functions below.
+- Rust `Configuration::from_path_with_profile(path, Some("remote"), "TES")`
+  reads a section of a given profile; with `None`, and in
+  `Configuration::from_path` and `from_file`, it reads the default profile
+  (`default_profile`, else `default`). Python `Configuration.from_file()`
+  reads the default profile as well.
+- A file without `profiles`, with its sections at the top level as in
+  [Configuration file](#configuration-file), counts as one profile named
+  `default`, so existing files keep working. Existing custom service sections
+  named `profiles` or `default_profile` remain valid when they have a
+  `base_path`. A `default_profile` setting without a profile map is an error.
+  A file with a profile map can't also have top-level
+  sections (keys starting with `$`, such as `$schema`, are allowed), and
+  naming a profile the file doesn't have is an error that lists the
+  profiles it has.
+- Profiles change only which sections are read. To keep a profile's tokens
+  out of the file, name an environment variable per section with
+  `oauth_access_token_env`, as `remote` does above; credentials are sent only
+  where described in the previous section.
 
 ## Command-line tool
 

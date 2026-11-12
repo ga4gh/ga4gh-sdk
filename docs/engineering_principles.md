@@ -14,10 +14,12 @@ every architectural improvement a prerequisite for an unrelated change.
 
 When you edit these principles, follow the
 [technical writing guide](technical_writing.md#instructions-for-agents-and-contributors).
-State each rule's scope, required action, and completion evidence. Preserve its
-conditions and exceptions.
+For each requirement, state its scope, action, and completion evidence. Mark
+decision prompts as guidance rather than implying they are required checks.
+Preserve conditions and exceptions.
 
-Use the relevant sections for the change at hand:
+Use only the relevant sections for the change at hand; the links below point
+to starting points, not a requirement to read this whole file:
 
 | Change touches | Start with |
 | --- | --- |
@@ -82,15 +84,14 @@ Before choosing types or modules, state what must remain true across the whole
 operation. Identify the inputs, the effects, the last point where failure is
 safe, and evidence that could disprove the claim. For example, if an operation
 checks content before sending it, the sent bytes must be the checked bytes; if
-preparation fails, no remote execution should start.
+preparation fails, remote execution must not start.
 
 For a consequential design choice, use a measurable quality scenario: name the
 trigger and operating conditions, expected response, and a measure or test.
-This adapts the [SEI quality attribute scenario method, Appendix A](https://www.sei.cmu.edu/documents/704/2003_005_001_14213.pdf#page=55).
-Use the [ISO/IEC 25010 product quality model](https://www.iso.org/standard/78176.html)
-as a prompt to consider relevant properties such as reliability, security,
-interoperability, performance, usability, and maintainability. Record a
-tradeoff when improving one property materially weakens another.
+Record the scenario and its test or measure in the deciding issue or PR.
+Consider reliability, security, interoperability, performance, usability, and
+maintainability when they bear on the decision. Record a tradeoff when
+improving one property materially weakens another.
 
 For a complex change, a short design record can make the contract reviewable:
 
@@ -105,14 +106,13 @@ Affected callers and compatibility: ...
 Unsupported cases: ...
 ```
 
-For decisions that will constrain later changes, retain a short
-[architecture decision record, following Nygard's approach](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions).
-Record context, alternatives considered, the decision, status, and consequences,
-including compatibility costs. Keep it discoverable from the affected guidance.
-When replacing a decision, link its successor and mark the old decision as
-superseded. Routine implementation choices need no separate record. Avoid claims
-such as “fully validated” unless every supported path enforces the stated
-invariant.
+For decisions that will constrain later changes, retain a short architecture
+decision record in the deciding issue or PR. Record the context, alternatives,
+decision, status, and consequences, including compatibility costs. Link the
+record from the affected guidance so later changes can find it. When replacing
+a decision, link its successor and mark the old decision as superseded. Routine
+implementation choices need no separate record. Do not claim “fully validated”
+unless every supported path enforces the stated invariant.
 
 ## Preserve protocol and downstream contracts
 
@@ -132,7 +132,9 @@ the exception and normal protocol behavior. Identify when to reconsider the
 exception, such as a provider correction or specification update. This adapts
 [RFC 9413's active protocol maintenance guidance](https://www.rfc-editor.org/rfc/rfc9413.html):
 resolve disagreements explicitly instead of allowing silent repairs to become
-an undocumented protocol.
+an undocumented protocol. Record TRS provider deviations and unverified
+interpretations under [Selection and capabilities](api_compatibility.md#selection-and-capabilities);
+use the corresponding compatibility guide for another service.
 
 For a public interface change, examine callers in all affected surfaces:
 
@@ -197,7 +199,7 @@ an interoperability decision, not a claim of schema conformance.
 
 Keep protocol behavior in service clients and shared transport facilities;
 keep argument parsing, process I/O, and language-specific conversion at their
-adapters. A lower-level operation should not require CLI initialization or
+adapters. A lower-level operation must not require CLI initialization or
 decide when a host application exits. Share wire rules such as path construction,
 query encoding, and semantic validation when they implement the same contract.
 Keep genuine presentation differences in the adapters.
@@ -228,7 +230,7 @@ Avoid silently constructing a default client halfway through the operation.
 If supplied and SDK-owned policies can conflict, make the resolution explicit.
 Reject an unsupported combination before its effect rather than falling back to
 an anonymous request or replacing a caller's transport policy. Offline preparation
-should not require credentials or discovery unless its documented contract does.
+must not require credentials or discovery unless its documented contract does.
 
 When configuration has multiple sources, define their precedence or mutual
 exclusion at one resolution boundary. State what absent, null, and empty values
@@ -236,15 +238,14 @@ mean. Reject invalid selected values instead of silently replacing them with
 defaults. Test both a supported override and a prohibited conflict where those
 cases exist. Resolving configuration does not authorize logging its values.
 
-Use [Parnas's information-hiding criterion](https://doi.org/10.1145/361598.361623)
-to choose module boundaries: contain decisions likely to change behind stable
-interfaces. For a proposed split, name a likely change and which callers would
-need edits. For example, a shared query policy should be changeable without
-reimplementing it in each language adapter. Splitting a file into steps of the
-same operation does not necessarily reduce coupling. Prefer composition and
-narrow helpers; introduce traits, builders, or layers when they protect a real
-invariant or enable an actual caller. [Google's review guidance](https://google.github.io/eng-practices/review/reviewer/looking-for.html)
-provides a useful check against unnecessary generality and complexity.
+Contain decisions likely to change behind stable interfaces. For a proposed
+module split, name a likely change and the callers that would need edits.
+For example, a shared query policy should be changeable without reimplementing
+it in each language adapter. Review the affected caller paths to check that
+claim. Splitting a file into steps of the same operation does not necessarily
+reduce coupling. Prefer composition and narrow helpers; introduce traits,
+builders, or layers when they protect a real invariant or enable an actual
+caller.
 
 Before publishing a shared abstraction, identify its present consumers and the
 common invariant it owns. With one consumer, prefer a local interface or document
@@ -325,7 +326,7 @@ are relevant here.
 Malformed external input and ordinary I/O failures belong in the error contract.
 Reserve panics for violated internal assumptions that callers cannot normally
 trigger. Do not turn failure into an empty success, fabricated default, or a
-secondary parsing error that hides the original cause. Tests should assert the
+secondary parsing error that hides the original cause. Assert the
 classification and recovery information, not only a fragment of the message.
 
 When an operation promises a usable task or run handle, validate the required
@@ -381,8 +382,8 @@ safe.
 ## Keep diagnostics safe and under caller control
 
 When adding or changing logs, traces, or metrics, let the host application choose
-initialization, exporters, formatting, and filtering. The library should emit
-through an instrumentation interface without installing process-wide handlers.
+initialization, exporters, formatting, and filtering. Emit through an
+instrumentation interface without installing process-wide handlers.
 This applies [OpenTelemetry's library instrumentation guidance](https://opentelemetry.io/docs/concepts/instrumentation/libraries/)
 as a design rule; it does not require adding OpenTelemetry to this repository.
 Keep ordinary SDK behavior usable when diagnostics are disabled. Instrumentation
@@ -443,18 +444,18 @@ that must fail.
   acknowledgement does not prove that the server did nothing. Treat HTTP
   responses according to the service contract; an error status alone need not
   prove absence of side effects.
-- State resource limits precisely. A bound on staged bytes does not also bound
-  response bodies, parsing work, or total transfer; bounded concurrency does
+- State resource limits precisely. A bound on staged bytes does not bound
+  response bodies, parsing work, or total transfer. Bounded concurrency does
   not bound queued inputs or accumulated results. Enforce limits while reading
   or producing data, rather than trusting remote length metadata.
 
 Classify each remote operation by its effect and retry semantics. Follow
 [RFC 9110's guidance on idempotency](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2):
-do not automatically repeat a non-idempotent request unless the service
-provides an idempotency mechanism or the client can establish that the first
-attempt had no effect. Test the case where the server receives the request but
-the response is lost. If the outcome cannot be resolved, expose that
-uncertainty to the caller.
+do not automatically repeat a non-idempotent request. Repeat it only if the
+service provides an idempotency mechanism or the client establishes that the
+first attempt had no effect. Test when the server receives the request but the
+response is lost. If the outcome cannot be resolved, expose that uncertainty
+to the caller.
 
 When retries are enabled, choose the layer that owns the attempt policy and
 account for retries in lower-level clients. Independent retry loops can multiply
@@ -476,10 +477,10 @@ task has already stopped.
 The [Tokio cancellation-safety documentation](https://docs.rs/tokio/latest/tokio/macro.select.html#cancellation-safety)
 explains why dropping a future must be considered at each awaited boundary.
 
-Test the relevant transitions: cancellation before the first request, during
-I/O, and after remote acceptance; deadline exhaustion during a body read or
-retry delay; cleanup after partial preparation. These cases need different
-outcomes, even if each begins with a timeout or cancellation signal.
+Test cancellation before the first request, during I/O, and after remote
+acceptance. Test deadline exhaustion during a body read or retry delay, and
+cleanup after partial preparation. These cases need different outcomes, even
+if each begins with a timeout or cancellation signal.
 
 ## Design public APIs for downstream use
 
@@ -491,9 +492,9 @@ policies discoverable rather than requiring downstream code to duplicate the
 implementation to change them.
 
 When an extension or implementation claims to substitute for an existing API,
-apply [Liskov and Wing's behavioral subtyping principle](https://www.cs.cmu.edu/~wing/publications/LiskovWing94.pdf).
-It must accept inputs admitted by the shared contract and preserve promised
-results, invariants, failure semantics, and state transitions. Matching Rust
+check behavioral substitutability. It must accept inputs admitted by the
+shared contract and preserve promised results, invariants, failure semantics,
+and state transitions. Matching Rust
 trait signatures or Python method names is insufficient. Exercise the same
 contract cases through the original and replacement implementations. A language
 adapter may intentionally expose a different contract; document that adaptation
@@ -554,11 +555,9 @@ affected by the change. Do not infer platform support from a single operating
 system, or declare an untested platform broken without evidence.
 
 For a release artifact or build-pipeline change, identify the source revision,
-build inputs, toolchain, and actual provenance produced. Use the
-[NIST Secure Software Development Framework](https://csrc.nist.gov/pubs/sp/800/218/final)
-to identify relevant development controls and the [SLSA build track](https://slsa.dev/spec/v1.2/build-track-basics)
-to reason about artifact provenance. Record only guarantees the pipeline
-provides. Keep executable release procedures in the CI or release guidance.
+build inputs, toolchain, and actual provenance produced. Record only guarantees
+the pipeline provides, with links to the workflow or artifact that proves each
+claim. Keep executable release procedures in the CI or release guidance.
 
 Test the artifact through the supported installation path, outside the source
 checkout. Inspect its metadata, licenses, included files, and usable imports or
@@ -642,3 +641,19 @@ result. Identify external sources and pin revisions or digests where reproducibl
 behavior depends on them. Check links and files in the distributed package as
 well as the repository when both are supported. Keep historical logs tied to
 their source revision; they do not validate later code.
+
+## Further reading
+
+The rules above adapt selected methods. These sources can help with a design
+decision; reading every source is not a required step for each change.
+
+- Quality scenarios: [SEI method](https://www.sei.cmu.edu/documents/704/2003_005_001_14213.pdf#page=55)
+  and [ISO/IEC 25010](https://www.iso.org/standard/78176.html).
+- Decision records and module boundaries:
+  [Nygard](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions),
+  [Parnas](https://doi.org/10.1145/361598.361623), and
+  [Google's review guidance](https://google.github.io/eng-practices/review/reviewer/looking-for.html).
+- Substitutability: [Liskov and Wing](https://www.cs.cmu.edu/~wing/publications/LiskovWing94.pdf).
+- Development controls and artifact provenance:
+  [NIST SSDF](https://csrc.nist.gov/pubs/sp/800/218/final) and
+  [SLSA build track](https://slsa.dev/spec/v1.2/build-track-basics).
