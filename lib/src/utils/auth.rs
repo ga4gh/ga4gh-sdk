@@ -81,7 +81,8 @@
 //! are rejected before anything is sent, and `reqwest` drops the
 //! `Authorization` header when a redirect leads to another host or port.
 //! Redirects to the same host and port keep it, also to paths outside the API
-//! root; the redirect contract is tracked in
+//! root and from `https` to `http` on the same explicit port; the redirect
+//! contract is tracked in
 //! [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
 //! Over plain `http` to a host other than `localhost` or a loopback address,
 //! the transport logs a warning once per process, as the credential then
@@ -409,6 +410,8 @@ pub enum CredentialErrorReason {
     Unsupported,
     /// The token is empty or has characters that an HTTP header can't hold.
     InvalidToken,
+    /// The Basic credentials have an empty username.
+    EmptyUsername,
 }
 
 impl fmt::Display for CredentialError {
@@ -424,6 +427,9 @@ impl fmt::Display for CredentialError {
                 "{} is empty or isn't a valid HTTP header value",
                 self.source
             ),
+            CredentialErrorReason::EmptyUsername => {
+                write!(f, "{} has an empty username", self.source)
+            }
         }
     }
 }

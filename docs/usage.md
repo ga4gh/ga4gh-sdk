@@ -111,7 +111,7 @@ discovery and submissions. A configuration holds at most one credential:
   supported, as it doesn't say which header the key belongs in; the file and
   Python can't set it. A set `api_key` fails every request (Rust:
   `CredentialError`), as does an empty token or one that an HTTP header can't
-  hold.
+  hold, or a `basic_auth` with an empty username.
 - **Upgrading:** earlier versions read `basic_auth` and `oauth_access_token`
   but didn't send them (only `workflow submit` sent the bearer token). Now they
   are sent, so remove credentials that a service doesn't need, and keep one per
@@ -121,7 +121,9 @@ discovery and submissions. A configuration holds at most one credential:
   status. With a static credential, the SDK doesn't send the request again.
 - **Destinations:** the credential goes only to the API root, as endpoints
   outside it are rejected. On a redirect to another host or port, the
-  `Authorization` header is dropped. Over plain `http` to a host other than
+  `Authorization` header is dropped; a redirect to the same host and port
+  keeps it, also from `https` to `http` on the same explicit port (see
+  #203). Over plain `http` to a host other than
   `localhost` or a loopback address, the SDK logs a warning once per process,
   as the credential travels unencrypted then; use `https`.
 - **Caller-owned clients:** a Rust client given to `Transport::with_client()` or

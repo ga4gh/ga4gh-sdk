@@ -343,10 +343,11 @@ impl Transport {
     /// `config.timeouts.connect` and `request` are not used; the `discovery` and
     /// `submission` limits still come from `config.timeouts`.
     ///
-    /// The client's own headers and redirect policy apply. A token provider in
-    /// `config` (see [`crate::utils::auth`]) applies as well; its
-    /// `Authorization` header takes the place of one among the client's default
-    /// headers.
+    /// The client's own headers and redirect policy apply. The credential of
+    /// `config`, a token provider or a static credential (see
+    /// [`crate::utils::auth`]), applies as well; its `Authorization` header
+    /// takes the place of one among the client's default headers. Without a
+    /// credential in `config`, the client's own `Authorization` header stays.
     pub fn with_client(config: &Configuration, client: Client) -> Self {
         Self {
             config: config.clone(),
@@ -639,6 +640,12 @@ impl Transport {
             warn_plain_http_once();
         }
         if let Some(basic) = &config.basic_auth {
+            if basic.username.is_empty() {
+                return Err(Box::new(CredentialError {
+                    source: "basic_auth",
+                    reason: CredentialErrorReason::EmptyUsername,
+                }));
+            }
             return Ok(request.basic_auth(&basic.username, basic.password.as_ref()));
         }
         let Some((field, token)) = bearer else {
@@ -1664,6 +1671,14 @@ mod tests {
                     "bearer_access_token",
                     CredentialErrorReason::InvalidToken,
                 ),
+                (
+                    Configuration::new(base("static-invalid")).with_basic_auth(BasicAuth {
+                        username: String::new(),
+                        password: Some("SENTINEL_PASSWORD".to_owned()),
+                    }),
+                    "basic_auth",
+                    CredentialErrorReason::EmptyUsername,
+                ),
             ];
             for (config, source, reason) in cases {
                 let error = Transport::new(&config).get("a", None).await.unwrap_err();
@@ -1793,6 +1808,24 @@ mod tests {
                 .await
                 .unwrap();
             discovery.assert();
+        }
+
+        #[tokio::test]
+        async fn test_request_builder_adds_no_static_credential() {
+            let request = mock("GET", "/static-plain-builder/a")
+                .match_header("authorization", Matcher::Missing)
+                .with_status(204)
+                .expect(1)
+                .create();
+            let config = Configuration::new(base("static-plain-builder"))
+                .with_oauth_access_token("my-token".to_owned());
+            Transport::new(&config)
+                .request_builder(reqwest::Method::GET, "a")
+                .unwrap()
+                .send()
+                .await
+                .unwrap();
+            request.assert();
         }
 
         #[test]
