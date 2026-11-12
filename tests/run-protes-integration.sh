@@ -96,7 +96,7 @@ PROTES_ACCESS_TOKEN=$(docker compose exec -T fake-tes python -c \
   'http://localhost:8080/oidc/token?sub=alice'))['access_token'])")
 export PROTES_ACCESS_TOKEN
 export PROTES_TES_URL="http://127.0.0.1:$port/ga4gh/tes/v1"
-# The URL of the backend in tests/protes/config.yaml
+# Must equal the backend URL in tests/protes/config.yaml (custom.tes.backends)
 export PROTES_BACKEND_URL=http://funnel:8000
 echo "proTES ready at $PROTES_TES_URL"
 

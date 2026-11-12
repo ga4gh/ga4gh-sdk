@@ -6,7 +6,8 @@
 # the Docker socket and the image of the Docker CLI. Not for deployments:
 # only proTES is published, on the host's loopback interface. All images
 # are pinned by digest; bump the one of proTES together with
-# `protes_commit` of the script, and the Docker CLI in the script.
+# `protes_commit` of the script, and the Docker CLI (`DOCKER_CLI_IMAGE`)
+# in the script, which sets it: run this file through the script.
 
 x-protes-image: &protes-image docker.io/elixircloud/protes:0.6.0@sha256:f9a6c5bb077f1744d0e3e4d4dcfc085d0703223761295d1b28f67833db01322a
 
