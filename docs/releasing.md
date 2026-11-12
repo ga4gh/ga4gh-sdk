@@ -1,8 +1,9 @@
 # Releasing
 
 A version tag `v<version>` on `main` starts the [Release workflow](../.github/workflows/release.yml).
-For now, it publishes the Python bindings to PyPI. It doesn't create a GitHub
-release; that comes with the CLI binaries
+For now, it publishes the Python bindings to PyPI and the
+[CLI image](container-image.md) to the GitHub Container Registry. It doesn't
+create a GitHub release; that comes with the CLI binaries
 ([#91](https://github.com/ga4gh/ga4gh-sdk/issues/91)).
 
 ## What the workflow does
@@ -29,12 +30,23 @@ release; that comes with the CLI binaries
    or glibc older than 2.28), pip builds from the sdist, which needs the Rust
    toolchain (see the [Python guide](../python/README.md#prerequisites)).
    CI runs the same build on every pull request, without publishing.
-3. **Publish package** uploads all files with
+3. **Release image** ([`image.yml`](../.github/workflows/image.yml)) builds
+   the [CLI image](container-image.md) natively for `linux/amd64` and
+   `linux/arm64`, checks each with `tests/run-image-tests.sh` (on
+   `linux/amd64` also against Funnel) and pushes each platform image by
+   digest, without a tag. CI runs the same build and checks on every pull
+   request, without pushing.
+4. **Publish package** waits for the wheels and the image, so that nothing
+   reaches PyPI unless every artefact is built. It uploads all files with
    [trusted publishing](https://docs.pypi.org/trusted-publishers/): there is no
    API token, PyPI accepts the upload because it comes from this workflow and
    environment. The upload also carries
    [attestations](https://docs.pypi.org/attestations/) of where each file was
    built.
+5. **Publish image** runs after the package is on the index. It combines the
+   two platform images into one multi-platform image, tags it with the
+   version and records a build provenance attestation for it (see
+   [CLI image](#cli-image)).
 
 The Python version comes from the workspace version; maturin converts it to
 PEP 440, so `0.2.0-rc.1` becomes `0.2.0rc1` on PyPI. Files on PyPI can't be
@@ -57,6 +69,26 @@ version and tag, such as `0.1.0-dev.1` and `v0.1.0-dev.1`. The workflow rejects
 an upstream TestPyPI upload of a stable version. An immutable tag cannot later
 be reused to publish the same version to PyPI. The run shows a warning; delete
 the variable afterwards, or the next tag goes to TestPyPI, too.
+
+## CLI image
+
+| Repository | Image |
+| --- | --- |
+| `ga4gh/ga4gh-sdk` | `ghcr.io/ga4gh/ga4gh-cli` |
+| A fork | `ghcr.io/<fork owner>/ga4gh-cli` |
+
+The workflow pushes with the job's `GITHUB_TOKEN`; it needs no secret and no
+environment. The tag is the workspace version, such as `0.2.0` or
+`0.2.0-rc.1` (a `+` of build metadata becomes `_`, which OCI tags allow).
+There is no `latest` tag. Unlike files on PyPI, a tag can be moved: a re-run
+of **Publish image** points the version tag at the images of that run, and
+earlier digests stay available.
+
+On the first push, GitHub creates the `ga4gh-cli` package, connected to this
+repository. Check after the first release that the package is public (the
+package's settings on GitHub, **Change visibility**) and that it inherits
+access from the repository; organization settings can restrict who creates
+public packages.
 
 ## One-time setup
 
@@ -105,8 +137,14 @@ confirmed.
    git push origin v0.2.0
    ```
 
-3. Approve the deployment to `pypi` in the workflow run once the wheels are
-   built.
+3. Approve the deployment to `pypi` in the workflow run once the wheels and
+   the image are built.
+4. Check the image tag and its attestation:
+
+   ```sh
+   docker buildx imagetools inspect ghcr.io/ga4gh/ga4gh-cli:0.2.0
+   gh attestation verify oci://ghcr.io/ga4gh/ga4gh-cli:0.2.0 --repo ga4gh/ga4gh-sdk
+   ```
 
 ## Dry run in a fork
 
@@ -140,5 +178,10 @@ such as `ga4gh-sdk-release-rehearsal`. The TestPyPI publisher and the name in
 
    Substitute your chosen test name in the install command if it differs from
    this example.
-6. Keep the test tag until the run and package can be reviewed; delete it from
-   the fork later if it is no longer needed.
+6. Check that the image is at `ghcr.io/<fork owner>/ga4gh-cli:0.1.0-dev.1`
+   and runs: `docker run --rm ghcr.io/<fork owner>/ga4gh-cli:0.1.0-dev.1 --version`.
+   The package is private in a fork unless you make it public; log in with
+   `gh auth token | docker login ghcr.io -u <user> --password-stdin` first.
+7. Keep the test tag until the run and package can be reviewed; delete it from
+   the fork later if it is no longer needed, together with the fork's
+   `ga4gh-cli` package.
