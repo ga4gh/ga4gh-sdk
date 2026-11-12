@@ -3,7 +3,8 @@
 //!
 //! The CLI takes the access token from its configuration file. Run through
 //! `tests/run-protes-integration.sh`, which starts the services and sets
-//! `PROTES_TES_URL` and `PROTES_ACCESS_TOKEN`.
+//! `PROTES_TES_URL` and `PROTES_ACCESS_TOKEN`. The task helpers follow
+//! `funnel_cli.rs`; keep both suites in sync.
 #![cfg(all(unix, feature = "protes_integration_tests"))]
 
 use serde_json::{json, Value};
@@ -54,8 +55,14 @@ fn cli(home: &TempDir, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"))
         .args(args)
         .env("HOME", home.path())
-        // The token must come from the config file only
+        // The token must come from the config file only, without a profile,
+        // and go to proTES rather than a proxy (as in registry.rs)
         .env_remove("PROTES_ACCESS_TOKEN")
+        .env_remove("GA4GH_CLI_PROFILE")
+        .env_remove("HTTP_PROXY")
+        .env_remove("http_proxy")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
         .current_dir(home.path())
         .output()
         .unwrap()
@@ -118,7 +125,9 @@ fn assert_unauthorized(home: &TempDir, args: &[&str]) {
     assert!(!output.status.success(), "{args:?} succeeded: {output:?}");
     assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("401"), "{args:?}: {stderr}");
+    // As `HttpError` prints the status, so that a 401 elsewhere in the
+    // message (e.g. in a task ID) doesn't count
+    assert!(stderr.contains("status: 401"), "{args:?}: {stderr}");
 }
 
 #[test]
@@ -157,12 +166,33 @@ fn task_runs_to_completion_with_the_configured_token() {
             .any(|line| line.starts_with(&id) && line.contains("Complete")),
         "task {id} not listed as complete: {table}"
     );
+
+    // A positive match alone would also pass if the filter were dropped
+    let no_match = format!("no-match-{id}");
+    let empty = stdout(
+        &home,
+        &[
+            "tes",
+            "list",
+            "--tag_key",
+            "sdk.suite",
+            "--tag_value",
+            &no_match,
+            "--view",
+            "MINIMAL",
+        ],
+    );
+    assert!(empty.starts_with("TASK ID"), "{empty}");
+    assert!(
+        empty.lines().skip(1).all(|line| line.trim().is_empty()),
+        "nonmatching tag filter returned tasks: {empty}"
+    );
 }
 
 #[test]
 fn canceled_task_ends_canceled_with_the_configured_token() {
     let home = authorized_home();
-    let id = create(&home, "cli-protes-cancel", &["sleep", "600"]);
+    let id = create(&home, "cli-protes-cancel", &["sleep", "120"]);
     // Cancel a task whose executor runs, not one that is still queued
     await_state(&home, &id, &["RUNNING"]);
 
@@ -174,7 +204,8 @@ fn canceled_task_ends_canceled_with_the_configured_token() {
 #[test]
 fn commands_without_a_configured_token_are_unauthorized() {
     // A task of the test user, so that the task commands below address an
-    // existing task and fail only for the missing token
+    // existing task and fail only for the missing token; it is left to
+    // finish, and the script removes the services afterwards
     let authorized = authorized_home();
     let id = create(&authorized, "cli-protes-anonymous", &["true"]);
 

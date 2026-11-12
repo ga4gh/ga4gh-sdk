@@ -88,6 +88,14 @@ curl --fail --location --silent --show-error --retry 3 --max-time 60 \
   "https://raw.githubusercontent.com/elixir-cloud-aai/proTES/$protes_commit/tests/smoke/fake_tes.py"
 echo "$fake_tes_sha256  $FAKE_TES_FILE" | sha256sum --check --quiet
 
+# Build the test binaries first: the access token expires 10 minutes after
+# it is issued, which a cold build could use up
+(cd "$repo_root" &&
+  cargo test --locked -p ga4gh-lib --features protes_integration_tests \
+    --test protes_tes --no-run &&
+  cargo test --locked -p ga4gh-cli --features protes_integration_tests \
+    --test protes_cli --no-run)
+
 started=true
 docker compose up --detach --wait --wait-timeout "$startup_timeout"
 

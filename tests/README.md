@@ -62,8 +62,7 @@ the identity provider and runs [`protes_tes.rs`](../lib/tests/protes_tes.rs):
 - a long task is canceled;
 - requests without a token, or with an invalid one, get HTTP 401.
 
-The test passes the token as a default header of its own HTTP client, because
-the transport doesn't send the credentials of the configuration yet (#31).
+The library test passes the token as a default header of its own HTTP client.
 
 It then runs the CLI suite, [`protes_cli.rs`](../cli/tests/protes_cli.rs).
 It runs the `ga4gh-cli` binary with a temporary home directory whose config
@@ -71,14 +70,17 @@ points to proTES and holds the access token as `oauth_access_token`, so the
 token reaches proTES from the CLI configuration only:
 
 - a task runs to completion with `tes create`, `tes status`, `tes get` and
-  `tes list` (with a tag filter);
+  `tes list` (with matching and nonmatching tag filters);
 - a running task is canceled with `tes cancel`;
 - with a config without a token, `tes create`, `tes status`, `tes get`,
   `tes list` and `tes cancel` (`status`, `get` and `cancel` on an existing
-  task of the test user) fail with a non-zero exit status, empty stdout, and HTTP 401 on stderr.
+  task of the test user) fail with a non-zero exit status, empty stdout,
+  and HTTP 401 on stderr.
 
-On exit, the script prints the service logs if a step failed and removes the
-services and its temporary files.
+The script builds both test binaries before it starts the services, because
+the access token expires 10 minutes after it is issued. On exit, it prints
+the service logs if a step failed and removes the services and its temporary
+files.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
