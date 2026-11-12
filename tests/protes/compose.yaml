@@ -4,8 +4,8 @@
 # (`fake-tes`, the one of the proTES smoke test). The script provides the
 # Funnel executable, the file of the identity provider, a work directory and
 # the Docker socket. Not for deployments: only proTES is published, on the
-# host's loopback interface. The proTES images are pinned by digest; bump
-# them together with `protes_commit` of the script.
+# host's loopback interface. All images are pinned by digest; bump
+# those of proTES together with `protes_commit` of the script.
 
 x-protes: &protes
   image: docker.io/elixircloud/protes:0.6.0@sha256:f9a6c5bb077f1744d0e3e4d4dcfc085d0703223761295d1b28f67833db01322a
@@ -76,7 +76,7 @@ services:
       retries: 30
 
   rabbitmq:
-    image: docker.io/library/rabbitmq:4.3.7
+    image: docker.io/library/rabbitmq:4.3.7@sha256:6c988780c85e08b7f12395973b89bda8fb3fe2f656498a74b1479a37f9903e48
     hostname: rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: protes
@@ -92,7 +92,7 @@ services:
       start_period: 10s
 
   mongodb:
-    image: docker.io/library/mongo:7.0.45
+    image: docker.io/library/mongo:7.0.45@sha256:8bb4442761a63a8dda452744082cdac9644b429807eb977b42324a63cef59ca4
     healthcheck:
       test: [CMD, mongosh, --quiet, --eval, "db.adminCommand('ping').ok"]
       interval: 5s

@@ -46,7 +46,8 @@ HTTP client, because the transport doesn't send the credentials of the
 configuration yet (#31). On exit, the script prints the service logs if a
 step failed and removes the services and its temporary files. Startup waits
 up to 300 seconds; set `PROTES_STARTUP_TIMEOUT_SECONDS` to change the limit.
-To update proTES, bump the image digests in the Compose file together with
+All images are pinned by digest. To update proTES, bump its image digests in
+the Compose file together with
 `protes_commit` and `fake_tes_sha256` in the script. The
 [CI workflow](../.github/workflows/ci.yml) runs this suite (`Integration
 (protes)`) when TES, shared library, dependency or its own files change.
