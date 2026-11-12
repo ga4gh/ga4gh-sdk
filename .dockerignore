@@ -1,4 +1,43 @@
+# Keeps secrets, build output and local state out of the image build context
+# (see docs/container-image.md); tests/run-image-tests.sh checks these rules.
+
+# Environment files may hold credentials; only the examples are kept
 .env*
 **/.env*
 !.env.example
 !**/.env.example
+
+# Keys, certificates and credential stores
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.jks
+**/id_rsa*
+**/id_dsa*
+**/id_ecdsa*
+**/id_ed25519*
+**/.ssh/
+**/.gnupg/
+**/.netrc
+**/.pypirc
+**/.docker/
+**/credentials*.json
+**/.ga4gh-cli/
+
+# Build output, caches and local tooling
+target/
+**/target/
+.git/
+coverage/
+debug/
+funnel-work-dir/
+funnel/
+node_modules/
+.venv/
+venv/
+env/
+**/__pycache__/
+*.log
+.idea/
+.vscode/

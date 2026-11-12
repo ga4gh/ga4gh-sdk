@@ -1,0 +1,13 @@
+{
+  "name": "ga4gh-cli site check",
+  "description": "Disposable task of the ga4gh-cli TES site check; safe to delete",
+  "tags": {
+    "purpose": "ga4gh-cli-site-check"
+  },
+  "executors": [
+    {
+      "image": "docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f",
+      "command": ["sh", "-c", "echo ga4gh-cli site check"]
+    }
+  ]
+}
