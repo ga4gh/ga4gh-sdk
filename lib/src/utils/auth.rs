@@ -36,20 +36,17 @@
 //!   user or password in `base_path`. Such a combination fails with an
 //!   [`AuthConflictError`] before anything is sent. Without a provider, the
 //!   transport behaves as before.
-//! - A provider set on the configuration of
-//!   [`Transport::with_client`](crate::utils::transport::Transport::with_client)
-//!   applies to that client's requests too, and its header takes the place of an
-//!   `Authorization` default header of the client.
+//! - A provider on a caller-owned client requires explicit opt-in through
+//!   [`Transport::with_client_and_configured_auth`](crate::utils::transport::Transport::with_client_and_configured_auth).
+//!   Its header then takes the place of a client default `Authorization` header.
 //! - [`Transport::request_builder`](crate::utils::transport::Transport::request_builder)
-//!   adds no token, so a request built with it and sent with
-//!   [`Transport::send_once`](crate::utils::transport::Transport::send_once)
-//!   carries none; use
+//!   rejects a configuration with a provider; use
 //!   [`Transport::authorized_request_builder`](crate::utils::transport::Transport::authorized_request_builder).
 //!   Fetches of descriptors and result artifacts from other URLs never carry it.
 //! - A provider failure is a [`TokenProviderError`], not an HTTP error, and
-//!   nothing is sent. Token values never appear in `Debug` output, errors or logs
-//!   of the SDK. The text of a provider's own error is shown as the provider wrote
-//!   it, so keep secrets out of it.
+//!   nothing is sent. Default `Display` and `Debug` output omits the provider's
+//!   error text and audience because either may contain a secret. Rust callers
+//!   can explicitly inspect the underlying source error; treat it as sensitive.
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -62,7 +59,6 @@ use std::time::Instant;
 pub type BoxError = Box<dyn Error + Send + Sync>;
 
 /// What the transport asks a [`TokenProvider`] for.
-#[derive(Debug)]
 #[non_exhaustive]
 pub struct TokenRequest<'a> {
     /// The service's audience; see the [module documentation](self).
@@ -71,6 +67,15 @@ pub struct TokenRequest<'a> {
     /// audience with `401 Unauthorized`; a provider with a cache of its own
     /// should then get a new token.
     pub after_rejection: bool,
+}
+
+impl fmt::Debug for TokenRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenRequest")
+            .field("audience", &"<redacted>")
+            .field("after_rejection", &self.after_rejection)
+            .finish()
+    }
 }
 
 /// A bearer token, and how long the transport may reuse it.
@@ -155,6 +160,12 @@ impl AccessToken {
     fn is_reusable(&self, now: Instant) -> bool {
         self.reusable_until.is_some_and(|until| now < until)
     }
+
+    fn is_valid_bearer(&self) -> bool {
+        !self.secret.is_empty()
+            && !self.secret.bytes().any(|byte| byte.is_ascii_whitespace())
+            && reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.secret)).is_ok()
+    }
 }
 
 /// The reused token of one audience.
@@ -238,7 +249,10 @@ impl TokenSource {
                 return Ok(token.clone());
             }
             slot.token = None;
-            let rejected = std::mem::take(&mut slot.rejected);
+            // Keep the rejection visible to concurrent calls until a fresh
+            // provider result succeeds. Otherwise one call can consume the
+            // signal while another asks a provider with its own stale cache.
+            let rejected = slot.rejected;
             (slot.generation, after_rejection || rejected)
         };
         let request = TokenRequest {
@@ -248,23 +262,24 @@ impl TokenSource {
         let token = match self.provider.token(&request).await {
             Ok(token) => token,
             Err(source) => {
-                // The next call asks after the rejection again.
-                if after_rejection {
-                    self.slots()
-                        .entry(audience.to_owned())
-                        .or_default()
-                        .rejected = true;
-                }
                 return Err(TokenProviderError::Failed {
                     audience: audience.to_owned(),
                     source,
-                });
+                })
             }
         };
-        if token.is_reusable(Instant::now()) {
-            let mut slots = self.slots();
-            let slot = slots.entry(audience.to_owned()).or_default();
-            if slot.generation == generation {
+        if !token.is_valid_bearer() {
+            return Err(TokenProviderError::InvalidToken {
+                audience: audience.to_owned(),
+            });
+        }
+        let mut slots = self.slots();
+        let slot = slots.entry(audience.to_owned()).or_default();
+        if slot.generation == generation {
+            if after_rejection {
+                slot.rejected = false;
+            }
+            if token.is_reusable(Instant::now()) {
                 slot.token = Some(token.clone());
             }
         }
@@ -273,7 +288,6 @@ impl TokenSource {
 }
 
 /// The token provider failed or gave a token that can't be sent; nothing was sent.
-#[derive(Debug)]
 #[non_exhaustive]
 pub enum TokenProviderError {
     /// The provider returned an error.
@@ -290,16 +304,23 @@ pub enum TokenProviderError {
     },
 }
 
+impl fmt::Debug for TokenProviderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            Self::Failed { .. } => "Failed",
+            Self::InvalidToken { .. } => "InvalidToken",
+        };
+        f.debug_struct("TokenProviderError")
+            .field("kind", &kind)
+            .finish()
+    }
+}
+
 impl fmt::Display for TokenProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Failed { audience, source } => {
-                write!(f, "The token provider failed for {audience}: {source}")
-            }
-            Self::InvalidToken { audience } => write!(
-                f,
-                "The token provider gave an empty token or one that isn't a valid HTTP header value for {audience}"
-            ),
+            Self::Failed { .. } => f.write_str("The token provider failed before the request was sent"),
+            Self::InvalidToken { .. } => f.write_str("The token provider gave an empty token or one that isn't a valid HTTP header value"),
         }
     }
 }
@@ -432,6 +453,34 @@ mod tests {
         assert_eq!(*provider.0.lock().unwrap(), [false, true]);
     }
 
+    #[tokio::test]
+    async fn concurrent_calls_both_see_unresolved_rejection() {
+        struct Concurrent {
+            barrier: tokio::sync::Barrier,
+            flags: Mutex<Vec<bool>>,
+        }
+
+        #[async_trait]
+        impl TokenProvider for Concurrent {
+            async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+                self.flags.lock().unwrap().push(request.after_rejection);
+                self.barrier.wait().await;
+                Ok(AccessToken::new("fresh"))
+            }
+        }
+
+        let provider = Arc::new(Concurrent {
+            barrier: tokio::sync::Barrier::new(2),
+            flags: Mutex::new(Vec::new()),
+        });
+        let source = TokenSource::new(provider.clone());
+        source.reject("a", "old");
+        let (first, second) = tokio::join!(source.token("a", false), source.token("a", false));
+        first.unwrap();
+        second.unwrap();
+        assert_eq!(*provider.flags.lock().unwrap(), [true, true]);
+    }
+
     #[test]
     fn test_debug_output_hides_the_token() {
         let token = AccessToken::new("SENTINEL_TOKEN");
@@ -442,6 +491,12 @@ mod tests {
         );
         let (source, _) = counting(None);
         assert_eq!(format!("{source:?}"), "TokenSource");
+        let request = TokenRequest {
+            audience: "SENTINEL_AUDIENCE",
+            after_rejection: true,
+        };
+        let output = format!("{request:?}");
+        assert!(!output.contains("SENTINEL"), "{output}");
     }
 
     #[test]
@@ -452,8 +507,9 @@ mod tests {
         };
         assert_eq!(
             error.to_string(),
-            "The token provider failed for https://example.org/: no session"
+            "The token provider failed before the request was sent"
         );
+        assert!(!format!("{error:?}").contains("no session"));
         assert_eq!(error.source().unwrap().to_string(), "no session");
         let error = AuthConflictError {
             sources: vec!["basic_auth", "oauth_access_token"],

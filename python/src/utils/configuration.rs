@@ -1,7 +1,7 @@
 use crate::utils::convert::{check_extra_args, to_python};
 use crate::ServiceSection;
 use ga4gh_sdk::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest, TokenSource};
-use ga4gh_sdk::utils::configuration::Configuration;
+use ga4gh_sdk::utils::configuration::{BasicAuth, Configuration};
 use ga4gh_sdk::utils::timeouts::Timeouts;
 use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -92,6 +92,32 @@ impl PyConfiguration {
 
     pub fn get_base_path(&mut self) -> String {
         self.inner.base_path.to_string()
+    }
+
+    /// Set one Basic credential for clients built from this configuration.
+    #[pyo3(signature = (username, password=None))]
+    pub fn set_basic_auth(&mut self, username: String, password: Option<String>) {
+        self.inner.basic_auth = Some(BasicAuth { username, password });
+    }
+
+    /// Set one OAuth bearer token for clients built from this configuration.
+    pub fn set_oauth_access_token(&mut self, token: String) {
+        self.inner.oauth_access_token = Some(token);
+    }
+
+    /// Set one generic bearer token for clients built from this configuration.
+    pub fn set_bearer_access_token(&mut self, token: String) {
+        self.inner.bearer_access_token = Some(token);
+    }
+
+    /// Remove configured Basic and bearer credentials before selecting another.
+    pub fn clear_auth(&mut self) {
+        self.inner.basic_auth = None;
+        self.inner.oauth_access_token = None;
+        self.inner.bearer_access_token = None;
+        self.inner.api_key = None;
+        self.inner.token_provider = None;
+        self.inner.token_audience = None;
     }
 
     /// Sets time limits of requests, in seconds; limits that aren't given stay as

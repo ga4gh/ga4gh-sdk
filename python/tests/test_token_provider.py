@@ -84,14 +84,15 @@ def test_token_with_reuse_time_is_reused(server):
 
 def test_provider_errors_send_nothing(server):
     def failing(audience):
-        raise ValueError("no session")
+        raise ValueError("no session for SENTINEL_TOKEN")
 
     before = len(server.paths())
-    with pytest.raises(RuntimeError, match="The token provider failed .*ValueError: no session"):
+    with pytest.raises(RuntimeError, match="The token provider failed") as raised:
         Transport(auth_config(server, failing)).get("tasks/task-1")
-    with pytest.raises(RuntimeError, match="must return a str"):
+    assert "SENTINEL_TOKEN" not in str(raised.value)
+    with pytest.raises(RuntimeError, match="The token provider failed"):
         Transport(auth_config(server, lambda audience: 3)).get("tasks/task-1")
-    with pytest.raises(RuntimeError, match="non-negative number of seconds"):
+    with pytest.raises(RuntimeError, match="The token provider failed"):
         Transport(auth_config(server, lambda audience: ("good", -1.0))).get("tasks/task-1")
     assert requests_since(server, before) == []
 
@@ -132,6 +133,13 @@ def test_clients_keep_the_provider_they_were_built_with(server):
     transport = Transport(config)
     config.set_token_provider(None)
     assert transport.get("tasks/task-1")
+    with pytest.raises(RuntimeError, match="401"):
+        Transport(config).get("tasks/task-1")
+
+
+def test_clear_auth_removes_provider_for_new_clients(server):
+    config = auth_config(server, Tokens("good"), audience="tes")
+    config.clear_auth()
     with pytest.raises(RuntimeError, match="401"):
         Transport(config).get("tasks/task-1")
 
