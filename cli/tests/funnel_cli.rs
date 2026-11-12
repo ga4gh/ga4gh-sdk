@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 const FUNNEL_TES_URL: &str = "http://localhost:8000/ga4gh/tes/v1";
-/// Time limit for a task to reach a state, including the image pull.
+/// Polling deadline, including the image pull; in-flight requests can extend it.
 const STATE_TIMEOUT: Duration = Duration::from_secs(180);
 const TERMINAL_STATES: [&str; 5] = [
     "COMPLETE",
@@ -124,6 +124,27 @@ fn task_runs_to_completion() {
             .lines()
             .any(|line| line.starts_with(&id) && line.contains("Complete")),
         "task {id} not listed as complete: {table}"
+    );
+
+    // A positive match alone would also pass if the CLI dropped the filter.
+    let no_match = format!("no-match-{id}");
+    let empty = stdout(
+        &home,
+        &[
+            "tes",
+            "list",
+            "--tag_key",
+            "sdk.suite",
+            "--tag_value",
+            &no_match,
+            "--view",
+            "MINIMAL",
+        ],
+    );
+    assert!(empty.starts_with("TASK ID"), "{empty}");
+    assert!(
+        empty.lines().skip(1).all(|line| line.trim().is_empty()),
+        "nonmatching tag filter returned tasks: {empty}"
     );
 }
 
