@@ -36,6 +36,73 @@ const SECTION_KEYS: [&str; 4] = [
     "oauth_access_token_env",
 ];
 
+/// The top-level key of a configuration file that holds named profiles.
+const PROFILES_KEY: &str = "profiles";
+/// The top-level key that names the profile to use when none is given.
+const DEFAULT_PROFILE_KEY: &str = "default_profile";
+/// The profile that is used when none is given and the file names none.
+pub const DEFAULT_PROFILE: &str = "default";
+
+/// Returns the object of the configuration file `root` that holds the service
+/// sections, with the name of the profile it belongs to: the selected profile
+/// in a file with `profiles`, otherwise `root` and no name.
+///
+/// The profile is `profile`, else the file's `default_profile`, else
+/// [`DEFAULT_PROFILE`]. A file without `profiles` is one profile named
+/// [`DEFAULT_PROFILE`].
+fn profile_sections<'a>(
+    root: &'a Map<String, Value>,
+    profile: Option<&str>,
+) -> Result<(Option<String>, &'a Map<String, Value>), String> {
+    let Some(profiles) = root.get(PROFILES_KEY) else {
+        if root.contains_key(DEFAULT_PROFILE_KEY) {
+            return Err(format!(
+                "Configuration file sets '{DEFAULT_PROFILE_KEY}' but has no '{PROFILES_KEY}' object"
+            ));
+        }
+        return match profile {
+            None | Some(DEFAULT_PROFILE) => Ok((None, root)),
+            Some(name) => Err(format!(
+                "Profile '{name}' not found: the configuration file has no '{PROFILES_KEY}' object"
+            )),
+        };
+    };
+    let profiles = profiles
+        .as_object()
+        .ok_or_else(|| format!("'{PROFILES_KEY}' must be an object of profiles"))?;
+    if let Some(key) = root
+        .keys()
+        .find(|key| !matches!(key.as_str(), PROFILES_KEY | DEFAULT_PROFILE_KEY))
+    {
+        return Err(format!(
+            "Configuration file with '{PROFILES_KEY}' can't have the top-level section '{key}'; \
+             move it into a profile"
+        ));
+    }
+    let name = match (profile, root.get(DEFAULT_PROFILE_KEY)) {
+        (Some(name), _) => name,
+        (None, None | Some(Value::Null)) => DEFAULT_PROFILE,
+        (None, Some(Value::String(name))) => name.as_str(),
+        (None, Some(_)) => return Err(format!("'{DEFAULT_PROFILE_KEY}' must be a string")),
+    };
+    match profiles.get(name) {
+        Some(Value::Object(sections)) => Ok((Some(name.to_owned()), sections)),
+        Some(_) => Err(format!("Profile '{name}' must be an object")),
+        None => {
+            let mut names: Vec<&str> = profiles.keys().map(String::as_str).collect();
+            names.sort_unstable();
+            let available = if names.is_empty() {
+                "none".to_owned()
+            } else {
+                names.join(", ")
+            };
+            Err(format!(
+                "Profile '{name}' not found; profiles in the configuration file: {available}"
+            ))
+        }
+    }
+}
+
 /// Reads a token from the environment variable `name`.
 fn token_from_env(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|error| var_error_message(name, &error))
@@ -284,6 +351,8 @@ impl Configuration {
     /// `oauth_access_token_env` names an environment variable to read the token
     /// from, in place of `oauth_access_token`. Other keys of the section go into
     /// `extra`. A missing file is an I/O error; malformed content is an input error.
+    /// In a file with profiles, the section comes from the default profile; see
+    /// [`Configuration::from_path_with_profile`].
     ///
     /// # Example
     ///
@@ -297,6 +366,50 @@ impl Configuration {
     /// ```
     pub fn from_path(
         path: impl AsRef<Path>,
+        section: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::from_path_with_profile(path, None, section)
+    }
+
+    /// Load one named section of a profile from a JSON configuration file.
+    ///
+    /// A file can hold named profiles, each with its own service sections,
+    /// for example one for local and one for remote services:
+    ///
+    /// ```json
+    /// {
+    ///   "default_profile": "local",
+    ///   "profiles": {
+    ///     "local": {"TES": {"base_path": "http://localhost:8000/ga4gh/tes/v1"}},
+    ///     "remote": {"TES": {"base_path": "https://tes.example.org/ga4gh/tes/v1"}}
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// The profile is `profile`, else the file's `default_profile`, else
+    /// [`DEFAULT_PROFILE`] (`default`). A file without `profiles` holds its
+    /// sections at the top level and counts as one profile named `default`.
+    /// A file with `profiles` can't also have top-level sections. Sections
+    /// have the same keys as for [`Configuration::from_path`].
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`Configuration::from_path`] does, and if the profile doesn't
+    /// exist or `profiles` or `default_profile` is malformed.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ga4gh_sdk::utils::configuration::Configuration;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = Configuration::from_path_with_profile("config.json", Some("remote"), "TES")?;
+    /// # let _ = config;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_path_with_profile(
+        path: impl AsRef<Path>,
+        profile: Option<&str>,
         section: &str,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let path = path.as_ref();
@@ -315,10 +428,14 @@ impl Configuration {
         let root = document
             .as_object()
             .ok_or("Configuration file must be a JSON object")?;
-        let fields = root
+        let (profile, sections) = profile_sections(root, profile)?;
+        let fields = sections
             .get(section)
             .and_then(Value::as_object)
-            .ok_or_else(|| format!("Configuration file must contain a '{section}' object"))?;
+            .ok_or_else(|| match &profile {
+                None => format!("Configuration file must contain a '{section}' object"),
+                Some(name) => format!("Profile '{name}' must contain a '{section}' object"),
+            })?;
         let base_path = fields
             .get("base_path")
             .and_then(Value::as_str)
@@ -626,6 +743,146 @@ mod tests {
             error.downcast_ref::<std::io::Error>().unwrap().kind(),
             std::io::ErrorKind::NotFound
         );
+    }
+
+    /// Writes `document` to a new `config.json` and returns its directory and path.
+    fn profile_file(document: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, document).unwrap();
+        (dir, path)
+    }
+
+    const PROFILES: &str = r#"{
+        "default_profile": "local",
+        "profiles": {
+            "local": {"TES": {"base_path": "http://localhost:8000/ga4gh/tes/v1"}},
+            "remote": {
+                "TES": {"base_path": "https://tes.example.org/ga4gh/tes/v1", "oauth_access_token_env": "PATH"},
+                "WES": {"base_path": "https://wes.example.org/ga4gh/wes/v1"}
+            },
+            "default": {"TES": {"base_path": "https://default.example.org/"}}
+        }
+    }"#;
+
+    #[test]
+    fn test_from_path_with_profile_selects_the_profile() {
+        let (_dir, path) = profile_file(PROFILES);
+        let base_path = |profile: Option<&str>, section: &str| {
+            Configuration::from_path_with_profile(&path, profile, section)
+                .unwrap()
+                .base_path
+                .to_string()
+        };
+        assert_eq!(
+            base_path(Some("remote"), "TES"),
+            "https://tes.example.org/ga4gh/tes/v1"
+        );
+        assert_eq!(
+            base_path(Some("remote"), "WES"),
+            "https://wes.example.org/ga4gh/wes/v1"
+        );
+        // Without a profile, `default_profile` wins over the profile `default`.
+        assert_eq!(base_path(None, "TES"), "http://localhost:8000/ga4gh/tes/v1");
+        assert_eq!(
+            Configuration::from_path(&path, "TES")
+                .unwrap()
+                .base_path
+                .as_str(),
+            "http://localhost:8000/ga4gh/tes/v1"
+        );
+        assert_eq!(
+            base_path(Some("default"), "TES"),
+            "https://default.example.org/"
+        );
+        // Sections in profiles read their keys as top-level sections do.
+        let remote = Configuration::from_path_with_profile(&path, Some("remote"), "TES").unwrap();
+        assert_eq!(remote.oauth_access_token, std::env::var("PATH").ok());
+        assert!(remote.extra.is_empty(), "{:?}", remote.extra);
+    }
+
+    #[test]
+    fn test_from_path_with_profile_falls_back_to_the_default_profile() {
+        let (_dir, path) = profile_file(
+            r#"{"profiles":{"default":{"TES":{"base_path":"https://default.example.org/"}},
+                "other":{"TES":{"base_path":"https://other.example.org/"}}}}"#,
+        );
+        for profile in [None, Some("default")] {
+            let config = Configuration::from_path_with_profile(&path, profile, "TES").unwrap();
+            assert_eq!(config.base_path.as_str(), "https://default.example.org/");
+        }
+        let (_dir, path) = profile_file(
+            r#"{"default_profile":null,"profiles":{"default":{"TES":{"base_path":"https://default.example.org/"}}}}"#,
+        );
+        let config = Configuration::from_path(&path, "TES").unwrap();
+        assert_eq!(config.base_path.as_str(), "https://default.example.org/");
+    }
+
+    #[test]
+    fn test_from_path_with_profile_reads_files_without_profiles_as_default() {
+        let (_dir, path) = profile_file(r#"{"TES":{"base_path":"https://tes.example.org/"}}"#);
+        for profile in [None, Some(DEFAULT_PROFILE)] {
+            let config = Configuration::from_path_with_profile(&path, profile, "TES").unwrap();
+            assert_eq!(config.base_path.as_str(), "https://tes.example.org/");
+        }
+        let error = Configuration::from_path_with_profile(&path, Some("remote"), "TES")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "Profile 'remote' not found: the configuration file has no 'profiles' object"
+        );
+    }
+
+    #[test]
+    fn test_from_path_with_profile_invalid_documents() {
+        let cases = [
+            (
+                PROFILES,
+                Some("staging"),
+                "Profile 'staging' not found; profiles in the configuration file: default, local, remote",
+            ),
+            (
+                r#"{"profiles":{}}"#,
+                None,
+                "Profile 'default' not found; profiles in the configuration file: none",
+            ),
+            (
+                r#"{"default_profile":"gone","profiles":{"local":{}}}"#,
+                None,
+                "Profile 'gone' not found; profiles in the configuration file: local",
+            ),
+            (PROFILES, Some("local"), "Profile 'local' must contain a 'WES' object"),
+            (r#"{"profiles":[]}"#, None, "'profiles' must be an object of profiles"),
+            (r#"{"profiles":{"default":3}}"#, None, "Profile 'default' must be an object"),
+            (
+                r#"{"default_profile":3,"profiles":{"default":{}}}"#,
+                None,
+                "'default_profile' must be a string",
+            ),
+            (
+                r#"{"default_profile":"local","WES":{"base_path":"https://wes.example.org/"}}"#,
+                None,
+                "Configuration file sets 'default_profile' but has no 'profiles' object",
+            ),
+            (
+                r#"{"profiles":{"default":{}},"WES":{"base_path":"https://wes.example.org/"}}"#,
+                None,
+                "Configuration file with 'profiles' can't have the top-level section 'WES'; move it into a profile",
+            ),
+            (
+                r#"{"profiles":{"default":{"WES":{"base_path":3}}}}"#,
+                None,
+                "Configuration section must contain a 'base_path' string",
+            ),
+        ];
+        for (document, profile, expected_message) in cases {
+            let (_dir, path) = profile_file(document);
+            let error = Configuration::from_path_with_profile(&path, profile, "WES")
+                .unwrap_err()
+                .to_string();
+            assert_eq!(error, expected_message, "{document}");
+        }
     }
 
     #[test]
