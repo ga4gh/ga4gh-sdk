@@ -14,8 +14,8 @@ from types import MappingProxyType
 
 import pytest
 
-import GA4GH
-from GA4GH import (
+import ga4gh_sdk
+from ga4gh_sdk import (
     Configuration,
     Run,
     RunListResponse,
@@ -100,9 +100,9 @@ def test_state_enum_members_are_strings():
     assert str(WesState.RUNNING) == "RUNNING"
     assert f"{WesState.RUNNING:<9}|" == "RUNNING  |"
     assert json.dumps({"state": WesState.RUNNING}) == '{"state": "RUNNING"}'
-    assert WesState.__module__ == "GA4GH"
+    assert WesState.__module__ == "ga4gh_sdk"
     assert pickle.loads(pickle.dumps(WesState.QUEUED)) is WesState.QUEUED
-    assert WesState is not GA4GH.TesState
+    assert WesState is not ga4gh_sdk.TesState
 
 
 def test_service_type_has_wes():

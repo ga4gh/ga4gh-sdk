@@ -2,7 +2,7 @@
 
 import pytest
 
-from GA4GH import ListTasksParams, TES
+from ga4gh_sdk import ListTasksParams, TES
 
 
 @pytest.mark.parametrize(

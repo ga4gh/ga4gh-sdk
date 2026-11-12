@@ -106,6 +106,7 @@ PENDING = (202, {}, {"Retry-After": "1"})
 
 ROUTES.update(
     {
+        ("GET", "/api/auth-failure"): (401, {"msg": "authentication required"}),
         ("GET", "/drs/service-info"): (200, DRS_SERVICE_INFO),
         ("GET", "/drs/objects/obj-1"): (200, DRS_OBJECT),
         ("GET", "/drs/objects/obj-1/access/https-1"): (200, ACCESS_URL),

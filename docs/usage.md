@@ -52,7 +52,6 @@ built-in services, or any other name for a custom service:
   "TES": {
     "base_path": "https://example.org/ga4gh/tes/v1",
     "basic_auth": {"username": "alice", "password": "change-me"},
-    "oauth_access_token": "my-token",
     "timeouts": {"discovery": 30, "submission": 600}
   },
   "MY_SERVICE": {
@@ -71,6 +70,8 @@ built-in services, or any other name for a custom service:
   variable that holds the access token, so that the token needn't be in the
   file. Use it in place of `oauth_access_token`, not together with it. If the
   variable isn't set, reading the section is an error.
+- `bearer_access_token` or `bearer_access_token_env` (string, optional): a
+  generic bearer token, or the name of the variable that holds it.
 - `timeouts` (object, optional): time limits in seconds, as positive numbers:
   `connect`, `request`, `discovery` and `submission`. Limits that the object
   doesn't name keep their defaults; see [Timeouts](#timeouts).
@@ -79,23 +80,18 @@ built-in services, or any other name for a custom service:
   such as those of a downstream crate. In the example, `extra` holds
   `queue`. Rust's `Debug` output shows only the keys, but `extra`
   and `get_extra()` themselves return the values as they are, so don't log
-  them if they can hold credentials. The file doesn't set the other
-  `Configuration` fields: `user_agent`, `bearer_access_token` and `api_key`
-  in a section end up in `extra` as well.
+  them if they can hold credentials. The file doesn't set `user_agent`.
+  `api_key` is recognized but rejected because its header contract is not
+  defined.
 
 A missing file or section, or a field of the wrong type, is an error. Rust
 reads a custom section with `ServiceType::Custom("MY_SERVICE".into())`, Python
 with `config.from_file("MY_SERVICE")`. `Configuration::from_path(path, "TES")`
-reads a section from another file. Files written for earlier versions read as
-before; their `extra` is empty.
-
-Default SDK clients and CLI service commands read `basic_auth` and
-`oauth_access_token` but **do not send them yet** (see
-[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). They need an anonymous
-service or an authenticating proxy. The experimental `workflow submit` CLI
-command sends a configured OAuth bearer token; Rust callers can also supply an
-authenticated client through `WES::from_transport()`. Cross-surface consistency
-is tracked in [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
+reads a section from another file. One section may use one credential source:
+Basic, OAuth bearer, or generic bearer. Sources cannot be combined.
+The [authentication guide](authentication.md) describes how credentials reach
+Rust, Python, and CLI requests, and the behavior of redirects and injected
+clients. Previously stored credentials now take effect on requests.
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
@@ -171,6 +167,10 @@ roots, a proxy or default headers, build a `reqwest::Client`, wrap it with
 `WES::discover_with_transport`). The client's own connect and request timeouts
 then replace `connect` and `request`; `discovery` and `submission` still come
 from the transport's configuration.
+If the configuration also has credentials, use
+`Transport::with_client_and_configured_auth(&config, client)` to opt into
+applying them. The injected client's redirect policy remains yours; see the
+[authentication guide](authentication.md#request-boundary-and-failures).
 
 ## Rust library
 
@@ -199,13 +199,17 @@ use url::Url;
 // No authentication
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?);
 
-// Credentials are stored, but not yet sent with requests (see #31)
+// The selected bearer token is sent to this service's API root.
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_oauth_access_token("my-token".to_owned());
 
 // The token from an environment variable of your choice
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_oauth_access_token_from_env("MY_SERVICE_TOKEN")?;
+
+// A generic bearer token is another exclusive source.
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_bearer_access_token_from_env("MY_SERVICE_TOKEN")?;
 
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_basic_auth(BasicAuth {
@@ -337,6 +341,7 @@ server's JSON, including fields that the models don't know.
 ### TRS
 
 ```rust
+use ga4gh_sdk::clients::trs::models::DescriptorType;
 use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
 
 let config = Configuration::new(Url::parse("https://workflowhub.eu/ga4gh/trs/v2")?);
@@ -349,7 +354,37 @@ let tools = trs.list_tools(&ToolFilter {
 for tool in tools {
     println!("{}", tool.id);
 }
+
+// All files of one version as a ZIP archive, at most 10 MiB.
+let archive = trs
+    .get_files_zip("TOOL_ID", "VERSION_ID", DescriptorType::Cwl, 10 * 1024 * 1024)
+    .await?;
 ```
+
+The client selects a TRS 2.0.1 or 2.0.2 API profile from the API version
+in `service-info.type.version`. An unknown declaration uses the 2.0.1 read
+contract and records compatibility as unverified. Use `TrsOptions` to require
+a known declaration or select a profile explicitly. Selection belongs to each
+client; one process can connect to different versions at the same time. See
+[API compatibility](api_compatibility.md) for options, limitations, and migration.
+
+The `tags` filter requires the 2.0.2 contract or an explicit deployment override.
+Tags are registry-specific and sent as one comma-separated value, so a tag
+must not be empty or contain a comma. A declared version is evidence of intended
+support, not proof that the server implements filtering correctly.
+
+`ToolVersion::description()` returns a string description when present; the
+original value remains in `extra` and in serialized JSON. If a registry sends
+a non-string value, `description()` returns `None` while the raw value stays
+available in `extra` under either profile. This tolerance is limited to an
+optional field; malformed JSON and invalid required fields still return errors.
+The existing public model fields remain unchanged.
+
+`get_files_zip` reads the response into memory and returns bytes without
+extracting them. A body larger than the caller's limit, or one without a ZIP
+signature, is an error. The archive's contents are not fully validated. ZIP
+responses are defined in both supported TRS versions; actual provider support
+can differ.
 
 ### Models
 
