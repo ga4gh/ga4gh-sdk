@@ -1,7 +1,7 @@
 use crate::utils::convert::{check_extra_args, to_python};
 use crate::ServiceSection;
 use ga4gh_sdk::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest, TokenSource};
-use ga4gh_sdk::utils::configuration::Configuration;
+use ga4gh_sdk::utils::configuration::{BasicAuth, Configuration};
 use ga4gh_sdk::utils::timeouts::Timeouts;
 use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -129,6 +129,33 @@ impl PyConfiguration {
     /// Returns the other keys of the configuration file section as a `dict`.
     pub fn get_extra(&self, py: Python<'_>) -> PyResult<PyObject> {
         to_python(py, &Value::Object(self.inner.extra.clone()))
+    }
+
+    /// Sends `username` and `password` as Basic credentials with each request;
+    /// `None` as `username` removes them. Like `basic_auth` in the configuration
+    /// file; only one credential may be set.
+    #[pyo3(signature = (username, password=None))]
+    pub fn set_basic_auth(
+        &mut self,
+        username: Option<String>,
+        password: Option<String>,
+    ) -> PyResult<()> {
+        self.inner.basic_auth = match username {
+            Some(username) => Some(BasicAuth { username, password }),
+            None if password.is_some() => {
+                return Err(PyValueError::new_err("password needs a username"))
+            }
+            None => None,
+        };
+        Ok(())
+    }
+
+    /// Sends `token` as a bearer token with each request; `None` removes it. Like
+    /// `oauth_access_token` in the configuration file; only one credential may be
+    /// set.
+    #[pyo3(signature = (token))]
+    pub fn set_access_token(&mut self, token: Option<String>) {
+        self.inner.oauth_access_token = token;
     }
 
     /// Gets a bearer token from `provider` for each request, in place of a static

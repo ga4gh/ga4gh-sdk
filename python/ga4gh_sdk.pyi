@@ -36,8 +36,10 @@ class Configuration:
     `ServiceType` or by a `str`; `get_extra()` returns the section's other keys.
     `set_timeouts()` and `get_timeouts()` set and give the time limits of
     requests in seconds; clients and transports read them when they are built.
+    `set_basic_auth()` and `set_access_token()` set a static credential: Basic
+    credentials or a bearer token, sent with each request.
     `set_token_provider()` sets a callable that gives a bearer token for each
-    request.
+    request. Only one credential may be set; requests fail otherwise.
     """
 
     def __init__(self, base_path: str) -> None: ...
@@ -53,6 +55,10 @@ class Configuration:
         submission: float | None = None,
     ) -> None: ...
     def get_timeouts(self) -> dict[str, float]: ...
+    def set_basic_auth(
+        self, username: str | None, password: str | None = None
+    ) -> None: ...
+    def set_access_token(self, token: str | None) -> None: ...
     def set_token_provider(
         self,
         provider: Callable[[str], str | tuple[str, float]] | None,
