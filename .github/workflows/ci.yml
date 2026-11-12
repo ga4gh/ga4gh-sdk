@@ -72,10 +72,12 @@ jobs:
         working-directory: python
         run: python -m pytest
 
-  # Builds the wheels of every release platform and the sdist, so that a
-  # platform-specific break shows up before a tag; nothing is published.
+  # Build the full release matrix after merges to main and on manual dispatch.
+  # PRs keep the Python binding tests above; maintainers can dispatch CI on a
+  # PR branch before merge when packaging or platform support changes.
   wheels:
     name: Python wheels
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/wheels.yml
 
   integration:
@@ -104,7 +106,8 @@ jobs:
             if [[ "$SUITE" == funnel ]]; then
               paths=("${common[@]}" run-integration-tests.sh lib/src/clients/tes/
                 lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
-                lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs)
+                lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs
+                cli/Cargo.toml cli/src/ cli/tests/funnel_cli.rs)
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
@@ -138,7 +141,8 @@ jobs:
         run: tests/run-wes-docker-integration.sh
 
   # Coverage of the unit tests, without the generated models; the report
-  # goes to the job summary and the `coverage` artifact (LCOV)
+  # goes to the job summary and the `coverage` artifact (LCOV), which the
+  # `codecov` job uploads
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -172,6 +176,40 @@ jobs:
           name: coverage
           path: coverage/
           if-no-files-found: error
+
+  # Uploads the `coverage` artifact to Codecov with an OIDC token of the run
+  # instead of a stored secret. A job of its own, so that only this job,
+  # which builds no code, may request OIDC tokens. The action uploads from
+  # forks without a token; Dependabot runs may get no OIDC token. Upload errors
+  # don't fail the job (`continue-on-error`), so that a Codecov outage
+  # doesn't block merges; `fail_ci_if_error` makes the action stop when it
+  # can't verify the Codecov CLI it downloads.
+  codecov:
+    name: Upload coverage
+    needs: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A job-level block replaces the workflow-level permissions
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Codecov maps the report's paths to the sources
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage
+          path: coverage/
+      - name: Upload to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: coverage/lcov.info
+          disable_search: true
+          use_oidc: true
+          fail_ci_if_error: true
 
   # Hooks from `.pre-commit-config.yaml`; the Rust hooks are skipped, because
   # the `lint` job runs the same commands
@@ -224,15 +262,29 @@ jobs:
       - name: Build documentation
         run: make site
 
+  # The example crate in `examples/downstream-sdk/`, built against the
+  # library and the CLI as a downstream crate would (see docs/downstream.md)
+  downstream:
+    name: Downstream example
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check, lint and test the example
+        run: make downstream
+
   passed:
     name: CI passed
-    needs: [lint, test, build, python, wheels, integration, coverage, pre-commit, docs]
+    needs: [lint, test, build, python, wheels, integration, coverage, codecov, pre-commit, docs, downstream]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check all jobs
         env:
+          EVENT_NAME: ${{ github.event_name }}
           NEEDS: ${{ toJSON(needs) }}
         run: |
           python3 - <<'PY'
@@ -245,10 +297,13 @@ jobs:
               print(f'{name}: {result}')
           expected = {
               'lint', 'test', 'build', 'python', 'wheels', 'integration', 'coverage',
-              'pre-commit', 'docs',
+              'codecov', 'pre-commit', 'docs', 'downstream',
           }
+          expected_results = {name: 'success' for name in expected}
+          if os.environ['EVENT_NAME'] == 'pull_request':
+              expected_results['wheels'] = 'skipped'
           if set(results) != expected or any(
-              result != 'success' for result in results.values()
+              results[name] != expected_results[name] for name in expected
           ):
               sys.exit(1)
           PY

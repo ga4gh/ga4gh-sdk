@@ -21,3 +21,6 @@ coverage/
 # Documentation site (`make site`) and the bytecode of its hooks
 site/
 __pycache__/
+
+# Copied from the root by `make downstream` (see docs/downstream.md)
+examples/downstream-sdk/Cargo.lock

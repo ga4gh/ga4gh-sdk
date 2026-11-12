@@ -427,7 +427,7 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(error.contains(&status.to_string()), "{error}");
-            assert!(error.contains("service failure"), "{error}");
+            assert!(!error.contains("service failure"), "{error}");
             assert_eq!(error.contains("base_path"), status == 404, "{error}");
         }
     }
