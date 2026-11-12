@@ -1,0 +1,97 @@
+name: CLI image
+
+# Builds the ga4gh-cli OCI image natively for each supported platform and
+# checks it with tests/run-image-tests.sh, including a TES site check against
+# Funnel on linux/amd64. Called by CI (build and check only) and by Release
+# (`push: true`: also pushes each platform image by digest, untagged, to
+# ghcr.io/<owner>/ga4gh-cli; the Publish image job of Release tags them).
+#
+# There is no top-level `permissions` block on purpose: the jobs get the
+# token permissions that the caller grants. CI grants `contents: read`;
+# Release grants `packages: write` for the push.
+on:
+  workflow_call:
+    inputs:
+      push:
+        description: Push the platform images by digest
+        type: boolean
+        default: false
+
+jobs:
+  image:
+    name: Build image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            id: linux-amd64
+            runner: ubuntu-24.04
+            funnel: true
+          - platform: linux/arm64
+            id: linux-arm64
+            runner: ubuntu-24.04-arm
+            funnel: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Funnel
+        if: matrix.funnel
+        shell: bash
+        run: |
+          archive=funnel-linux-amd64-v0.11.14.tar.gz
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/calypr/funnel/releases/download/v0.11.14/$archive"
+          echo "007e85ee808f131034854f6868efc9b11d3205f2fc1c778f339b484e9271996b  $RUNNER_TEMP/$archive" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" funnel
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      # Shared with the push below, so that it reuses the layers just checked;
+      # the BuildKit image is pinned by digest
+      - name: Set up the image builder
+        run: |
+          docker buildx create --use --driver docker-container \
+            --driver-opt image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      - name: Build and check the image
+        env:
+          FUNNEL_CHECK: ${{ matrix.funnel }}
+          IMAGE: ga4gh-cli:ci
+          PLATFORM: ${{ matrix.platform }}
+        run: tests/run-image-tests.sh
+      - name: Log in to the GitHub Container Registry
+        if: inputs.push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s\n' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Push the image by digest
+        if: inputs.push
+        env:
+          ID: ${{ matrix.id }}
+          OWNER: ${{ github.repository_owner }}
+          PLATFORM: ${{ matrix.platform }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          repository="ghcr.io/${OWNER,,}/ga4gh-cli"
+          # Same Dockerfile, context and builder as the checked image, so the
+          # layers come from the builder's cache; pushed without a tag.
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          docker buildx build --platform "$PLATFORM" \
+            --label "org.opencontainers.image.source=$SOURCE" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --provenance false \
+            --output "type=image,name=$repository,push-by-digest=true,name-canonical=true,push=true,rewrite-timestamp=true" \
+            --metadata-file "$RUNNER_TEMP/metadata.json" .
+          digest="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' "$RUNNER_TEMP/metadata.json")"
+          mkdir -p "$RUNNER_TEMP/digests"
+          echo "$digest" > "$RUNNER_TEMP/digests/$ID"
+          echo "Pushed $repository@$digest ($PLATFORM)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.push
+        with:
+          name: image-digest-${{ matrix.id }}
+          path: ${{ runner.temp }}/digests/${{ matrix.id }}
+          if-no-files-found: error

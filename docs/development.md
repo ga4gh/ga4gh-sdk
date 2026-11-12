@@ -120,6 +120,8 @@ on pushes to `main` and on manual dispatch:
 | `test` | Test | `cargo test --workspace --locked` |
 | `build` | Build | Lockfile check, builds of library, CLI and Python wheel |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
+| `wheels` | Python wheels | Builds the wheels of every release platform and the sdist |
+| `image` | CLI image | Builds the [CLI image](container-image.md) for `linux/amd64` and `linux/arm64` and runs `tests/run-image-tests.sh` (with Funnel on `linux/amd64`) |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
