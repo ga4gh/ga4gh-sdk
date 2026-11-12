@@ -1,4 +1,4 @@
-# Codecov settings for the reports that the `coverage` job of
+# Codecov settings for the reports that the `codecov` job of
 # `.github/workflows/ci.yml` uploads; see docs/development.md.
 #
 # The statuses are informational: they show the coverage on pull requests but

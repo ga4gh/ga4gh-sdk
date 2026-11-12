@@ -177,7 +177,7 @@ jobs:
   # Uploads the `coverage` artifact to Codecov with an OIDC token of the run
   # instead of a stored secret. A job of its own, so that only this job,
   # which builds no code, may request OIDC tokens. The action uploads from
-  # forks without a token; Dependabot runs get no OIDC token. Upload errors
+  # forks without a token; Dependabot runs may get no OIDC token. Upload errors
   # don't fail the job (`continue-on-error`), so that a Codecov outage
   # doesn't block merges; `fail_ci_if_error` makes the action stop when it
   # can't verify the Codecov CLI it downloads.
