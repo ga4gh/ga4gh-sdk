@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::time::Duration;
 
+/// A `RuntimeError` for a DRS response that doesn't fit its models.
 pub(super) fn invalid_response(error: impl std::fmt::Display) -> PyErr {
     json::invalid_response("DRS", error)
 }
