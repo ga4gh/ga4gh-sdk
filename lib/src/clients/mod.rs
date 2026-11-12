@@ -1,5 +1,9 @@
 pub mod bundle;
 pub mod capabilities;
+// The docs of the DRS models still have bare URLs and AsciiDoc links, which
+// rustdoc warns about; they are to be fixed with the restructuring of the
+// DRS client (#16)
+#[allow(rustdoc::bare_urls, rustdoc::broken_intra_doc_links)]
 pub mod drs;
 pub mod pagination;
 pub mod registry;

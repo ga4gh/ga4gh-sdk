@@ -57,9 +57,11 @@ clean-coverage: ## Remove coverage data and reports
 docs: ## Build the API documentation (target/doc)
 	$(CARGO) doc --workspace --no-deps --locked
 
-# As Read the Docs (`.readthedocs.yaml`) and the CI `docs` job build it
+# As Read the Docs (`.readthedocs.yaml`) and the CI `docs` job build it;
+# rustdoc's warnings, such as broken links, fail the build
 site: ## Build the documentation site in site/, strictly (needs MkDocs)
-	$(CARGO) doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli
+	RUSTDOCFLAGS="$${RUSTDOCFLAGS:-} -D warnings" \
+		$(CARGO) doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli
 	$(MKDOCS) build --strict
 	@# The hook must keep the theme's files (styles and scripts)
 	@ls site/assets/javascripts/bundle.*.min.js > /dev/null

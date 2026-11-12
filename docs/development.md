@@ -146,9 +146,15 @@ python3 -m pip install --group python/pyproject.toml:docs
 make site
 ```
 
-`make site` runs `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` and
-`mkdocs build --strict`, which fails on warnings such as links to missing
-files or anchors. `python3 -m pytest docs/test_hooks.py` tests the hooks; CI
+`make site` runs `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` with
+`RUSTDOCFLAGS="-D warnings"`, so that rustdoc's warnings, such as bare URLs
+(write `<https://...>` or `[text](https://...)`) and unresolved links, fail
+the build, and `mkdocs build --strict`, which fails on warnings such as links
+to missing files or anchors. Fixes in the docs of generated models go into
+their patch in `utils/patches/` (see
+[Autogenerate OpenAPI models](autogenerate_OAI_models.md)); the DRS models
+are exempt from the rustdoc check until they are fixed.
+`python3 -m pytest docs/test_hooks.py` tests the hooks; CI
 runs both. After the first `make site`, `mkdocs serve` shows the site
 at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
 
@@ -181,7 +187,7 @@ on pushes to `main` and on manual dispatch:
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
-| `docs` | Docs | `make site`: the Rust API reference and the strict MkDocs build |
+| `docs` | Docs | `make site`: the Rust API reference, without rustdoc warnings, and the strict MkDocs build |
 | `passed` | CI passed | Fails unless all jobs above succeeded |
 
 `CI passed` is the check to require for merges. A new job must be added to
