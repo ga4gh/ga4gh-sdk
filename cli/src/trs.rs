@@ -1,11 +1,16 @@
 use crate::render::{json_printable, printable};
 use crate::CommandOutput;
-use clap::{arg, ArgMatches, Command};
+use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain, FileWrapper};
 use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::HttpError;
 use std::error::Error;
+use std::io::Write;
+use std::path::PathBuf;
+
+/// The largest ZIP archive that `trs files --zip` downloads.
+const ZIP_LIMIT: usize = 64 * 1024 * 1024;
 
 /// Build the TRS commands for browsing tools and fetching their descriptors.
 pub fn command() -> Command {
@@ -20,6 +25,10 @@ pub fn command() -> Command {
                 .arg(arg!(--"descriptor-type" <TYPE> "Descriptor type: CWL, WDL, NFL, GALAXY or SMK"))
                 .arg(arg!(--organization <ORGANIZATION> "Organization that published the tool"))
                 .arg(arg!(--name <NAME> "Name of the tool's image"))
+                .arg(
+                    arg!(--tag <TAG> "Registry-specific tag; repeat for several tags")
+                        .action(ArgAction::Append),
+                )
                 .arg(arg!(--offset <OFFSET> "Start of the page, as returned by the registry"))
                 .arg(arg!(--limit <LIMIT> "Number of tools per page")),
         )
@@ -50,10 +59,14 @@ pub fn command() -> Command {
         )
         .subcommand(
             Command::new("files")
-                .about("List the files of a tool version")
+                .about("List the files of a tool version, or download them as a ZIP archive")
                 .arg(arg!(<TOOL_ID> "Tool ID"))
                 .arg(arg!(<VERSION_ID> "Version ID"))
-                .arg(type_arg()),
+                .arg(type_arg())
+                .arg(
+                    arg!(--zip <FILE> "Write all files as a ZIP archive to FILE (must not exist)")
+                        .value_parser(clap::value_parser!(PathBuf)),
+                ),
         )
         .subcommand(
             Command::new("tests")
@@ -71,7 +84,8 @@ fn type_arg() -> clap::Arg {
 
 /// A TRS request, checked before any request is sent.
 enum Request {
-    Tools(ToolFilter),
+    // Boxed: the filter is much larger than the other variants.
+    Tools(Box<ToolFilter>),
     Tool(String),
     Versions(String),
     Version {
@@ -89,6 +103,7 @@ enum Request {
         tool: String,
         version: String,
         descriptor_type: DescriptorType,
+        zip: Option<PathBuf>,
     },
     Tests {
         tool: String,
@@ -121,7 +136,7 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
     let segment = |id: &str| segment_arg(id, required(id)?);
 
     Ok(match name {
-        "tools" => Request::Tools(ToolFilter {
+        "tools" => Request::Tools(tool_filter(ToolFilter {
             tool_class: string("tool-class"),
             descriptor_type: string("descriptor-type")
                 .map(|value| parse_descriptor_type(&value))
@@ -139,8 +154,12 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
                     })
                 })
                 .transpose()?,
+            tags: args
+                .get_many::<String>("tag")
+                .map(|tags| tags.cloned().collect())
+                .unwrap_or_default(),
             ..Default::default()
-        }),
+        })?),
         "tool" => Request::Tool(segment("TOOL_ID")?),
         "versions" => Request::Versions(segment("TOOL_ID")?),
         "version" => Request::Version {
@@ -166,6 +185,10 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
                     tool,
                     version,
                     descriptor_type,
+                    zip: args
+                        .get_one::<PathBuf>("zip")
+                        .map(|path| new_file_arg(path.clone()))
+                        .transpose()?,
                 },
                 _ => Request::Tests {
                     tool,
@@ -177,6 +200,41 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
         }
         _ => anyhow::bail!("Unrecognized TRS command: {name}"),
     })
+}
+
+// Checks the filter as the library would, so that invalid tags fail before
+// the registry is contacted.
+fn tool_filter(filter: ToolFilter) -> anyhow::Result<Box<ToolFilter>> {
+    filter
+        .query()
+        .map_err(|error| anyhow::anyhow!("{}", printable(&error.to_string())))?;
+    Ok(Box::new(filter))
+}
+
+// The archive never replaces an existing file; checked here so that the
+// registry isn't contacted, and again when the file is created.
+fn new_file_arg(path: PathBuf) -> anyhow::Result<PathBuf> {
+    if path.exists() {
+        anyhow::bail!(
+            "{} already exists; choose another --zip file",
+            printable(&path.display().to_string())
+        );
+    }
+    Ok(path)
+}
+
+fn write_new_file(path: &PathBuf, bytes: &[u8]) -> Result<String, Box<dyn Error>> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("Can't create {}: {error}", path.display()))?;
+    file.write_all(bytes)?;
+    Ok(format!(
+        "Wrote {} bytes to {}\n",
+        bytes.len(),
+        printable(&path.display().to_string())
+    ))
 }
 
 fn segment_arg(name: &str, value: String) -> anyhow::Result<String> {
@@ -220,6 +278,18 @@ async fn execute(trs: &TRS, request: Request) -> Result<String, Box<dyn Error>> 
             tool,
             version,
             descriptor_type,
+            zip: Some(path),
+        } => {
+            let archive = trs
+                .get_files_zip(&tool, &version, descriptor_type, ZIP_LIMIT)
+                .await?;
+            write_new_file(&path, &archive)
+        }
+        Request::Files {
+            tool,
+            version,
+            descriptor_type,
+            zip: None,
         } => json(serde_json::to_value(
             trs.list_files(&tool, &version, descriptor_type).await?,
         )),
