@@ -9,14 +9,17 @@ use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::Task;
 use ga4gh_sdk::clients::tes::TesView;
 use ga4gh_sdk::clients::tes::TES;
+use ga4gh_sdk::clients::wait::{WaitOptions, WaitOutcome};
 use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::transport::Transport;
+use ga4gh_sdk::utils::operation::OperationError;
+use ga4gh_sdk::utils::transport::{urlencode, Transport};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
 use pyo3::types::{PyDict, PyMapping, PyString, PyTuple, PyType};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 fn invalid_response_text(error: impl std::fmt::Display) -> String {
     format!("Invalid TES response: {error}")
@@ -197,6 +200,185 @@ pub async fn cancel_task(task: &Task) -> Result<(), String> {
         .map_err(|e| format!("Failed to cancel task: {e}"))
 }
 
+/// Python source of the `WaitTimeoutError` exception.
+const WAIT_TIMEOUT_ERROR_SOURCE: &str = r#"
+class WaitTimeoutError(TimeoutError):
+    """Raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
+
+    `id` is the task's ID, and `last_state` its last polled state as a `TesState`, or
+    `None` if no poll succeeded. The task goes on running.
+    """
+
+    __module__ = "ga4gh_sdk"
+
+    id = None
+    last_state = None
+"#;
+
+static WAIT_TIMEOUT_ERROR: GILOnceCell<Py<PyType>> = GILOnceCell::new();
+
+/// The `WaitTimeoutError` Python exception, a `TimeoutError` (created once per interpreter).
+pub fn wait_timeout_error_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
+    WAIT_TIMEOUT_ERROR
+        .get_or_try_init(py, || {
+            // In a namespace of its own, like `TesState`.
+            let namespace = PyDict::new_bound(py);
+            namespace.set_item("__name__", "ga4gh_sdk")?;
+            py.run_bound(WAIT_TIMEOUT_ERROR_SOURCE, Some(&namespace), None)?;
+            Ok(namespace
+                .get_item("WaitTimeoutError")?
+                .ok_or_else(|| PyRuntimeError::new_err("WaitTimeoutError is not defined"))?
+                .downcast_into::<PyType>()?
+                .unbind())
+        })
+        .map(|cls| cls.bind(py))
+}
+
+/// How long a sync wait blocks without the GIL before it checks for signals, such as Ctrl-C.
+const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+
+/// The longest interval between polls if the caller gives none (or a shorter `poll_interval`).
+const DEFAULT_MAX_INTERVAL: Duration = Duration::from_secs(10);
+
+/// The settings of a wait, from the arguments of `wait()`.
+pub struct WaitSettings {
+    /// The library waiter's options; their deadline counts from the call of `wait()`.
+    pub options: WaitOptions,
+    /// The view in which to give the ended task, or `None` to give its state.
+    pub view: Option<TesView>,
+}
+
+/// A duration in seconds from Python; `name` names the argument in errors.
+fn seconds(name: &str, value: f64) -> PyResult<Duration> {
+    Duration::try_from_secs_f64(value).map_err(|_| {
+        PyValueError::new_err(format!(
+            "{name} must be a finite number of seconds, at least 0, not {value}"
+        ))
+    })
+}
+
+/// Checks the arguments of `wait()` and builds its settings; errors are `ValueError`s.
+///
+/// `timeout` is the time for the whole wait (`None` waits as long as it takes). Polls
+/// start `poll_interval` apart, and the interval doubles up to `max_interval` (by default
+/// 10 seconds, or `poll_interval` if that's longer).
+pub fn wait_settings(
+    timeout: Option<f64>,
+    poll_interval: f64,
+    max_interval: Option<f64>,
+    view: Option<&str>,
+) -> PyResult<WaitSettings> {
+    let budget = timeout
+        .map(|timeout| seconds("timeout", timeout))
+        .transpose()?
+        .unwrap_or(Duration::MAX);
+    let poll_interval = seconds("poll_interval", poll_interval)?;
+    if poll_interval.is_zero() {
+        return Err(PyValueError::new_err("poll_interval must be more than 0"));
+    }
+    let max_interval = match max_interval {
+        Some(max_interval) => seconds("max_interval", max_interval)?,
+        None => DEFAULT_MAX_INTERVAL.max(poll_interval),
+    };
+    if max_interval < poll_interval {
+        return Err(PyValueError::new_err(
+            "max_interval must be at least poll_interval",
+        ));
+    }
+    let view = view.map(parse_view).transpose()?;
+    let mut options = WaitOptions::new(budget);
+    options.poll_interval = poll_interval;
+    options.max_interval = max_interval;
+    Ok(WaitSettings { options, view })
+}
+
+/// How a wait ended, as owned, `Send` data; [`wait_result`] converts it for Python.
+pub enum WaitEnd {
+    /// The task reached this terminal state.
+    State(TesState),
+    /// The task ended; this is the task in the view asked for.
+    Task(Box<PyTesTask>),
+    /// The time ran out; the last polled state, if a poll succeeded.
+    Timeout(Option<TesState>),
+    /// The wait was stopped locally.
+    Interrupted,
+    /// A poll or the lookup of the ended task failed.
+    Failed(String),
+}
+
+/// Reads a state name from a TES response; names that TES 1.1 doesn't define read as
+/// `Unknown`.
+fn read_state(state: &str) -> TesState {
+    serde_json::from_value(Value::String(state.to_owned())).unwrap_or_default()
+}
+
+/// Waits for the task with the library's waiter until it ends, the time runs out or the
+/// settings' operation is cancelled. Never cancels the task.
+pub async fn wait_task(task: &Task, settings: WaitSettings) -> WaitEnd {
+    let WaitSettings { options, view } = settings;
+    let result = task.wait(&options).await;
+    let last_state = result.last_state.as_deref().map(read_state);
+    match result.outcome {
+        WaitOutcome::Complete
+        | WaitOutcome::ExecutorError
+        | WaitOutcome::SystemError
+        | WaitOutcome::Canceled
+        | WaitOutcome::Preempted => {}
+        WaitOutcome::Deadline => return WaitEnd::Timeout(last_state),
+        WaitOutcome::Interrupted => return WaitEnd::Interrupted,
+        WaitOutcome::PollingFailed => {
+            let error = result.error.unwrap_or_else(|| "unknown error".to_owned());
+            return WaitEnd::Failed(format!("Failed to wait for task: {error}"));
+        }
+    }
+    // The waiter ends only on states that TES 1.1 defines.
+    let state = last_state.unwrap_or_default();
+    let raw = match (view, result.last_response) {
+        (None, _) => return WaitEnd::State(state),
+        // The waiter polls the minimal view; no need to ask again.
+        (Some(TesView::Minimal), Some(raw)) => Ok(raw),
+        (Some(view), _) => {
+            let path = format!("tasks/{}", urlencode(&task.id));
+            let params = serde_json::json!({ "view": view });
+            match options
+                .operation
+                .run(task.transport.get(&path, Some(params)))
+                .await
+            {
+                Ok(Ok(body)) => serde_json::from_str(&body).map_err(invalid_response_text),
+                Ok(Err(error)) => Err(format!("Failed to get task: {error}")),
+                Err(OperationError::Deadline) => return WaitEnd::Timeout(Some(state)),
+                Err(OperationError::Cancelled) => return WaitEnd::Interrupted,
+            }
+        }
+    };
+    match raw.and_then(|raw| PyTesTask::parse(raw).map_err(invalid_response_text)) {
+        Ok(task) => WaitEnd::Task(Box::new(task)),
+        Err(error) => WaitEnd::Failed(error),
+    }
+}
+
+/// Converts the end of a wait for the task `id` into its Python result or exception.
+pub fn wait_result(py: Python<'_>, id: &str, end: WaitEnd) -> PyResult<PyObject> {
+    match end {
+        WaitEnd::State(state) => state_to_python(py, state),
+        WaitEnd::Task(task) => Ok((*task).into_py(py)),
+        WaitEnd::Timeout(last_state) => {
+            let last_state = match last_state {
+                Some(state) => state_to_python(py, state)?,
+                None => py.None(),
+            };
+            let message = format!("Timed out waiting for task {id}");
+            let error = wait_timeout_error_type(py)?.call1((message,))?;
+            error.setattr("id", id)?;
+            error.setattr("last_state", last_state)?;
+            Err(PyErr::from_value_bound(error))
+        }
+        WaitEnd::Interrupted => Err(PyRuntimeError::new_err("The wait was stopped")),
+        WaitEnd::Failed(error) => Err(PyRuntimeError::new_err(error)),
+    }
+}
+
 /// A TES task on the server, addressed by its ID.
 #[pyclass(name = "Task", module = "ga4gh_sdk", subclass)]
 pub struct PyTask {
@@ -249,6 +431,56 @@ impl PyTask {
     /// Asks the server to cancel the task. Returns `None`.
     pub fn cancel(&self, py: Python<'_>) -> PyResult<()> {
         io(py, |rt| rt.block_on(cancel_task(&self.inner)))
+    }
+
+    /// Waits until the task ends. Returns its final state as a `TesState`, or, with a
+    /// `view` (`"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case), the task in that view as
+    /// a `TesTask`.
+    ///
+    /// A task ends in `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`, `CANCELED` or
+    /// `PREEMPTED`. Polls start `poll_interval` seconds apart; the interval doubles up to
+    /// `max_interval` (by default 10 seconds, or `poll_interval` if that's longer).
+    /// `timeout` is the time in seconds for the whole wait; `None` waits as long as it
+    /// takes. Raises `WaitTimeoutError` when the time runs out, `RuntimeError` if a poll
+    /// fails, and `ValueError` for invalid arguments. The wait releases the GIL, and
+    /// Ctrl-C stops it with `KeyboardInterrupt`. None of these cancels the task.
+    #[pyo3(signature = (timeout=None, *, poll_interval=1.0, max_interval=None, view=None))]
+    pub fn wait(
+        &self,
+        py: Python<'_>,
+        timeout: Option<f64>,
+        poll_interval: f64,
+        max_interval: Option<f64>,
+        view: Option<&str>,
+    ) -> PyResult<PyObject> {
+        let settings = wait_settings(timeout, poll_interval, max_interval, view)?;
+        let cancellation = settings.options.operation.cancellation.clone();
+        let (end, interrupt) = io(py, |rt| {
+            Ok(rt.block_on(async {
+                let waiting = wait_task(&self.inner, settings);
+                tokio::pin!(waiting);
+                let mut checks = tokio::time::interval(SIGNAL_CHECK_INTERVAL);
+                let mut interrupt = None;
+                loop {
+                    tokio::select! {
+                        end = &mut waiting => break (end, interrupt),
+                        _ = checks.tick(), if interrupt.is_none() => {
+                            // Runs the signal handlers, such as the one that raises
+                            // `KeyboardInterrupt`, if this is the main thread.
+                            if let Err(error) = Python::with_gil(|py| py.check_signals()) {
+                                // Stops the waiter, which then ends at once.
+                                cancellation.cancel();
+                                interrupt = Some(error);
+                            }
+                        }
+                    }
+                }
+            }))
+        })?;
+        match interrupt {
+            Some(error) => Err(error),
+            None => wait_result(py, &self.inner.id, end),
+        }
     }
 }
 

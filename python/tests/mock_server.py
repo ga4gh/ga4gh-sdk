@@ -12,6 +12,8 @@ client closes the connection before,
 the client leaves (at most 30 seconds), for tests of timed-out submissions.
 Below ``/auth``, the TES of ``/api`` answers requests with the bearer token
 ``good`` and rejects all others with ``401 Unauthorized``.
+``GET /api/tasks/state-<STATE>`` answers at once with a task of that ID in that
+state, for tests of waiting.
 """
 
 import base64
@@ -109,6 +111,12 @@ PENDING = (202, {}, {"Retry-After": "1"})
 ROUTES.update(
     {
         ("GET", "/api/auth-failure"): (401, {"msg": "authentication required"}),
+        # A task that is queued, then runs, then completes, for tests of waiting.
+        ("GET", "/api/tasks/progress"): Sequence(
+            (200, {**TASK, "id": "progress", "state": "QUEUED"}),
+            (200, {**TASK, "id": "progress", "state": "RUNNING"}),
+            (200, {**TASK, "id": "progress", "state": "COMPLETE"}),
+        ),
         ("GET", "/drs/service-info"): (200, DRS_SERVICE_INFO),
         ("GET", "/drs/objects/obj-1"): (200, DRS_OBJECT),
         ("GET", "/drs/objects/obj-1/access/https-1"): (200, ACCESS_URL),
@@ -206,6 +214,10 @@ class Handler(BaseHTTPRequestHandler):
                 DISCONNECTS.append(url.path)
                 return
             self._reply(200, {**TASK, "id": task_id, "state": "RUNNING"})
+            return
+        if self.command == "GET" and url.path.startswith("/api/tasks/state-"):
+            task_id = url.path.rsplit("/", 1)[1]
+            self._reply(200, {**TASK, "id": task_id, "state": task_id.removeprefix("state-")})
             return
         if url.path.startswith("/failing-") and url.path.endswith("/service-info"):
             time.sleep(float(url.path.split("/")[1].removeprefix("failing-")))

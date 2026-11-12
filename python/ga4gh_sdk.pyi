@@ -7,7 +7,7 @@ import asyncio
 import enum
 import os
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Any, Generic, Self, TypeAlias, TypeVar, final
+from typing import Any, Generic, Self, TypeAlias, TypeVar, final, overload
 
 _JSONObject: TypeAlias = dict[str, Any]
 """A JSON object as a `dict`, for example a task's executor."""
@@ -569,6 +569,53 @@ class Task:
     def transport(self) -> Transport: ...
     def status(self) -> TesState: ...
     def cancel(self) -> None: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: None = None,
+    ) -> TesState: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: str,
+    ) -> TesTask: ...
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: str | None = None,
+    ) -> TesState | TesTask:
+        """Waits until the task ends; gives its final state, or the task in `view`.
+
+        A task ends in `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`, `CANCELED` or
+        `PREEMPTED`. Polls start `poll_interval` seconds apart; the interval doubles up to
+        `max_interval` (by default 10 seconds, or `poll_interval` if that's longer).
+        `timeout` is the time in seconds for the whole wait; `None` waits as long as it
+        takes. Raises `WaitTimeoutError` when the time runs out, `RuntimeError` if a poll
+        fails and `ValueError` for invalid arguments. Releases the GIL; Ctrl-C stops the
+        wait with `KeyboardInterrupt`. None of these cancels the task.
+        """
+
+class WaitTimeoutError(TimeoutError):
+    """Raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
+
+    The task goes on running.
+    """
+
+    id: str | None
+    """The task's ID."""
+    last_state: TesState | None
+    """The task's last polled state, or `None` if no poll succeeded."""
 
 class ListTasksParams:
     """Filters and paging for `TES.list()`."""
@@ -652,3 +699,34 @@ class AsyncTask:
     def transport(self) -> Transport: ...
     def status(self) -> asyncio.Future[TesState]: ...
     def cancel(self) -> asyncio.Future[None]: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: None = None,
+    ) -> asyncio.Future[TesState]: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: str,
+    ) -> asyncio.Future[TesTask]: ...
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: str | None = None,
+    ) -> asyncio.Future[TesState] | asyncio.Future[TesTask]:
+        """Waits until the task ends, like `Task.wait()`.
+
+        Invalid arguments raise `ValueError` when the method is called. Cancelling the
+        awaiting coroutine stops polling; it doesn't cancel the task.
+        """

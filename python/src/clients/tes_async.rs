@@ -8,7 +8,8 @@
 
 use crate::clients::tes::{
     cancel_task, connect, create_task, get_task, list_endpoint, list_tasks, parse_view,
-    state_to_python, task_status, task_to_create, PyListTasksParams,
+    state_to_python, task_status, task_to_create, wait_result, wait_settings, wait_task,
+    PyListTasksParams,
 };
 use crate::utils::convert::check_extra_args;
 // Public, so that Rust extensions can add async methods the same way.
@@ -267,6 +268,31 @@ impl PyAsyncTask {
             spawn_io(move || async move { cancel_task(&task).await })
                 .await
                 .map_err(PyRuntimeError::new_err)
+        })
+    }
+
+    /// Waits until the task ends; takes the same arguments as `Task.wait()` and gives the
+    /// same result.
+    ///
+    /// Invalid arguments raise `ValueError` when the method is called. Cancelling the
+    /// awaiting coroutine stops polling; it doesn't cancel the task.
+    #[pyo3(signature = (timeout=None, *, poll_interval=1.0, max_interval=None, view=None))]
+    pub fn wait<'py>(
+        &self,
+        py: Python<'py>,
+        timeout: Option<f64>,
+        poll_interval: f64,
+        max_interval: Option<f64>,
+        view: Option<&str>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let settings = wait_settings(timeout, poll_interval, max_interval, view)?;
+        let task = self.inner.clone();
+        let id = task.id.clone();
+        future_into_py(py, async move {
+            let end = spawn_io(move || async move { Ok(wait_task(&task, settings).await) })
+                .await
+                .map_err(PyRuntimeError::new_err)?;
+            Python::with_gil(|py| wait_result(py, &id, end))
         })
     }
 }
