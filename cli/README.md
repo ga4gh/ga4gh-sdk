@@ -134,8 +134,8 @@ recover an opaque ID exactly, use `tes create --format json`: it prints
 `{"id":"..."}` with JSON escapes and does not need a subsequent list request.
 The shell example above assumes an ordinary ID; command substitution cannot
 represent a NUL byte and strips trailing newlines. If the service rejects the
-task, the CLI prints the HTTP status and server message to stderr and exits
-with code 1.
+task, the CLI prints the HTTP status to stderr and exits with code 1. It does
+not print the server's error body, which may contain echoed credentials.
 
 2. To retrieve the list of tasks run `tes list` command:
 

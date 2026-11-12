@@ -195,6 +195,9 @@ class Handler(BaseHTTPRequestHandler):
                 "body": base64.b64encode(body).decode(),
             }
         )
+        if self.command == "GET" and url.path == "/api/auth-echo":
+            self._reply(401, {"echo": self.headers.get("Authorization")})
+            return
         if self.command == "GET" and url.path.startswith("/api/tasks/slow-"):
             task_id = url.path.rsplit("/", 1)[1]
             if self._client_left_within(float(task_id.removeprefix("slow-"))):

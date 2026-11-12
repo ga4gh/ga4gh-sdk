@@ -430,3 +430,6 @@ Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
 as `ga4gh_sdk::utils::transport::HttpError` (formerly `HttpStatusError`, still
 available under that name), which carries the status code and body. Downcast to
 it to distinguish, for example, a `404` from a network error.
+Its `Display` and `Debug` output omits the server body, because the server may
+echo a credential. The public `body` field retains the bounded raw response for
+explicit inspection; treat it as sensitive and do not log it by default.

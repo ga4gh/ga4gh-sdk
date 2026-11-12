@@ -67,10 +67,13 @@ the same WES configuration and authentication path as `wes run`.
 
 Errors name invalid or conflicting **sources**, not credential values.
 `Configuration` debug output also redacts known credentials. A remote server
-can return arbitrary text in an HTTP error body; treat that text as untrusted
-and avoid a service that echoes secrets in its response. The SDK preserves the
-bounded response body for diagnosis, so do not publish raw server errors that
-may include sensitive data.
+can echo a credential or other sensitive data in an HTTP error body. The
+default `Display` and `Debug` output of `HttpError` therefore includes its
+status but omits the body; CLI error output and Python exceptions use that
+safe message. Rust callers can explicitly read the bounded `HttpError.body`
+for diagnosis. It is raw, untrusted data and must not be logged or shown
+without reviewing it. This rule also applies to bodies obtained through the
+low-level raw-response API.
 
 Dynamic token-provider authentication is tracked separately in
 [#215](https://github.com/ga4gh/ga4gh-sdk/pull/215). Its integration with
