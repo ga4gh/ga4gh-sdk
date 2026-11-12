@@ -5,6 +5,9 @@ Hand edits of the TRS 2.0.1 models, applied by utils/build_models.sh.
   `Unrecognized`, so a derived `Deserialize` would read every descriptor type
   as an unknown image type. The hand-written `Deserialize` reads known values
   of either enum first and other values as image types.
+- `Checksum.type` writes its two links in Markdown (`[text](url)`)
+  instead of the spec's AsciiDoc (`url[text]`), so that rustdoc renders
+  them as links and doesn't warn about bare URLs and unresolved links.
 
 --- a/models/file_wrapper_image_type.rs
 +++ b/models/file_wrapper_image_type.rs
@@ -43,3 +46,14 @@ Hand edits of the TRS 2.0.1 models, applied by utils/build_models.sh.
  impl Default for FileWrapperImageType {
      fn default() -> Self {
          Self::ImageType(Default::default())
+--- a/models/checksum.rs
++++ b/models/checksum.rs
+@@ -18,7 +18,7 @@
+     /// The hex-string encoded checksum for the data. 
+     #[serde(rename = "checksum")]
+     pub checksum: String,
+-    /// The digest method used to create the checksum. The value (e.g. `sha-256`) SHOULD be listed as `Hash Name String` in the https://github.com/ga4gh-discovery/ga4gh-checksum/blob/master/hash-alg.csv[GA4GH Checksum Hash Algorithm Registry]. Other values MAY be used, as long as implementors are aware of the issues discussed in https://tools.ietf.org/html/rfc6920#section-9.4[RFC6920]. GA4GH may provide more explicit guidance for use of non-IANA-registered algorithms in the future.
++    /// The digest method used to create the checksum. The value (e.g. `sha-256`) SHOULD be listed as `Hash Name String` in the [GA4GH Checksum Hash Algorithm Registry](https://github.com/ga4gh-discovery/ga4gh-checksum/blob/master/hash-alg.csv). Other values MAY be used, as long as implementors are aware of the issues discussed in [RFC6920](https://tools.ietf.org/html/rfc6920#section-9.4). GA4GH may provide more explicit guidance for use of non-IANA-registered algorithms in the future.
+     #[serde(rename = "type")]
+     pub r#type: String,
+     /// Fields that the spec doesn't define, kept as received, so that writing
