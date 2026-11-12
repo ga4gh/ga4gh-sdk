@@ -7,9 +7,9 @@ use ga4gh_sdk::clients::tes::models::ListTasksParams;
 use ga4gh_sdk::clients::tes::{TesView, TES};
 use ga4gh_sdk::clients::wait::{WaitOptions, WaitOutcome};
 use ga4gh_sdk::reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
-use ga4gh_sdk::reqwest::Client;
+use ga4gh_sdk::reqwest::{Client, StatusCode};
 use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::transport::Transport;
+use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use serde_json::{json, Value};
 use std::time::Duration;
 use url::Url;
@@ -31,11 +31,16 @@ fn config() -> Configuration {
     Configuration::new(base_path)
 }
 
-/// Client of a user of proTES. The transport doesn't send the credentials of
-/// the configuration yet (#31), so the access token is a default header of a
-/// caller-owned client.
+/// Client of a user of proTES.
 async fn authorized_tes() -> TES {
-    let mut token = HeaderValue::from_str(&format!("Bearer {}", env("PROTES_ACCESS_TOKEN")))
+    tes_with_token(&env("PROTES_ACCESS_TOKEN")).await
+}
+
+/// Client that sends an access token. The transport doesn't send the
+/// credentials of the configuration yet (#31), so the token is a default
+/// header of a caller-owned client.
+async fn tes_with_token(token: &str) -> TES {
+    let mut token = HeaderValue::from_str(&format!("Bearer {token}"))
         .expect("access token is not a header value");
     token.set_sensitive(true);
     let headers = HeaderMap::from_iter([(AUTHORIZATION, token)]);
@@ -73,6 +78,7 @@ async fn task_runs_to_completion_through_the_gateway() {
         .await
         .expect("task in view FULL");
     let tags = full.tags.expect("tags of the task");
+    // proTES records the TES instance that runs a task in this tag
     assert_eq!(
         tags.get("gateway.backend").map(String::as_str),
         Some(env("PROTES_BACKEND_URL").as_str()),
@@ -123,19 +129,25 @@ async fn canceled_task_ends_canceled() {
     assert_eq!(result.outcome, WaitOutcome::Canceled, "{result:?}");
 }
 
-#[tokio::test]
-async fn requests_without_access_token_are_unauthorized() {
-    // The service info is public; tasks are not
-    let tes = TES::new(&config()).await.expect("TES client");
+/// Asserts that a request failed with HTTP 401.
+fn assert_unauthorized(error: &(dyn std::error::Error + 'static)) {
+    let status = error.downcast_ref::<HttpError>().map(|error| error.status);
+    assert_eq!(status, Some(StatusCode::UNAUTHORIZED), "{error}");
+}
 
-    let error = tes
-        .list_tasks(None)
-        .await
-        .expect_err("list without a token");
-    assert!(error.to_string().contains("401"), "{error}");
-    let error = tes
-        .create_value(task("anonymous", &["true"]))
-        .await
-        .expect_err("creation without a token");
-    assert!(error.to_string().contains("401"), "{error}");
+#[tokio::test]
+async fn requests_without_valid_access_token_are_unauthorized() {
+    // The service info is public; tasks are not
+    let anonymous = TES::new(&config()).await.expect("TES client");
+    let invalid = tes_with_token("not-a-token").await;
+
+    for tes in [anonymous, invalid] {
+        let error = tes.list_tasks(None).await.expect_err("list");
+        assert_unauthorized(error.as_ref());
+        let error = tes
+            .create_value(task("unauthorized", &["true"]))
+            .await
+            .expect_err("creation");
+        assert_unauthorized(error.as_ref());
+    }
 }

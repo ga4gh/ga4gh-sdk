@@ -125,7 +125,7 @@ jobs:
           echo "$SUITE: run=$run_suite" >> "$GITHUB_STEP_SUMMARY"
       # Also for proTES, which relays tasks to Funnel
       - name: Install Funnel
-        if: (matrix.suite == 'funnel' || matrix.suite == 'protes') && steps.changes.outputs.run == 'true'
+        if: contains(fromJSON('["funnel", "protes"]'), matrix.suite) && steps.changes.outputs.run == 'true'
         shell: bash
         run: |
           archive=funnel-linux-amd64-v0.11.14.tar.gz

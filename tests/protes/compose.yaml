@@ -2,14 +2,17 @@
 # `tests/run-protes-integration.sh`: it relays tasks to a Funnel server
 # (`funnel`), and accepts access tokens of a fake identity provider
 # (`fake-tes`, the one of the proTES smoke test). The script provides the
-# Funnel executable, the file of the identity provider, a work directory and
-# the Docker socket. Not for deployments: only proTES is published, on the
-# host's loopback interface. All images are pinned by digest; bump
-# those of proTES together with `protes_commit` of the script.
+# Funnel executable, the file of the identity provider, a work directory,
+# the Docker socket and the image of the Docker CLI. Not for deployments:
+# only proTES is published, on the host's loopback interface. All images
+# are pinned by digest; bump the one of proTES together with
+# `protes_commit` of the script, and the Docker CLI in the script.
+
+x-protes-image: &protes-image docker.io/elixircloud/protes:0.6.0@sha256:f9a6c5bb077f1744d0e3e4d4dcfc085d0703223761295d1b28f67833db01322a
 
 x-protes: &protes
-  image: docker.io/elixircloud/protes:0.6.0@sha256:f9a6c5bb077f1744d0e3e4d4dcfc085d0703223761295d1b28f67833db01322a
-  environment: &protes-environment
+  image: *protes-image
+  environment:
     CELERY_BROKER_URL: pyamqp://protes:protes@rabbitmq:5672//
     FOCA_CONFIG_OVERLAY: /sdk/config.yaml
   volumes:
@@ -42,7 +45,7 @@ services:
   # The identity provider only; its fake TES API is unused. The name is
   # part of the issuer of its tokens (`ISSUER` of `fake_tes.py`)
   fake-tes:
-    image: docker.io/elixircloud/protes:0.6.0@sha256:f9a6c5bb077f1744d0e3e4d4dcfc085d0703223761295d1b28f67833db01322a
+    image: *protes-image
     command: [python, /smoke/fake_tes.py]
     volumes:
       - ${FAKE_TES_FILE:?path of fake_tes.py}:/smoke/fake_tes.py:ro
@@ -56,7 +59,7 @@ services:
   # bind-mounts task directories from the work directory: the directory has
   # the same path in this container as on the host
   funnel:
-    image: docker.io/library/docker:28.5.2-cli@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d
+    image: ${DOCKER_CLI_IMAGE:?image of the Docker CLI}
     entrypoint: [/usr/local/bin/funnel]
     command:
       - server
