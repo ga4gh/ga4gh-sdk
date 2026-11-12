@@ -141,7 +141,7 @@ hand-written:
   methods that return `PyResult`, and an `#[allow]` on the `impl` block or
   the method doesn't reach that code. It is crate-wide rather than per file,
   so that new binding files don't each need it. Remove it after upgrading
-  PyO3.
+  PyO3 ([#239](https://github.com/ga4gh/ga4gh-sdk/issues/239)).
 
 Documentation lint enforcement remains in
 [#87](https://github.com/ga4gh/ga4gh-sdk/issues/87); it needs a policy for
