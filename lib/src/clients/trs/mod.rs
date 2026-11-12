@@ -524,6 +524,7 @@ impl TRS {
 mod tests {
     use super::*;
     use crate::clients::trs::models::tool_file::FileType;
+    use crate::utils::auth::FixedToken;
     use crate::utils::transport::BodyLimitError;
     use mockito::{mock, server_url, Matcher, Mock};
     use url::Url;
@@ -637,6 +638,31 @@ mod tests {
             assert_eq!(trs.service.unwrap().r#type.artifact, "trs");
         }
         m.assert();
+    }
+
+    #[tokio::test]
+    async fn token_provider_authenticates_discovery_and_tool_reads() {
+        let prefix = "provider";
+        let info = mock("GET", path(prefix, "service-info").as_str())
+            .match_header("authorization", "Bearer good")
+            .with_body(service_info_json("trs").to_string())
+            .create();
+        let tools = mock("GET", path(prefix, "tools").as_str())
+            .match_header("authorization", "Bearer good")
+            .with_body("[]")
+            .create();
+        let config = Configuration::new(
+            Url::parse(&format!("{}/{prefix}/ga4gh/trs/v2", server_url())).unwrap(),
+        )
+        .with_token_provider(FixedToken("good"));
+        let trs = TRS::new(&config).await.unwrap();
+        assert!(trs
+            .list_tools(&ToolFilter::default())
+            .await
+            .unwrap()
+            .is_empty());
+        info.assert();
+        tools.assert();
     }
 
     #[tokio::test]

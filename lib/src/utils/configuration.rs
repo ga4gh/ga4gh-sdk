@@ -1,8 +1,10 @@
 use crate::clients::ServiceType;
+use crate::utils::auth::{TokenProvider, TokenSource};
 use crate::utils::timeouts::Timeouts;
 use serde_json::{Map, Value};
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 use url::Url;
 
 /// Printed in `Debug` output in place of a value that is set but not meant to be shown.
@@ -141,6 +143,12 @@ pub struct Configuration {
     pub extra: Map<String, Value>,
     /// The time limits of requests; see [`Timeouts`].
     pub timeouts: Timeouts,
+    /// Gives a bearer token for each request, in place of a static credential;
+    /// see [`with_token_provider`](Self::with_token_provider).
+    pub token_provider: Option<TokenSource>,
+    /// The audience passed to the token provider; without it, the API root.
+    /// See [`token_audience`](Self::token_audience).
+    pub token_audience: Option<String>,
 }
 
 /// Represents the basic authentication credentials.
@@ -175,6 +183,8 @@ pub enum AuthError {
     InvalidBasicUsername,
     /// A caller-owned client and configured credentials require explicit opt-in.
     CallerOwnedClient,
+    /// A token provider requires the asynchronous request builder.
+    ProviderRequiresAsyncBuilder,
 }
 
 impl fmt::Display for AuthError {
@@ -188,6 +198,9 @@ impl fmt::Display for AuthError {
             Self::InvalidBasicUsername => f.write_str("Basic auth username must not contain ':'"),
             Self::CallerOwnedClient => f.write_str(
                 "Configured credentials cannot be applied to a caller-owned HTTP client without explicit opt-in",
+            ),
+            Self::ProviderRequiresAsyncBuilder => f.write_str(
+                "A token provider requires authorized_request_builder() before sending a request",
             ),
         }
     }
@@ -214,6 +227,8 @@ impl fmt::Debug for Configuration {
             api_key,
             extra,
             timeouts,
+            token_provider,
+            token_audience,
         } = self;
         f.debug_struct("Configuration")
             .field("base_path", &display_url(base_path))
@@ -224,6 +239,8 @@ impl fmt::Debug for Configuration {
             .field("api_key", api_key)
             .field("extra", &RedactedValues(extra))
             .field("timeouts", timeouts)
+            .field("token_provider", &token_provider.as_ref().map(|_| Redacted))
+            .field("token_audience", &redact(token_audience))
             .finish()
     }
 }
@@ -275,6 +292,8 @@ impl Configuration {
             api_key: None,
             extra: Map::new(),
             timeouts: Timeouts::default(),
+            token_provider: None,
+            token_audience: None,
         }
     }
 
@@ -401,6 +420,79 @@ impl Configuration {
         name: &str,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(self.with_oauth_access_token(token_from_env(name)?))
+    }
+
+    /// Gets bearer tokens from `provider` for each request, in place of a static
+    /// credential.
+    ///
+    /// The provider is one credential source on its own: requests fail before
+    /// anything is sent if `basic_auth`, `oauth_access_token`,
+    /// `bearer_access_token`, `api_key` or a user or password in `base_path` is
+    /// set as well. See [`crate::utils::auth`] for when the provider is asked,
+    /// how tokens are reused and when a request is sent once more after
+    /// `401 Unauthorized`.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - Gives the tokens.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of Configuration.
+    pub fn with_token_provider(self, provider: impl TokenProvider + 'static) -> Self {
+        self.with_shared_token_provider(Arc::new(provider))
+    }
+
+    /// Like [`with_token_provider`](Self::with_token_provider), for a provider
+    /// that other configurations use, too.
+    pub fn with_shared_token_provider(mut self, provider: Arc<dyn TokenProvider>) -> Self {
+        self.token_provider = Some(TokenSource::new(provider));
+        self
+    }
+
+    /// Sets the audience that the token provider is asked for, such as the
+    /// audience of a token exchange; without it, it is the API root.
+    ///
+    /// # Arguments
+    ///
+    /// * `audience` - The audience.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of Configuration.
+    pub fn with_token_audience(mut self, audience: String) -> Self {
+        self.token_audience = Some(audience);
+        self
+    }
+
+    /// The audience that the token provider is asked for: the configured
+    /// `token_audience` or, without one, `base_path` without user, password,
+    /// query and fragment.
+    pub fn token_audience(&self) -> String {
+        self.token_audience
+            .clone()
+            .unwrap_or_else(|| display_url(&self.base_path))
+    }
+
+    /// The names of the configured credentials other than the token provider.
+    pub(crate) fn static_credentials(&self) -> Vec<&'static str> {
+        let mut sources = Vec::new();
+        if self.basic_auth.is_some() {
+            sources.push("basic_auth");
+        }
+        if self.oauth_access_token.is_some() {
+            sources.push("oauth_access_token");
+        }
+        if self.bearer_access_token.is_some() {
+            sources.push("bearer_access_token");
+        }
+        if self.api_key.is_some() {
+            sources.push("api_key");
+        }
+        if !self.base_path.username().is_empty() || self.base_path.password().is_some() {
+            sources.push("the user or password in base_path");
+        }
+        sources
     }
 
     /// Sets a generic bearer access token for API requests.
@@ -567,6 +659,8 @@ impl Default for Configuration {
             api_key: None,
             extra: Map::new(),
             timeouts: Timeouts::default(),
+            token_provider: None,
+            token_audience: None,
         }
     }
 }
@@ -591,6 +685,8 @@ pub(crate) fn config_with_markers() -> Configuration {
         Value::String("SENTINEL_EXTRA".to_owned()),
     );
     config
+        .with_token_provider(crate::utils::auth::FixedToken("SENTINEL_PROVIDER"))
+        .with_token_audience("https://audience.example".to_owned())
 }
 
 #[cfg(test)]
@@ -948,7 +1044,9 @@ mod tests {
              bearer_access_token: Some(<redacted>), \
              api_key: Some(ApiKey { prefix: Some(\"Token\"), key: <redacted> }), \
              extra: {\"client_secret\": <redacted>}, \
-             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s } }"
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s }, \
+             token_provider: Some(<redacted>), \
+             token_audience: Some(<redacted>) }"
         );
     }
 
@@ -964,7 +1062,9 @@ mod tests {
              bearer_access_token: None, \
              api_key: None, \
              extra: {}, \
-             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s } }"
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s }, \
+             token_provider: None, \
+             token_audience: None }"
         );
     }
 
@@ -972,6 +1072,8 @@ mod tests {
     fn test_debug_output_pretty() {
         let output = format!("{:#?}", config_with_markers());
         assert!(!output.contains("SENTINEL"), "{output}");
+        let config = Configuration::default().with_token_audience("SENTINEL_AUDIENCE".into());
+        assert!(!format!("{config:?}").contains("SENTINEL"));
         assert!(
             output.contains("oauth_access_token: Some(\n        <redacted>,\n    )"),
             "{output}"
@@ -1019,5 +1121,33 @@ mod tests {
         let mut config = Configuration::default();
         config.set_base_path(Url::parse("https://api.example.com").unwrap());
         assert_eq!(config.base_path.as_str(), "https://api.example.com/");
+    }
+
+    #[test]
+    fn test_token_audience() {
+        let base = Url::parse("https://user:secret@example.org/ga4gh/tes/v1?x=1#f").unwrap();
+        let config = Configuration::new(base);
+        assert_eq!(config.token_audience(), "https://example.org/ga4gh/tes/v1");
+        let config = config.with_token_audience("tes-audience".to_owned());
+        assert_eq!(config.token_audience(), "tes-audience");
+    }
+
+    #[test]
+    fn test_static_credentials() {
+        assert!(Configuration::default().static_credentials().is_empty());
+        let config = Configuration::default()
+            .with_token_provider(crate::utils::auth::FixedToken("token"))
+            .with_token_audience("audience".to_owned());
+        assert!(config.static_credentials().is_empty());
+        assert_eq!(
+            config_with_markers().static_credentials(),
+            [
+                "basic_auth",
+                "oauth_access_token",
+                "bearer_access_token",
+                "api_key",
+                "the user or password in base_path"
+            ]
+        );
     }
 }

@@ -72,10 +72,12 @@ jobs:
         working-directory: python
         run: python -m pytest
 
-  # Builds the wheels of every release platform and the sdist, so that a
-  # platform-specific break shows up before a tag; nothing is published.
+  # Build the full release matrix after merges to main and on manual dispatch.
+  # PRs keep the Python binding tests above; maintainers can dispatch CI on a
+  # PR branch before merge when packaging or platform support changes.
   wheels:
     name: Python wheels
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/wheels.yml
 
   integration:
@@ -207,6 +209,7 @@ jobs:
     steps:
       - name: Check all jobs
         env:
+          EVENT_NAME: ${{ github.event_name }}
           NEEDS: ${{ toJSON(needs) }}
         run: |
           python3 - <<'PY'
@@ -221,8 +224,11 @@ jobs:
               'lint', 'test', 'build', 'python', 'wheels', 'integration', 'coverage',
               'pre-commit',
           }
+          expected_results = {name: 'success' for name in expected}
+          if os.environ['EVENT_NAME'] == 'pull_request':
+              expected_results['wheels'] = 'skipped'
           if set(results) != expected or any(
-              result != 'success' for result in results.values()
+              results[name] != expected_results[name] for name in expected
           ):
               sys.exit(1)
           PY

@@ -10,6 +10,8 @@ client closes the connection before,
 ``GET /__disconnects__`` lists the request's path. Below ``/hang``,
 ``service-info`` answers at once and every other request gets no answer until
 the client leaves (at most 30 seconds), for tests of timed-out submissions.
+Below ``/auth``, the TES of ``/api`` answers requests with the bearer token
+``good`` and rejects all others with ``401 Unauthorized``.
 """
 
 import base64
@@ -208,6 +210,14 @@ class Handler(BaseHTTPRequestHandler):
         if url.path.startswith("/failing-") and url.path.endswith("/service-info"):
             time.sleep(float(url.path.split("/")[1].removeprefix("failing-")))
             self._reply(503, {"msg": "unavailable"})
+            return
+        if url.path.startswith("/auth/"):
+            # The TES below `/api`, for requests with the token `good` only.
+            if self.headers.get("Authorization") != "Bearer good":
+                self._reply(401, {"msg": "unauthorized"})
+                return
+            path = "/api/" + url.path.removeprefix("/auth/")
+            self._reply(*ROUTES.get((self.command, path), (404, {"msg": "not found"})))
             return
         if url.path == "/hang/service-info":
             self._reply(200, SERVICE_INFO)
