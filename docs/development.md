@@ -110,10 +110,10 @@ informational: they never fail, and `CI passed` remains the only required
 check.
 
 The upload authenticates with an OIDC token of the workflow run, so the
-repository needs no Codecov secret; uploads from forks need no token. This
-needs a one-time setup by an organization admin: the Codecov GitHub app
-installed for the repository, and the repository enabled on Codecov.
-Dependabot pull requests may get no OIDC token, and then no Codecov report.
+repository needs no Codecov secret; uploads from forks need no token. Uploads
+need the Codecov GitHub app, which the ga4gh organization has installed for
+this repository. Dependabot pull requests may get no OIDC token, and then no
+Codecov report.
 A failed upload doesn't fail the job: the job summary and the `coverage`
 artifact of the `coverage` job are then still there, and the job log of
 `codecov` shows the reason.
