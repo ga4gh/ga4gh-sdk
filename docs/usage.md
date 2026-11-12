@@ -22,9 +22,20 @@ The CLI reads one service section from the configuration file for each command.
 
 ## API root (`base_path`)
 
-Every client takes a `Configuration` whose `base_path` is the **API root** of
-one service, including the service's path prefix. The SDK resolves
-`service-info`, `tasks`, `runs` and `objects` below that root:
+`Configuration.base_path` identifies the **API root** of one service.
+The API root includes the service's deployment path.
+
+Before configuring the client, obtain the API root from the service operator
+or the deployment documentation. The example URLs below illustrate the path
+structure. They are not live services.
+
+1. Set `base_path` to the service's full API root.
+2. If the service is behind a gateway or reverse proxy, retain the full path
+   prefix. For example, use `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+3. Omit embedded credentials, query strings, and fragments from the API root.
+
+A trailing slash is optional. The SDK resolves endpoint paths below the
+configured root. The following table shows the resulting request paths:
 
 | Service | Example `base_path`                  | Requests go to                        |
 | ------- | ------------------------------------ | ------------------------------------- |
@@ -34,11 +45,11 @@ one service, including the service's path prefix. The SDK resolves
 | TRS     | `https://example.org/ga4gh/trs/v2`   | `…/ga4gh/trs/v2/service-info`, `…/tools` |
 | Registry | `https://example.org/ga4gh/registry/v1` | `…/ga4gh/registry/v1/service-info`, `…/services` |
 
-A service behind a gateway or reverse proxy keeps its full prefix, for example
-`https://gateway.example.org/my-tes/ga4gh/tes/v1`. A trailing slash is
-optional. The root must not contain a query string or a fragment. A host-only
-URL such as `https://example.org` sends requests to `/service-info` on the
-host, which usually fails with `404 Not Found`.
+A host-only root such as `https://example.org` resolves `service-info` to
+`https://example.org/service-info`. If the service uses a path prefix, that
+request targets the wrong location and can return `404 Not Found`.
+If discovery returns 404, verify the API root against the deployment's
+documented URL. A 404 response alone does not identify the cause.
 
 ## Configuration file
 

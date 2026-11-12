@@ -5,6 +5,19 @@ pre-commit hooks, coverage, lints, the CI checks, and the issue and pull
 request templates. The rules for changes and the standard checks are in
 [AGENTS.md](../AGENTS.md); run all commands from the repository root.
 
+## Engineering and review guidance
+
+| Work | Guide |
+| --- | --- |
+| Design or change SDK behavior | [Engineering principles](engineering_principles.md), with routing by affected contract |
+| Review or publish a change | [Reviewer framework](reviewer_framework.md), including updates to an existing PR |
+| Write instructions or user documentation | [Technical writing](technical_writing.md), with audience-specific guidance |
+| Investigate the initial rollout | [Dated engineering assessment](engineering_assessment.md), with pinned evidence and issue ownership |
+
+Use the principles as decision guidance for the current change. Issues track
+implementation work; the assessment is a historical snapshot. `AGENTS.md` routes
+coding agents to the same guides used by contributors.
+
 ## Prerequisites
 
 - [rustup](https://rustup.rs/), for the toolchain pinned in

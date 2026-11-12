@@ -21,6 +21,12 @@ different directory is shown.
   wrapper must not change `lib/src/clients`.
 - When changing a public Rust, CLI, or Python API, consider the downstream
   extension use cases in [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78).
+- For implementation work, use the routing table in the
+  [engineering principles](docs/engineering_principles.md). Apply the sections
+  relevant to the affected contract; they do not require unrelated refactoring.
+- For documentation and repository instructions, follow the
+  [technical writing guide](docs/technical_writing.md). Preserve technical
+  meaning, conditions, exceptions, and API identifiers.
 
 ## Before opening a pull request
 
