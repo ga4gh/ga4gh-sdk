@@ -264,8 +264,7 @@ async fn strict_json_validates_utf8_even_in_ignored_properties() {
         BodyLimits::default(),
     )
     .await
-    .err()
-    .expect("invalid UTF-8 must not be skipped with an unknown field");
+    .expect_err("invalid UTF-8 must not be skipped with an unknown field");
     assert!(error.downcast_ref::<std::str::Utf8Error>().is_some());
     request.assert();
 }

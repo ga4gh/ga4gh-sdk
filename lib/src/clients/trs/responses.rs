@@ -128,7 +128,12 @@ pub async fn next_tools_page<'a>(
     {
         return Err("TRS next_page must identify tools at the same API root".into());
     }
-    if next.query_pairs().any(|(key, _)| key == "tags") {
+    // An empty echoed `tags=` does not request tag filtering. Preserve the
+    // server's opaque link while guarding a nonempty filter before the request.
+    if next
+        .query_pairs()
+        .any(|(key, value)| key == "tags" && !value.is_empty())
+    {
         context.tags.require("TRS", "tags")?;
     }
     let endpoint = match next.query() {

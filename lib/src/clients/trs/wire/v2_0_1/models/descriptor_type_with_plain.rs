@@ -10,7 +10,7 @@
 
 #![allow(unused_imports)]
 #![allow(clippy::empty_docs)]
-use crate::clients::trs::models;
+use crate::clients::trs::wire::v2_0_1::models;
 use serde::{Deserialize, Serialize};
 
 /// DescriptorTypeWithPlain : The output type of the descriptor. Plain types return the raw text while the \"non-plain\" types return the application/json

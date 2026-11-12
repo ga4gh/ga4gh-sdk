@@ -93,6 +93,23 @@ async fn independent_clients_use_declared_profiles_and_preserve_extensions() {
 }
 
 #[tokio::test]
+async fn tool_with_a_2_0_2_description_keeps_the_public_model_and_original_json() {
+    let prefix = "nested-description202";
+    let payload = tool(version(json!("Readable description")));
+    let response = get(prefix, "tools/t", payload.to_string());
+    let actual = explicit(prefix, TrsVersion::V2_0_2)
+        .get_tool("t")
+        .await
+        .unwrap();
+    assert_eq!(
+        actual.versions[0].description(),
+        Some("Readable description")
+    );
+    assert_eq!(serde_json::to_value(actual).unwrap(), payload);
+    response.assert();
+}
+
+#[tokio::test]
 async fn selected_decoder_is_used_for_every_typed_route_without_retry() {
     for (prefix, profile, succeeds) in [
         ("routes201", TrsVersion::V2_0_1, true),
@@ -106,7 +123,7 @@ async fn selected_decoder_is_used_for_every_typed_route_without_retry() {
         let single_version = get(prefix, "tools/t/versions/v1", v.to_string());
         let list = mock("GET", format!("/{prefix}/trs/v2/tools").as_str())
             .with_status(200)
-            .with_body(json!([t.clone()]).to_string())
+            .with_body(json!([tool(version(json!("valid"))), t.clone()]).to_string())
             .expect(2)
             .create();
         let next = mock("GET", format!("/{prefix}/trs/v2/tools").as_str())
@@ -127,10 +144,15 @@ async fn selected_decoder_is_used_for_every_typed_route_without_retry() {
                 .downcast_ref::<serde_json::Error>()
                 .is_some());
         }
-        assert_eq!(
-            client.list_tools(&ToolFilter::default()).await.is_ok(),
-            succeeds
-        );
+        let listed = client.list_tools(&ToolFilter::default()).await;
+        if succeeds {
+            assert_eq!(listed.unwrap().len(), 2);
+        } else {
+            assert!(listed
+                .unwrap_err()
+                .to_string()
+                .contains("Tool.versions[0].description"));
+        }
         assert_eq!(
             responses::list_tools_page(&client, None, BodyLimits::default())
                 .await
@@ -212,20 +234,14 @@ async fn strict_discovery_and_explicit_override_remain_distinct() {
         .create();
     let error = TRS::with_options(
         &config(prefix),
-        TrsOptions {
-            version: VersionPolicy::RequireKnown,
-            ..Default::default()
-        },
+        TrsOptions::default().with_version(VersionPolicy::RequireKnown),
     )
     .await
     .unwrap_err();
     assert!(error.downcast_ref::<CompatibilityError>().is_some());
     let client = TRS::with_options(
         &config(prefix),
-        TrsOptions {
-            version: VersionPolicy::Explicit(TrsVersion::V2_0_2),
-            ..Default::default()
-        },
+        TrsOptions::default().with_version(VersionPolicy::Explicit(TrsVersion::V2_0_2)),
     )
     .await
     .unwrap();
@@ -294,6 +310,18 @@ async fn tags_require_support_on_requests_and_pagination() {
         CapabilitySupport::CallerEnabled
     );
     allowed.assert();
+
+    let empty_link = mock("GET", "/empty-tag-link/trs/v2/tools")
+        .match_query(Matcher::Exact("tags=".into()))
+        .with_status(200)
+        .with_body("[]")
+        .create();
+    let empty_link_client = explicit("empty-tag-link", TrsVersion::V2_0_1);
+    let page = responses::next_tools_page(&empty_link_client, "?tags=", BodyLimits::default())
+        .await
+        .unwrap();
+    assert!(page.tools.is_empty());
+    empty_link.assert();
 }
 
 #[tokio::test]
@@ -309,10 +337,7 @@ async fn discovery_failure_is_not_an_automatic_bypass() {
             .create();
         let result = TRS::with_options(
             &config(prefix),
-            TrsOptions {
-                version: VersionPolicy::Explicit(TrsVersion::V2_0_1),
-                ..Default::default()
-            },
+            TrsOptions::default().with_version(VersionPolicy::Explicit(TrsVersion::V2_0_1)),
         )
         .await;
         let error = result.unwrap_err();

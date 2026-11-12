@@ -36,12 +36,3 @@ impl TrsVersion {
             .collect()
     }
 }
-
-impl ToolVersion {
-    /// String description when supplied by a registry. TRS 2.0.2 defines it;
-    /// older profiles retain it as extension data without imposing a string type.
-    /// The field remains in `extra` and is included in serialized JSON.
-    pub fn description(&self) -> Option<&str> {
-        self.extra.get("description").and_then(Value::as_str)
-    }
-}

@@ -45,12 +45,12 @@
 //! ```
 
 mod compatibility;
-pub mod models;
 mod protocol;
 pub mod responses;
 mod wire;
 use crate::compatibility::CapabilityOverride;
 pub use compatibility::{TrsCompatibility, TrsOptions, TrsVersion};
+pub use wire::v2_0_1::models;
 
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::trs::models::{
@@ -62,6 +62,15 @@ use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 use std::error::Error;
+
+impl ToolVersion {
+    /// String description when supplied by a registry. TRS 2.0.2 defines it;
+    /// older profiles retain it as extension data without imposing a string type.
+    /// The original value remains in `extra` and in serialized JSON.
+    pub fn description(&self) -> Option<&str> {
+        self.extra.get("description").and_then(Value::as_str)
+    }
+}
 
 // Encodes a path parameter as one URL path segment. Empty values and dot
 // segments would change the path that the URL resolves to, so they are
@@ -960,7 +969,12 @@ mod tests {
         let m = get_mock("bad-description", &tool_version(""), &version.to_string());
         for client in clients("bad-description") {
             let error = client.get_version(TOOL_ID, VERSION_ID).await.unwrap_err();
-            assert!(error.to_string().contains("invalid type"), "{error}");
+            assert!(
+                error
+                    .to_string()
+                    .contains("ToolVersion.description must be a string"),
+                "{error}"
+            );
         }
         m.assert();
     }
