@@ -93,6 +93,30 @@ async fn invalid_or_conflicting_sources_fail_before_network_io() {
 }
 
 #[tokio::test]
+async fn server_echoing_the_credential_cannot_put_it_in_error_diagnostics() {
+    const TOKEN: &str = "SENTINEL_TOKEN";
+    let body = format!("Authorization: Bearer {TOKEN}");
+    let request = mock("GET", "/echo/error")
+        .match_header("authorization", format!("Bearer {TOKEN}").as_str())
+        .with_status(401)
+        .with_body(&body)
+        .create();
+    let config = config("/echo").with_bearer_access_token(TOKEN.into());
+    let error = Transport::new(&config)
+        .get("error", None)
+        .await
+        .unwrap_err();
+    let http = error.downcast_ref::<HttpError>().unwrap();
+    assert_eq!(http.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(http.body, body);
+    for diagnostic in [error.to_string(), format!("{error:?}"), format!("{http:?}")] {
+        assert!(diagnostic.contains("401"), "{diagnostic}");
+        assert!(!diagnostic.contains(TOKEN), "{diagnostic}");
+    }
+    request.assert();
+}
+
+#[tokio::test]
 async fn authorized_requests_do_not_follow_same_origin_redirects_outside_root() {
     let first = mock("GET", "/root/start")
         .match_header("authorization", "Bearer secret-token")

@@ -254,7 +254,8 @@ for listed in page.tasks:
   `FileNotFoundError` (an `OSError`). Failed requests and responses that don't fit the TES
   models raise `RuntimeError`. If task creation fails after submission, the error may
   mean the server created the task but its acknowledgement was lost or malformed;
-  do not retry automatically.
+  do not retry automatically. HTTP failures include the status in the exception
+  message but omit the server's untrusted response body.
 
 ### Task objects
 

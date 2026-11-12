@@ -192,30 +192,27 @@ pub fn urlencode<T: AsRef<str>>(value: T) -> String {
 }
 
 /// An HTTP response whose status is not successful.
-#[derive(Debug)]
+///
+/// `body` is the untrusted server response and may contain credentials echoed
+/// by the server. Access it explicitly when needed, but do not log or display
+/// it without reviewing its contents. `Display` and `Debug` omit the body.
 pub struct HttpError {
     pub status: reqwest::StatusCode,
     pub body: String,
 }
 
+impl fmt::Debug for HttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpError")
+            .field("status", &self.status)
+            .field("body", &"<untrusted response omitted>")
+            .finish()
+    }
+}
+
 impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const MAX_BODY_CHARS: usize = 300;
-        let end = self
-            .body
-            .char_indices()
-            .nth(MAX_BODY_CHARS)
-            .map_or(self.body.len(), |(index, _)| index);
-        write!(
-            f,
-            "Request failed with status: {}. Response: {}",
-            self.status,
-            &self.body[..end]
-        )?;
-        if end < self.body.len() {
-            write!(f, "... [truncated]")?;
-        }
-        Ok(())
+        write!(f, "Request failed with status: {}", self.status)
     }
 }
 
@@ -775,22 +772,20 @@ mod tests {
     }
 
     #[test]
-    fn test_http_status_error_truncates_display_but_keeps_body() {
-        let body = "é".repeat(301);
+    fn test_http_status_error_keeps_body_but_omits_it_from_diagnostics() {
+        let body = "Bearer SENTINEL_TOKEN\n".repeat(301);
         let error = HttpStatusError {
             status: reqwest::StatusCode::BAD_GATEWAY,
             body: body.clone(),
         };
         assert_eq!(error.body, body);
-        assert!(error
-            .to_string()
-            .ends_with(&format!("{}... [truncated]", "é".repeat(300))));
-
-        let short = HttpStatusError {
-            status: reqwest::StatusCode::NOT_FOUND,
-            body: "service failure".to_string(),
-        };
-        assert!(short.to_string().ends_with("Response: service failure"));
+        assert_eq!(
+            error.to_string(),
+            "Request failed with status: 502 Bad Gateway"
+        );
+        let debug = format!("{error:?}");
+        assert!(debug.contains("502"), "{debug}");
+        assert!(!debug.contains("SENTINEL_TOKEN"), "{debug}");
     }
 
     #[test]
