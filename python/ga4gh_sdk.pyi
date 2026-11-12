@@ -33,7 +33,8 @@ class Configuration:
     """The API root and settings for connecting to a GA4GH service.
 
     `from_file()` reads a section of `~/.ga4gh-cli/config.json`, named by a
-    `ServiceType` or by a `str`; `get_extra()` returns the section's other keys.
+    `ServiceType` or by a `str`; in a file with profiles it reads the default
+    profile. `get_extra()` returns the section's other keys.
     `set_timeouts()` and `get_timeouts()` set and give the time limits of
     requests in seconds; clients and transports read them when they are built.
     `set_token_provider()` sets a callable that gives a bearer token for each
