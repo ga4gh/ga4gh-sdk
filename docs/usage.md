@@ -107,10 +107,16 @@ discovery and submissions. A configuration holds at most one credential:
   sent, with an error that names the fields (Rust: `AuthConflictError`). No
   credential takes precedence. `oauth_access_token` and `bearer_access_token`
   may both be set only to the same token.
-- **API keys:** `api_key` isn't supported, as the configuration doesn't say
-  which header it belongs in. A configured `api_key` fails every request (Rust:
+- **API keys:** the `api_key` field of a Rust `Configuration` isn't
+  supported, as it doesn't say which header the key belongs in; the file and
+  Python can't set it. A set `api_key` fails every request (Rust:
   `CredentialError`), as does an empty token or one that an HTTP header can't
   hold.
+- **Upgrading:** earlier versions read `basic_auth` and `oauth_access_token`
+  but didn't send them (only `workflow submit` sent the bearer token). Now they
+  are sent, so remove credentials that a service doesn't need, and keep one per
+  section: a section with both `basic_auth` and `oauth_access_token`, which
+  used to work, now fails every request.
 - **401:** a `401 Unauthorized` answer is returned as an HTTP error with its
   status. With a static credential, the SDK doesn't send the request again.
 - **Destinations:** the credential goes only to the API root, as endpoints

@@ -59,6 +59,17 @@ def test_conflicting_credentials_send_nothing(server):
     assert server.paths()[before:] == []
 
 
+@pytest.mark.parametrize("token", ["", "SENTINEL\nTOKEN"])
+def test_unusable_tokens_send_nothing(server, token):
+    config = Configuration(f"{server.root}/auth")
+    config.set_access_token(token)
+    before = len(server.paths())
+    with pytest.raises(RuntimeError, match="oauth_access_token") as error:
+        TES(config)
+    assert "SENTINEL" not in str(error.value)
+    assert server.paths()[before:] == []
+
+
 def test_static_credential_conflicts_with_a_token_provider(server):
     config = Configuration(f"{server.root}/auth")
     config.set_access_token("SENTINEL_TOKEN")

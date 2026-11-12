@@ -617,29 +617,18 @@ impl Transport {
                 reason: CredentialErrorReason::Unsupported,
             }));
         }
+        // The same list as for a token provider's conflict, except that both
+        // bearer fields with the same token count as one credential.
+        let mut sources = config.static_credentials();
         let bearer = match (&config.oauth_access_token, &config.bearer_access_token) {
-            (Some(oauth), Some(bearer)) if oauth != bearer => {
-                return Err(Box::new(AuthConflictError {
-                    sources: vec!["oauth_access_token", "bearer_access_token"],
-                    token_provider: false,
-                }))
+            (Some(oauth), Some(bearer)) if oauth == bearer => {
+                sources.retain(|source| *source != "bearer_access_token");
+                Some(("oauth_access_token", oauth))
             }
             (Some(token), _) => Some(("oauth_access_token", token)),
             (None, Some(token)) => Some(("bearer_access_token", token)),
             (None, None) => None,
         };
-        let in_url =
-            !config.base_path.username().is_empty() || config.base_path.password().is_some();
-        let mut sources = Vec::new();
-        if config.basic_auth.is_some() {
-            sources.push("basic_auth");
-        }
-        if let Some((field, _)) = bearer {
-            sources.push(field);
-        }
-        if in_url {
-            sources.push("the user or password in base_path");
-        }
         if sources.len() > 1 {
             return Err(Box::new(AuthConflictError {
                 sources,

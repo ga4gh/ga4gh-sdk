@@ -158,8 +158,8 @@ impl PyConfiguration {
         self.inner.oauth_access_token = token;
     }
 
-    /// Gets a bearer token from `provider` for each request, in place of a static
-    /// credential; `None` removes the provider.
+    /// Gets a bearer token from `provider` for each request; `None` removes the
+    /// provider. Together with a static credential, requests fail.
     ///
     /// `provider(audience)` is called with `audience`, or the API root if it is
     /// `None`, and returns the token as a `str`, or a `(str, float)` tuple with the

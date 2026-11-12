@@ -362,9 +362,12 @@ impl Error for TokenProviderError {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct AuthConflictError {
-    /// The static credentials, by field name, such as `oauth_access_token`.
+    /// The static credentials that are set, by field name, such as
+    /// `oauth_access_token`. With `token_provider`, one or more; without it,
+    /// two or more.
     pub sources: Vec<&'static str>,
-    /// Whether a token provider is configured as well as `sources`.
+    /// `true` if a token provider is set as well: it conflicts with each of
+    /// `sources`. `false` if the static credentials conflict with each other.
     pub token_provider: bool,
 }
 

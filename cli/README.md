@@ -73,9 +73,9 @@ All commands that contact a service, including `workflow submit`, send the
 section's credential with every request: `basic_auth` as Basic credentials
 (with an empty password if it has none), or `oauth_access_token` as a bearer
 token. A user and password in `base_path` are sent as Basic credentials, too.
-Set only one of them: with more than one, or with an `api_key`, which isn't
-supported, every command that contacts the service fails before sending
-anything. A `401 Unauthorized` answer is reported with its status, and the
+Set only one of them: with more than one, every command that contacts the
+service fails before sending anything. Earlier versions didn't send these
+credentials, so remove those that a service doesn't need. A `401 Unauthorized` answer is reported with its status, and the
 command exits with status 1. For example:
 
 ```json

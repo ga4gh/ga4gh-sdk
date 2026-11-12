@@ -202,8 +202,9 @@ config.set_access_token(os.environ["WES_TOKEN"])  # Authorization: Bearer
   `password` may be left out. Set credentials after `from_file()`, which replaces
   all settings. Clients and `Transport` take them when they are built.
 - Only one credential may be set, including a [token provider](#token-providers).
-  With more than one, or with an `api_key` in the configuration file, calls raise
-  `RuntimeError` before anything is sent; the message names the fields, not
+  With more than one, or with an empty token or one that can't be an HTTP header
+  value, calls raise `RuntimeError` before anything is sent; the message names
+  the fields, not
   their values.
 - A `401 Unauthorized` answer raises `RuntimeError` with the status; the request
   isn't sent again. Refresh an expired token yourself with `set_access_token()`
