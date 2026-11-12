@@ -42,6 +42,7 @@ bump them, so update this guide when you change them.
 | `make coverage` | Coverage report in `coverage/` (see below) |
 | `make clean-coverage` | Removes coverage data and `coverage/` |
 | `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
+| `make site` | The documentation site in `site/` (see [Documentation](#documentation)) |
 | `make models` | Runs `utils/build_models_wrapper.sh`; run `make fmt` afterwards |
 | `make pre-commit` | `pre-commit run --all-files` |
 
@@ -109,6 +110,45 @@ command and checks formatting. Documentation lint enforcement remains in
 generated models and the existing undocumented public API before it can become
 a useful gate.
 
+## Documentation
+
+The guides are Markdown files next to the code they describe: the
+[README](../README.md), the guides in `docs/`, the
+[CLI README](../cli/README.md), the [Python README](../python/README.md), the
+[integration test guide](../tests/README.md) and the READMEs of the
+examples. [Read the Docs](https://ga4gh-sdk.readthedocs.io/) publishes them
+as one site, built with [MkDocs](https://www.mkdocs.org/) and the
+[Material theme](https://squidfunk.github.io/mkdocs-material/), together with
+the Rust API reference of `cargo doc` for the `ga4gh_sdk` and `ga4gh_cli`
+crates. The site has a version per tag, `latest` from `main`, and a preview
+for every pull request.
+
+- [`mkdocs.yml`](../mkdocs.yml) configures the site. Its `nav` lists the
+  pages by their paths in the repository; Markdown files that it doesn't
+  list are not on the site.
+- [`docs/hooks.py`](hooks.py) builds the site from those files where they
+  are, so that relative links between them work on GitHub and on the site
+  alike, and points links to other files of the repository, such as source
+  files, to GitHub.
+- [`.readthedocs.yaml`](../.readthedocs.yaml) configures the build on Read the
+  Docs: the dependency group `docs` of
+  [`python/pyproject.toml`](../python/pyproject.toml), rustup for the
+  pinned toolchain, `cargo doc`, then MkDocs.
+
+A new guide needs an entry in `nav`; link to it with its relative path, as
+on GitHub. To build the site locally into `site/` as CI does, install the
+tools (pip 25.1 or later) and run `make site`:
+
+```sh
+python3 -m pip install --group python/pyproject.toml:docs
+make site
+```
+
+`make site` runs `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` and
+`mkdocs build --strict`, which fails on warnings such as links to missing
+files or anchors. After the first `make site`, `mkdocs serve` shows the site
+at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
+
 ## CI
 
 The [`CI` workflow](../.github/workflows/ci.yml) runs on every pull request,
@@ -123,6 +163,7 @@ on pushes to `main` and on manual dispatch:
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
+| `docs` | Docs | `make site`: the Rust API reference and the strict MkDocs build |
 | `passed` | CI passed | Fails unless all jobs above succeeded |
 
 `CI passed` is the check to require for merges. A new job must be added to
