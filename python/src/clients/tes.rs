@@ -9,7 +9,7 @@ use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::Task;
 use ga4gh_sdk::clients::tes::TesView;
 use ga4gh_sdk::clients::tes::TES;
-use ga4gh_sdk::clients::wait::{WaitOptions, WaitOutcome};
+use ga4gh_sdk::clients::wait::{WaitOptions, WaitOutcome, WaitResult};
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::operation::OperationError;
 use ga4gh_sdk::utils::transport::{urlencode, Transport};
@@ -18,6 +18,7 @@ use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
 use pyo3::types::{PyDict, PyMapping, PyString, PyTuple, PyType};
 use serde_json::Value;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -307,11 +308,43 @@ fn read_state(state: &str) -> TesState {
     serde_json::from_value(Value::String(state.to_owned())).unwrap_or_default()
 }
 
+/// The path of a task's lookup.
+pub fn task_path(task: &Task) -> String {
+    format!("tasks/{}", urlencode(&task.id))
+}
+
 /// Waits for the task with the library's waiter until it ends, the time runs out or the
 /// settings' operation is cancelled. Never cancels the task.
+///
+/// This is the sync `Task.wait()`. The future is not `Send`, so `AsyncTask.wait()` uses
+/// `tes_async::wait_task_send` instead, which shares [`wait_end`].
 pub async fn wait_task(task: &Task, settings: WaitSettings) -> WaitEnd {
     let WaitSettings { options, view } = settings;
     let result = task.wait(&options).await;
+    wait_end(result, &options, view, |view| async move {
+        let params = serde_json::json!({ "view": view });
+        task.transport
+            .get(&task_path(task), Some(params))
+            .await
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+/// Converts the library waiter's result into the end of the wait.
+///
+/// With a `view` other than the minimal one, `get_view` gets the ended task's JSON in that
+/// view, within the deadline of `options`. The future is `Send` if `get_view`'s is.
+pub async fn wait_end<G, Fut>(
+    result: WaitResult,
+    options: &WaitOptions,
+    view: Option<TesView>,
+    get_view: G,
+) -> WaitEnd
+where
+    G: FnOnce(TesView) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+{
     let last_state = result.last_state.as_deref().map(read_state);
     match result.outcome {
         WaitOutcome::Complete
@@ -332,20 +365,12 @@ pub async fn wait_task(task: &Task, settings: WaitSettings) -> WaitEnd {
         (None, _) => return WaitEnd::State(state),
         // The waiter polls the minimal view; no need to ask again.
         (Some(TesView::Minimal), Some(raw)) => Ok(raw),
-        (Some(view), _) => {
-            let path = format!("tasks/{}", urlencode(&task.id));
-            let params = serde_json::json!({ "view": view });
-            match options
-                .operation
-                .run(task.transport.get(&path, Some(params)))
-                .await
-            {
-                Ok(Ok(body)) => serde_json::from_str(&body).map_err(invalid_response_text),
-                Ok(Err(error)) => Err(format!("Failed to get task: {error}")),
-                Err(OperationError::Deadline) => return WaitEnd::Timeout(Some(state)),
-                Err(OperationError::Cancelled) => return WaitEnd::Interrupted,
-            }
-        }
+        (Some(view), _) => match options.operation.run(get_view(view)).await {
+            Ok(Ok(body)) => serde_json::from_str(&body).map_err(invalid_response_text),
+            Ok(Err(error)) => Err(format!("Failed to get task: {error}")),
+            Err(OperationError::Deadline) => return WaitEnd::Timeout(Some(state)),
+            Err(OperationError::Cancelled) => return WaitEnd::Interrupted,
+        },
     };
     match raw.and_then(|raw| PyTesTask::parse(raw).map_err(invalid_response_text)) {
         Ok(task) => WaitEnd::Task(Box::new(task)),
@@ -911,5 +936,109 @@ impl PyTES {
         io(py, |rt| {
             rt.block_on(list_tasks(&self.inner.transport, &endpoint))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ga4gh_sdk::clients::wait::{RemoteHandle, ServiceKind};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A waiter's result for a task that ended in `state`, with its minimal view.
+    fn ended(state: &str) -> WaitResult {
+        WaitResult {
+            handle: RemoteHandle {
+                service: ServiceKind::Tes,
+                api_root: "http://localhost/".to_owned(),
+                id: "task-1".to_owned(),
+            },
+            outcome: WaitOutcome::Complete,
+            last_state: Some(state.to_owned()),
+            last_response: Some(serde_json::json!({ "id": "task-1", "state": state })),
+            details: None,
+            error: None,
+        }
+    }
+
+    /// Runs `future` on a runtime of its own.
+    fn block_on<F: Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn the_minimal_view_reuses_the_last_poll() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        let asked = AtomicBool::new(false);
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Minimal),
+            |_| async {
+                asked.store(true, Ordering::SeqCst);
+                Ok(String::new())
+            },
+        ));
+        assert!(matches!(end, WaitEnd::Task(task) if task.raw["id"] == "task-1"));
+        assert!(!asked.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn other_views_give_the_task_from_the_view_request() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Full),
+            |view| async move {
+                assert_eq!(view, TesView::Full);
+                Ok(r#"{"id": "task-1", "state": "COMPLETE", "logs": []}"#.to_owned())
+            },
+        ));
+        assert!(matches!(end, WaitEnd::Task(task) if task.raw.get("logs").is_some()));
+    }
+
+    #[test]
+    fn a_failed_view_request_fails_the_wait() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Full),
+            |_| async { Err("HTTP 500".to_owned()) },
+        ));
+        assert!(matches!(end, WaitEnd::Failed(error) if error == "Failed to get task: HTTP 500"));
+    }
+
+    #[test]
+    fn the_deadline_during_the_view_request_keeps_the_final_state() {
+        let options = WaitOptions::new(Duration::from_millis(10));
+        let end = block_on(wait_end(
+            ended("EXECUTOR_ERROR"),
+            &options,
+            Some(TesView::Basic),
+            |_| std::future::pending(),
+        ));
+        assert!(matches!(
+            end,
+            WaitEnd::Timeout(Some(TesState::ExecutorError))
+        ));
+    }
+
+    #[test]
+    fn cancellation_during_the_view_request_interrupts_the_wait() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        options.operation.cancellation.cancel();
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Basic),
+            |_| std::future::pending(),
+        ));
+        assert!(matches!(end, WaitEnd::Interrupted));
     }
 }

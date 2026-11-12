@@ -362,7 +362,16 @@ for root, reply in BAD_ACKNOWLEDGEMENTS.items():
     ROUTES[("GET", f"/{root}/service-info")] = (200, WES_SERVICE_INFO)
     ROUTES[("POST", f"/{root}/runs")] = reply
 
+
+class Server(ThreadingHTTPServer):
+    """A threading HTTP server that queues enough connections for hundreds of clients."""
+
+    # The default (5) delays connections beyond it by seconds of SYN retries, for example
+    # those of hundreds of concurrent async calls.
+    request_queue_size = 1024
+
+
 if __name__ == "__main__":
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    httpd = Server(("127.0.0.1", 0), Handler)
     print(httpd.server_address[1], flush=True)
     httpd.serve_forever()

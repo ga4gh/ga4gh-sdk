@@ -519,31 +519,78 @@ def test_cancelling_the_async_wait_stops_polling_only(
     assert not [path for path in server.paths() if path.endswith(":cancel")]
 
 
+def test_many_async_waits_do_not_delay_other_calls(
+    server: MockServer, config: Configuration
+) -> None:
+    """More pending waits than call threads leave other async calls free to run.
+
+    The waits sleep between polls without holding a call thread, so a status request, a
+    cancel request and a further wait all run at once.
+
+    Args:
+        server: The mock server.
+        config: The mock TES's configuration.
+    """
+    waits = 300  # More than the 256 call threads.
+    path = "/api/tasks/state-RUNNING"
+
+    async def main() -> float:
+        """Starts the waits, lets each of them poll once, then times other calls.
+
+        Returns:
+            How long the other calls took, in seconds.
+        """
+        running = async_task(config, "state-RUNNING")
+        # Earlier tests of the module poll the same path on the shared server.
+        before = requests_to(server, path)
+        pending = [asyncio.ensure_future(running.wait(poll_interval=10)) for _ in range(waits)]
+        try:
+            deadline = time.monotonic() + 10
+            while requests_to(server, path) - before < waits:
+                assert time.monotonic() < deadline, "the waits did not all poll"
+                await asyncio.sleep(0.05)
+            started = time.monotonic()
+            assert await asyncio.wait_for(running.status(), 5) is TesState.RUNNING
+            assert await asyncio.wait_for(async_task(config, "task-1").cancel(), 5) is None
+            with pytest.raises(WaitTimeoutError) as raised:
+                await asyncio.wait_for(running.wait(0.3, **FAST), 5)
+            assert raised.value.last_state is TesState.RUNNING
+            elapsed = time.monotonic() - started
+            assert not [waiting for waiting in pending if waiting.done()]
+            return elapsed
+        finally:
+            for waiting in pending:
+                waiting.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    assert run(main) < 2
+
+
 def test_a_queued_async_wait_still_times_out(config: Configuration) -> None:
-    """A wait queued behind 256 pending ones raises `WaitTimeoutError` soon after its timeout.
+    """A wait whose poll is queued behind 256 pending calls raises at its timeout.
 
     Args:
         config: The mock TES's configuration.
     """
 
     async def main() -> float:
-        """Fills the call threads with waits, then waits once more with a timeout.
+        """Fills the call threads with slow requests, then waits with a timeout.
 
         Returns:
             How long the queued wait took, in seconds.
         """
-        running = async_task(config, "state-RUNNING")
-        pending = [asyncio.ensure_future(running.wait(poll_interval=10)) for _ in range(256)]
+        slow = async_task(config, "slow-30")
+        pending = [asyncio.ensure_future(slow.status()) for _ in range(256)]
         try:
             await asyncio.sleep(0.2)
             started = time.monotonic()
             with pytest.raises(WaitTimeoutError) as raised:
-                await running.wait(0.3)
+                await async_task(config, "state-RUNNING").wait(0.3)
             assert raised.value.last_state is None
             return time.monotonic() - started
         finally:
-            for waiting in pending:
-                waiting.cancel()
+            for call in pending:
+                call.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
 
-    assert run(main) < 5
+    assert run(main) < 2

@@ -424,12 +424,13 @@ asyncio.run(main())
   existing task, like `Task`. `config`, `transport` and `id` are plain properties.
 - `await task.wait(...)` waits for a task like `Task.wait()`, with the same arguments,
   results and errors. Cancelling the awaiting coroutine, for example with
-  `asyncio.wait_for()`, stops polling; the task on the server goes on. A pending wait
-  takes one of the 256 call threads (see below) for as long as it waits; with 256
-  pending waits, further async calls, including `cancel()`, queue until one ends. Give
-  waits a `timeout` when an app may wait for many tasks at once: a wait that is still
-  queued raises `WaitTimeoutError` (with `last_state` `None`) about a second after its
-  timeout.
+  `asyncio.wait_for()`, stops polling; the task on the server goes on. Between polls, a
+  pending wait sleeps on the runtime without a call thread (see below); it takes one
+  only for each request. So an app can wait for many more tasks than there are call
+  threads, and other async calls, including `cancel()`, queue behind waits only while
+  their polls take all 256 call threads at once.
+  The `timeout` also holds while a request waits for a call thread: if the time runs
+  out before the first poll, `WaitTimeoutError` has `last_state` `None`.
 - The requests run on the runtime of the sync API without the GIL, so they don't block
   the event loop, and several of them run at the same time. Because the SDK's futures
   aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256
