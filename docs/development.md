@@ -124,8 +124,9 @@ artifact of the `coverage` job are then still there, and the job log of
 `make clippy` checks all workspace targets and fails on any Clippy warning
 (`-- -D warnings`). The CI lint job runs the same command and checks
 formatting. Fix a new warning in the code where you can. Otherwise allow the
-lint as narrowly as possible, with a comment that says why. Two allows cover
-code that isn't hand-written:
+lint as narrowly as possible, with a comment that says why. Allows in
+hand-written code sit on single items; two wider allows cover code that isn't
+hand-written:
 
 - Generated models: `clippy::derivable_impls` (the generator writes
   `Default` for enums by hand) is allowed on the `models` module of the DRS,

@@ -171,9 +171,10 @@ models keep unknown fields and values too. Their crate needs `serde_json` and
 
 The generated enums implement `Default` by hand, and some constructors take
 more than seven arguments. Clippy warns about these (`derivable_impls`,
-`too_many_arguments`); this repository allows them on the parent `models`
-module (see [Lints](development.md#lints)). A crate that lints with
-`-D warnings` needs the same `#[allow]` on its `models` module.
+`too_many_arguments`); this repository allows each on the parent `models`
+module of the clients where it fires (see [Lints](development.md#lints)). A crate that lints with
+`-D warnings` needs an `#[allow]` on its `models` module for those of these
+lints that fire there.
 
 ## Hand edits
 
