@@ -265,13 +265,7 @@ async fn sdk_shared_scenarios() {
         reqwest::StatusCode::FORBIDDEN
     );
     let trs_transport = data_session.transport("trs").await;
-    let trs = TRS {
-        config: data_session.config("trs"),
-        service: Ok(
-            serde_json::from_str(&trs_transport.get("service-info", None).await.unwrap()).unwrap(),
-        ),
-        transport: trs_transport,
-    };
+    let trs = TRS::with_transport(trs_transport).await.unwrap();
     let wrapper = trs
         .get_descriptor("fixture", "1", DescriptorTypeWithPlain::Cwl)
         .await
