@@ -139,10 +139,8 @@ pub async fn run_extension(
 /// code as for the built-in commands: [`CommandOutput::json`] for the
 /// response, [`CommandOutput::failure`] for an error.
 ///
-/// `Transport::new` doesn't send configured credentials yet
-/// ([#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)); a service that
-/// needs them takes a client with an `Authorization` header through
-/// `Transport::with_client`.
+/// `Transport::new` applies the configured credential to this service's
+/// requests. See the SDK's authentication guide for caller-owned clients.
 pub async fn quota(config: &Configuration) -> CommandOutput {
     match Transport::new(config).get("quota", None).await {
         Ok(body) => CommandOutput::json(body),

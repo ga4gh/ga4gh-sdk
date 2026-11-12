@@ -44,7 +44,7 @@ class TesState(str, enum.Enum):
     `json.dumps()` give the state's name. `TesState("RUNNING")` looks a state up by name.
     """
 
-    __module__ = "GA4GH"
+    __module__ = "ga4gh_sdk"
 
     UNKNOWN = "UNKNOWN"
     QUEUED = "QUEUED"
@@ -72,10 +72,10 @@ pub fn tes_state_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     TES_STATE
         .get_or_try_init(py, || {
             // Runs in a namespace of its own. `PyModule::from_code_bound` would register a
-            // module in `sys.modules` and, under the name `GA4GH`, overwrite the package's
-            // attributes; the class itself names `GA4GH` as its module.
+            // module in `sys.modules` and, under the name `ga4gh_sdk`, overwrite the package's
+            // attributes; the class itself names `ga4gh_sdk` as its module.
             let namespace = PyDict::new_bound(py);
-            namespace.set_item("__name__", "GA4GH")?;
+            namespace.set_item("__name__", "ga4gh_sdk")?;
             py.run_bound(TES_STATE_SOURCE, Some(&namespace), None)?;
             Ok(namespace
                 .get_item("TesState")?
@@ -198,7 +198,7 @@ pub async fn cancel_task(task: &Task) -> Result<(), String> {
 }
 
 /// A TES task on the server, addressed by its ID.
-#[pyclass(name = "Task", module = "GA4GH", subclass)]
+#[pyclass(name = "Task", module = "ga4gh_sdk", subclass)]
 pub struct PyTask {
     pub inner: Task,
 }
@@ -256,7 +256,7 @@ impl PyTask {
 ///
 /// `json()` and `to_dict()` return the task's JSON as given or received, including fields
 /// that the TES models don't know (object keys may come back in another order).
-#[pyclass(name = "TesTask", module = "GA4GH", subclass)]
+#[pyclass(name = "TesTask", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyTesTask {
     /// The task parsed into the TES model; derived from `raw`.
@@ -463,7 +463,7 @@ impl PyTesTask {
 }
 
 /// Filters and paging for `TES.list()`.
-#[pyclass(name = "ListTasksParams", module = "GA4GH", subclass)]
+#[pyclass(name = "ListTasksParams", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyListTasksParams {
     pub inner: ListTasksParams,
@@ -543,7 +543,7 @@ impl PyListTasksParams {
 }
 
 /// One page of tasks from `TES.list()`.
-#[pyclass(name = "ListTasksResponse", module = "GA4GH", subclass)]
+#[pyclass(name = "ListTasksResponse", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyTesListTasksResponse {
     pub inner: TesListTasksResponse,
@@ -600,7 +600,7 @@ impl PyTesListTasksResponse {
 ///
 /// The public `inner` preserves the Rust extension API and is safe to share
 /// between Python threads while synchronous requests release the GIL.
-#[pyclass(name = "TES", module = "GA4GH", subclass)]
+#[pyclass(name = "TES", module = "ga4gh_sdk", subclass)]
 pub struct PyTES {
     pub inner: TES,
 }

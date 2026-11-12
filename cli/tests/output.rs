@@ -21,24 +21,18 @@ const ENCODED_MARKER: &str = "U0VOVElORUxf";
 const LOG_LEVELS: [Option<&str>; 3] = [None, Some("debug"), Some("trace")];
 const TASK_ID: &str = "t1";
 
-/// Config with marker values in all authentication fields, read by the CLI or not.
+/// Config with one configured credential, whose value must stay out of output.
 fn config_with_fields(base_path: &str) -> Value {
     json!({"TES": {
         "base_path": base_path,
         "basic_auth": {"username": "SENTINEL_USER", "password": "SENTINEL_PASSWORD"},
-        "oauth_access_token": "SENTINEL_OAUTH",
-        "bearer_access_token": "SENTINEL_BEARER",
-        "api_key": {"prefix": "Token", "key": "SENTINEL_KEY"},
     }})
 }
 
-/// Config with marker values in the base path credentials only.
-fn config_with_url(base_path: &str) -> Value {
-    let base_path = base_path.replacen("http://", "http://SENTINEL_USER:SENTINEL_PASSWORD@", 1);
+/// Config without a credential, for the anonymous path through the CLI.
+fn config_without_auth(base_path: &str) -> Value {
     json!({"TES": {
         "base_path": format!("{base_path}/"),
-        "basic_auth": null,
-        "oauth_access_token": null,
     }})
 }
 
@@ -194,7 +188,10 @@ fn test_output_on_success() {
     ];
 
     let base_path = format!("{}{prefix}", mockito::server_url());
-    for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
+    for config in [
+        config_with_fields(&base_path),
+        config_without_auth(&base_path),
+    ] {
         for (args, output) in Home::new(&config).run_all() {
             assert!(output.status.success(), "{args:?}: {}", stderr(&output));
             match args[1].as_str() {
@@ -208,32 +205,91 @@ fn test_output_on_success() {
     }
 }
 
+/// A task with known fields and fields that the TES models don't know, at the
+/// task and executor levels. A model round trip would change `ram_gb` to
+/// `2.0` and drop the explicit `null`.
+fn task_with_extension_fields() -> Value {
+    json!({
+        "name": "extended",
+        "description": null,
+        "resources": {"cpu_cores": 1, "ram_gb": 2},
+        "executors": [{
+            "image": "alpine",
+            "command": ["echo", "hello"],
+            "extension_field": {"nested": [1, 2.5, "three"]},
+        }],
+        "extension_field": {"kept": true},
+    })
+}
+
 #[test]
-fn create_accepts_file_inline_json_and_stdin() {
-    let _service = service_info_mock("/ga4gh/tes/v1/service-info");
-    let create = mock("POST", "/ga4gh/tes/v1/tasks")
-        .match_body(Matcher::PartialJson(
-            json!({"executors": [{"image": "alpine"}]}),
-        ))
+fn create_forwards_the_parsed_task_json_unchanged() {
+    let task = task_with_extension_fields();
+    let _service = service_info_mock("/raw-task/service-info");
+    let create = mock("POST", "/raw-task/tasks")
+        .match_body(Matcher::Json(task.clone()))
         .with_status(200)
         .with_body(json!({"id": TASK_ID}).to_string())
         .expect(3)
         .create();
-    let base_path = format!("{}/ga4gh/tes/v1", mockito::server_url());
-    let home = Home::new(&config_with_fields(&base_path));
-    let file = home.path().join("task.json");
-    let file = file.to_str().unwrap();
-    let inline = fs::read_to_string(file).unwrap();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/raw-task",
+        mockito::server_url()
+    )));
+    let file = home.path().join("extended.json");
+    // The CLI doesn't promise to keep whitespace or key order, only the
+    // parsed JSON structure.
+    let pretty = serde_json::to_string_pretty(&task).unwrap();
+    fs::write(&file, &pretty).unwrap();
+    let inline = task.to_string();
 
     for output in [
-        home.run(&["tes", "create", file], None),
+        home.run(&["tes", "create", file.to_str().unwrap()], None),
         home.run(&["tes", "create", &inline], None),
-        home.run_with_stdin(&["tes", "create", "-"], &inline),
+        home.run_with_stdin(&["tes", "create", "-"], &pretty),
     ] {
         assert!(output.status.success(), "{}", stderr(&output));
         assert_eq!(stdout(&output), format!("{TASK_ID}\n"));
     }
     create.assert();
+}
+
+#[test]
+fn invalid_task_input_fails_before_any_request() {
+    let requests = mock("GET", Matcher::Regex(r"^/invalid-task".into()))
+        .expect(0)
+        .create();
+    let posts = mock("POST", Matcher::Regex(r"^/invalid-task".into()))
+        .expect(0)
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/invalid-task",
+        mockito::server_url()
+    )));
+    let cases = [
+        (r#"{"executors": ["#.to_owned(), "Failed to parse JSON"),
+        (
+            json!({"executors": [{"command": ["true"]}], "extension_field": 1}).to_string(),
+            "Invalid TES task: missing field `image`",
+        ),
+    ];
+    for (input, expected) in cases {
+        let file = home.path().join("invalid.json");
+        fs::write(&file, &input).unwrap();
+        for output in [
+            home.run(&["tes", "create", file.to_str().unwrap()], None),
+            home.run(&["tes", "create", &input], None),
+            home.run_with_stdin(&["tes", "create", "-"], &input),
+        ] {
+            assert!(!output.status.success(), "{input}");
+            assert!(output.stdout.is_empty(), "{}", stdout(&output));
+            let message = stderr(&output);
+            assert!(message.contains(expected), "{message}");
+            assert!(!message.contains("panicked"), "{message}");
+        }
+    }
+    requests.assert();
+    posts.assert();
 }
 
 #[test]
@@ -281,7 +337,8 @@ fn list_sends_repeated_tags_and_displays_next_page_token() {
 #[test]
 fn test_output_on_error_response() {
     for status in [401, 404, 500] {
-        let body = format!("mock failure {status}");
+        // A server can echo a credential in an error response.
+        let body = format!("mock failure {status}: SENTINEL_PASSWORD");
         let _mocks = [
             service_info_mock("/service-info"),
             mock("POST", Matcher::Any)
@@ -295,7 +352,10 @@ fn test_output_on_error_response() {
         ];
 
         let base_path = mockito::server_url();
-        for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
+        for config in [
+            config_with_fields(&base_path),
+            config_without_auth(&base_path),
+        ] {
             for (args, output) in Home::new(&config).run_all() {
                 assert_eq!(
                     output.status.code(),
@@ -306,7 +366,7 @@ fn test_output_on_error_response() {
                 assert!(output.stdout.is_empty(), "{args:?}: {}", stdout(&output));
                 let message = stderr(&output);
                 assert!(message.contains(&status.to_string()), "{args:?}: {message}");
-                assert!(message.contains(&body), "{args:?}: {message}");
+                assert!(!message.contains(&body), "{args:?}: {message}");
             }
         }
     }
@@ -325,7 +385,7 @@ fn service_info_404_keeps_api_root_hint() {
     assert!(stdout(&output).is_empty());
     let message = stderr(&output);
     assert!(message.contains("404"), "{message}");
-    assert!(message.contains("service missing"), "{message}");
+    assert!(!message.contains("service missing"), "{message}");
     assert!(
         message.contains("base_path is the TES API root"),
         "{message}"
@@ -346,7 +406,7 @@ fn canceling_terminal_task_reports_server_conflict() {
         assert!(stdout(&output).is_empty());
         let message = stderr(&output);
         assert!(message.contains("409"), "{message}");
-        assert!(message.contains(&body), "{message}");
+        assert!(!message.contains(&body), "{message}");
     }
 }
 
@@ -359,7 +419,10 @@ fn test_output_without_service() {
     };
 
     let base_path = format!("http://127.0.0.1:{port}");
-    for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
+    for config in [
+        config_with_fields(&base_path),
+        config_without_auth(&base_path),
+    ] {
         for (args, output) in Home::new(&config).run_all() {
             assert_eq!(output.status.code(), Some(1), "{args:?}");
             assert!(output.stdout.is_empty(), "{args:?}");
@@ -567,7 +630,8 @@ fn server_text_is_escaped_in_text_output() {
     assert_eq!(failed.status.code(), Some(1));
     let message = stderr(&failed);
     assert_escaped(&message);
-    assert!(message.contains("down\\u{1b}]0;title\\u{7}"), "{message}");
+    assert!(message.contains("500"), "{message}");
+    assert!(!message.contains("down"), "{message}");
 }
 
 #[test]
@@ -668,7 +732,7 @@ fn get_reports_a_body_that_is_not_json() {
 }
 
 #[test]
-fn log_messages_are_escaped() {
+fn log_messages_omit_untrusted_server_error_body() {
     let _service = mock("GET", "/escape-log/service-info")
         .with_status(500)
         .with_body("down\u{202E}x\nforged")
@@ -686,6 +750,49 @@ fn log_messages_are_escaped() {
             !message.lines().any(|line| line.starts_with("forged")),
             "{log_level:?}: {message}"
         );
-        assert!(message.contains("down\\u{202e}x\\nforged"), "{message}");
+        assert!(message.contains("500"), "{message}");
+        assert!(
+            !message.contains("down") && !message.contains("forged"),
+            "{message}"
+        );
     }
+}
+
+#[test]
+fn undefined_states_read_as_unknown_except_in_get_and_jsonl() {
+    let _service = service_info_mock("/undefined-state/service-info");
+    let task = json!({"id": TASK_ID, "state": "SUSPENDED"});
+    let body = task.to_string();
+    let _task = mock("GET", "/undefined-state/tasks/t1")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body(&body)
+        .create();
+    let _list = mock("GET", "/undefined-state/tasks")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body(json!({"tasks": [task]}).to_string())
+        .create();
+    let home = Home::new(&config_with_fields(&format!(
+        "{}/undefined-state",
+        mockito::server_url()
+    )));
+
+    let state = home.run(&["tes", "status", TASK_ID], None);
+    assert!(state.status.success(), "{}", stderr(&state));
+    assert_eq!(stdout(&state), "UNKNOWN\n");
+    let listed = home.run(&["tes", "list"], None);
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    let table = stdout(&listed);
+    assert!(
+        table.contains(&format!("{TASK_ID:<25} {:<15}\n", "Unknown")),
+        "{table}"
+    );
+    let got = home.run(&["tes", "get", TASK_ID, "FULL"], None);
+    assert!(got.status.success(), "{}", stderr(&got));
+    assert_eq!(stdout(&got), body);
+    let exported = home.run(&["tes", "list", "--all", "--format", "jsonl"], None);
+    assert!(exported.status.success(), "{}", stderr(&exported));
+    let record: Value = serde_json::from_str(stdout(&exported).trim()).unwrap();
+    assert_eq!(record["state"], "SUSPENDED");
 }

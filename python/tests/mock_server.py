@@ -7,7 +7,11 @@ answers with a running task of that ID after the given delay, for tests of
 concurrent and cancelled calls, as does ``GET /slow-<seconds>/service-info``
 with the service info (``GET /failing-<seconds>/service-info`` with a 503); if the
 client closes the connection before,
-``GET /__disconnects__`` lists the request's path.
+``GET /__disconnects__`` lists the request's path. Below ``/hang``,
+``service-info`` answers at once and every other request gets no answer until
+the client leaves (at most 30 seconds), for tests of timed-out submissions.
+Below ``/auth``, the TES of ``/api`` answers requests with the bearer token
+``good`` and rejects all others with ``401 Unauthorized``.
 """
 
 import base64
@@ -104,6 +108,7 @@ PENDING = (202, {}, {"Retry-After": "1"})
 
 ROUTES.update(
     {
+        ("GET", "/api/auth-failure"): (401, {"msg": "authentication required"}),
         ("GET", "/drs/service-info"): (200, DRS_SERVICE_INFO),
         ("GET", "/drs/objects/obj-1"): (200, DRS_OBJECT),
         ("GET", "/drs/objects/obj-1/access/https-1"): (200, ACCESS_URL),
@@ -192,6 +197,9 @@ class Handler(BaseHTTPRequestHandler):
                 "body": base64.b64encode(body).decode(),
             }
         )
+        if self.command == "GET" and url.path == "/api/auth-echo":
+            self._reply(401, {"echo": self.headers.get("Authorization")})
+            return
         if self.command == "GET" and url.path.startswith("/api/tasks/slow-"):
             task_id = url.path.rsplit("/", 1)[1]
             if self._client_left_within(float(task_id.removeprefix("slow-"))):
@@ -202,6 +210,20 @@ class Handler(BaseHTTPRequestHandler):
         if url.path.startswith("/failing-") and url.path.endswith("/service-info"):
             time.sleep(float(url.path.split("/")[1].removeprefix("failing-")))
             self._reply(503, {"msg": "unavailable"})
+            return
+        if url.path.startswith("/auth/"):
+            # The TES below `/api`, for requests with the token `good` only.
+            if self.headers.get("Authorization") != "Bearer good":
+                self._reply(401, {"msg": "unauthorized"})
+                return
+            path = "/api/" + url.path.removeprefix("/auth/")
+            self._reply(*ROUTES.get((self.command, path), (404, {"msg": "not found"})))
+            return
+        if url.path == "/hang/service-info":
+            self._reply(200, SERVICE_INFO)
+            return
+        if url.path.startswith("/hang/"):
+            self._client_left_within(30)
             return
         if url.path.startswith("/slow-") and url.path.endswith("/service-info"):
             if self._client_left_within(float(url.path.split("/")[1].removeprefix("slow-"))):

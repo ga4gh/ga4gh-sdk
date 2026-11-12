@@ -90,7 +90,6 @@ mod list_tasks_params;
 pub mod models;
 mod view;
 use crate::clients::serviceinfo::models::Service;
-use crate::clients::serviceinfo::ServiceInfo;
 use crate::clients::tes::models::ListTasksParams;
 use crate::clients::tes::models::TesListTasksResponse;
 use crate::clients::tes::models::TesState;
@@ -182,18 +181,26 @@ impl TES {
     /// Creates a new `TES` instance.
     ///
     /// # Arguments
-    /// - `config`: A reference to the service configuration.
+    /// - `config`: A reference to the service configuration; its `timeouts`
+    ///   set the time limits (see [`Timeouts`](crate::utils::timeouts::Timeouts)).
     ///
     /// # Returns
     /// - A new `TES` instance, or an error if the initialization fails.
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
-        let transport = Transport::new(config);
-        let service_info = ServiceInfo::new(config)?;
+        Self::with_transport(Transport::new(config)).await
+    }
 
-        let service = service_info.get().await?;
+    /// Creates a new `TES` instance that sends its requests with `transport`, for
+    /// example one from [`Transport::with_client`]. The client's configuration is
+    /// the transport's.
+    ///
+    /// # Returns
+    /// - A new `TES` instance, or an error if the initialization fails.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        let service = crate::clients::serviceinfo::fetch(&transport, "service-info").await?;
 
         let instance = TES {
-            config: config.clone(),
+            config: transport.config.clone(),
             transport,
             service: Ok(service),
         };
@@ -242,6 +249,12 @@ impl TES {
     /// Creates a task from a JSON value, preserving fields unknown to the
     /// current TES models while applying the same submission and acknowledgement
     /// checks as [`Self::create`].
+    ///
+    /// The POST is sent once, within the `submission` limit of the transport's
+    /// configuration. If it runs out of time or loses its connection after its
+    /// request started, the error is an
+    /// [`AmbiguousSubmissionError`](crate::utils::operation::AmbiguousSubmissionError):
+    /// the service may have created the task.
     pub async fn create_value(&self, task: Value) -> Result<Task, Box<dyn std::error::Error>> {
         let _: TesTask = serde_json::from_value(task.clone())?;
         // First, check if the service is of TES class
@@ -249,10 +262,16 @@ impl TES {
             log::error!("Service check failed: {}", e);
             e
         })?;
-        let operation = crate::utils::operation::Operation::new(std::time::Duration::from_secs(60));
-        let request = self
-            .transport
-            .request_builder(reqwest::Method::POST, "tasks")?
+        let operation =
+            crate::utils::operation::Operation::new(self.transport.config.timeouts.submission);
+        // The token provider runs within the operation; running out of time
+        // there is not an ambiguous submission, as nothing was sent.
+        let request = operation
+            .run(
+                self.transport
+                    .authorized_request_builder(reqwest::Method::POST, "tasks"),
+            )
+            .await??
             .json(&task);
         let response_body = self
             .transport
@@ -399,6 +418,83 @@ mod tests {
         let task = Task::new("123".to_owned(), Transport::new(&Configuration::new(url)));
         let error = task.status().await.unwrap_err();
         assert!(error.to_string().contains("missing 'state'"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn test_token_provider_for_discovery_submission_and_pages() {
+        use crate::clients::pagination::{Pager, PagingOptions};
+        use crate::clients::wait::ServiceKind;
+        use crate::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        /// Gives `token-<n>` for the n-th call.
+        #[derive(Default)]
+        struct Counting(AtomicUsize);
+
+        #[async_trait::async_trait]
+        impl TokenProvider for Counting {
+            async fn token(&self, _: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+                let n = self.0.fetch_add(1, Ordering::SeqCst) + 1;
+                Ok(AccessToken::new(format!("token-{n}")))
+            }
+        }
+
+        let service_info = mock("GET", "/tes-auth/service-info")
+            .match_header("authorization", "Bearer token-1")
+            .with_status(200)
+            .with_body(
+                r#"{"id": "tes", "name": "TES", "version": "1",
+                    "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
+                    "organization": {"name": "Example", "url": "https://example.org"}}"#,
+            )
+            .expect(1)
+            .create();
+        // A rejected submission is not sent again.
+        let submission = mock("POST", "/tes-auth/tasks")
+            .match_header("authorization", "Bearer token-2")
+            .with_status(401)
+            .expect(1)
+            .create();
+        // A rejected page is asked for once more, with a new token.
+        let rejected_page = mock("GET", "/tes-auth/tasks")
+            .match_header("authorization", "Bearer token-3")
+            .with_status(401)
+            .expect(1)
+            .create();
+        let page = mock("GET", "/tes-auth/tasks")
+            .match_header("authorization", "Bearer token-4")
+            .with_status(200)
+            .with_body(r#"{"tasks": [{"id": "1"}]}"#)
+            .expect(1)
+            .create();
+
+        let provider = Arc::new(Counting::default());
+        let base = url::Url::parse(&format!("{}/tes-auth", server_url())).unwrap();
+        let config = Configuration::new(base).with_shared_token_provider(provider.clone());
+        let tes = TES::new(&config).await.unwrap();
+        let error = tes
+            .create_value(serde_json::json!({"executors": []}))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<HttpStatusError>().unwrap().status,
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let options = PagingOptions::new(std::time::Duration::from_secs(10));
+        let mut pager = Pager::new(
+            &tes.transport,
+            ServiceKind::Tes,
+            serde_json::json!({}),
+            options,
+        )
+        .unwrap();
+        let first = pager.next_page().await.unwrap().unwrap();
+        assert_eq!(first.items.len(), 1);
+        for mock in [service_info, submission, rejected_page, page] {
+            mock.assert();
+        }
+        assert_eq!(provider.0.load(Ordering::SeqCst), 4);
     }
 
     #[tokio::test]

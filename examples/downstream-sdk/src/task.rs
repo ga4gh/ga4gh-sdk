@@ -16,13 +16,13 @@ pub struct PrioritizedTask {
     /// The fields that the TES specification defines.
     #[serde(flatten)]
     pub task: TesTask,
-    /// Scheduling priority, from 0 (lowest) to 9 (highest).
+    /// Scheduling priority defined by the example service.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<u8>,
 }
 
 impl PrioritizedTask {
-    /// Wraps a TES task without a priority.
+    /// Wraps a TES task without setting a typed priority.
     pub fn new(task: TesTask) -> Self {
         Self {
             task,

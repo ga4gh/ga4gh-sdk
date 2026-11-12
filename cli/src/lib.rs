@@ -207,9 +207,9 @@ impl CliContext {
     /// no credentials.
     ///
     /// The token applies only to the listed sections, and only if they set
-    /// none of `basic_auth`, `oauth_access_token` and `oauth_access_token_env`;
-    /// other sections never receive it. An unset or empty variable leaves the
-    /// sections without a token. To send a token to another service, name a
+    /// no configured credential; other sections never receive it. If a listed
+    /// section has no credential, an unset, empty, or malformed variable is an
+    /// error before a service request is made. To send a token to another service, name a
     /// variable in its section with `oauth_access_token_env`.
     ///
     /// Sections match by their exact name (`service_type.as_str()`, case
@@ -284,7 +284,8 @@ impl CliContext {
     /// # Errors
     ///
     /// Fails if the file or section is missing or malformed, or if the token
-    /// variable is set but not valid Unicode.
+    /// variable is missing, empty, or not valid Unicode for a listed section
+    /// without its own credential.
     pub fn load_config(&self, service_type: ServiceType) -> anyhow::Result<Configuration> {
         let path = self.config_path()?;
         let section = service_type.as_str();
@@ -294,10 +295,24 @@ impl CliContext {
             if self.token_sections.iter().any(|listed| listed == section)
                 && config.basic_auth.is_none()
                 && config.oauth_access_token.is_none()
+                && config.bearer_access_token.is_none()
             {
                 match std::env::var(name) {
-                    Ok(token) if !token.is_empty() => config.oauth_access_token = Some(token),
-                    Ok(_) | Err(std::env::VarError::NotPresent) => {}
+                    Ok(token) if !token.is_empty() => {
+                        let valid = !token.bytes().any(|byte| byte.is_ascii_whitespace())
+                            && ga4gh_sdk::reqwest::header::HeaderValue::from_str(&format!(
+                                "Bearer {token}"
+                            ))
+                            .is_ok();
+                        if !valid {
+                            anyhow::bail!("Invalid bearer token in environment variable '{name}'");
+                        }
+                        config.oauth_access_token = Some(token);
+                    }
+                    Ok(_) => anyhow::bail!("Environment variable '{name}' is empty"),
+                    Err(std::env::VarError::NotPresent) => {
+                        anyhow::bail!("Environment variable '{name}' is not set")
+                    }
                     Err(std::env::VarError::NotUnicode(_)) => {
                         anyhow::bail!("Environment variable '{name}' is not valid Unicode")
                     }
