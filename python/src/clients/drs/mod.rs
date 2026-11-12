@@ -14,14 +14,17 @@
 //! - `uri`: `DrsUri`.
 //! - `resolver`: `DrsResolver` and `AccessPlan`.
 //! - `helpers`: the functions that these modules share; they define no Python classes.
+//!
+//! Helpers that other service bindings can use as they are go to `crate::utils` instead,
+//! such as `utils::json` and `utils::validate`.
 
-pub mod bulk;
-pub mod client;
+mod bulk;
+mod client;
 mod helpers;
-pub mod objects;
-pub mod pending;
-pub mod resolver;
-pub mod uri;
+mod objects;
+mod pending;
+mod resolver;
+mod uri;
 
 pub use bulk::{PyBulkOutcome, PyBulkPolicy, PyBulkReport};
 pub use client::PyDRS;
