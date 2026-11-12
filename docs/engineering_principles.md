@@ -32,6 +32,7 @@ Use the relevant sections for the change at hand:
 | Submission, concurrency, cancellation, or retry | [Remote effects and lifetimes](#keep-verification-tied-to-the-actual-effect) |
 | Generation, dependencies, or build pipelines | [Reproducibility and build evidence](#evaluate-generation-dependencies-and-build-evidence) |
 | Tests, examples, or CI coverage | [Boundary evidence](#prove-behavior-at-the-relevant-boundary) |
+| User documentation or instructions | [Public contracts](#design-public-apis-for-downstream-use); [technical writing](technical_writing.md) |
 | Maintainer edits to an open PR | [Review-time changes](reviewer_framework.md#maintaining-an-existing-pr) |
 
 The external references have different roles. Protocol specifications define
@@ -160,10 +161,12 @@ compatibility. Record supported operations and evidence in the
 [compatibility guide](api_compatibility.md), including provider deviations and
 unverified interpretations.
 
-Select a profile for each connection and retain how it was selected. Keep it
-consistent with the transport and discovery snapshot. Define what happens when
-the caller changes the endpoint or refreshes discovery. A failed decode must
-not select a more permissive decoder or replay an operation automatically.
+When behavior depends on API version, select a protocol profile for each
+connection and retain how it was selected. Keep it consistent with the transport
+and discovery snapshot. Define what happens when the caller changes the endpoint
+or refreshes discovery. A failed decode must not select a more permissive decoder
+or replay an operation automatically. Shared behavior needs no extra version
+layer solely to conform to this guide.
 
 Treat capabilities separately from versions. A feature absent from an older
 specification may be a provider extension; a declared newer version does not
@@ -226,6 +229,12 @@ If supplied and SDK-owned policies can conflict, make the resolution explicit.
 Reject an unsupported combination before its effect rather than falling back to
 an anonymous request or replacing a caller's transport policy. Offline preparation
 should not require credentials or discovery unless its documented contract does.
+
+When configuration has multiple sources, define their precedence or mutual
+exclusion at one resolution boundary. State what absent, null, and empty values
+mean. Reject invalid selected values instead of silently replacing them with
+defaults. Test both a supported override and a prohibited conflict where those
+cases exist. Resolving configuration does not authorize logging its values.
 
 Use [Parnas's information-hiding criterion](https://doi.org/10.1145/361598.361623)
 to choose module boundaries: contain decisions likely to change behind stable
@@ -318,6 +327,12 @@ Reserve panics for violated internal assumptions that callers cannot normally
 trigger. Do not turn failure into an empty success, fabricated default, or a
 secondary parsing error that hides the original cause. Tests should assert the
 classification and recovery information, not only a fragment of the message.
+
+When an operation promises a usable task or run handle, validate the required
+acknowledgement before returning it. A successful HTTP status alone is insufficient.
+If the acknowledgement is unusable after submission, report that the remote
+operation may have started. Test a malformed acknowledgement without replaying
+the submission; do not classify it as a failure known to precede sending.
 
 ## Trace inputs to every output and effect
 
@@ -454,9 +469,10 @@ Give a composed operation one explicit lifetime and resource budget when the
 API promises an overall deadline. Carry the remaining budget through discovery,
 retries, body reads, polling, and sleeps instead of restarting it at each step.
 Decide what happens to spawned work, open streams, temporary files, and partial
-results when a caller cancels or drops the future. Local cancellation stops
-local work; requesting remote cancellation is a separate action, and its
-acknowledgement need not mean the remote task has already stopped.
+results when a caller cancels or drops the future. Define when local cancellation
+takes effect and which background work can continue. Requesting remote
+cancellation is a separate action; its acknowledgement need not mean the remote
+task has already stopped.
 The [Tokio cancellation-safety documentation](https://docs.rs/tokio/latest/tokio/macro.select.html#cancellation-safety)
 explains why dropping a future must be considered at each awaited boundary.
 
@@ -495,6 +511,16 @@ installation steps, and runnable examples aligned. Matching member names in a
 stub does not verify returned values or behavioral parity. Follow the
 [Python agent guide](../python/AGENTS.md) for runtime, GIL, build, and test rules;
 Rust changes do not automatically propagate into hand-written bindings.
+
+When supported behavior changes, update the affected reference text, examples,
+and migration instructions in the same change. Identify the authoritative page
+for each procedure and link to it instead of maintaining competing copies.
+Check the documented behavior against the current implementation and intended
+contract; do not rewrite a promise solely to conceal an implementation defect.
+Apply the [technical writing guide](technical_writing.md) to the affected prose.
+Clear wording and verified technical instructions are separate requirements;
+[Google's documentation review guidance](https://google.github.io/eng-practices/review/reviewer/looking-for.html#documentation)
+also treats documentation updates as part of a behavior change.
 
 ## Evaluate generation, dependencies, and build evidence
 
@@ -605,13 +631,10 @@ and failure combinations, including manual and main-branch runs when used.
 Document how to request expensive checks before merge for relevant changes.
 Measure job count or runner time when cost is the reason for the change.
 
-After a material fix, rerun affected checks and review the complete diff against
-its base. For a published PR, inspect CI on the new head and update the PR
-description and review conclusion where the evidence changed. Local checks
-support the pre-PR review; CI is checked after publication. If a defect is found
-after approval, treat that approval as stale and review the corrected head
-before merging. Use the [reviewer framework](reviewer_framework.md) to classify
-any remaining findings.
+For rechecks after integration, CI inspection, and review conclusions, follow
+the [reviewer framework](reviewer_framework.md#maintaining-an-existing-pr).
+Earlier evidence applies only while the behavior and assumptions it exercised
+remain unchanged.
 
 For a runnable example or fixture collection, provide a discoverable entry point
 with its purpose, prerequisites, working directory, inputs, command, and expected

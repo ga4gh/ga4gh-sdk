@@ -177,8 +177,13 @@ does not block unrelated work. Use the reviewer framework to classify findings.
 
 ## Adoption and automation
 
-Apply the guide first to selected engineering rules and one user procedure.
-Then evaluate both audiences before extending enforcement. Track publication in
+Apply this guide incrementally to new and changed prose within the task's scope.
+Existing documentation is not presumed to satisfy it. Plan broader rewrites as
+separate work, and check technical behavior as well as wording.
+
+The initial publication applies the guide to selected engineering rules and the
+API-root procedure. This is a pilot, not a completed rewrite of all documentation.
+Evaluate both audiences before adding automated enforcement. Track publication in
 [#178](https://github.com/ga4gh/ga4gh-sdk/issues/178) and the evaluation in
 [#185](https://github.com/ga4gh/ga4gh-sdk/issues/185), under the rollout in
 [#176](https://github.com/ga4gh/ga4gh-sdk/issues/176).
