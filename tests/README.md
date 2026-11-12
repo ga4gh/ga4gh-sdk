@@ -62,7 +62,8 @@ the identity provider and runs [`protes_tes.rs`](../lib/tests/protes_tes.rs):
 - a long task is canceled;
 - requests without a token, or with an invalid one, get HTTP 401.
 
-The library test passes the token as a default header of its own HTTP client.
+The library test passes the token with
+`Configuration::with_oauth_access_token`.
 
 It then runs the CLI suite, [`protes_cli.rs`](../cli/tests/protes_cli.rs).
 It runs the `ga4gh-cli` binary with a temporary home directory whose config

@@ -6,10 +6,9 @@
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
 use ga4gh_sdk::clients::tes::{TesView, TES};
 use ga4gh_sdk::clients::wait::{WaitOptions, WaitOutcome};
-use ga4gh_sdk::reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
-use ga4gh_sdk::reqwest::{Client, StatusCode};
+use ga4gh_sdk::reqwest::StatusCode;
 use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::transport::{HttpError, Transport};
+use ga4gh_sdk::utils::transport::HttpError;
 use serde_json::{json, Value};
 use std::time::Duration;
 use url::Url;
@@ -36,19 +35,9 @@ async fn authorized_tes() -> TES {
     tes_with_token(&env("PROTES_ACCESS_TOKEN")).await
 }
 
-/// Client that sends an access token. The transport doesn't send the
-/// credentials of the configuration yet (#31), so the token is a default
-/// header of a caller-owned client.
+/// Client that sends an access token, from the configuration.
 async fn tes_with_token(token: &str) -> TES {
-    let mut token = HeaderValue::from_str(&format!("Bearer {token}"))
-        .expect("access token is not a header value");
-    token.set_sensitive(true);
-    let headers = HeaderMap::from_iter([(AUTHORIZATION, token)]);
-    let client = Client::builder()
-        .default_headers(headers)
-        .build()
-        .expect("HTTP client");
-    TES::with_transport(Transport::with_client(&config(), client))
+    TES::new(&config().with_oauth_access_token(token.into()))
         .await
         .expect("TES client")
 }
