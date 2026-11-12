@@ -25,6 +25,8 @@
 //!   request of
 //!   [`Transport::request_with_policy`](crate::utils::transport::Transport::request_with_policy)
 //!   with [`ReplaySafety::ReadOnly`](crate::utils::operation::ReplaySafety::ReadOnly).
+//!   The retry uses a current token; another concurrent request may already
+//!   have refreshed it.
 //!   Other requests, such as task and run submissions, are never sent twice;
 //!   their `401` comes back as an
 //!   [`HttpError`](crate::utils::transport::HttpError).

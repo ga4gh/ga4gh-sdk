@@ -279,7 +279,7 @@ contract:
   of the configuration. Without it, the provider is asked for every request.
 - **`401 Unauthorized`.** The SDK stops reusing the rejected token and asks the
   provider with `TokenRequest::after_rejection` set the next time. A
-  replayable request is sent once more right away with the new token: a `GET`
+  replayable request is sent once more right away with a current token: a `GET`
   or `HEAD` of `Transport`'s helpers, discovery and pages, or a request of
   `Transport::request_with_policy` with `ReplaySafety::ReadOnly`. Other
   requests, such as task and run submissions, are never sent twice; their

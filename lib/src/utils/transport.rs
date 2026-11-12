@@ -704,7 +704,8 @@ impl Transport {
     /// Builds a request with [`authorized_request_builder`](Self::authorized_request_builder)
     /// and `build`, and sends it. If it is `replayable`, a token provider is
     /// configured and the service answers `401 Unauthorized`, builds and sends it
-    /// once more with a new token. `sent`, if given, is set just before the first
+    /// once more with a current token. Another concurrent request may already
+    /// have refreshed the token. `sent`, if given, is set just before the first
     /// request is sent.
     pub(crate) async fn send_authorized(
         &self,
@@ -726,9 +727,12 @@ impl Transport {
             return Ok(response);
         }
         drop(response);
-        log::debug!("Asking the token provider again after 401 Unauthorized");
+        log::debug!("Retrying a read after 401 Unauthorized with the current token");
         let request = self.request_builder_inner(method, endpoint, true)?;
-        let request = build(self.authorize(request, true).await?)?;
+        // send_checked already rejected the token used by the first request.
+        // Do not force another rejection here: a concurrent request may have
+        // installed a newer reusable token before this retry.
+        let request = build(self.authorize(request, false).await?)?;
         self.send_checked(request, None).await
     }
 
@@ -824,7 +828,8 @@ impl Transport {
         .await
     }
 
-    /// Text helper with caller-selected success/error bounds. No implicit retry.
+    /// Text helper with caller-selected success/error bounds. With a token
+    /// provider, a `GET` or `HEAD` may retry once after `401 Unauthorized`.
     pub async fn request_text(
         &self,
         method: reqwest::Method,
@@ -1231,6 +1236,100 @@ mod tests {
             accepted.assert();
             let root = base("auth-replay").to_string();
             assert_eq!(provider.calls(), [(root.clone(), false), (root, true)]);
+        }
+
+        #[tokio::test]
+        async fn late_401_does_not_evict_a_newer_reusable_token() {
+            use tokio::{
+                io::{AsyncReadExt, AsyncWriteExt},
+                net::TcpListener,
+                sync::Notify,
+            };
+
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let late_started = Arc::new(Notify::new());
+            let release_late = Arc::new(Notify::new());
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let server = tokio::spawn({
+                let late_started = late_started.clone();
+                let release_late = release_late.clone();
+                let seen = seen.clone();
+                async move {
+                    loop {
+                        let (mut socket, _) = listener.accept().await.unwrap();
+                        let late_started = late_started.clone();
+                        let release_late = release_late.clone();
+                        let seen = seen.clone();
+                        tokio::spawn(async move {
+                            let mut bytes = Vec::new();
+                            let mut chunk = [0; 1024];
+                            loop {
+                                let count = socket.read(&mut chunk).await.unwrap();
+                                if count == 0 {
+                                    return;
+                                }
+                                bytes.extend_from_slice(&chunk[..count]);
+                                if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                            let request = String::from_utf8(bytes).unwrap();
+                            let path = request.split_whitespace().nth(1).unwrap();
+                            let authorization = request
+                                .lines()
+                                .filter_map(|line| line.split_once(':'))
+                                .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                                .map(|(_, value)| value.trim())
+                                .unwrap_or("");
+                            seen.lock().unwrap().push(format!("{path} {authorization}"));
+                            if path == "/auth-race/late" && authorization == "Bearer token-1" {
+                                late_started.notify_one();
+                                release_late.notified().await;
+                            }
+                            let response = match (path, authorization) {
+                                ("/auth-race/late", "Bearer token-1")
+                                | ("/auth-race/fast", "Bearer token-1") => {
+                                    "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                }
+                                ("/auth-race/late", "Bearer token-2")
+                                | ("/auth-race/fast", "Bearer token-2") => {
+                                    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                                }
+                                _ => "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            };
+                            socket.write_all(response.as_bytes()).await.unwrap();
+                        });
+                    }
+                }
+            });
+
+            let provider = Arc::new(Recording {
+                lifetime: Some(Duration::from_secs(60)),
+                ..Default::default()
+            });
+            let config =
+                Configuration::new(Url::parse(&format!("http://{address}/auth-race")).unwrap())
+                    .with_shared_token_provider(provider.clone());
+            let transport = Arc::new(Transport::new(&config));
+            // Cache token-1 before both reads start.
+            let _ = transport
+                .authorized_request_builder(reqwest::Method::GET, "late")
+                .await
+                .unwrap();
+            let (late, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::join!(transport.get("late", None), async {
+                    late_started.notified().await;
+                    assert_eq!(transport.get("fast", None).await.unwrap(), "ok");
+                    release_late.notify_one();
+                })
+            })
+            .await
+            .unwrap();
+            assert_eq!(late.unwrap(), "ok");
+            assert_eq!(provider.calls().len(), 2, "the newer token must be reused");
+            assert_eq!(seen.lock().unwrap().len(), 4);
+            server.abort();
         }
 
         #[tokio::test]

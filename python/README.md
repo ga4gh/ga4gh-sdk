@@ -219,7 +219,7 @@ tes = TES(config)
   `Transport` take it when they are built; `set_token_provider(None)` removes it
   for those built later.
 - After `401 Unauthorized`, the SDK drops a reused token and asks the provider
-  again; a `GET` request is sent once more right away with the new token, while
+  again; a `GET` request is sent once more right away with a current token, while
   submissions such as `TES.create()` and `WES.run()` are never sent twice. The
   provider isn't told about the rejection, so don't let it cache tokens itself:
   return a `(str, float)` tuple and let the SDK reuse the token instead.
