@@ -33,7 +33,7 @@
 /// let response = transport.delete("users/1").await;
 /// };
 /// ```
-use crate::utils::configuration::Configuration;
+use crate::utils::configuration::{AuthError, Configuration, ConfiguredAuth};
 use crate::utils::query::query_pairs;
 use reqwest::multipart::Form;
 use reqwest::Client;
@@ -138,19 +138,39 @@ pub async fn response_text(
     response: reqwest::Response,
     limits: BodyLimits,
 ) -> Result<String, Box<dyn Error>> {
+    let response = checked_response(response, limits).await?;
+    Ok(String::from_utf8_lossy(&response.body).into_owned())
+}
+
+/// Decode bounded JSON from the original bytes. Invalid UTF-8 and malformed JSON
+/// return a decoding error. Non-success responses retain the existing HttpError.
+pub async fn response_json<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+    limits: BodyLimits,
+) -> Result<T, Box<dyn Error>> {
+    let response = checked_response(response, limits).await?;
+    // Validate the whole document even when T ignores unknown properties.
+    // A byte deserializer may skip UTF-8 checks for discarded string values.
+    let text = std::str::from_utf8(&response.body)?;
+    Ok(serde_json::from_str(text)?)
+}
+
+async fn checked_response(
+    response: reqwest::Response,
+    limits: BodyLimits,
+) -> Result<BufferedResponse, Box<dyn Error>> {
     let limit = if response.status().is_success() {
         limits.success
     } else {
         limits.error
     };
     let response = read_bounded(response, limit).await?;
-    let body = String::from_utf8_lossy(&response.body).into_owned();
     if response.status.is_success() {
-        Ok(body)
+        Ok(response)
     } else {
         Err(Box::new(HttpError {
             status: response.status,
-            body,
+            body: String::from_utf8_lossy(&response.body).into_owned(),
         }))
     }
 }
@@ -273,7 +293,8 @@ fn is_dot_segment(segment: &str) -> bool {
 #[derive(Clone)]
 pub struct Transport {
     pub config: Configuration,
-    pub client: reqwest::Client,
+    client: reqwest::Client,
+    apply_configured_auth: bool,
 }
 
 impl fmt::Debug for Transport {
@@ -287,6 +308,9 @@ impl fmt::Debug for Transport {
 impl Transport {
     /// Creates a new `Transport` instance with the given configuration.
     ///
+    /// The HTTP client uses the `connect` and `request` limits of
+    /// `config.timeouts`; see [`Timeouts`](crate::utils::timeouts::Timeouts).
+    ///
     /// # Arguments
     ///
     /// * `config` - The configuration for the transport.
@@ -295,34 +319,100 @@ impl Transport {
     ///
     /// A new `Transport` instance.
     pub fn new(config: &Configuration) -> Self {
-        Transport {
-            config: config.clone(),
-            client: Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .expect("default HTTP client initialization failed"),
-        }
+        Self::build(config).expect("default HTTP client initialization failed")
+    }
+
+    // SDK-owned clients never follow redirects implicitly: a redirect can
+    // leave the configured API root or replay a submission.
+    fn build(config: &Configuration) -> reqwest::Result<Self> {
+        Client::builder()
+            .connect_timeout(config.timeouts.connect)
+            .timeout(config.timeouts.request)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map(|client| Self {
+                config: config.clone(),
+                client,
+                apply_configured_auth: true,
+            })
     }
 
     /// Inject a configured client, for connection budgets, TLS and downstream use.
+    ///
+    /// The client's own connect and request timeouts apply, and
+    /// `config.timeouts.connect` and `request` are not used; the `discovery` and
+    /// `submission` limits still come from `config.timeouts`. The configured
+    /// credentials are not applied. If both are present, requests fail with
+    /// [`AuthError::CallerOwnedClient`]; use
+    /// [`with_client_and_configured_auth`](Self::with_client_and_configured_auth)
+    /// to opt in. The caller retains responsibility for redirect policy.
     pub fn with_client(config: &Configuration, client: Client) -> Self {
         Self {
             config: config.clone(),
             client,
+            apply_configured_auth: false,
         }
     }
 
+    /// Explicitly apply configured credentials to a caller-owned HTTP client.
+    /// The caller owns that client's redirect policy and must prevent credential
+    /// forwarding outside the configured API root and replay of submissions.
+    pub fn with_client_and_configured_auth(config: &Configuration, client: Client) -> Self {
+        Self {
+            config: config.clone(),
+            client,
+            apply_configured_auth: true,
+        }
+    }
+
+    /// Read-only access to the underlying HTTP client. Requests made through a
+    /// clone of it do not acquire SDK-configured authentication automatically.
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Creates a transport with these connect and request timeouts in place of
+    /// those of `config.timeouts`, and records them there.
     pub fn with_timeouts(
         config: &Configuration,
         connect: std::time::Duration,
         request: std::time::Duration,
     ) -> reqwest::Result<Self> {
-        Client::builder()
-            .connect_timeout(connect)
-            .timeout(request)
-            .build()
-            .map(|client| Self::with_client(config, client))
+        let mut config = config.clone();
+        config.timeouts.connect = connect;
+        config.timeouts.request = request;
+        Self::build(&config)
+    }
+
+    /// Sends a GET request within `timeout`, in place of the request timeout,
+    /// including reading the response. The connect timeout still applies.
+    pub(crate) async fn get_within(
+        &self,
+        endpoint: &str,
+        timeout: std::time::Duration,
+    ) -> Result<String, Box<dyn Error>> {
+        let request = self
+            .request_builder(reqwest::Method::GET, endpoint)?
+            .timeout(timeout);
+        let operation = crate::utils::operation::Operation::new(timeout);
+        operation
+            .run(async { response_text(request.send().await?, BodyLimits::default()).await })
+            .await?
+    }
+
+    /// Strict JSON discovery under the configured absolute discovery budget.
+    pub(crate) async fn get_json_within<T: serde::de::DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        timeout: std::time::Duration,
+    ) -> Result<T, Box<dyn Error>> {
+        let request = self
+            .request_builder(reqwest::Method::GET, endpoint)?
+            .header(reqwest::header::ACCEPT, "application/json")
+            .timeout(timeout);
+        crate::utils::operation::Operation::new(timeout)
+            .run(async { response_json(request.send().await?, BodyLimits::default()).await })
+            .await?
     }
 
     /// Sends exactly once under an absolute operation budget, including body I/O.
@@ -456,16 +546,30 @@ impl Transport {
 
     /// Shared API-relative request construction. Service-specific callers can
     /// add headers, streaming bodies or custom methods without losing policies.
-    /// Authentication remains controlled by the configured/injected client;
-    /// see #31 for configuration-based authentication support.
+    /// SDK-owned clients apply one configured Basic or bearer credential.
+    /// Caller-owned clients retain their policy; configured credentials require
+    /// [`with_client_and_configured_auth`](Self::with_client_and_configured_auth).
     pub fn request_builder(
         &self,
         method: reqwest::Method,
         endpoint: &str,
-    ) -> Result<reqwest::RequestBuilder, EndpointError> {
+    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+        let auth = self.config.configured_auth()?;
+        if !self.apply_configured_auth && !matches!(auth, ConfiguredAuth::None) {
+            return Err(Box::new(AuthError::CallerOwnedClient));
+        }
         let mut request = self.client.request(method, self.endpoint(endpoint)?);
         if let Some(agent) = &self.config.user_agent {
             request = request.header(reqwest::header::USER_AGENT, agent);
+        }
+        if self.apply_configured_auth {
+            request = match auth {
+                ConfiguredAuth::None => request,
+                ConfiguredAuth::Basic(basic) => {
+                    request.basic_auth(&basic.username, basic.password.as_deref())
+                }
+                ConfiguredAuth::Bearer(token) => request.bearer_auth(token),
+            };
         }
         Ok(request)
     }

@@ -10,7 +10,7 @@
 
 #![allow(unused_imports)]
 #![allow(clippy::empty_docs)]
-use crate::clients::trs::models;
+use crate::clients::trs::wire::v2_0_1::models;
 use serde::{Deserialize, Serialize};
 
 /// FileWrapper : A file provides content for one of - A tool descriptor is a metadata document that describes one or more tools. - A tool document that describes how to test with one or more sample test JSON. - A containerfile is a document that describes how to build a particular container image. Examples include Dockerfiles for creating Docker images and Singularity recipes for Singularity images

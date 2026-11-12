@@ -147,31 +147,35 @@ pub struct WES {
 }
 
 impl WES {
-    /// Creates a new `WES` instance.
+    /// Creates a new `WES` instance. The `timeouts` of `config` set the time
+    /// limits (see [`Timeouts`](crate::utils::timeouts::Timeouts)).
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::from_transport(Transport::new(config)).await
+        Self::with_transport(Transport::new(config)).await
     }
 
-    /// Discover using a caller-owned transport, including its authenticated client.
-    pub async fn from_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
-        let config = transport.config.clone();
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            transport.get("service-info", None),
-        )
-        .await?;
-        let service = response
-            .and_then(|body| service_from_info(serde_json::from_str(&body)?))
+    /// Creates a new `WES` instance that sends its requests with `transport`, for
+    /// example one from [`Transport::with_client`]. The client's configuration is
+    /// the transport's.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        let service = crate::clients::serviceinfo::fetch_raw(&transport, "service-info")
+            .await
+            .and_then(|body| service_from_info(from_str(&body)?))
             .map_err(|error| access_error(error.as_ref()))?;
 
         let instance = WES {
-            config,
+            config: transport.config.clone(),
             transport,
             service: Ok(service),
         };
 
         instance.check()?;
         Ok(instance)
+    }
+
+    /// Discovers WES with a caller-owned transport, including its authenticated
+    /// client. Kept for callers that used this name before `with_transport`.
+    pub async fn from_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_transport(transport).await
     }
 
     fn check(&self) -> Result<(), String> {
@@ -194,6 +198,13 @@ impl WES {
     }
 
     /// Creates a workflow run with optional uploaded workflow files.
+    ///
+    /// The request is sent once, within the `submission` limit of the
+    /// transport's configuration, including the upload. If it runs out of time
+    /// or loses its connection after its request started, the error is an
+    /// [`AmbiguousSubmissionError`](crate::utils::operation::AmbiguousSubmissionError):
+    /// the service may have created the run. For a deadline or cancellation of
+    /// your own, use [`Self::run_workflow_streaming`].
     pub async fn run_workflow_with_attachments(
         &self,
         request: RunRequest,
@@ -209,7 +220,7 @@ impl WES {
         self.run_workflow_streaming(
             request,
             attachments,
-            &crate::utils::operation::Operation::new(std::time::Duration::from_secs(60)),
+            &crate::utils::operation::Operation::new(self.transport.config.timeouts.submission),
         )
         .await
     }

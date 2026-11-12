@@ -34,7 +34,8 @@ are errors rather than being ignored.
         "base_path": "http://localhost:8000/ga4gh/tes/v1"
     },
     "WES": {
-        "base_path": "https://wes.example.org/ga4gh/wes/v1"
+        "base_path": "https://wes.example.org/ga4gh/wes/v1",
+        "timeouts": {"discovery": 30, "submission": 600}
     },
     "DRS": {
         "base_path": "https://drs.example.org/ga4gh/drs/v1"
@@ -56,20 +57,28 @@ must add the deployed service prefix, such as `/ga4gh/tes/v1`,
 gateway keeps its whole prefix, for example
 `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
 
+`timeouts` sets time limits in seconds for the commands of that section:
+`connect` (default 10), `request` (default 60), `discovery` (the service-info
+check, default 10) and `submission` (`tes create` and `wes run`, including
+uploads, default 300). A submission is sent once; if it runs out of time
+after its request started, the error says that it may have been accepted, so look
+for the task or run before you submit it again. The
+[usage guide](../docs/usage.md#timeouts) has the details. Downstream binaries
+that call `dispatch_with_config()` set them with
+`Configuration::with_timeouts`.
+
 ### Authentication
 
-The service commands read `basic_auth` and `oauth_access_token`, but do not yet
-send them with requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)).
-The experimental `workflow submit` is an exception: it sends
-`oauth_access_token` as a bearer token to WES; callers supplying a
-`Configuration` directly can also use `bearer_access_token`. It does not
-support Basic auth or API keys. [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203) tracks consistent
-authentication across the SDK and CLI. For other commands, use services that
-allow anonymous access or a proxy that adds credentials. Keep the file private
-(`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold credentials. To keep
-a token out of the file, name an environment variable that holds it with
-`oauth_access_token_env`; the
-[usage guide](../docs/usage.md#configuration-file) describes all keys.
+Each built-in service command sends the single configured Basic, OAuth bearer,
+or generic bearer credential to its service, including discovery and
+submission. `workflow submit` uses the WES section and the same policy as
+`wes run`. Conflicting sources, unsupported `api_key` or URL userinfo, and
+invalid tokens fail before a request. An `_env` field can name a variable that
+holds the token. Keep the file private (`chmod 600 ~/.ga4gh-cli/config.json`).
+SDK-owned clients do not follow redirects. See the
+[authentication guide](../docs/authentication.md) for the source and redirect
+contracts. Dynamic token-provider integration is tracked in
+[#215](https://github.com/ga4gh/ga4gh-sdk/pull/215).
 
 ## Usage
 
@@ -106,6 +115,19 @@ The CLI also accepts JSON text directly or from standard input:
 ga4gh-cli tes create "$(cat examples/tes-hello.json)"
 cat examples/tes-hello.json | ga4gh-cli tes create -
 ```
+
+Whatever the source, the CLI sends the task as the JSON it parsed from the
+input, including fields that the SDK's TES model doesn't know, at the task
+level or nested, for example in an executor. Explicit `null`s are kept, and
+integers stay integers. Numbers are read as 64-bit integers or as
+double-precision floats, so an integer beyond that range or a decimal with
+more digits than a double holds is sent rounded. Whitespace and key order may
+differ from the input. Whether the service accepts or uses an additional field is up to
+the service; it may reject the task. Before contacting the service, the CLI
+checks the input: input that isn't valid JSON fails with `Failed to parse
+JSON`, and a task that doesn't match the TES model, such as an executor
+without `image`, fails with `Invalid TES task`. Both print the reason to
+stderr and exit with code 1 without sending a request.
 
 By default the command prints the new task ID as text. For scripts that must
 recover an opaque ID exactly, use `tes create --format json`: it prints
@@ -294,6 +316,29 @@ The `trs` commands browse a GA4GH Tool Registry Service (TRS), such as
 WorkflowHub or Dockstore, and download workflow files from it. They only read
 from the registry; nothing is changed there.
 
+The CLI uses the SDK's [TRS compatibility policy](../docs/api_compatibility.md).
+`--api-version auto` (default) recognizes 2.0.1 and 2.0.2. An unknown declaration
+uses the 2.0.1 read contract without assuming tag-filter support.
+`--api-version strict` requires a recognized declaration;
+`--api-version 2.0.1` or `2.0.2` selects an API profile explicitly.
+These flags can appear before or after a TRS subcommand.
+
+`--tag-filter enabled` allows a known deployment's backported tag filter;
+`--tag-filter disabled` blocks filtering on a deployment that does not implement
+it. Neither option changes the response contract. Use overrides only with
+independent knowledge of the server, not just because it returned HTTP 200.
+For a known endpoint without usable service-info, combine `--no-discovery`
+with an explicit version. Discovery failures never trigger this automatically.
+
+```sh
+# Require a recognized server declaration.
+ga4gh-cli trs --api-version strict tools --limit 1
+# Use a known 2.0.1 deployment's backported tag filter.
+ga4gh-cli trs --api-version 2.0.1 --tag-filter enabled tools --tag genomics
+# Read a known endpoint that does not expose service-info.
+ga4gh-cli trs --no-discovery --api-version 2.0.1 tools --limit 1
+```
+
 #### 1. Configure the registry
 
 The `trs` commands need to know which registry to talk to. They read it from
@@ -332,7 +377,7 @@ or WDL. Replace `TOOL_ID` and `VERSION_ID` below with values returned by the
 registry:
 
 ```sh
-# Find tools. All filters are optional.
+# Find tools. All filters are optional; repeat --tag for several tags.
 ga4gh-cli trs tools --tool-class Workflow --descriptor-type CWL --limit 5
 
 # Look at one tool and its versions.
@@ -343,17 +388,20 @@ ga4gh-cli trs version 'TOOL_ID' 'VERSION_ID'
 # See which files the version has, then download the main workflow file.
 ga4gh-cli trs files 'TOOL_ID' 'VERSION_ID' --type CWL
 ga4gh-cli trs descriptor 'TOOL_ID' 'VERSION_ID' --type CWL --plain > main.cwl
+
+# Or download all files of the version as one ZIP archive.
+ga4gh-cli trs files 'TOOL_ID' 'VERSION_ID' --type CWL --zip workflow.zip
 ```
 
 #### Commands
 
 | Command | Result |
 | --- | --- |
-| `trs tools [filters]` | A list of tools, optionally filtered. |
+| `trs tools [filters]` | A list of tools, optionally filtered by `--tool-class`, `--descriptor-type`, `--organization`, `--name` and `--tag` (repeatable), paged with `--offset` and `--limit`. |
 | `trs tool <TOOL_ID>` | One tool and its versions. |
 | `trs versions <TOOL_ID>` | The versions of a tool. |
-| `trs version <TOOL_ID> <VERSION_ID>` | One version and its descriptor types. |
-| `trs files <TOOL_ID> <VERSION_ID> --type <TYPE>` | The paths and types of its files. |
+| `trs version <TOOL_ID> <VERSION_ID>` | One version, its descriptor types and, if the registry sends one, its description. |
+| `trs files <TOOL_ID> <VERSION_ID> --type <TYPE>` | The paths and types of its files; `--zip <FILE>` writes all files as one ZIP archive to `FILE` instead. |
 | `trs descriptor <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its primary descriptor; `--path <RELATIVE_PATH>` selects another file. |
 | `trs tests <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its test parameter files. |
 
@@ -361,7 +409,15 @@ Results are JSON by default. `trs descriptor --plain` prints the descriptor
 content without a JSON wrapper. `trs tests --plain` prints one inline test file;
 if the server returns several files or only a URL, omit `--plain` to inspect
 their JSON instead. The commands exit with code 0 on success and 1 on request
-or server errors; missing arguments use exit code 2. Error messages and JSON
+or server errors; missing arguments use exit code 2. `--zip` never replaces
+an existing file, doesn't extract the archive, and downloads at most 64 MiB;
+the file appears under its name only when it is complete (until then, it is a
+hidden `.<name>.partial-<pid>` file in the same directory, which an interrupted
+download may leave behind, so the name may be up to about 18 bytes shorter than
+the filesystem allows). On filesystems without hard links, such as FAT, the
+archive is written to the file directly.
+A tag must not be empty or contain a comma, because the registry receives all
+tags as one comma-separated value. Error messages and JSON
 output escape terminal control and bidirectional formatting characters.
 
 ## Service Registry commands
@@ -383,8 +439,8 @@ the registry's API root:
 Replace `registry.example.org` with your registry's host.
 The CLI requests `services`, `services/{id}` and `services/types` below this
 path. Public reads need no token; a deployment that requires authentication
-needs an authenticating proxy until [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)
-adds configured authentication.
+can use one of the configured sources in the
+[authentication guide](../docs/authentication.md).
 
 1. To list the services, optionally only those of one type artifact (case
    ignored), run `registry list`:

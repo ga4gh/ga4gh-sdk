@@ -4,7 +4,7 @@ use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 
-#[pyclass(name = "ServiceInfo", module = "GA4GH", subclass)]
+#[pyclass(name = "ServiceInfo", module = "ga4gh_sdk", subclass)]
 pub struct PyServiceInfo {
     pub inner: ServiceInfo,
 }
