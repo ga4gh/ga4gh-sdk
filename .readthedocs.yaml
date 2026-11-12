@@ -18,9 +18,9 @@ build:
       - python -m pip install --upgrade "pip>=25.1"
       - python -m pip install --group "python/pyproject.toml:docs"
     # The Rust API reference (`target/doc/`), which `docs/hooks.py` adds to
-    # the site, as `make site` does. rustup is pinned by its checksum (by
-    # hand: Dependabot doesn't bump it); it installs the toolchain of
-    # `rust-toolchain.toml` when Cargo first runs
+    # the site, as `make site` does, failing on any rustdoc warning. rustup
+    # is pinned by its checksum (by hand: Dependabot doesn't bump it); it
+    # installs the toolchain of `rust-toolchain.toml` when Cargo first runs
     pre_build:
       - >-
         curl --fail --location --silent --show-error --proto "=https"
@@ -32,6 +32,7 @@ build:
         "$HOME/rustup-init" -y --no-modify-path --profile minimal
         --default-toolchain none
       - >-
+        RUSTDOCFLAGS="-D warnings"
         "$HOME/.cargo/bin/cargo" doc --no-deps --locked
         -p ga4gh-lib -p ga4gh-cli
 
