@@ -56,17 +56,7 @@ impl Session {
         config
     }
     async fn transport(&self, service: &str) -> Transport {
-        let mut headers = reqwest::header::HeaderMap::new();
-        let mut token =
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.token)).unwrap();
-        token.set_sensitive(true);
-        headers.insert(reqwest::header::AUTHORIZATION, token);
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
-        Transport::with_client(&self.config(service), client)
+        Transport::new(&self.config(service))
     }
     async fn wes(&self) -> WES {
         let transport = self.transport("wes").await;
