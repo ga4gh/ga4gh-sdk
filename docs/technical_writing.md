@@ -177,9 +177,14 @@ does not block unrelated work. Use the reviewer framework to classify findings.
 
 ## Adoption and automation
 
-Apply this guide incrementally to new and changed prose within the task's scope.
-Existing documentation is not presumed to satisfy it. Plan broader rewrites as
-separate work, and check technical behavior as well as wording.
+For every documentation or instruction update, review the affected paragraph,
+list, or procedure as a coherent unit. Include existing prose needed to understand
+the change. Revise that text where needed using the adapted STE rules in this
+guide. Then check technical meaning, conditions, exceptions, and requirement strength.
+An edit does not require rewriting the whole file or unrelated pages.
+
+Existing documentation is not presumed to satisfy this guide. Plan broader
+rewrites as separate work, and check technical behavior as well as wording.
 
 The initial publication applies the guide to selected engineering rules and the
 API-root procedure. This is a pilot, not a completed rewrite of all documentation.

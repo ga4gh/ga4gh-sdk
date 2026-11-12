@@ -27,9 +27,12 @@ different directory is shown.
 - Before reviewing or updating an existing PR, read the
   [reviewer framework](docs/reviewer_framework.md). For updates, follow its
   procedure for maintaining an existing PR.
-- For documentation and repository instructions, follow the
-  [technical writing guide](docs/technical_writing.md). Preserve technical
-  meaning, conditions, exceptions, and API identifiers.
+- When adding or updating documentation or repository instructions, read the
+  [technical writing guide](docs/technical_writing.md). Before finishing, review
+  the affected English prose against this project's adaptation of ASD-STE100
+  (STE) and revise it where needed. Preserve technical meaning, conditions,
+  exceptions, and API identifiers.
+  Keep unrelated documentation rewrites outside the task.
 
 ## Before opening a pull request
 

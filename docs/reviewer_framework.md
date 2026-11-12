@@ -284,6 +284,9 @@ consequence make the finding actionable.
   CI covers the affected crates and the locked graph.
 - [ ] Public API changes have a downstream example or test; docs commands match
   actual paths and prerequisites.
+- [ ] Changed documentation and instructions have been reviewed and revised
+  where needed using the [adapted STE guide](technical_writing.md#review-and-verification),
+  with their technical meaning and conditions preserved.
 - [ ] Review threads and issue checkboxes reflect delivered work. Closing
   keywords describe what this merge will complete; follow-up links identify
   work that remains.
