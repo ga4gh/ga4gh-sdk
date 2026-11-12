@@ -292,9 +292,9 @@ fn is_plain_http_to_remote(url: &Url) -> bool {
         return false;
     }
     match url.host() {
-        Some(url::Host::Domain(domain)) => !domain
-            .trim_end_matches('.')
-            .eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Domain(domain)) => {
+            !domain.eq_ignore_ascii_case("localhost") && !domain.eq_ignore_ascii_case("localhost.")
+        }
         Some(url::Host::Ipv4(address)) => !address.is_loopback(),
         Some(url::Host::Ipv6(address)) => !address.is_loopback(),
         None => true,
@@ -989,6 +989,7 @@ mod tests {
             ("http://[2001:db8::1]/tes", true),
             ("http://localhost/tes", false),
             ("http://localhost./tes", false),
+            ("http://localhost../tes", true),
             ("http://127.0.0.2/tes", false),
             ("http://[::1]/tes", false),
         ] {
