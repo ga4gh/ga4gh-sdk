@@ -17,3 +17,7 @@ node_modules/
 
 # Coverage reports (`make coverage`)
 coverage/
+
+# Documentation site (`make site`) and the bytecode of its hooks
+site/
+__pycache__/

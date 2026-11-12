@@ -39,6 +39,19 @@ tests = [
     "pytest",
 ]
 
+# Not needed by the bindings: the tools that build the repository's
+# documentation site (`mkdocs.yml`) on Read the Docs (`.readthedocs.yaml`)
+# and in CI (`docs` job). Install them with
+# `python -m pip install --group python/pyproject.toml:docs` (pip 25.1 or
+# later). Major versions are bounded, so that new warnings, which fail the
+# strict build, come only with deliberate upgrades
+[dependency-groups]
+docs = [
+    "mkdocs>=1.6.1,<2",
+    "mkdocs-material>=9.7.0,<10",
+    "pymdown-extensions>=10.0,<13",
+]
+
 [tool.maturin]
 bindings = "pyo3"
 module-name = "ga4gh_sdk"
