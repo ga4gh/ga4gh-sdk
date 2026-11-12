@@ -240,8 +240,21 @@ def test_pages_follow_next_page_below_each_root(server, root):
     trs = TRS(Configuration(f"{server.root}/{root}"))
     first = trs.list_tools(limit=1)
     assert first.next_page == f"{server.root}/{root}/tools?offset=1&limit=1"
-    trs.next_tools_page(first.next_page)
-    assert server.last()["path"] == f"/{root}/tools"
+    second = trs.next_tools_page(first.next_page)
+    request = server.last()
+    assert (request["path"], request["query"]) == (f"/{root}/tools", {"offset": ["1"], "limit": ["1"]})
+    assert [tool.id for tool in second.tools] == ["second"]
+
+
+def test_paging_headers_use_first_text_values(server):
+    page = TRS(Configuration(f"{server.root}/trs/odd-headers"), api_version="2.0.1", discovery=False).list_tools()
+    assert page.next_page == f"{server.root}/trs/tools?offset=1"
+    assert page.last_page is None
+    assert page.self_link is None
+    headers = page.headers()
+    assert headers["next_page"] == f"{server.root}/trs/tools?offset=1, {server.root}/trs/tools?offset=2"
+    assert headers["last_page"] == ""
+    assert "self_link" not in headers
 
 
 def test_pages_follow_next_page(server, trs):
@@ -305,7 +318,7 @@ def test_tags_follow_the_tag_filter_override(server):
     assert server.last()["query"] == {"tags": ["genomics"]}
 
 
-@pytest.mark.parametrize("limit", [0, -1, 2**31])
+@pytest.mark.parametrize("limit", [0, -1, 2**31, 2**63, 2**100])
 def test_invalid_page_size_raises_value_error(server, trs, limit):
     before = server.paths()
     with pytest.raises(ValueError, match="limit must be between"):
@@ -401,7 +414,7 @@ def test_get_files_zip_checks_limit_and_signature(server, trs):
     with pytest.raises(RuntimeError, match="not a ZIP archive"):
         trs.get_files_zip("t", "1", "CWL")
     before = server.paths()
-    for limit in (0, -1):
+    for limit in (0, -1, 2**63, 2**100):
         with pytest.raises(ValueError, match="limit must be positive"):
             trs.get_files_zip(TRS_TOOL_ID, TRS_VERSION_ID, "CWL", limit=limit)
     assert server.paths() == before

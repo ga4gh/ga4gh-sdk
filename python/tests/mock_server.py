@@ -11,7 +11,9 @@ client closes the connection before,
 ``service-info`` answers at once and every other request gets no answer until
 the client leaves (at most 30 seconds), for tests of timed-out submissions.
 A route can answer with a ``Raw`` body instead of JSON, or be a function of the
-query parameters; ``{host}`` in a reply header becomes the request's host.
+query parameters; ``{host}`` in a reply header becomes the request's host. Reply
+headers are a ``dict`` or a list of pairs, which may repeat a name; a ``bytes``
+value is sent as it is.
 """
 
 import base64
@@ -181,7 +183,11 @@ class Handler(BaseHTTPRequestHandler):
         else:
             data = json.dumps(payload).encode()
         self.send_response(status)
-        for name, value in (headers or {}).items():
+        pairs = headers.items() if isinstance(headers, dict) else headers or []
+        for name, value in pairs:
+            if isinstance(value, bytes):  # A header value that isn't text.
+                self._headers_buffer.append(name.encode() + b": " + value + b"\r\n")
+                continue
             self.send_header(name, value.replace("{host}", self.headers.get("Host", "")))
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
@@ -449,6 +455,17 @@ for root, version in [("trs", "2.0.1"), ("trs2", "2.0.2"), ("trs-next", "9.9.9")
                 {**TRS_TOOL, "id": "bad-description", "versions": [{**TRS_VERSION, "description": 7}]},
             ),
             ("GET", f"/{root}/tools/t/versions/1/CWL/files"): (200, TRS_FILES),
+            # Repeated, empty and non-text paging headers.
+            ("GET", f"/{root}/odd-headers/tools"): (
+                200,
+                [TRS_TOOL],
+                [
+                    ("next_page", "http://{host}/trs/tools?offset=1"),
+                    ("next_page", "http://{host}/trs/tools?offset=2"),
+                    ("last_page", ""),
+                    ("self_link", b"http://h/\xff"),
+                ],
+            ),
         }
     )
 

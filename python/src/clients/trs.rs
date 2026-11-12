@@ -18,7 +18,7 @@ use ga4gh_sdk::compatibility::{
     CapabilityOverride, CapabilitySupport, SelectionSource, VersionPolicy,
 };
 use ga4gh_sdk::utils::transport::{BodyLimits, Transport};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple, PyType};
 use reqwest::header::HeaderMap;
@@ -76,6 +76,19 @@ fn parse_descriptor_type<T: DeserializeOwned>(name: &str) -> PyResult<T> {
     require_segment(name, "descriptor type")?;
     serde_json::from_value(Value::String(name.to_owned()))
         .map_err(|error| PyValueError::new_err(format!("Invalid descriptor type: {error}")))
+}
+
+/// An `int` argument between `min` and `max`. Other `int`s, also those too large for an
+/// `i64`, raise `ValueError` with `message`; other types raise `TypeError`.
+fn bounded_int(value: &Bound<'_, PyAny>, min: i64, max: i64, message: &str) -> PyResult<i64> {
+    match value.extract::<i64>() {
+        Ok(number) if (min..=max).contains(&number) => Ok(number),
+        Ok(_) => Err(PyValueError::new_err(message.to_owned())),
+        Err(error) if error.is_instance_of::<PyOverflowError>(value.py()) => {
+            Err(PyValueError::new_err(message.to_owned()))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Checks a tool ID and a version ID, see [`require_segment`].
@@ -776,14 +789,17 @@ impl PyTRS {
         checker: Option<bool>,
         tags: Option<Vec<String>>,
         offset: Option<String>,
-        limit: Option<i64>,
+        limit: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyToolPage> {
         let limit = limit
             .map(|limit| {
-                i32::try_from(limit)
-                    .ok()
-                    .filter(|limit| *limit > 0)
-                    .ok_or_else(|| PyValueError::new_err("limit must be between 1 and 2147483647"))
+                bounded_int(
+                    limit,
+                    1,
+                    i32::MAX.into(),
+                    "limit must be between 1 and 2147483647",
+                )
+                .map(|limit| limit as i32)
             })
             .transpose()?;
         let filter = ToolFilter {
@@ -947,23 +963,24 @@ impl PyTRS {
 
     /// Downloads all files of a tool version as one ZIP archive, as `bytes`.
     ///
-    /// The archive is read into memory, at most `limit` bytes (64 MiB by default); a larger
+    /// The archive is read into memory, at most `limit` bytes (`None`: 64 MiB); a larger
     /// archive, or a response that isn't a ZIP archive, raises `RuntimeError`.
-    #[pyo3(signature = (id, version_id, descriptor_type, limit=DEFAULT_ZIP_LIMIT))]
+    #[pyo3(signature = (id, version_id, descriptor_type, limit=None))]
     pub fn get_files_zip<'py>(
         &self,
         py: Python<'py>,
         id: &str,
         version_id: &str,
         descriptor_type: &str,
-        limit: i64,
+        limit: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyBytes>> {
         require_ids(id, version_id)?;
         let descriptor_type: DescriptorType = parse_descriptor_type(descriptor_type)?;
-        let limit = usize::try_from(limit)
-            .ok()
-            .filter(|limit| *limit > 0)
-            .ok_or_else(|| PyValueError::new_err("limit must be positive"))?;
+        let limit = match limit {
+            Some(limit) => bounded_int(limit, 1, i64::MAX, "limit must be positive")?,
+            None => DEFAULT_ZIP_LIMIT,
+        };
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
         let archive = io(py, |rt| {
             rt.block_on(
                 self.inner

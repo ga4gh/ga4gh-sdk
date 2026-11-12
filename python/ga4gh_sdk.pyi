@@ -504,9 +504,11 @@ class TRS:
     def list_files(self, id: str, version_id: str, descriptor_type: str) -> list[ToolFile]:
         """Lists the version's files; `descriptor_type` without `PLAIN_`, such as `"CWL"`."""
     def get_files_zip(
-        self, id: str, version_id: str, descriptor_type: str, limit: int = 67108864
+        self, id: str, version_id: str, descriptor_type: str, limit: int | None = None
     ) -> bytes:
         """Downloads the version's files as one ZIP archive of at most `limit` bytes.
+
+        `None` means 64 MiB (67108864 bytes).
 
         A larger archive, or a response that isn't a ZIP archive, raises `RuntimeError`;
         a `limit` below 1 raises `ValueError`.

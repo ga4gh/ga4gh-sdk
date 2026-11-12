@@ -703,12 +703,12 @@ The Python test suite runs this file against a mock TRS.
   `FileWrapper`s; for `PLAIN_` types, a bare test file comes as one `FileWrapper`.
   `TRS.get_containerfiles(id, version_id)` returns the container specifications, such as
   Dockerfiles, as `FileWrapper`s.
-- `TRS.list_files(id, version_id, descriptor_type)` and `TRS.get_files_zip()` take
-  descriptor types without `PLAIN_`, such as `"CWL"`. `list_files()` returns the version's files as
+- `TRS.list_files(id, version_id, descriptor_type)` returns the version's files as
   `ToolFile`s with `path` and `file_type`. `TRS.get_files_zip(id, version_id,
-  descriptor_type, limit=67108864)` downloads them as one ZIP archive and returns it as
-  `bytes`; it reads at most `limit` bytes into memory, and a `limit` below 1 raises
-  `ValueError`. A larger archive, or a response
+  descriptor_type, limit=None)` downloads them as one ZIP archive and returns it as
+  `bytes`; it reads at most `limit` bytes into memory (`None`: 64 MiB), and a `limit`
+  below 1 raises `ValueError`. Both take descriptor types without `PLAIN_`, such as
+  `"CWL"`. A larger archive, or a response
   that isn't a ZIP archive (such as the JSON file list of a registry that ignores
   `format=zip`), raises `RuntimeError`. The archive isn't extracted or checked further.
 - `TRS.list_tool_classes()` returns the registry's tool classes as `dict`s.
