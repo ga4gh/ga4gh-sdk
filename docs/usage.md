@@ -274,7 +274,7 @@ contract:
 - **Reuse.** A token returned with `reusable_until(instant)` is reused for its
   audience until that instant, by every transport and client built from clones
   of the configuration. Without it, the provider is asked for every request.
-- **`401 Unauthorized`.** The SDK drops the reused token and asks the
+- **`401 Unauthorized`.** The SDK stops reusing the rejected token and asks the
   provider with `TokenRequest::after_rejection` set the next time. A
   replayable request is sent once more right away with the new token: a `GET`
   or `HEAD` of `Transport`'s helpers, discovery and pages, or a request of

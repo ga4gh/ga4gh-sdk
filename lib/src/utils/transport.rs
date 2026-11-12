@@ -386,20 +386,12 @@ impl Transport {
         let result = operation
             .run(async {
                 attempted = true;
-                response_text(request.send().await?, limits).await
+                response_text(self.send_checked(request).await?, limits).await
             })
             .await;
         match result {
             Ok(Ok(body)) => Ok(body),
-            Ok(Err(error)) if error.downcast_ref::<HttpError>().is_some() => {
-                if error
-                    .downcast_ref::<HttpError>()
-                    .is_some_and(|e| e.status == reqwest::StatusCode::UNAUTHORIZED)
-                {
-                    self.reject_token();
-                }
-                Err(error)
-            }
+            Ok(Err(error)) if error.downcast_ref::<HttpError>().is_some() => Err(error),
             Ok(Err(error)) => Err(Box::new(AmbiguousSubmissionError {
                 reason: error.to_string(),
             })),
@@ -576,12 +568,35 @@ impl Transport {
         Ok(request.header(reqwest::header::AUTHORIZATION, value))
     }
 
-    /// Drops the reused token of the token provider, if there is one, after the
-    /// service answered `401 Unauthorized`.
-    fn reject_token(&self) {
-        if let Some(source) = &self.config.token_provider {
-            source.reject(&self.config.token_audience());
+    /// Tells the token provider's reused tokens that the service answered
+    /// `401 Unauthorized` to a request with these `headers`, if they carry a
+    /// bearer token and a provider is configured.
+    fn reject_token(&self, headers: &reqwest::header::HeaderMap) {
+        let Some(source) = &self.config.token_provider else {
+            return;
+        };
+        let secret = headers
+            .get(reqwest::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "));
+        if let Some(secret) = secret {
+            source.reject(&self.config.token_audience(), secret);
         }
+    }
+
+    /// Sends `request`, and tells the reused tokens about a `401 Unauthorized`.
+    async fn send_checked(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, Box<dyn Error>> {
+        let (client, request) = request.build_split();
+        let request = request?;
+        let headers = request.headers().clone();
+        let response = client.execute(request).await?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.reject_token(&headers);
+        }
+        Ok(response)
     }
 
     /// Builds a request with [`authorized_request_builder`](Self::authorized_request_builder)
@@ -604,21 +619,18 @@ impl Transport {
         if let Some(sent) = sent {
             sent.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        let response = request.send().await?;
-        if response.status() != reqwest::StatusCode::UNAUTHORIZED
+        let response = self.send_checked(request).await?;
+        if !replayable
+            || response.status() != reqwest::StatusCode::UNAUTHORIZED
             || self.config.token_provider.is_none()
         {
-            return Ok(response);
-        }
-        if !replayable {
-            self.reject_token();
             return Ok(response);
         }
         drop(response);
         log::debug!("Asking the token provider again after 401 Unauthorized");
         let request = self.request_builder(method, endpoint)?;
         let request = build(self.authorize(request, true).await?)?;
-        Ok(request.send().await?)
+        self.send_checked(request).await
     }
 
     /// Resolves a relative path beneath the configured API root, with or without a trailing slash.
@@ -790,7 +802,7 @@ impl Transport {
             .authorized_request_builder(reqwest::Method::POST, endpoint)
             .await?
             .multipart(form);
-        let response = request.send().await?;
+        let response = self.send_checked(request).await?;
         response_text(response, BodyLimits::default()).await
     }
 
@@ -1245,6 +1257,22 @@ mod tests {
                 .unwrap();
             assert_eq!(provider.calls().len(), 3);
             assert!(provider.calls()[2].1);
+
+            // And after `post_multipart`.
+            let rejected = mock("POST", "/auth-drop/form")
+                .match_header("authorization", "Bearer token-3")
+                .with_status(401)
+                .expect(1)
+                .create();
+            let form = reqwest::multipart::Form::new().text("x", "y");
+            assert!(transport.post_multipart("form", form).await.is_err());
+            rejected.assert();
+            transport
+                .authorized_request_builder(reqwest::Method::POST, "form")
+                .await
+                .unwrap();
+            assert_eq!(provider.calls().len(), 4);
+            assert!(provider.calls()[3].1);
         }
 
         #[tokio::test]

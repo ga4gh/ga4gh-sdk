@@ -18,8 +18,8 @@
 //!   audience until that instant, by all transports built from clones of the
 //!   configuration. Return an earlier instant than the token's expiry to leave
 //!   a margin.
-//! - If the service answers `401 Unauthorized`, the transport drops the reused
-//!   token, and asks the provider with [`TokenRequest::after_rejection`] set
+//! - If the service answers `401 Unauthorized`, the transport stops reusing the
+//!   rejected token, and asks the provider with [`TokenRequest::after_rejection`] set
 //!   the next time. A replayable request is sent once more right away with the
 //!   new token: a `GET` or `HEAD` of the transport's helpers and pages, or a
 //!   request of
@@ -198,12 +198,20 @@ impl TokenSource {
         self.reused.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Drops the reused token of `audience` after the service rejected a token,
-    /// so that the next request asks the provider, with
-    /// [`TokenRequest::after_rejection`] set.
-    pub(crate) fn reject(&self, audience: &str) {
+    /// Records that the service rejected the token `secret` for `audience`: if
+    /// it is the reused one, or none is reused, the next request asks the
+    /// provider, with [`TokenRequest::after_rejection`] set. A newer reused
+    /// token stays.
+    pub(crate) fn reject(&self, audience: &str, secret: &str) {
         let mut slots = self.slots();
         let slot = slots.entry(audience.to_owned()).or_default();
+        if slot.token.as_ref().is_some_and(|t| t.secret != secret) {
+            return;
+        }
+        Self::clear(slot);
+    }
+
+    fn clear(slot: &mut Slot) {
         slot.token = None;
         slot.generation += 1;
         slot.rejected = true;
@@ -216,12 +224,12 @@ impl TokenSource {
         audience: &str,
         after_rejection: bool,
     ) -> Result<AccessToken, TokenProviderError> {
-        if after_rejection {
-            self.reject(audience);
-        }
         let (generation, after_rejection) = {
             let mut slots = self.slots();
             let slot = slots.entry(audience.to_owned()).or_default();
+            if after_rejection {
+                Self::clear(slot);
+            }
             if let Some(token) = slot
                 .token
                 .as_ref()
@@ -230,7 +238,8 @@ impl TokenSource {
                 return Ok(token.clone());
             }
             slot.token = None;
-            (slot.generation, std::mem::take(&mut slot.rejected))
+            let rejected = std::mem::take(&mut slot.rejected);
+            (slot.generation, after_rejection || rejected)
         };
         let request = TokenRequest {
             audience,
@@ -415,8 +424,10 @@ mod tests {
         let provider = Arc::new(Rejections::default());
         let source = TokenSource::new(provider.clone());
         assert_eq!(source.token("a", false).await.unwrap().secret(), "token-1");
-        source.reject("a");
+        source.reject("a", "token-1");
         assert_eq!(source.token("a", false).await.unwrap().secret(), "token-2");
+        // A late rejection of the old token leaves the newer reused one.
+        source.reject("a", "token-1");
         assert_eq!(source.token("a", false).await.unwrap().secret(), "token-2");
         assert_eq!(*provider.0.lock().unwrap(), [false, true]);
     }
