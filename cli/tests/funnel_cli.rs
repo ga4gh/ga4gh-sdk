@@ -77,6 +77,10 @@ fn await_state(home: &TempDir, id: &str, states: &[&str]) -> String {
             return state;
         }
         assert!(
+            !TERMINAL_STATES.contains(&state.as_str()),
+            "task {id} ended {state}, expected one of {states:?}"
+        );
+        assert!(
             Instant::now() < deadline,
             "task {id} still {state} after {STATE_TIMEOUT:?}"
         );
