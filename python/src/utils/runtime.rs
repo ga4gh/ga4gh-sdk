@@ -3,7 +3,9 @@
 //! Multi-thread runtime drivers remain alive between calls, retaining HTTP pools.
 //! Only owned Rust data crosses the GIL boundary. Convert errors to strings there
 //! (the current SDK's boxed errors are not Send); create Python exceptions after
-//! reacquiring the GIL. No Python callbacks or borrowed Python objects run here.
+//! reacquiring the GIL. No Python callbacks or borrowed Python objects run here, except
+//! token providers, which take the GIL on a blocking thread of the runtime (see
+//! `Configuration.set_token_provider()`).
 //!
 //! Synchronous calls block on the runtime with [`io`]. Asynchronous calls run on the same
 //! runtime as `asyncio` futures, with [`future_into_py`].

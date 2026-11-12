@@ -332,11 +332,8 @@ fn run_reports_rejected_submissions_and_wrong_services() {
     let output = run(&home, &args);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(
-        stderr(&output).contains("unsupported workflow type"),
-        "{}",
-        stderr(&output)
-    );
+    assert!(stderr(&output).contains("400"), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("unsupported workflow type"));
     submit.assert();
 
     let missing = home_with_wes_config("/no-wes-here");
@@ -526,13 +523,13 @@ fn service_failures_have_nonzero_exit_codes() {
         .create();
     let home = home_with_wes_config(prefix);
     for (args, expected) in [
-        (vec!["wes", "get", "missing"], "run not found"),
-        (vec!["wes", "status", "missing"], "status not found"),
+        (vec!["wes", "get", "missing"], "404"),
+        (vec!["wes", "status", "missing"], "404"),
         (
             vec!["wes", "cancel", "done"],
             "cancellation cannot be confirmed",
         ),
-        (vec!["wes", "list"], "list unavailable"),
+        (vec!["wes", "list"], "503"),
     ] {
         let output = run(&home, &args);
         assert_eq!(output.status.code(), Some(1), "{args:?}");
@@ -574,10 +571,8 @@ fn list_all_escapes_server_text_in_records_and_errors() {
     let record: Value = serde_json::from_str(records.trim()).unwrap();
     assert_eq!(record["run_id"], "a\u{202E}b\u{9b}c");
     let diagnostics = stderr(&output);
-    assert!(
-        diagnostics.contains(r"down\u{1b}]0;title\u{7}"),
-        "{diagnostics}"
-    );
+    assert!(diagnostics.contains("503"), "{diagnostics}");
+    assert!(!diagnostics.contains("down"), "{diagnostics}");
     assert!(
         !diagnostics.contains('\u{1b}') && !diagnostics.contains('\u{9b}'),
         "{diagnostics}"
@@ -595,4 +590,43 @@ fn empty_run_ids_are_usage_errors() {
         assert_eq!(output.status.code(), Some(2), "{command}");
         assert!(output.stdout.is_empty(), "{command}");
     }
+}
+
+#[test]
+fn undefined_states_read_as_unknown_except_in_get_and_jsonl() {
+    let prefix = "/undefined-state/ga4gh/wes/v1";
+    let _service = service_info(prefix);
+    let log_body = json!({"run_id": "r1", "state": "SUSPENDED"}).to_string();
+    let _log = mock("GET", format!("{prefix}/runs/r1").as_str())
+        .with_status(200)
+        .with_body(&log_body)
+        .create();
+    let _status = mock("GET", format!("{prefix}/runs/r1/status").as_str())
+        .with_status(200)
+        .with_body(&log_body)
+        .create();
+    let _list = mock("GET", format!("{prefix}/runs").as_str())
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body(json!({"runs": [{"run_id": "r1", "state": "SUSPENDED"}]}).to_string())
+        .create();
+    let home = home_with_wes_config(prefix);
+
+    let state = run(&home, &["wes", "status", "r1"]);
+    assert_success(&state);
+    assert_eq!(stdout(&state), "UNKNOWN\n");
+    let table = run(&home, &["wes", "list"]);
+    assert_success(&table);
+    assert!(
+        stdout(&table).contains("r1      UNKNOWN\n"),
+        "{}",
+        stdout(&table)
+    );
+    let get = run(&home, &["wes", "get", "r1"]);
+    assert_success(&get);
+    assert_eq!(stdout(&get), log_body);
+    let export = run(&home, &["wes", "list", "--all", "--format", "jsonl"]);
+    assert_success(&export);
+    let record: Value = serde_json::from_str(stdout(&export).trim()).unwrap();
+    assert_eq!(record["state"], "SUSPENDED");
 }

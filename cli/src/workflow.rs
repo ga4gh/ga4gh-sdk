@@ -150,14 +150,7 @@ pub(crate) async fn run_with_context(
                             .load_config(ServiceType::WES)
                             .map_err(|error| error.to_string())?,
                     };
-                    let mut headers = ga4gh_sdk::reqwest::header::HeaderMap::new();
-                    if config.basic_auth.is_some() || config.api_key.is_some() { return Err("workflow CLI supports OAuth bearer auth; use a caller-owned transport for other schemes".into()); }
-                    if let Some(token)=config.oauth_access_token.as_ref().or(config.bearer_access_token.as_ref()) {
-                        let mut value=ga4gh_sdk::reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
-                        value.set_sensitive(true);headers.insert(ga4gh_sdk::reqwest::header::AUTHORIZATION,value);
-                    }
-                    let client=ga4gh_sdk::reqwest::Client::builder().default_headers(headers).redirect(ga4gh_sdk::reqwest::redirect::Policy::none()).connect_timeout(std::time::Duration::from_secs(10)).timeout(std::time::Duration::from_secs(60)).build()?;
-                    let wes = WES::from_transport(ga4gh_sdk::utils::transport::Transport::with_client(&config,client)).await?;
+                    let wes = WES::new(&config).await?;
                     let attachments = m
                         .get_many::<String>("attachment")
                         .into_iter()

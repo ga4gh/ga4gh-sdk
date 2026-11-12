@@ -99,8 +99,25 @@ suites are not included. For an HTML report of the same data, run this after
 
 ```sh
 cargo llvm-cov report --html --open \
-  --ignore-filename-regex 'lib/src/clients/[^/]+/models/'
+  --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
 ```
+
+In CI, the `codecov` job uploads `coverage/lcov.info` from the `coverage`
+job to [Codecov](https://codecov.io/gh/ga4gh/ga4gh-sdk), which shows the
+coverage of `main` in the README badge and, on pull requests, the change in
+coverage as a comment and as the `codecov/project` and `codecov/patch`
+statuses. [`codecov.yml`](../codecov.yml) makes these statuses
+informational: they never fail, and `CI passed` remains the only required
+check.
+
+The upload authenticates with an OIDC token of the workflow run, so the
+repository needs no Codecov secret; uploads from forks need no token. Uploads
+need the Codecov GitHub app, which the ga4gh organization has installed for
+this repository. Dependabot pull requests may get no OIDC token, and then no
+Codecov report.
+A failed upload doesn't fail the job: the job summary and the `coverage`
+artifact of the `coverage` job are then still there, and the job log of
+`codecov` shows the reason.
 
 ## Lints
 
@@ -119,16 +136,25 @@ on pushes to `main` and on manual dispatch:
 | --- | --- | --- |
 | `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` |
 | `test` | Test | `cargo test --workspace --locked` |
-| `build` | Build | Lockfile check, builds of library, CLI and Python wheel |
+| `build` | Build | Lockfile check, standalone library and CLI builds |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
+| `wheels` | Python wheels | Full platform wheel and sdist matrix on `main` pushes and manual runs; skipped on PRs |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
+| `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
 | `downstream` | Downstream example | `make downstream`: builds and tests [`examples/downstream-sdk/`](downstream.md) |
-| `passed` | CI passed | Fails unless all jobs above succeeded |
+| `passed` | CI passed | Requires all applicable jobs to succeed; accepts the intentionally skipped wheel matrix on PRs |
 
 `CI passed` is the check to require for merges. A new job must be added to
-its `needs:` and to the list of expected jobs in its script.
+its `needs:` and to the list of expected jobs in its script. Ordinary PRs run
+the Python binding tests, including a local wheel build, but do not run the
+five-platform wheel and sdist matrix. Every push to `main` runs that matrix;
+version tags also build it as part of the [release workflow](releasing.md).
+For a PR that changes packaging, native dependencies, supported platforms or
+the wheel/release workflows, open **Actions → CI → Run workflow**, select the
+PR branch and run the full matrix before merging. Check the wheel and sdist
+jobs. The manual run builds artifacts but does not publish them.
 
 ## Issue and pull request templates
 

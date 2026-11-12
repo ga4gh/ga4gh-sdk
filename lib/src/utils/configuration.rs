@@ -1,7 +1,10 @@
 use crate::clients::ServiceType;
+use crate::utils::auth::{TokenProvider, TokenSource};
+use crate::utils::timeouts::Timeouts;
 use serde_json::{Map, Value};
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 use url::Url;
 
 /// Printed in `Debug` output in place of a value that is set but not meant to be shown.
@@ -29,12 +32,32 @@ impl fmt::Debug for RedactedValues<'_> {
 }
 
 /// The keys of a configuration file section that `Configuration::from_path` reads itself.
-const SECTION_KEYS: [&str; 4] = [
+const SECTION_KEYS: [&str; 8] = [
     "base_path",
     "basic_auth",
     "oauth_access_token",
     "oauth_access_token_env",
+    "bearer_access_token",
+    "bearer_access_token_env",
+    "api_key",
+    "timeouts",
 ];
+
+/// Reads the `timeouts` object of a configuration file section: each key is a
+/// limit of [`Timeouts`] in seconds; missing keys keep their defaults.
+fn timeouts_from_value(value: &Value) -> Result<Timeouts, String> {
+    let fields = value
+        .as_object()
+        .ok_or("timeouts must be an object of numbers of seconds")?;
+    let mut timeouts = Timeouts::default();
+    for (key, value) in fields {
+        // A non-number is as invalid as a negative one; NaN gives the same message.
+        timeouts
+            .set_seconds(key, value.as_f64().unwrap_or(f64::NAN))
+            .map_err(|error| format!("Invalid timeouts: {error}"))?;
+    }
+    Ok(timeouts)
+}
 
 /// The top-level key of a configuration file that holds named profiles.
 const PROFILES_KEY: &str = "profiles";
@@ -42,6 +65,12 @@ const PROFILES_KEY: &str = "profiles";
 const DEFAULT_PROFILE_KEY: &str = "default_profile";
 /// The profile that is used when none is given and the file names none.
 pub const DEFAULT_PROFILE: &str = "default";
+
+/// Render a name from the file or caller without terminal controls or bidi
+/// formatting characters in default error messages.
+fn display_profile_name(name: &str) -> String {
+    name.chars().flat_map(char::escape_default).collect()
+}
 
 /// Returns the object of the configuration file `root` that holds the service
 /// sections, with the name of the profile it belongs to: the selected profile
@@ -54,8 +83,20 @@ fn profile_sections<'a>(
     root: &'a Map<String, Value>,
     profile: Option<&str>,
 ) -> Result<(Option<String>, &'a Map<String, Value>), String> {
-    let Some(profiles) = root.get(PROFILES_KEY) else {
-        if root.contains_key(DEFAULT_PROFILE_KEY) {
+    // An existing custom service can be named `profiles`. A valid service
+    // section has a string base_path; a profile map has profile objects.
+    let flat_profiles_section = root
+        .get(PROFILES_KEY)
+        .and_then(Value::as_object)
+        .and_then(|fields| fields.get("base_path"))
+        .is_some_and(Value::is_string);
+    let Some(profiles) = root.get(PROFILES_KEY).filter(|_| !flat_profiles_section) else {
+        let flat_default_section = root
+            .get(DEFAULT_PROFILE_KEY)
+            .and_then(Value::as_object)
+            .and_then(|fields| fields.get("base_path"))
+            .is_some_and(Value::is_string);
+        if root.contains_key(DEFAULT_PROFILE_KEY) && !flat_default_section {
             return Err(format!(
                 "Configuration file sets '{DEFAULT_PROFILE_KEY}' but has no '{PROFILES_KEY}' object"
             ));
@@ -63,7 +104,8 @@ fn profile_sections<'a>(
         return match profile {
             None | Some(DEFAULT_PROFILE) => Ok((None, root)),
             Some(name) => Err(format!(
-                "Profile '{name}' not found: the configuration file has no '{PROFILES_KEY}' object"
+                "Profile '{}' not found: the configuration file has no '{PROFILES_KEY}' object",
+                display_profile_name(name)
             )),
         };
     };
@@ -75,29 +117,38 @@ fn profile_sections<'a>(
         !key.starts_with('$') && !matches!(key.as_str(), PROFILES_KEY | DEFAULT_PROFILE_KEY)
     }) {
         return Err(format!(
-            "Configuration file with '{PROFILES_KEY}' can't have the top-level section '{key}'; \
-             move it into a profile"
+            "Configuration file with '{PROFILES_KEY}' can't have the top-level section '{}'; \
+             move it into a profile",
+            display_profile_name(key)
         ));
     }
-    let name = match (profile, root.get(DEFAULT_PROFILE_KEY)) {
-        (Some(name), _) => name,
-        (None, None | Some(Value::Null)) => DEFAULT_PROFILE,
-        (None, Some(Value::String(name))) => name.as_str(),
-        (None, Some(_)) => return Err(format!("'{DEFAULT_PROFILE_KEY}' must be a string")),
+    let default_name = match root.get(DEFAULT_PROFILE_KEY) {
+        None | Some(Value::Null) => DEFAULT_PROFILE,
+        Some(Value::String(name)) => name.as_str(),
+        Some(_) => return Err(format!("'{DEFAULT_PROFILE_KEY}' must be a string")),
     };
+    let name = profile.unwrap_or(default_name);
     match profiles.get(name) {
         Some(Value::Object(sections)) => Ok((Some(name.to_owned()), sections)),
-        Some(_) => Err(format!("Profile '{name}' must be an object")),
+        Some(_) => Err(format!(
+            "Profile '{}' must be an object",
+            display_profile_name(name)
+        )),
         None => {
             let mut names: Vec<&str> = profiles.keys().map(String::as_str).collect();
             names.sort_unstable();
             let available = if names.is_empty() {
                 "none".to_owned()
             } else {
-                names.join(", ")
+                names
+                    .into_iter()
+                    .map(display_profile_name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             };
             Err(format!(
-                "Profile '{name}' not found; profiles in the configuration file: {available}"
+                "Profile '{}' not found; profiles in the configuration file: {available}",
+                display_profile_name(name)
             ))
         }
     }
@@ -106,6 +157,30 @@ fn profile_sections<'a>(
 /// Reads a token from the environment variable `name`.
 fn token_from_env(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|error| var_error_message(name, &error))
+}
+
+/// Read one direct token or an explicitly named environment variable.
+fn token_field(
+    fields: &Map<String, Value>,
+    direct: &'static str,
+    env_field: &'static str,
+    section: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let token = match fields.get(direct) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(token)) => Some(token.clone()),
+        _ => return Err(format!("{direct} must be a string").into()),
+    };
+    match fields.get(env_field) {
+        None | Some(Value::Null) => Ok(token),
+        Some(Value::String(_)) if token.is_some() => {
+            Err(format!("Set either {direct} or {env_field}, not both").into())
+        }
+        Some(Value::String(name)) => token_from_env(name)
+            .map(Some)
+            .map_err(|error| format!("{error}; it is named by {env_field} in '{section}'").into()),
+        _ => Err(format!("{env_field} must be a string").into()),
+    }
 }
 
 /// Describes why the environment variable `name` can't be read, without its value.
@@ -161,6 +236,14 @@ pub struct Configuration {
     /// settings that the SDK doesn't know, such as those of a downstream crate.
     /// They can hold credentials, so `Debug` output shows only their keys.
     pub extra: Map<String, Value>,
+    /// The time limits of requests; see [`Timeouts`].
+    pub timeouts: Timeouts,
+    /// Gives a bearer token for each request, in place of a static credential;
+    /// see [`with_token_provider`](Self::with_token_provider).
+    pub token_provider: Option<TokenSource>,
+    /// The audience passed to the token provider; without it, the API root.
+    /// See [`token_audience`](Self::token_audience).
+    pub token_audience: Option<String>,
 }
 
 /// Represents the basic authentication credentials.
@@ -181,6 +264,57 @@ pub struct ApiKey {
     pub key: String,
 }
 
+/// An invalid or ambiguous configured credential. No credential value is shown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AuthError {
+    /// More than one credential source was configured.
+    Conflicting { sources: Vec<&'static str> },
+    /// The SDK has no request-header contract for this source.
+    Unsupported { source: &'static str },
+    /// The bearer value cannot be sent as an HTTP bearer token.
+    InvalidBearer { source: &'static str },
+    /// A Basic username cannot contain the separator used by Basic auth.
+    InvalidBasicUsername,
+    /// A Basic username or password contains an HTTP control character.
+    InvalidBasicControlCharacter { field: &'static str },
+    /// A caller-owned client and configured credentials require explicit opt-in.
+    CallerOwnedClient,
+    /// A token provider requires the asynchronous request builder.
+    ProviderRequiresAsyncBuilder,
+}
+
+impl fmt::Display for AuthError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Conflicting { sources } => {
+                write!(f, "Conflicting authentication sources: {}", sources.join(", "))
+            }
+            Self::Unsupported { source } => write!(f, "Unsupported authentication source: {source}"),
+            Self::InvalidBearer { source } => write!(f, "Invalid bearer token in {source}"),
+            Self::InvalidBasicUsername => f.write_str("Basic auth username must not contain ':'"),
+            Self::InvalidBasicControlCharacter { field } => {
+                write!(f, "Basic auth {field} must not contain control characters")
+            }
+            Self::CallerOwnedClient => f.write_str(
+                "Configured credentials cannot be applied to a caller-owned HTTP client without explicit opt-in",
+            ),
+            Self::ProviderRequiresAsyncBuilder => f.write_str(
+                "A token provider requires authorized_request_builder() before sending a request",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AuthError {}
+
+/// The one supported credential selected for a request.
+pub(crate) enum ConfiguredAuth<'a> {
+    None,
+    Basic(&'a BasicAuth),
+    Bearer(&'a str),
+}
+
 impl fmt::Debug for Configuration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Listing all fields makes the compiler ask how to print any new one.
@@ -192,6 +326,9 @@ impl fmt::Debug for Configuration {
             bearer_access_token,
             api_key,
             extra,
+            timeouts,
+            token_provider,
+            token_audience,
         } = self;
         f.debug_struct("Configuration")
             .field("base_path", &display_url(base_path))
@@ -201,6 +338,9 @@ impl fmt::Debug for Configuration {
             .field("bearer_access_token", &redact(bearer_access_token))
             .field("api_key", api_key)
             .field("extra", &RedactedValues(extra))
+            .field("timeouts", timeouts)
+            .field("token_provider", &token_provider.as_ref().map(|_| Redacted))
+            .field("token_audience", &redact(token_audience))
             .finish()
     }
 }
@@ -251,6 +391,9 @@ impl Configuration {
             bearer_access_token: None,
             api_key: None,
             extra: Map::new(),
+            timeouts: Timeouts::default(),
+            token_provider: None,
+            token_audience: None,
         }
     }
 
@@ -310,6 +453,69 @@ impl Configuration {
         self
     }
 
+    /// Select exactly one credential source. Validate programmatic changes on
+    /// each request, because the configuration fields are public.
+    pub(crate) fn configured_auth(&self) -> Result<ConfiguredAuth<'_>, AuthError> {
+        let mut sources = Vec::new();
+        if self.basic_auth.is_some() {
+            sources.push("basic_auth");
+        }
+        if self.oauth_access_token.is_some() {
+            sources.push("oauth_access_token");
+        }
+        if self.bearer_access_token.is_some() {
+            sources.push("bearer_access_token");
+        }
+        if self.api_key.is_some() {
+            sources.push("api_key");
+        }
+        if !self.base_path.username().is_empty() || self.base_path.password().is_some() {
+            sources.push("base_path userinfo");
+        }
+        if sources.len() > 1 {
+            return Err(AuthError::Conflicting { sources });
+        }
+        if self.api_key.is_some() {
+            return Err(AuthError::Unsupported { source: "api_key" });
+        }
+        if sources.contains(&"base_path userinfo") {
+            return Err(AuthError::Unsupported {
+                source: "base_path userinfo",
+            });
+        }
+        if let Some(basic) = &self.basic_auth {
+            if basic.username.contains(':') {
+                return Err(AuthError::InvalidBasicUsername);
+            }
+            if basic.username.bytes().any(|byte| byte.is_ascii_control()) {
+                return Err(AuthError::InvalidBasicControlCharacter { field: "username" });
+            }
+            if basic
+                .password
+                .as_deref()
+                .is_some_and(|password| password.bytes().any(|byte| byte.is_ascii_control()))
+            {
+                return Err(AuthError::InvalidBasicControlCharacter { field: "password" });
+            }
+            return Ok(ConfiguredAuth::Basic(basic));
+        }
+        for (source, token) in [
+            ("oauth_access_token", self.oauth_access_token.as_deref()),
+            ("bearer_access_token", self.bearer_access_token.as_deref()),
+        ] {
+            if let Some(token) = token {
+                if token.is_empty()
+                    || token.bytes().any(|byte| byte.is_ascii_whitespace())
+                    || reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).is_err()
+                {
+                    return Err(AuthError::InvalidBearer { source });
+                }
+                return Ok(ConfiguredAuth::Bearer(token));
+            }
+        }
+        Ok(ConfiguredAuth::None)
+    }
+
     /// Sets the OAuth access token from an environment variable that the caller names.
     ///
     /// # Arguments
@@ -326,6 +532,107 @@ impl Configuration {
         Ok(self.with_oauth_access_token(token_from_env(name)?))
     }
 
+    /// Gets bearer tokens from `provider` for each request, in place of a static
+    /// credential.
+    ///
+    /// The provider is one credential source on its own: requests fail before
+    /// anything is sent if `basic_auth`, `oauth_access_token`,
+    /// `bearer_access_token`, `api_key` or a user or password in `base_path` is
+    /// set as well. See [`crate::utils::auth`] for when the provider is asked,
+    /// how tokens are reused and when a request is sent once more after
+    /// `401 Unauthorized`.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - Gives the tokens.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of Configuration.
+    pub fn with_token_provider(self, provider: impl TokenProvider + 'static) -> Self {
+        self.with_shared_token_provider(Arc::new(provider))
+    }
+
+    /// Like [`with_token_provider`](Self::with_token_provider), for a provider
+    /// that other configurations use, too.
+    pub fn with_shared_token_provider(mut self, provider: Arc<dyn TokenProvider>) -> Self {
+        self.token_provider = Some(TokenSource::new(provider));
+        self
+    }
+
+    /// Sets the audience that the token provider is asked for, such as the
+    /// audience of a token exchange; without it, it is the API root.
+    ///
+    /// # Arguments
+    ///
+    /// * `audience` - The audience.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of Configuration.
+    pub fn with_token_audience(mut self, audience: String) -> Self {
+        self.token_audience = Some(audience);
+        self
+    }
+
+    /// The audience that the token provider is asked for: the configured
+    /// `token_audience` or, without one, `base_path` without user, password,
+    /// query and fragment.
+    pub fn token_audience(&self) -> String {
+        self.token_audience
+            .clone()
+            .unwrap_or_else(|| display_url(&self.base_path))
+    }
+
+    /// The names of the configured credentials other than the token provider.
+    pub(crate) fn static_credentials(&self) -> Vec<&'static str> {
+        let mut sources = Vec::new();
+        if self.basic_auth.is_some() {
+            sources.push("basic_auth");
+        }
+        if self.oauth_access_token.is_some() {
+            sources.push("oauth_access_token");
+        }
+        if self.bearer_access_token.is_some() {
+            sources.push("bearer_access_token");
+        }
+        if self.api_key.is_some() {
+            sources.push("api_key");
+        }
+        if !self.base_path.username().is_empty() || self.base_path.password().is_some() {
+            sources.push("the user or password in base_path");
+        }
+        sources
+    }
+
+    /// Sets a generic bearer access token for API requests.
+    pub fn with_bearer_access_token(mut self, token: String) -> Self {
+        self.bearer_access_token = Some(token);
+        self
+    }
+
+    /// Sets a generic bearer token from an explicitly named environment variable.
+    pub fn with_bearer_access_token_from_env(
+        self,
+        name: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(self.with_bearer_access_token(token_from_env(name)?))
+    }
+
+    /// Sets the time limits of requests; see [`Timeouts`].
+    ///
+    /// # Arguments
+    ///
+    /// * `timeouts` - The time limits.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of Configuration.
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+
     /// Loads the configuration from a JSON file.
     ///
     /// # Arguments
@@ -338,7 +645,6 @@ impl Configuration {
     ///
     /// This function will return an error if the configuration file is missing or malformed.
     pub fn from_file(service_type: ServiceType) -> Result<Self, Box<dyn std::error::Error>> {
-        // `ga4gh_cli::CliContext::default()` reads the same file; keep the two in step.
         let path = dirs::home_dir()
             .ok_or("Home directory not found")?
             .join(".ga4gh-cli/config.json");
@@ -348,11 +654,15 @@ impl Configuration {
     /// Load one named section from a JSON configuration file.
     ///
     /// Only `base_path` is required; authentication fields are optional.
-    /// `oauth_access_token_env` names an environment variable to read the token
-    /// from, in place of `oauth_access_token`. Other keys of the section go into
-    /// `extra`. A missing file is an I/O error; malformed content is an input error.
-    /// In a file with profiles, the section comes from the default profile; see
-    /// [`Configuration::from_path_with_profile`].
+    /// `oauth_access_token_env` and `bearer_access_token_env` name environment
+    /// variables to read a token from. Configure one supported source only;
+    /// `api_key` and URL userinfo are rejected. `timeouts` is an object with
+    /// `connect`, `request`, `discovery` and `submission` in seconds; missing
+    /// ones keep their defaults (see [`Timeouts`]). Other keys of the section go
+    /// into `extra`. A missing file is an I/O error; malformed content is an
+    /// input error.
+    /// In a file with profiles, the section comes from the default profile;
+    /// see [`Configuration::from_path_with_profile`].
     ///
     /// # Example
     ///
@@ -434,7 +744,10 @@ impl Configuration {
             .and_then(Value::as_object)
             .ok_or_else(|| match &profile {
                 None => format!("Configuration file must contain a '{section}' object"),
-                Some(name) => format!("Profile '{name}' must contain a '{section}' object"),
+                Some(name) => format!(
+                    "Profile '{}' must contain a '{section}' object",
+                    display_profile_name(name)
+                ),
             })?;
         let base_path = fields
             .get("base_path")
@@ -463,31 +776,31 @@ impl Configuration {
             }
             _ => return Err("basic_auth must be an object".into()),
         }
-        match fields.get("oauth_access_token") {
-            None | Some(Value::Null) => {}
-            Some(Value::String(token)) => config.oauth_access_token = Some(token.clone()),
-            _ => return Err("oauth_access_token must be a string".into()),
+        config.oauth_access_token = token_field(
+            fields,
+            "oauth_access_token",
+            "oauth_access_token_env",
+            section,
+        )?;
+        config.bearer_access_token = token_field(
+            fields,
+            "bearer_access_token",
+            "bearer_access_token_env",
+            section,
+        )?;
+        if fields.get("api_key").is_some_and(|value| !value.is_null()) {
+            return Err(AuthError::Unsupported { source: "api_key" }.into());
         }
-        match fields.get("oauth_access_token_env") {
+        match fields.get("timeouts") {
             None | Some(Value::Null) => {}
-            Some(Value::String(_)) if config.oauth_access_token.is_some() => {
-                return Err(
-                    "Set either oauth_access_token or oauth_access_token_env, not both".into(),
-                )
-            }
-            Some(Value::String(name)) => {
-                let token = token_from_env(name).map_err(|error| {
-                    format!("{error}; it is named by oauth_access_token_env in '{section}'")
-                })?;
-                config.oauth_access_token = Some(token);
-            }
-            _ => return Err("oauth_access_token_env must be a string".into()),
+            Some(value) => config.timeouts = timeouts_from_value(value)?,
         }
         config.extra = fields
             .iter()
             .filter(|(key, _)| !SECTION_KEYS.contains(&key.as_str()))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
+        config.configured_auth()?;
         Ok(config)
     }
 }
@@ -508,6 +821,9 @@ impl Default for Configuration {
             bearer_access_token: None,
             api_key: None,
             extra: Map::new(),
+            timeouts: Timeouts::default(),
+            token_provider: None,
+            token_audience: None,
         }
     }
 }
@@ -532,6 +848,8 @@ pub(crate) fn config_with_markers() -> Configuration {
         Value::String("SENTINEL_EXTRA".to_owned()),
     );
     config
+        .with_token_provider(crate::utils::auth::FixedToken("SENTINEL_PROVIDER"))
+        .with_token_audience("https://audience.example".to_owned())
 }
 
 #[cfg(test)]
@@ -555,17 +873,17 @@ mod tests {
 
         std::fs::write(
             &path,
-            r#"{"custom":{"base_path":"https://example.org/tes/v1","basic_auth":{"username":"alice"},"oauth_access_token":"token"}}"#,
+            r#"{"custom":{"base_path":"https://example.org/tes/v1","basic_auth":{"username":"alice"}}}"#,
         )
         .unwrap();
         let config = Configuration::from_path(&path, "custom").unwrap();
         assert_eq!(config.basic_auth.as_ref().unwrap().username, "alice");
         assert_eq!(config.basic_auth.as_ref().unwrap().password, None);
-        assert_eq!(config.oauth_access_token.as_deref(), Some("token"));
+        assert!(config.oauth_access_token.is_none());
     }
 
     #[test]
-    fn test_from_path_reads_existing_files_unchanged() {
+    fn test_from_path_reads_service_sections_with_one_credential() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         std::fs::write(
@@ -573,8 +891,7 @@ mod tests {
             r#"{
                 "TES": {
                     "base_path": "https://example.org/ga4gh/tes/v1",
-                    "basic_auth": {"username": "alice", "password": "change-me"},
-                    "oauth_access_token": "my-token"
+                    "basic_auth": {"username": "alice", "password": "change-me"}
                 },
                 "WES": {"base_path": "https://example.org/ga4gh/wes/v1"}
             }"#,
@@ -592,7 +909,7 @@ mod tests {
                 password: Some("change-me".to_owned()),
             })
         );
-        assert_eq!(config.oauth_access_token.as_deref(), Some("my-token"));
+        assert!(config.oauth_access_token.is_none());
         assert!(config.extra.is_empty(), "{:?}", config.extra);
 
         let config = Configuration::from_path(&path, ServiceType::WES.as_str()).unwrap();
@@ -647,6 +964,18 @@ mod tests {
         assert_eq!(config.oauth_access_token, Some(expected.clone()));
         assert!(config.extra.is_empty(), "{:?}", config.extra);
 
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org","bearer_access_token_env":"PATH"}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(
+            config.bearer_access_token,
+            Some(std::env::var("PATH").unwrap())
+        );
+        assert!(config.extra.is_empty());
+
         // `null` means unset, for both keys.
         std::fs::write(
             &path,
@@ -694,6 +1023,50 @@ mod tests {
     }
 
     #[test]
+    fn test_from_path_reads_timeouts() {
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"custom":{"base_path":"https://example.org","timeouts":{"discovery":30,"submission":0.5}}}"#,
+        )
+        .unwrap();
+        let config = Configuration::from_path(&path, "custom").unwrap();
+        assert_eq!(
+            config.timeouts,
+            Timeouts {
+                discovery: Duration::from_secs(30),
+                submission: Duration::from_millis(500),
+                ..Default::default()
+            }
+        );
+        assert!(config.extra.is_empty(), "{:?}", config.extra);
+
+        for document in [
+            r#"{"custom":{"base_path":"https://example.org"}}"#,
+            r#"{"custom":{"base_path":"https://example.org","timeouts":null}}"#,
+            r#"{"custom":{"base_path":"https://example.org","timeouts":{}}}"#,
+        ] {
+            std::fs::write(&path, document).unwrap();
+            let config = Configuration::from_path(&path, "custom").unwrap();
+            assert_eq!(config.timeouts, Timeouts::default(), "{document}");
+        }
+    }
+
+    #[test]
+    fn test_with_timeouts() {
+        let timeouts = Timeouts {
+            connect: std::time::Duration::from_secs(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            Configuration::default().with_timeouts(timeouts).timeouts,
+            timeouts
+        );
+    }
+
+    #[test]
     fn test_from_path_invalid_documents() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
@@ -721,6 +1094,50 @@ mod tests {
             (
                 r#"{"custom":{"base_path":"https://example.org","oauth_access_token":"token","oauth_access_token_env":"GA4GH_SDK_TEST_TOKEN_BOTH"}}"#,
                 "not both",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","basic_auth":{"username":"alice"},"oauth_access_token":"token"}}"#,
+                "Conflicting authentication sources",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","bearer_access_token":3}}"#,
+                "bearer_access_token must be a string",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","bearer_access_token":"one","bearer_access_token_env":"PATH"}}"#,
+                "not both",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","api_key":{"key":"secret"}}}"#,
+                "Unsupported authentication source: api_key",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://user:secret@example.org"}}"#,
+                "Unsupported authentication source: base_path userinfo",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":30}}"#,
+                "timeouts must be an object",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"read":30}}}"#,
+                "Invalid timeouts: unknown timeout 'read'",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"request":"30"}}}"#,
+                "Invalid timeouts: request must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"connect":0}}}"#,
+                "Invalid timeouts: connect must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"discovery":-1}}}"#,
+                "Invalid timeouts: discovery must be a positive number of seconds",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","timeouts":{"submission":1e300}}}"#,
+                "Invalid timeouts: submission must be a positive number of seconds",
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"GA4GH_SDK_TEST_TOKEN_UNSET"}}"#,
@@ -758,7 +1175,7 @@ mod tests {
         "profiles": {
             "local": {"TES": {"base_path": "http://localhost:8000/ga4gh/tes/v1"}},
             "remote": {
-                "TES": {"base_path": "https://tes.example.org/ga4gh/tes/v1", "oauth_access_token_env": "PATH"},
+                "TES": {"base_path": "https://tes.example.org/ga4gh/tes/v1", "oauth_access_token_env": "GA4GH_SDK_PROFILE_TEST_TOKEN"},
                 "WES": {"base_path": "https://wes.example.org/ga4gh/wes/v1"}
             },
             "default": {"TES": {"base_path": "https://default.example.org/"}}
@@ -767,6 +1184,8 @@ mod tests {
 
     #[test]
     fn test_from_path_with_profile_selects_the_profile() {
+        // Only this test reads this variable, so parallel tests cannot change it.
+        std::env::set_var("GA4GH_SDK_PROFILE_TEST_TOKEN", "profile-test-token");
         let (_dir, path) = profile_file(PROFILES);
         let base_path = |profile: Option<&str>, section: &str| {
             Configuration::from_path_with_profile(&path, profile, section)
@@ -795,10 +1214,12 @@ mod tests {
             base_path(Some("default"), "TES"),
             "https://default.example.org/"
         );
-        // Sections in profiles read their keys as top-level sections do. PATH,
-        // as in the tests above, because setting a variable would race.
+        // Sections in profiles read credentials as top-level sections do.
         let remote = Configuration::from_path_with_profile(&path, Some("remote"), "TES").unwrap();
-        assert_eq!(remote.oauth_access_token, std::env::var("PATH").ok());
+        assert_eq!(
+            remote.oauth_access_token.as_deref(),
+            Some("profile-test-token")
+        );
         assert!(remote.extra.is_empty(), "{:?}", remote.extra);
     }
 
@@ -846,6 +1267,40 @@ mod tests {
     }
 
     #[test]
+    fn test_flat_custom_sections_named_profiles_or_default_profile_still_work() {
+        let (_dir, path) = profile_file(
+            r#"{
+                "profiles": {"base_path": "https://profiles.example.org/"},
+                "default_profile": {"base_path": "https://default-profile.example.org/"}
+            }"#,
+        );
+        for (section, expected) in [
+            ("profiles", "https://profiles.example.org/"),
+            ("default_profile", "https://default-profile.example.org/"),
+        ] {
+            let config = Configuration::from_path(&path, section).unwrap();
+            assert_eq!(config.base_path.as_str(), expected);
+            let config =
+                Configuration::from_path_with_profile(&path, Some("default"), section).unwrap();
+            assert_eq!(config.base_path.as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn test_profile_errors_escape_untrusted_names() {
+        let (_dir, path) = profile_file(
+            r#"{"profiles":{"bad\u202e":{"TES":{"base_path":"https://example.org/"}}}}"#,
+        );
+        let error = Configuration::from_path_with_profile(&path, Some("\u{1b}[2J"), "TES")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("\\u{1b}[2J"), "{error}");
+        assert!(error.contains("bad\\u{202e}"), "{error}");
+        assert!(!error.contains('\u{1b}'));
+        assert!(!error.contains('\u{202e}'));
+    }
+
+    #[test]
     fn test_from_path_with_profile_invalid_documents() {
         let cases = [
             (
@@ -869,6 +1324,11 @@ mod tests {
             (
                 r#"{"default_profile":3,"profiles":{"default":{}}}"#,
                 None,
+                "'default_profile' must be a string",
+            ),
+            (
+                r#"{"default_profile":3,"profiles":{"default":{},"remote":{}}}"#,
+                Some("remote"),
                 "'default_profile' must be a string",
             ),
             (
@@ -940,7 +1400,10 @@ mod tests {
              oauth_access_token: Some(<redacted>), \
              bearer_access_token: Some(<redacted>), \
              api_key: Some(ApiKey { prefix: Some(\"Token\"), key: <redacted> }), \
-             extra: {\"client_secret\": <redacted>} }"
+             extra: {\"client_secret\": <redacted>}, \
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s }, \
+             token_provider: Some(<redacted>), \
+             token_audience: Some(<redacted>) }"
         );
     }
 
@@ -955,7 +1418,10 @@ mod tests {
              oauth_access_token: None, \
              bearer_access_token: None, \
              api_key: None, \
-             extra: {} }"
+             extra: {}, \
+             timeouts: Timeouts { connect: 10s, request: 60s, discovery: 10s, submission: 300s }, \
+             token_provider: None, \
+             token_audience: None }"
         );
     }
 
@@ -963,6 +1429,8 @@ mod tests {
     fn test_debug_output_pretty() {
         let output = format!("{:#?}", config_with_markers());
         assert!(!output.contains("SENTINEL"), "{output}");
+        let config = Configuration::default().with_token_audience("SENTINEL_AUDIENCE".into());
+        assert!(!format!("{config:?}").contains("SENTINEL"));
         assert!(
             output.contains("oauth_access_token: Some(\n        <redacted>,\n    )"),
             "{output}"
@@ -1010,5 +1478,47 @@ mod tests {
         let mut config = Configuration::default();
         config.set_base_path(Url::parse("https://api.example.com").unwrap());
         assert_eq!(config.base_path.as_str(), "https://api.example.com/");
+    }
+
+    #[test]
+    fn test_token_audience() {
+        let base = Url::parse("https://user:secret@example.org/ga4gh/tes/v1?x=1#f").unwrap();
+        let config = Configuration::new(base);
+        assert_eq!(config.token_audience(), "https://example.org/ga4gh/tes/v1");
+        let config = config.with_token_audience("tes-audience".to_owned());
+        assert_eq!(config.token_audience(), "tes-audience");
+    }
+
+    #[test]
+    fn test_static_credentials() {
+        assert!(Configuration::default().static_credentials().is_empty());
+        let config = Configuration::default()
+            .with_token_provider(crate::utils::auth::FixedToken("token"))
+            .with_token_audience("audience".to_owned());
+        assert!(config.static_credentials().is_empty());
+        assert_eq!(
+            config_with_markers().static_credentials(),
+            [
+                "basic_auth",
+                "oauth_access_token",
+                "bearer_access_token",
+                "api_key",
+                "the user or password in base_path"
+            ]
+        );
+    }
+
+    #[test]
+    fn file_rejects_basic_control_characters_without_printing_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"TES":{"base_path":"https://example.org/tes","basic_auth":{"username":"alice","password":"SENTINEL\nsecret"}}}"#,
+        )
+        .unwrap();
+        let error = Configuration::from_path(&path, "TES").unwrap_err();
+        assert!(error.to_string().contains("Basic auth password"));
+        assert!(!error.to_string().contains("SENTINEL"));
     }
 }

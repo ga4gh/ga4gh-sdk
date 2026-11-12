@@ -45,7 +45,7 @@ def test_creation_acknowledgements_fail_once_and_preserve_opaque_id():
     thread.start()
     code = r'''
 import sys
-from GA4GH import Configuration, TES
+from ga4gh_sdk import Configuration, TES
 client = TES(Configuration(sys.argv[1]))
 for _ in range(5):
     try:

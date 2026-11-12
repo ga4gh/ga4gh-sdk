@@ -77,11 +77,8 @@ fn profile_is_selected_by_name_then_variable_then_file() {
         "http://localhost:8000/ga4gh/tes/v1"
     );
     std::env::set_var(VAR, "");
-    assert_eq!(context(&path, VAR).selected_profile().unwrap(), None);
-    assert_eq!(
-        tes_base_path(&context(&path, VAR)),
-        "http://localhost:8000/ga4gh/tes/v1"
-    );
+    let error = context(&path, VAR).selected_profile().unwrap_err();
+    assert!(error.to_string().contains("empty profile name"), "{error}");
     std::env::set_var(VAR, "default");
     assert_eq!(
         tes_base_path(&context(&path, VAR)),
@@ -190,12 +187,13 @@ fn profile_option_is_global() {
         .unwrap();
     let context = CliContext::default().with_profile("kept");
     assert_eq!(context.with_profile_from(&matches).profile(), Some("kept"));
-    // An empty `--profile` counts as not given.
-    let matches = command
+    // An empty explicit name cannot fall back to a different service.
+    let error = command
         .clone()
         .try_get_matches_from(["ga4gh-cli", "--profile", "", "tes", "list"])
-        .unwrap();
-    assert_eq!(context.with_profile_from(&matches).profile(), Some("kept"));
+        .unwrap_err();
+    assert!(error.to_string().contains("a value is required"), "{error}");
+    assert!(context.with_profile("").selected_profile().is_err());
     // A subcommand's own argument `profile` isn't the configuration profile.
     let matches = CliContext::default()
         .command()

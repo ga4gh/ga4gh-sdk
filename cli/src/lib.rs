@@ -229,8 +229,8 @@ impl CliContext {
     /// profile is selected with `--profile` or
     /// [`with_profile`](Self::with_profile).
     ///
-    /// An unset or empty variable selects no profile, so the file's
-    /// `default_profile` applies.
+    /// An unset variable selects no profile, so the file's `default_profile`
+    /// applies. An empty value is an error.
     pub fn with_profile_env(mut self, name: impl Into<String>) -> Self {
         self.profile_env = Some(name.into());
         self
@@ -248,9 +248,9 @@ impl CliContext {
     /// no credentials.
     ///
     /// The token applies only to the listed sections, and only if they set
-    /// none of `basic_auth`, `oauth_access_token` and `oauth_access_token_env`;
-    /// other sections never receive it. An unset or empty variable leaves the
-    /// sections without a token. To send a token to another service, name a
+    /// no configured credential; other sections never receive it. If a listed
+    /// section has no credential, an unset, empty, or malformed variable is an
+    /// error before a service request is made. To send a token to another service, name a
     /// variable in its section with `oauth_access_token_env`.
     ///
     /// Sections match by their exact name (`service_type.as_str()`, case
@@ -300,9 +300,11 @@ impl CliContext {
     ///
     /// # Errors
     ///
-    /// Fails if the profile variable is set but not valid Unicode.
+    /// Fails if the selected name is empty or the profile variable is not
+    /// valid Unicode.
     pub fn selected_profile(&self) -> anyhow::Result<Option<String>> {
         if let Some(profile) = &self.profile {
+            anyhow::ensure!(!profile.is_empty(), "Profile name must not be empty");
             return Ok(Some(profile.clone()));
         }
         let Some(name) = &self.profile_env else {
@@ -310,7 +312,8 @@ impl CliContext {
         };
         match std::env::var(name) {
             Ok(profile) if !profile.is_empty() => Ok(Some(profile)),
-            Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
+            Ok(_) => anyhow::bail!("Environment variable '{name}' has an empty profile name"),
+            Err(std::env::VarError::NotPresent) => Ok(None),
             Err(std::env::VarError::NotUnicode(_)) => {
                 anyhow::bail!("Environment variable '{name}' is not valid Unicode")
             }
@@ -349,18 +352,19 @@ impl CliContext {
         Ok(home.join(format!(".{}", self.name)).join("config.json"))
     }
 
-    /// Reads the section for `service_type` of the
-    /// [selected profile](Self::selected_profile) from the configuration file,
-    /// as [`Configuration::from_path_with_profile`] does, and applies the token
-    /// variable.
+    /// Reads the section for `service_type` from the selected profile of the
+    /// configuration file, as [`Configuration::from_path_with_profile`] does,
+    /// and applies the token variable.
     ///
     /// The section name is `service_type.as_str()`, such as `TES`, or the name
     /// of a `ServiceType::Custom` section.
     ///
     /// # Errors
     ///
-    /// Fails if the file, profile or section is missing or malformed, or if
-    /// the profile or token variable is set but not valid Unicode.
+    /// Fails if the file, profile or section is missing or malformed, if the
+    /// profile name is empty, the profile variable is not valid Unicode, or
+    /// if the token variable is missing, empty, or invalid for a listed
+    /// section without a credential.
     pub fn load_config(&self, service_type: ServiceType) -> anyhow::Result<Configuration> {
         let path = self.config_path()?;
         let profile = self.selected_profile()?;
@@ -371,10 +375,24 @@ impl CliContext {
             if self.token_sections.iter().any(|listed| listed == section)
                 && config.basic_auth.is_none()
                 && config.oauth_access_token.is_none()
+                && config.bearer_access_token.is_none()
             {
                 match std::env::var(name) {
-                    Ok(token) if !token.is_empty() => config.oauth_access_token = Some(token),
-                    Ok(_) | Err(std::env::VarError::NotPresent) => {}
+                    Ok(token) if !token.is_empty() => {
+                        let valid = !token.bytes().any(|byte| byte.is_ascii_whitespace())
+                            && ga4gh_sdk::reqwest::header::HeaderValue::from_str(&format!(
+                                "Bearer {token}"
+                            ))
+                            .is_ok();
+                        if !valid {
+                            anyhow::bail!("Invalid bearer token in environment variable '{name}'");
+                        }
+                        config.oauth_access_token = Some(token);
+                    }
+                    Ok(_) => anyhow::bail!("Environment variable '{name}' is empty"),
+                    Err(std::env::VarError::NotPresent) => {
+                        anyhow::bail!("Environment variable '{name}' is not set")
+                    }
                     Err(std::env::VarError::NotUnicode(_)) => {
                         anyhow::bail!("Environment variable '{name}' is not valid Unicode")
                     }
@@ -404,6 +422,7 @@ impl CliContext {
                     .long("profile")
                     .value_name("NAME")
                     .global(true)
+                    .value_parser(clap::builder::NonEmptyStringValueParser::new())
                     .help(profile_help),
             )
             .subcommand(drs::command())
@@ -414,9 +433,8 @@ impl CliContext {
             .subcommand(registry::command())
     }
 
-    /// This context with the profile of `--profile`, if `matches` has a
-    /// non-empty one; otherwise an unchanged copy. An empty `--profile`
-    /// counts as not given, as an empty profile variable does.
+    /// This context with the profile of `--profile`, if `matches` has one;
+    /// otherwise an unchanged copy. The command parser rejects an empty name.
     ///
     /// [`dispatch`](Self::dispatch) and [`dispatch_to`](Self::dispatch_to)
     /// call it themselves. A downstream binary calls it before
@@ -425,7 +443,7 @@ impl CliContext {
     pub fn with_profile_from(&self, matches: &ArgMatches) -> Self {
         // `try_get_one`, because a downstream command tree may lack the option.
         match matches.try_get_one::<String>(PROFILE_ARG) {
-            Ok(Some(profile)) if !profile.is_empty() => self.clone().with_profile(profile.clone()),
+            Ok(Some(profile)) => self.clone().with_profile(profile.clone()),
             _ => self.clone(),
         }
     }

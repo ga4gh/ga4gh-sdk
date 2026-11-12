@@ -6,7 +6,6 @@ pub mod uri;
 use crate::clients::drs::models::AccessUrl;
 use crate::clients::drs::models::DrsObject;
 use crate::clients::serviceinfo::models::Service;
-use crate::clients::serviceinfo::ServiceInfo;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::{urlencode, HttpStatusError, Transport};
 use std::error::Error;
@@ -53,20 +52,28 @@ impl DRS {
     /// Creates a new `DRS` instance.
     ///
     /// # Arguments
-    /// - `config`: A reference to the service configuration.
+    /// - `config`: A reference to the service configuration; its `timeouts`
+    ///   set the time limits (see [`Timeouts`](crate::utils::timeouts::Timeouts)).
     ///
     /// # Returns
     /// - A new `DRS` instance, or an error if the initialization fails.
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
-        let transport = Transport::new(config);
-        let service_info = ServiceInfo::new(config)?;
-        let service = service_info
-            .get()
+        Self::with_transport(Transport::new(config)).await
+    }
+
+    /// Creates a new `DRS` instance that sends its requests with `transport`, for
+    /// example one from [`Transport::with_client`]. The client's configuration is
+    /// the transport's.
+    ///
+    /// # Returns
+    /// - A new `DRS` instance, or an error if the initialization fails.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        let service = crate::clients::serviceinfo::fetch(&transport, "service-info")
             .await
             .map_err(|error| Box::new(DiscoveryError(error)) as Box<dyn Error>)?;
 
         let instance = DRS {
-            config: config.clone(),
+            config: transport.config.clone(),
             transport,
             service: Ok(service),
         };
@@ -420,7 +427,7 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(error.contains(&status.to_string()), "{error}");
-            assert!(error.contains("service failure"), "{error}");
+            assert!(!error.contains("service failure"), "{error}");
             assert_eq!(error.contains("base_path"), status == 404, "{error}");
         }
     }

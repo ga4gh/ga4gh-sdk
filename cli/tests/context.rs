@@ -134,6 +134,7 @@ fn token_variable_fills_listed_sections_without_credentials() {
             "WES": {"base_path": "https://wes.example.org/", "oauth_access_token": "from-file"},
             "DRS": {"base_path": "https://drs.example.org/", "basic_auth": {"username": "user"}},
             "TRS": {"base_path": "https://trs.example.org/"},
+            "REGISTRY": {"base_path": "https://registry.example.org/", "bearer_access_token": "generic-from-file"},
             "MY_SERVICE": {"base_path": "https://my.example.org/"}
         }),
     );
@@ -144,13 +145,14 @@ fn token_variable_fills_listed_sections_without_credentials() {
             ServiceType::TES,
             ServiceType::WES,
             ServiceType::DRS,
+            ServiceType::REGISTRY,
             ServiceType::Custom("MY_SERVICE".into()),
         ],
     );
     assert_eq!(context.token_env(), Some(VAR));
     assert_eq!(
         context.token_sections(),
-        ["TES", "WES", "DRS", "MY_SERVICE"]
+        ["TES", "WES", "DRS", "REGISTRY", "MY_SERVICE"]
     );
 
     let tes = context.load_config(ServiceType::TES).unwrap();
@@ -168,12 +170,18 @@ fn token_variable_fills_listed_sections_without_credentials() {
     let drs = context.load_config(ServiceType::DRS).unwrap();
     assert_eq!(drs.oauth_access_token, None);
     assert!(drs.basic_auth.is_some());
+    let registry = context.load_config(ServiceType::REGISTRY).unwrap();
+    assert_eq!(
+        registry.bearer_access_token.as_deref(),
+        Some("generic-from-file")
+    );
+    assert!(registry.oauth_access_token.is_none());
     // The debug output still hides the token.
     assert!(!format!("{tes:?}").contains("from-env"));
 }
 
 #[test]
-fn unset_or_empty_token_variable_leaves_the_section_unauthenticated() {
+fn unset_or_empty_token_variable_fails_before_a_request() {
     const UNSET: &str = "GA4GH_CLI_TEST_CONTEXT_TOKEN_UNSET";
     const EMPTY: &str = "GA4GH_CLI_TEST_CONTEXT_TOKEN_EMPTY";
     let dir = tempfile::tempdir().unwrap();
@@ -184,14 +192,32 @@ fn unset_or_empty_token_variable_leaves_the_section_unauthenticated() {
     std::env::remove_var(UNSET);
     std::env::set_var(EMPTY, "");
     for var in [UNSET, EMPTY] {
-        let config = context(&path)
+        let error = context(&path)
             .with_token_env(var, [ServiceType::TES])
             .load_config(ServiceType::TES)
-            .unwrap();
-        assert_eq!(config.oauth_access_token, None, "{var}");
+            .unwrap_err();
+        assert!(error.to_string().contains(var), "{error}");
     }
     let config = context(&path).load_config(ServiceType::TES).unwrap();
     assert_eq!(config.oauth_access_token, None);
+}
+
+#[test]
+fn malformed_token_variable_fails_without_exposing_its_value() {
+    const VAR: &str = "GA4GH_CLI_TEST_CONTEXT_TOKEN_INVALID";
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_config(
+        dir.path(),
+        json!({"TES": {"base_path": "https://tes.example.org/"}}),
+    );
+    std::env::set_var(VAR, "SENTINEL invalid");
+    let error = context(&path)
+        .with_token_env(VAR, [ServiceType::TES])
+        .load_config(ServiceType::TES)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(VAR), "{error}");
+    assert!(!error.contains("SENTINEL"), "{error}");
 }
 
 #[cfg(unix)]

@@ -116,14 +116,13 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                 "File does not exist: {task_file}"
             )));
         };
-        let testask: TesTask = serde_json::from_str(&task_json)
-            .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {e}"))?;
+        let task = parse_task(&task_json)?;
 
         let tes = match TES::new(config).await {
             Ok(tes) => tes,
             Err(error) => return Ok(service_failure(error.as_ref())),
         };
-        match tes.create(testask).await {
+        match tes.create_value(task).await {
             Ok(task) => {
                 let output = if sub.get_one::<String>("format").map(String::as_str) == Some("json")
                 {
@@ -251,6 +250,20 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         }
     }
     Ok(CommandOutput::success(String::new()))
+}
+
+/// Parse task input as JSON and check it against the TES task model.
+///
+/// Returns the parsed value itself, not the model, so that the request carries
+/// the input's JSON structure unchanged, including fields that the model
+/// doesn't know. The check is the one that [`TES::create_value`] applies; it
+/// runs here as well so that invalid input fails before service discovery.
+fn parse_task(task_json: &str) -> anyhow::Result<serde_json::Value> {
+    let task: serde_json::Value = serde_json::from_str(task_json)
+        .map_err(|error| anyhow::anyhow!("Failed to parse JSON: {error}"))?;
+    <TesTask as serde::Deserialize>::deserialize(&task)
+        .map_err(|error| anyhow::anyhow!("Invalid TES task: {error}"))?;
+    Ok(task)
 }
 
 fn service_failure(error: &(dyn std::error::Error + 'static)) -> CommandOutput {

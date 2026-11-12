@@ -5,8 +5,8 @@ specification's models, or offer commands of their own. A downstream SDK for
 such a service can build on this SDK instead of forking it. This guide walks
 through [`examples/downstream-sdk/`](../examples/downstream-sdk/), a small
 crate that does so through public APIs only. CI builds and tests it (job
-`downstream`), so a change to the SDK that would break downstream crates
-fails CI.
+`downstream`), so changes to the public API paths exercised by the example
+are checked before merge.
 
 The example's extensions are made up: a TES service that offers
 `GET /tasks/{id}/usage` with the resource usage of a task and a `priority`
@@ -40,6 +40,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 url = "2"
 ```
 
+Replace `<commit>` with the same commit SHA in both dependency entries.
 Use the same major versions of `clap` and `serde` as the SDK: the CLI hands
 out Clap 4 `Command`s, and the models implement Serde 1 traits. HTTP types
 are re-exported as `ga4gh_sdk::reqwest`, so a crate that needs them doesn't
@@ -63,14 +64,19 @@ pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
   root are rejected. `urlencode` encodes a path segment, such as an ID.
 - `UsageClient::from_transport(tes.transport.clone())` shares the transport
   of an SDK client, such as `TES`. The new client then uses the same base
-  path, user agent and HTTP client: timeouts, TLS settings and connection
-  pool. `UsageClient::new(&config)` creates its own.
+  path, user agent, configured credentials and HTTP client: timeouts, TLS
+  settings and connection pool. `UsageClient::new(&config)` creates its own
+  transport and applies the same configured credentials. An injected HTTP
+  client has a separate authentication policy; see the
+  [authentication guide](authentication.md#request-boundary-and-failures).
 - For other methods, headers or bodies, `request_builder` returns a
   `reqwest::RequestBuilder` for a path beneath the root, and
   `request_response` returns the response with its status and headers; see
-  [Advanced transport](../README.md#advanced-transport).
-- An error status comes back as `ga4gh_sdk::utils::transport::HttpError`,
-  with the status and the (bounded) body.
+  [Advanced transport](../README.md#advanced-transport). For a dynamic token
+  provider, use `authorized_request_builder()` instead.
+- An error status comes back as `ga4gh_sdk::utils::transport::HttpError`.
+  The status is inspectable. Its bounded body is available to Rust callers,
+  but omitted from default error messages because the server may echo secrets.
 - A custom section in the configuration file (any name besides the built-in
   ones) can hold the service's settings; read it with
   `CliContext::load_config(ServiceType::Custom("MY_SERVICE".into()))` from
@@ -136,31 +142,24 @@ The name, version and help text are `&'static str`, usually literals or
 as a directory name (not empty, `.` or `..`, and without `/` or `\`);
 otherwise, set the path with `with_config_path`.
 
-The token variable holds an OAuth access token for the sections listed with
-it, typically the binary's own services. It applies only to listed sections
-that set no credentials (`basic_auth`, `oauth_access_token` or
-`oauth_access_token_env`); credentials in a section take precedence, and
-sections that aren't listed never receive the token. An unset or empty
-variable leaves the sections without a token. (An empty variable named by
-`oauth_access_token_env` gives an empty token instead.) To send a token to
-another service, name a variable in its section with
-`oauth_access_token_env`. Like the configured tokens, it is sent only where
-the SDK sends credentials (see [Not covered yet](#not-covered-yet)).
+The token variable holds an OAuth access token for the listed sections. It
+applies only when a listed section has no credential. A section's Basic,
+OAuth bearer, or generic bearer credential takes precedence. Other sections
+never receive the token. If a listed section has no credential, an unset,
+empty, or invalid token variable is an error before the request. To send a
+token to another service, name a variable in its section with
+`oauth_access_token_env`. The SDK applies the credential to discovery and
+service requests under the configured API root; see the
+[authentication guide](authentication.md).
 
-The configuration file can hold
-[profiles](usage.md#profiles). The context's command tree has the global
-option `--profile`; `dispatch` and `dispatch_to` apply it to built-in
-commands. Otherwise, the profile variable selects the profile, if the
-context has one, then the file's `default_profile`. For its own commands,
-the example calls `context().with_profile_from(&matches)` before
-`load_config`, so that `downstream-cli --profile metered quota` reads the
-`QUOTA` section of the profile `metered`. The long name `--profile` is
-reserved in the whole command tree: an option of a binary's own with that
-long name, at the root or in a subcommand, conflicts with the global option
-(Clap's debug assertions catch it in debug builds and tests, so call
-`command().debug_assert()` in a test; release builds don't check it). Arguments
-merely named `profile`, such as a positional one, are fine; the option's id
-is `ga4gh-cli-profile`.
+The configuration file can hold [profiles](usage.md#profiles). The context's
+command tree has a global `--profile` option; its dispatch methods apply it
+to built-in commands. For an added command, the example calls
+`context().with_profile_from(&matches)` before `load_config()`, so
+`downstream-cli --profile metered quota` reads the `QUOTA` section of
+`metered`. The long option name `--profile` is reserved throughout the
+command tree. A positional argument named `profile` can still be used because
+the global option has the distinct Clap id `ga4gh-cli-profile`.
 
 [`cli::command`](../examples/downstream-sdk/src/cli.rs) starts from the
 context's command tree and adds `tes usage <ID>` and a top-level `quota`:
@@ -202,13 +201,17 @@ everything else to the SDK:
 - `ga4gh_cli::printable` escapes control characters in values from the
   service, as the SDK's CLI does in its text output.
 
-Run it from the repository root, with `~/.downstream-cli/config.json` in the
-format described in the [usage guide](usage.md#configuration-file), with a
-`TES` section and, for `quota`, a `QUOTA` section:
+Run it from the repository root. Set `DOWNSTREAM_CLI_TOKEN` for the `TES`
+section and create `~/.downstream-cli/config.json` in the format described in
+the [usage guide](usage.md#configuration-file). Include a `QUOTA` section to
+run `quota`. The `usage` command needs a TES server that implements the
+example's additional endpoint. Replace the sample ID with an ID from that
+server:
 
 ```sh
 cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- --version
-cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes usage <task-id>
+task_id='task-from-your-service'
+cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes usage "$task_id"
 cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes list
 cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- quota
 ```
@@ -216,26 +219,27 @@ cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- quota
 ## Checks
 
 `make downstream` runs what the CI job `downstream` runs: formatting, Clippy
-(warnings are errors) and the tests of the example. The example has its own
-Cargo workspace, so that the SDK's crates are built as dependencies, as in a
-downstream repository; the workspace commands such as `make check` leave it
-out. It has no lockfile of its own: the target copies the repository's
+(warnings are errors) and the tests of the example. A test also runs the
+binary with an isolated configuration and token variable. The example has its
+own Cargo workspace, so that the SDK's crates are built as dependencies, as
+in a downstream repository; the workspace commands such as `make check`
+leave it out. It has no lockfile of its own: the target copies the repository's
 `Cargo.lock` into it, lets Cargo add the example's own entry, and fails if
 any other package isn't locked at a version and source from the root
 lockfile. The example thus builds with the SDK's dependency versions; a
 dependency that only the example needs must be added to the workspace
-first. Without
-`make downstream`, Cargo resolves the example's dependencies afresh.
+first. Without `make downstream`, Cargo resolves the example's dependencies
+afresh.
 
 When you change a public API that the example uses, update the example and
 this guide in the same pull request.
 
-## Not covered yet
+## Scope
 
-- Default clients don't send configured credentials yet
-  ([#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). A downstream client
-  can supply an authenticated `reqwest::Client` through
-  `Transport::with_client`.
+- The example tests its configured token variable and one file credential.
+  The SDK supports other credential sources described in the
+  [authentication guide](authentication.md); this example does not exercise
+  each one.
 - The example is Rust only. Building on the Python bindings is tracked in
   [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78), with the other
   remaining steps for downstream SDKs.
