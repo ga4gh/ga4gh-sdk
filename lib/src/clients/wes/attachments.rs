@@ -161,7 +161,8 @@ impl WES {
             .await??;
         let request = self
             .transport
-            .request_builder(reqwest::Method::POST, "runs")?
+            .authorized_request_builder(reqwest::Method::POST, "runs")
+            .await?
             .multipart(form);
         let body = self
             .transport

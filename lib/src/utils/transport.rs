@@ -33,6 +33,7 @@
 /// let response = transport.delete("users/1").await;
 /// };
 /// ```
+use crate::utils::auth::{AuthConflictError, TokenProviderError};
 use crate::utils::configuration::Configuration;
 use crate::utils::query::query_pairs;
 use reqwest::multipart::Form;
@@ -315,6 +316,11 @@ impl Transport {
     /// The client's own connect and request timeouts apply, and
     /// `config.timeouts.connect` and `request` are not used; the `discovery` and
     /// `submission` limits still come from `config.timeouts`.
+    ///
+    /// The client's own headers and redirect policy apply. A token provider in
+    /// `config` (see [`crate::utils::auth`]) applies as well; its
+    /// `Authorization` header takes the place of one among the client's default
+    /// headers.
     pub fn with_client(config: &Configuration, client: Client) -> Self {
         Self {
             config: config.clone(),
@@ -342,12 +348,16 @@ impl Transport {
         endpoint: &str,
         timeout: std::time::Duration,
     ) -> Result<String, Box<dyn Error>> {
-        let request = self
-            .request_builder(reqwest::Method::GET, endpoint)?
-            .timeout(timeout);
         let operation = crate::utils::operation::Operation::new(timeout);
         operation
-            .run(async { response_text(request.send().await?, BodyLimits::default()).await })
+            .run(async {
+                let response = self
+                    .send_authorized(reqwest::Method::GET, endpoint, true, |request| {
+                        Ok(request.timeout(timeout))
+                    })
+                    .await?;
+                response_text(response, BodyLimits::default()).await
+            })
             .await?
     }
 
@@ -411,8 +421,14 @@ impl Transport {
                 .operation
                 .run(async {
                     attempted = true;
-                    self.request_response(method.clone(), endpoint, data.clone(), params.clone())
-                        .await
+                    self.request_response_with(
+                        method.clone(),
+                        endpoint,
+                        data.clone(),
+                        params.clone(),
+                        options.safety == ReplaySafety::ReadOnly,
+                    )
+                    .await
                 })
                 .await;
             let response = match result {
@@ -482,8 +498,11 @@ impl Transport {
 
     /// Shared API-relative request construction. Service-specific callers can
     /// add headers, streaming bodies or custom methods without losing policies.
-    /// Authentication remains controlled by the configured/injected client;
-    /// see #31 for configuration-based authentication support.
+    ///
+    /// The request carries no token from a token provider; use
+    /// [`authorized_request_builder`](Self::authorized_request_builder) for
+    /// that. Static credentials of the configuration are not sent yet (see #31);
+    /// those of an injected client are.
     pub fn request_builder(
         &self,
         method: reqwest::Method,
@@ -494,6 +513,84 @@ impl Transport {
             request = request.header(reqwest::header::USER_AGENT, agent);
         }
         Ok(request)
+    }
+
+    /// Like [`request_builder`](Self::request_builder), with the token of the
+    /// configured token provider, if there is one (see [`crate::utils::auth`]).
+    ///
+    /// The request is sent once, as the caller sends it; there is no further
+    /// attempt after `401 Unauthorized`.
+    ///
+    /// # Errors
+    ///
+    /// An [`EndpointError`], an [`AuthConflictError`] if the configuration has
+    /// other credentials as well, or a [`TokenProviderError`]. Nothing has been
+    /// sent then.
+    pub async fn authorized_request_builder(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+        let request = self.request_builder(method, endpoint)?;
+        self.authorize(request, false).await
+    }
+
+    /// Adds the provider's token to `request`, a new one if `after_rejection`.
+    /// Without a provider, `request` stays as it is.
+    async fn authorize(
+        &self,
+        request: reqwest::RequestBuilder,
+        after_rejection: bool,
+    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+        let Some(source) = &self.config.token_provider else {
+            return Ok(request);
+        };
+        let sources = self.config.static_credentials();
+        if !sources.is_empty() {
+            return Err(Box::new(AuthConflictError { sources }));
+        }
+        let audience = self.config.token_audience();
+        let token = source.token(&audience, after_rejection).await?;
+        let invalid = || TokenProviderError::InvalidToken {
+            audience: audience.clone(),
+        };
+        if token.secret().is_empty() {
+            return Err(Box::new(invalid()));
+        }
+        let mut value =
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token.secret()))
+                .map_err(|_| invalid())?;
+        value.set_sensitive(true);
+        Ok(request.header(reqwest::header::AUTHORIZATION, value))
+    }
+
+    /// Builds a request with [`authorized_request_builder`](Self::authorized_request_builder)
+    /// and `build`, and sends it. If it is `replayable`, a token provider is
+    /// configured and the service answers `401 Unauthorized`, builds and sends it
+    /// once more with a new token.
+    pub(crate) async fn send_authorized(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+        replayable: bool,
+        build: impl Fn(reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder, Box<dyn Error>>,
+    ) -> Result<reqwest::Response, Box<dyn Error>> {
+        let request = build(
+            self.authorized_request_builder(method.clone(), endpoint)
+                .await?,
+        )?;
+        let response = request.send().await?;
+        if !replayable
+            || response.status() != reqwest::StatusCode::UNAUTHORIZED
+            || self.config.token_provider.is_none()
+        {
+            return Ok(response);
+        }
+        drop(response);
+        log::debug!("Asking the token provider again after 401 Unauthorized");
+        let request = self.request_builder(method, endpoint)?;
+        let request = build(self.authorize(request, true).await?)?;
+        Ok(request.send().await?)
     }
 
     /// Resolves a relative path beneath the configured API root, with or without a trailing slash.
@@ -538,7 +635,9 @@ impl Transport {
     ///
     /// # Returns
     ///
-    /// A raw response, or an endpoint/transport error. No automatic replay.
+    /// A raw response, or an endpoint/transport error. With a token provider
+    /// (see [`crate::utils::auth`]), a `GET` or `HEAD` request is sent once
+    /// more with a new token after `401 Unauthorized`; there is no other replay.
     pub async fn request_response(
         &self,
         method: reqwest::Method,
@@ -546,24 +645,37 @@ impl Transport {
         data: Option<Value>,
         params: Option<Value>,
     ) -> Result<reqwest::Response, Box<dyn Error>> {
-        let mut request_builder = self.request_builder(method, endpoint)?;
+        let replayable = matches!(method, reqwest::Method::GET | reqwest::Method::HEAD);
+        self.request_response_with(method, endpoint, data, params, replayable)
+            .await
+    }
 
-        if let Some(ref params_value) = params {
-            let pairs = query_pairs(params_value).map_err(std::io::Error::from)?;
+    async fn request_response_with(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+        data: Option<Value>,
+        params: Option<Value>,
+        replayable: bool,
+    ) -> Result<reqwest::Response, Box<dyn Error>> {
+        let pairs = match params {
+            Some(ref params_value) => query_pairs(params_value).map_err(std::io::Error::from)?,
+            None => Vec::new(),
+        };
+        self.send_authorized(method, endpoint, replayable, |mut request_builder| {
             if !pairs.is_empty() {
                 request_builder = request_builder.query(&pairs);
             }
-        }
-
-        if let Some(ref data) = data {
-            if serde_json::to_string(&data).is_ok() {
-                request_builder = request_builder.json(&data);
-            } else {
-                log::error!("Parameters are invalid, and can't convert to JSON");
+            if let Some(ref data) = data {
+                if serde_json::to_string(&data).is_ok() {
+                    request_builder = request_builder.json(&data);
+                } else {
+                    log::error!("Parameters are invalid, and can't convert to JSON");
+                }
             }
-        }
-
-        Ok(request_builder.send().await?)
+            Ok(request_builder)
+        })
+        .await
     }
 
     /// Text helper with caller-selected success/error bounds. No implicit retry.
@@ -640,7 +752,8 @@ impl Transport {
         form: Form,
     ) -> Result<String, Box<dyn Error>> {
         let request = self
-            .request_builder(reqwest::Method::POST, endpoint)?
+            .authorized_request_builder(reqwest::Method::POST, endpoint)
+            .await?
             .multipart(form);
         let response = request.send().await?;
         response_text(response, BodyLimits::default()).await
@@ -821,5 +934,341 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response, "ok");
+    }
+
+    mod token_provider {
+        use crate::utils::auth::{
+            AccessToken, AuthConflictError, BoxError, TokenProvider, TokenProviderError,
+            TokenRequest,
+        };
+        use crate::utils::configuration::Configuration;
+        use crate::utils::operation::ReplaySafety;
+        use crate::utils::transport::{HttpError, RequestOptions, Transport};
+        use mockito::{mock, Matcher};
+        use std::sync::{Arc, Mutex};
+        use std::time::{Duration, Instant};
+        use url::Url;
+
+        /// Gives `token-<n>` for the n-th call and records the requests.
+        #[derive(Default)]
+        struct Recording {
+            requests: Mutex<Vec<(String, bool)>>,
+            lifetime: Option<Duration>,
+            fail: bool,
+            token: Option<&'static str>,
+        }
+
+        #[async_trait::async_trait]
+        impl TokenProvider for Recording {
+            async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+                let mut requests = self.requests.lock().unwrap();
+                requests.push((request.audience.to_owned(), request.after_rejection));
+                if self.fail {
+                    return Err("no session for SENTINEL_USER".into());
+                }
+                let token = match self.token {
+                    Some(token) => AccessToken::new(token),
+                    None => AccessToken::new(format!("token-{}", requests.len())),
+                };
+                Ok(match self.lifetime {
+                    Some(lifetime) => token.reusable_until(Instant::now() + lifetime),
+                    None => token,
+                })
+            }
+        }
+
+        impl Recording {
+            fn calls(&self) -> Vec<(String, bool)> {
+                self.requests.lock().unwrap().clone()
+            }
+        }
+
+        fn base(root: &str) -> Url {
+            Url::parse(&format!("{}/{root}", mockito::server_url())).unwrap()
+        }
+
+        /// A transport below `/<root>` of the mock server, with `provider`.
+        fn transport(root: &str, provider: &Arc<Recording>) -> Transport {
+            Transport::new(
+                &Configuration::new(base(root)).with_shared_token_provider(provider.clone()),
+            )
+        }
+
+        #[tokio::test]
+        async fn test_sends_the_token_for_every_method() {
+            let provider = Arc::new(Recording::default());
+            let transport = transport("auth-methods", &provider);
+            let mocks = [
+                mock("GET", "/auth-methods/a").match_header("authorization", "Bearer token-1"),
+                mock("POST", "/auth-methods/b").match_header("authorization", "Bearer token-2"),
+                mock("PUT", "/auth-methods/c").match_header("authorization", "Bearer token-3"),
+                mock("DELETE", "/auth-methods/d").match_header("authorization", "Bearer token-4"),
+                mock("POST", "/auth-methods/e").match_header("authorization", "Bearer token-5"),
+            ]
+            .map(|mock| mock.with_status(200).with_body("ok").expect(1).create());
+            transport.get("a", None).await.unwrap();
+            transport.post("b", None).await.unwrap();
+            transport.put("c", serde_json::json!({})).await.unwrap();
+            transport.delete("d").await.unwrap();
+            let form = reqwest::multipart::Form::new().text("x", "y");
+            transport.post_multipart("e", form).await.unwrap();
+            for mock in mocks {
+                mock.assert();
+            }
+            let expected = vec![(base("auth-methods").to_string(), false); 5];
+            assert_eq!(provider.calls(), expected);
+        }
+
+        #[tokio::test]
+        async fn test_sends_no_header_without_a_provider() {
+            let request = mock("GET", "/auth-none/a")
+                .match_header("authorization", Matcher::Missing)
+                .with_status(200)
+                .expect(1)
+                .create();
+            Transport::new(&Configuration::new(base("auth-none")))
+                .get("a", None)
+                .await
+                .unwrap();
+            request.assert();
+        }
+
+        #[tokio::test]
+        async fn test_configured_audience_and_reuse() {
+            let provider = Arc::new(Recording {
+                lifetime: Some(Duration::from_secs(60)),
+                ..Default::default()
+            });
+            let config = Configuration::new(base("auth-reuse"))
+                .with_shared_token_provider(provider.clone())
+                .with_token_audience("tes".to_owned());
+            let request = mock("GET", "/auth-reuse/a")
+                .match_header("authorization", "Bearer token-1")
+                .with_status(200)
+                .expect(2)
+                .create();
+            // Transports of clones of a configuration share reused tokens.
+            Transport::new(&config).get("a", None).await.unwrap();
+            Transport::new(&config.clone())
+                .get("a", None)
+                .await
+                .unwrap();
+            request.assert();
+            assert_eq!(provider.calls(), [("tes".to_owned(), false)]);
+        }
+
+        #[tokio::test]
+        async fn test_replays_a_get_once_after_401() {
+            let provider = Arc::new(Recording {
+                lifetime: Some(Duration::from_secs(60)),
+                ..Default::default()
+            });
+            let transport = transport("auth-replay", &provider);
+            let rejected = mock("GET", "/auth-replay/a")
+                .match_header("authorization", "Bearer token-1")
+                .with_status(401)
+                .expect(1)
+                .create();
+            let accepted = mock("GET", "/auth-replay/a")
+                .match_header("authorization", "Bearer token-2")
+                .with_status(200)
+                .with_body("ok")
+                .expect(2)
+                .create();
+            assert_eq!(transport.get("a", None).await.unwrap(), "ok");
+            // The new token is reused.
+            assert_eq!(transport.get("a", None).await.unwrap(), "ok");
+            rejected.assert();
+            accepted.assert();
+            let root = base("auth-replay").to_string();
+            assert_eq!(provider.calls(), [(root.clone(), false), (root, true)]);
+        }
+
+        #[tokio::test]
+        async fn test_replays_only_once() {
+            let provider = Arc::new(Recording::default());
+            let transport = transport("auth-twice", &provider);
+            let rejected = mock("GET", "/auth-twice/a")
+                .with_status(401)
+                .with_body("denied")
+                .expect(2)
+                .create();
+            let error = transport.get("a", None).await.unwrap_err();
+            let error = error.downcast_ref::<HttpError>().unwrap();
+            assert_eq!(error.status, reqwest::StatusCode::UNAUTHORIZED);
+            rejected.assert();
+            assert_eq!(provider.calls().len(), 2);
+        }
+
+        #[tokio::test]
+        async fn test_never_replays_a_submission() {
+            let provider = Arc::new(Recording::default());
+            let transport = transport("auth-submit", &provider);
+            let rejected = mock("POST", "/auth-submit/a")
+                .with_status(401)
+                .expect(2)
+                .create();
+            let error = transport.post("a", None).await.unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<HttpError>().unwrap().status,
+                reqwest::StatusCode::UNAUTHORIZED
+            );
+            let form = reqwest::multipart::Form::new().text("x", "y");
+            let error = transport.post_multipart("a", form).await.unwrap_err();
+            assert!(error.downcast_ref::<HttpError>().is_some(), "{error}");
+            rejected.assert();
+            assert_eq!(provider.calls().len(), 2);
+        }
+
+        #[tokio::test]
+        async fn test_replay_follows_the_replay_safety() {
+            let provider = Arc::new(Recording::default());
+            let transport = transport("auth-policy", &provider);
+            let rejected = mock("POST", "/auth-policy/lookup")
+                .match_header("authorization", "Bearer token-1")
+                .with_status(401)
+                .expect(1)
+                .create();
+            let accepted = mock("POST", "/auth-policy/lookup")
+                .match_header("authorization", "Bearer token-2")
+                .with_status(200)
+                .with_body("ok")
+                .expect(1)
+                .create();
+            let mut options = RequestOptions::new(Duration::from_secs(10));
+            options.safety = ReplaySafety::ReadOnly;
+            let method = reqwest::Method::POST;
+            let body = transport
+                .request_with_policy(method.clone(), "lookup", None, None, &options)
+                .await
+                .unwrap();
+            assert_eq!(body, "ok");
+            rejected.assert();
+            accepted.assert();
+
+            let submission = mock("POST", "/auth-policy/submit")
+                .with_status(401)
+                .expect(1)
+                .create();
+            options.safety = ReplaySafety::NonReplayable;
+            let error = transport
+                .request_with_policy(method, "submit", None, None, &options)
+                .await
+                .unwrap_err();
+            assert!(error.downcast_ref::<HttpError>().is_some(), "{error}");
+            submission.assert();
+        }
+
+        #[tokio::test]
+        async fn test_provider_failure_sends_nothing() {
+            let provider = Arc::new(Recording {
+                fail: true,
+                ..Default::default()
+            });
+            let transport = transport("auth-fail", &provider);
+            let request = mock("GET", "/auth-fail/a").expect(0).create();
+            let error = transport.get("a", None).await.unwrap_err();
+            let message = error.to_string();
+            let error = error.downcast_ref::<TokenProviderError>().unwrap();
+            assert!(matches!(error, TokenProviderError::Failed { .. }));
+            assert_eq!(
+                message,
+                format!(
+                    "The token provider failed for {}: no session for SENTINEL_USER",
+                    base("auth-fail")
+                )
+            );
+            request.assert();
+        }
+
+        #[tokio::test]
+        async fn test_invalid_tokens_are_not_sent_or_shown() {
+            for token in ["", "SENTINEL\nTOKEN"] {
+                let provider = Arc::new(Recording {
+                    token: Some(token),
+                    ..Default::default()
+                });
+                let transport = transport("auth-invalid", &provider);
+                let request = mock("GET", "/auth-invalid/a").expect(0).create();
+                let error = transport.get("a", None).await.unwrap_err();
+                assert!(
+                    !format!("{error} {error:?}").contains("SENTINEL"),
+                    "{error:?}"
+                );
+                assert!(matches!(
+                    error.downcast_ref::<TokenProviderError>().unwrap(),
+                    TokenProviderError::InvalidToken { .. }
+                ));
+                request.assert();
+            }
+        }
+
+        #[tokio::test]
+        async fn test_conflicting_credentials_send_nothing() {
+            let provider = Arc::new(Recording::default());
+            let request = mock("GET", "/auth-conflict/a").expect(0).create();
+            let config = Configuration::new(base("auth-conflict"))
+                .with_shared_token_provider(provider.clone())
+                .with_oauth_access_token("SENTINEL_OAUTH".to_owned());
+            let error = Transport::new(&config).get("a", None).await.unwrap_err();
+            assert!(!format!("{error} {error:?}").contains("SENTINEL"));
+            assert_eq!(
+                error.downcast_ref::<AuthConflictError>().unwrap().sources,
+                ["oauth_access_token"]
+            );
+            let mut url = base("auth-conflict");
+            url.set_username("alice").unwrap();
+            let config = Configuration::new(url).with_shared_token_provider(provider.clone());
+            let error = Transport::new(&config).get("a", None).await.unwrap_err();
+            assert!(error.downcast_ref::<AuthConflictError>().is_some());
+            request.assert();
+            assert!(provider.calls().is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_provider_header_replaces_a_client_default() {
+            let provider = Arc::new(Recording::default());
+            let request = mock("GET", "/auth-client/a")
+                .match_header("authorization", "Bearer token-1")
+                .match_header("x-client", "kept")
+                .with_status(200)
+                .expect(1)
+                .create();
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert("authorization", "Bearer client".parse().unwrap());
+            headers.insert("x-client", "kept".parse().unwrap());
+            let client = reqwest::Client::builder()
+                .default_headers(headers)
+                .build()
+                .unwrap();
+            let config =
+                Configuration::new(base("auth-client")).with_shared_token_provider(provider);
+            Transport::with_client(&config, client)
+                .get("a", None)
+                .await
+                .unwrap();
+            request.assert();
+        }
+
+        #[tokio::test]
+        async fn test_authorized_request_builder_sends_once() {
+            let provider = Arc::new(Recording::default());
+            let transport = transport("auth-builder", &provider);
+            let request = mock("PATCH", "/auth-builder/a")
+                .match_header("authorization", "Bearer token-1")
+                .with_status(401)
+                .expect(1)
+                .create();
+            let response = transport
+                .authorized_request_builder(reqwest::Method::PATCH, "a")
+                .await
+                .unwrap()
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+            request.assert();
+            assert_eq!(provider.calls().len(), 1);
+        }
     }
 }

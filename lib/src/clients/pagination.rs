@@ -194,16 +194,21 @@ impl Pager {
             ServiceKind::Tes => "tasks",
             ServiceKind::Wes => "runs",
         };
-        let request = self
-            .transport
-            .request_builder(reqwest::Method::GET, path)
-            .map_err(|e| self.failure(e))?
-            .query(&pairs);
+        // An unusable path is a failure of this page before any request.
+        self.transport.endpoint(path).map_err(|e| self.failure(e))?;
         self.requests += 1;
         let body = self
             .options
             .operation
-            .run(async { response_text(request.send().await?, self.options.limits).await })
+            .run(async {
+                let response = self
+                    .transport
+                    .send_authorized(reqwest::Method::GET, path, true, |request| {
+                        Ok(request.query(&pairs))
+                    })
+                    .await?;
+                response_text(response, self.options.limits).await
+            })
             .await
             .map_err(|e| self.failure(e))?
             .map_err(|e| self.failure(e))?;
