@@ -711,9 +711,9 @@ The Python test suite runs this file against a mock TRS.
   segment each, so IDs such as Dockstore's `#workflow/github.com/org/repo` work. Empty
   values, `.` and `..` raise `ValueError` before a request.
 - Errors: failed requests, such as a missing tool (`404`), and responses that don't fit the
-  TRS models raise `RuntimeError`; the message has the HTTP status. TRS 2.0.2 requires a
-  version's `description` to be a string; for 2.0.1, other values are kept in the JSON,
-  and the `description` property is `None` then.
+  TRS models raise `RuntimeError`; the message has the HTTP status. A version's
+  `description` (TRS 2.0.2) that isn't a string is kept in the JSON, and the
+  `description` property is `None` then.
 
 The results are typed objects with properties. They hold the JSON of the Rust SDK's TRS
 models, including fields that those models don't know: `to_dict()` returns it as a new

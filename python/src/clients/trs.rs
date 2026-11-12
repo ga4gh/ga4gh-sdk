@@ -653,10 +653,9 @@ impl PyTRS {
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         check_extra_args::<Self>(cls, args, kwargs)?;
-        let options = TrsOptions {
-            version: version_policy(api_version)?,
-            tag_filter: capability_override(tag_filter)?,
-        };
+        let options = TrsOptions::default()
+            .with_version(version_policy(api_version)?)
+            .with_tag_filter(capability_override(tag_filter)?);
         Self::connect(cls.py(), config, options, discovery)
     }
 

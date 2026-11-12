@@ -190,13 +190,12 @@ def test_list_tool_classes(server, trs):
     assert server.last()["path"] == "/trs/toolClasses"
 
 
-def test_version_description_depends_on_trs_version(server):
-    # TRS 2.0.2 defines `description` as a string; 2.0.1 keeps other values as they are.
-    [version] = TRS(Configuration(f"{server.root}/trs")).get_tool("bad-description").versions
+@pytest.mark.parametrize("root", ["trs", "trs2"])
+def test_non_string_version_description_is_kept_in_json(server, root):
+    # TRS 2.0.2 defines `description` as a string; other values stay in the JSON.
+    [version] = TRS(Configuration(f"{server.root}/{root}")).get_tool("bad-description").versions
     assert version.description is None
     assert version.to_dict()["description"] == 7
-    with pytest.raises(RuntimeError, match="Failed to get tool"):
-        TRS(Configuration(f"{server.root}/trs2")).get_tool("bad-description")
 
 
 # Listing tools and pages
