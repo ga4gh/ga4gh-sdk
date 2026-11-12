@@ -118,15 +118,23 @@ on pushes to `main` and on manual dispatch:
 | --- | --- | --- |
 | `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` |
 | `test` | Test | `cargo test --workspace --locked` |
-| `build` | Build | Lockfile check, builds of library, CLI and Python wheel |
+| `build` | Build | Lockfile check, standalone library and CLI builds |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
+| `wheels` | Python wheels | Full platform wheel and sdist matrix on `main` pushes and manual runs; skipped on PRs |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
-| `passed` | CI passed | Fails unless all jobs above succeeded |
+| `passed` | CI passed | Requires all applicable jobs to succeed; accepts the intentionally skipped wheel matrix on PRs |
 
 `CI passed` is the check to require for merges. A new job must be added to
-its `needs:` and to the list of expected jobs in its script.
+its `needs:` and to the list of expected jobs in its script. Ordinary PRs run
+the Python binding tests, including a local wheel build, but do not run the
+five-platform wheel and sdist matrix. Every push to `main` runs that matrix;
+version tags also build it as part of the [release workflow](releasing.md).
+For a PR that changes packaging, native dependencies, supported platforms or
+the wheel/release workflows, open **Actions → CI → Run workflow**, select the
+PR branch and run the full matrix before merging. Check the wheel and sdist
+jobs. The manual run builds artifacts but does not publish them.
 
 ## Issue and pull request templates
 
