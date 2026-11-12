@@ -1,7 +1,7 @@
 //! Runs tasks through all `tes` commands of the CLI binary against Funnel.
 //!
-//! Run through `run-integration-tests.sh`, which starts Funnel; set
-//! `FUNNEL_TES_URL` to use another TES API root than Funnel's default one.
+//! Run through `run-integration-tests.sh`, which starts Funnel at
+//! `localhost:8000`, as for the Funnel tests of the library.
 #![cfg(all(unix, feature = "integration_tests"))]
 
 use serde_json::{json, Value};
@@ -10,6 +10,7 @@ use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
+const FUNNEL_TES_URL: &str = "http://localhost:8000/ga4gh/tes/v1";
 /// Time limit for a task to reach a state, including the image pull.
 const STATE_TIMEOUT: Duration = Duration::from_secs(180);
 const TERMINAL_STATES: [&str; 5] = [
@@ -22,13 +23,11 @@ const TERMINAL_STATES: [&str; 5] = [
 
 /// A home directory with a CLI config for the TES API of Funnel.
 fn home() -> TempDir {
-    let base_path = std::env::var("FUNNEL_TES_URL")
-        .unwrap_or_else(|_| "http://localhost:8000/ga4gh/tes/v1".into());
     let home = TempDir::new().unwrap();
     fs::create_dir(home.path().join(".ga4gh-cli")).unwrap();
     fs::write(
         home.path().join(".ga4gh-cli/config.json"),
-        json!({"TES": {"base_path": base_path}}).to_string(),
+        json!({"TES": {"base_path": FUNNEL_TES_URL}}).to_string(),
     )
     .unwrap();
     home
@@ -48,7 +47,7 @@ fn stdout(home: &TempDir, args: &[&str]) -> String {
     let output = cli(home, args);
     assert!(
         output.status.success(),
-        "{args:?} failed: {}",
+        "{args:?} failed (is Funnel running? see run-integration-tests.sh): {}",
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).unwrap()
@@ -114,6 +113,7 @@ fn task_runs_to_completion() {
             "MINIMAL",
         ],
     );
+    // The table format itself is checked against a mock in output.rs
     assert!(table.starts_with("TASK ID"), "{table}");
     assert!(
         table
@@ -127,7 +127,8 @@ fn task_runs_to_completion() {
 fn canceled_task_ends_canceled() {
     let home = home();
     let id = create(&home, "cli-cancel", &["sleep", "600"]);
-    await_state(&home, &id, &["QUEUED", "INITIALIZING", "RUNNING"]);
+    // Cancel a task whose executor runs, not one that is still queued
+    await_state(&home, &id, &["RUNNING"]);
 
     let output = stdout(&home, &["tes", "cancel", &id]);
     assert!(output.starts_with("STATUS: "), "{output}");
@@ -140,4 +141,7 @@ fn unknown_task_is_an_error() {
     let output = cli(&home, &["tes", "get", "no-such-task", "MINIMAL"]);
     assert!(!output.status.success(), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
+    // Funnel answers, with 404, rather than the request failing
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("404"), "{stderr}");
 }

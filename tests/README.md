@@ -22,13 +22,12 @@ to change the limit. It does not stop a Funnel process that it starts.
 The CLI suite, [`funnel_cli.rs`](../cli/tests/funnel_cli.rs), runs the
 `ga4gh-cli` binary with a temporary home directory whose config points to
 Funnel. It runs a task without inputs or outputs to completion with
-`tes create`, `tes status`, `tes get` and `tes list`, cancels a long task with
-`tes cancel`, and checks that an unknown task is an error. Funnel needs a
-Docker daemon to run these tasks. Set `FUNNEL_TES_URL` to run the suite
-against another TES API root without authentication, e.g.
-`FUNNEL_TES_URL=http://localhost:8000/ga4gh/tes/v1 cargo test -p ga4gh-cli
---features integration_tests --test funnel_cli`. The other `tes` tests of the
-CLI run the binary against mock servers in the default `cargo test`.
+`tes create`, `tes status`, `tes get` and `tes list`, cancels a running task
+with `tes cancel`, and checks that an unknown task is an error (HTTP 404).
+Funnel needs a Docker daemon and network access to pull `alpine:3.22` for
+these tasks; each task has 180 seconds to reach a state. The other `tes`
+tests of the CLI run the binary against mock servers in the default
+`cargo test`.
 
 ## Starter Kit WES
 
