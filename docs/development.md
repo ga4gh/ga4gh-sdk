@@ -128,11 +128,13 @@ for every pull request.
   list are not on the site.
 - [`docs/hooks.py`](hooks.py) builds the site from those files where they
   are, so that relative links between them work on GitHub and on the site
-  alike, and points links to other files of the repository, such as source
-  files, to GitHub.
+  alike, and points links to other files that Git tracks, such as source
+  files, to GitHub. Links to untracked files, such as build output, fail the
+  build.
 - [`.readthedocs.yaml`](../.readthedocs.yaml) configures the build on Read the
   Docs: the dependency group `docs` of
-  [`python/pyproject.toml`](../python/pyproject.toml), rustup for the
+  [`python/pyproject.toml`](../python/pyproject.toml) (exact versions;
+  Dependabot doesn't bump them, so update them by hand), rustup for the
   pinned toolchain, `cargo doc`, then MkDocs.
 
 A new guide needs an entry in `nav`; link to it with its relative path, as

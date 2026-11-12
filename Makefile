@@ -61,6 +61,8 @@ docs: ## Build the API documentation (target/doc)
 site: ## Build the documentation site in site/, strictly (needs MkDocs)
 	$(CARGO) doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli
 	$(MKDOCS) build --strict
+	@# The hook must keep the theme's files (styles and scripts)
+	@ls site/assets/javascripts/bundle.*.min.js > /dev/null
 
 models: ## Regenerate the OpenAPI models (see docs/autogenerate_OAI_models.md)
 	bash ./utils/build_models_wrapper.sh

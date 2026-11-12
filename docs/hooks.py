@@ -13,8 +13,8 @@ repository instead of from the files of `docs_dir`:
 - `on_page_markdown` points relative links to other files of the repository,
   such as source files or guides that are not in `nav`, to the files on
   GitHub, at the commit that Read the Docs builds (`main` elsewhere). Links
-  to files that don't exist stay as they are, so the strict build fails on
-  them.
+  to files that Git doesn't track stay as they are, so the strict build
+  fails on them.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 import posixpath
 import re
+import subprocess
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -42,8 +43,10 @@ log = logging.getLogger("mkdocs.hooks.repo_pages")
 
 # `[text](target "title")` and `![alt](target)`; `<target>` too
 INLINE_LINK = re.compile(r"(?P<head>\]\(\s*)(?P<target><[^>]*>|[^)\s]+)")
-# `[label]: target "title"`
-REFERENCE = re.compile(r"^(?P<head> {0,3}\[[^\]]+\]:\s*)(?P<target><[^>]*>|\S+)")
+# `[label]: target "title"`, but not footnotes (`[^1]: text`)
+REFERENCE = re.compile(r"^(?P<head> {0,3}\[(?!\^)[^\]]+\]:\s*)(?P<target><[^>]*>|\S+)")
+# Inline code spans, which are left as they are
+CODE_SPAN = re.compile(r"(`+).*?\1")
 FENCE = re.compile(r"^\s*(```+|~~~+)")
 
 
@@ -63,6 +66,34 @@ def _nav_paths(nav: Any) -> list[str]:
     if isinstance(nav, list):
         return [path for item in nav for path in _nav_paths(item)]
     return []
+
+
+def _tracked_paths() -> set[str] | None:
+    """List the files that Git tracks, with their directories.
+
+    Links to other files, such as build output, are not rewritten, so that
+    the strict build reports them.
+
+    Returns:
+        Paths relative to the repository root, or `None` without Git.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z"],
+            capture_output=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    paths = set()
+    for path in result.stdout.decode().split("\0"):
+        while path:
+            paths.add(path)
+            path = posixpath.dirname(path)
+    return paths
+
+
+TRACKED = _tracked_paths()
 
 
 def _rustdoc_dir() -> Path:
@@ -110,16 +141,19 @@ def on_files(files: Files, config: MkDocsConfig) -> Files:
     """Replace the files of `docs_dir` with the files of the repository.
 
     Args:
-        files: Files of `docs_dir` (unused).
+        files: Files of `docs_dir` and of the theme.
         config: MkDocs configuration.
 
     Returns:
-        Pages listed in `nav`, assets and the Rust API reference.
+        The theme's files, the pages listed in `nav`, assets and the Rust
+        API reference.
 
     Raises:
         FileNotFoundError: A Markdown file listed in `nav` is missing.
     """
-    site = Files([])
+    # The theme's files (styles, scripts, ...) stay
+    docs_dir = os.path.normpath(config.docs_dir)
+    site = Files([file for file in files if os.path.normpath(file.src_dir or "") != docs_dir])
     for path in _nav_paths(config.nav):
         if not path.endswith(".md") or urlsplit(path).scheme:
             continue
@@ -177,7 +211,8 @@ def _rewrite(target: str, page_path: str, site_paths: set[str], ref: str) -> str
     if parts.scheme or parts.netloc or not parts.path or bare.startswith("/"):
         return target
     path = posixpath.normpath(posixpath.join(posixpath.dirname(page_path), parts.path))
-    if path.startswith("../") or path in site_paths or not (ROOT / path).exists():
+    exists = (ROOT / path).exists() if TRACKED is None else path in TRACKED
+    if path.startswith("../") or path in site_paths or not exists:
         return target
     fragment = f"#{parts.fragment}" if parts.fragment else ""
     return _github_url(path, ref) + fragment
@@ -186,7 +221,7 @@ def _rewrite(target: str, page_path: str, site_paths: set[str], ref: str) -> str
 def on_page_markdown(markdown: str, page: Any, config: MkDocsConfig, files: Files) -> str:
     """Point links to files outside the site to GitHub.
 
-    Code blocks are left as they are.
+    Fenced code blocks and inline code spans are left as they are.
 
     Args:
         markdown: Markdown of the page.
@@ -205,6 +240,17 @@ def on_page_markdown(markdown: str, page: Any, config: MkDocsConfig, files: File
     def replace(match: re.Match[str]) -> str:
         return match["head"] + _rewrite(match["target"], page_path, site_paths, ref)
 
+    def rewrite_line(line: str) -> str:
+        line = REFERENCE.sub(replace, line)
+        parts = []
+        start = 0
+        for code in CODE_SPAN.finditer(line):
+            parts.append(INLINE_LINK.sub(replace, line[start : code.start()]))
+            parts.append(code[0])
+            start = code.end()
+        parts.append(INLINE_LINK.sub(replace, line[start:]))
+        return "".join(parts)
+
     lines = []
     fence = ""
     for line in markdown.splitlines(keepends=True):
@@ -215,6 +261,6 @@ def on_page_markdown(markdown: str, page: Any, config: MkDocsConfig, files: File
         elif opening:
             fence = opening[1]
         else:
-            line = REFERENCE.sub(replace, INLINE_LINK.sub(replace, line))
+            line = rewrite_line(line)
         lines.append(line)
     return "".join(lines)

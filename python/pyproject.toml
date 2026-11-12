@@ -43,13 +43,14 @@ tests = [
 # documentation site (`mkdocs.yml`) on Read the Docs (`.readthedocs.yaml`)
 # and in CI (`docs` job). Install them with
 # `python -m pip install --group python/pyproject.toml:docs` (pip 25.1 or
-# later). Major versions are bounded, so that new warnings, which fail the
-# strict build, come only with deliberate upgrades
+# later). Exact versions, as for the other tools of CI, so that new
+# warnings, which fail the strict build, come only with deliberate
+# upgrades; not bumped by Dependabot, so update them manually
 [dependency-groups]
 docs = [
-    "mkdocs>=1.6.1,<2",
-    "mkdocs-material>=9.7.0,<10",
-    "pymdown-extensions>=10.0,<13",
+    "mkdocs==1.6.1",
+    "mkdocs-material==9.8.1",
+    "pymdown-extensions==12.3",
 ]
 
 [tool.maturin]
