@@ -356,8 +356,8 @@ or WDL. Replace `TOOL_ID` and `VERSION_ID` below with values returned by the
 registry:
 
 ```sh
-# Find tools. All filters are optional.
-ga4gh-cli trs tools --tool-class Workflow --descriptor-type CWL --limit 5
+# Find tools. All filters are optional; repeat --tag for several tags.
+ga4gh-cli trs tools --tool-class Workflow --descriptor-type CWL --tag genomics --limit 5
 
 # Look at one tool and its versions.
 ga4gh-cli trs tool 'TOOL_ID'
@@ -367,17 +367,20 @@ ga4gh-cli trs version 'TOOL_ID' 'VERSION_ID'
 # See which files the version has, then download the main workflow file.
 ga4gh-cli trs files 'TOOL_ID' 'VERSION_ID' --type CWL
 ga4gh-cli trs descriptor 'TOOL_ID' 'VERSION_ID' --type CWL --plain > main.cwl
+
+# Or download all files of the version as one ZIP archive.
+ga4gh-cli trs files 'TOOL_ID' 'VERSION_ID' --type CWL --zip workflow.zip
 ```
 
 #### Commands
 
 | Command | Result |
 | --- | --- |
-| `trs tools [filters]` | A list of tools, optionally filtered. |
+| `trs tools [filters]` | A list of tools, optionally filtered by `--tool-class`, `--descriptor-type`, `--organization`, `--name` and `--tag` (repeatable), paged with `--offset` and `--limit`. |
 | `trs tool <TOOL_ID>` | One tool and its versions. |
 | `trs versions <TOOL_ID>` | The versions of a tool. |
-| `trs version <TOOL_ID> <VERSION_ID>` | One version and its descriptor types. |
-| `trs files <TOOL_ID> <VERSION_ID> --type <TYPE>` | The paths and types of its files. |
+| `trs version <TOOL_ID> <VERSION_ID>` | One version, its descriptor types and, if the registry sends one, its description. |
+| `trs files <TOOL_ID> <VERSION_ID> --type <TYPE>` | The paths and types of its files; `--zip <FILE>` writes all files as one ZIP archive to `FILE` instead. |
 | `trs descriptor <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its primary descriptor; `--path <RELATIVE_PATH>` selects another file. |
 | `trs tests <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its test parameter files. |
 
@@ -385,7 +388,10 @@ Results are JSON by default. `trs descriptor --plain` prints the descriptor
 content without a JSON wrapper. `trs tests --plain` prints one inline test file;
 if the server returns several files or only a URL, omit `--plain` to inspect
 their JSON instead. The commands exit with code 0 on success and 1 on request
-or server errors; missing arguments use exit code 2. Error messages and JSON
+or server errors; missing arguments use exit code 2. `--zip` never replaces
+an existing file, doesn't extract the archive, and downloads at most 64 MiB.
+A tag must not be empty or contain a comma, because the registry receives all
+tags as one comma-separated value. Error messages and JSON
 output escape terminal control and bidirectional formatting characters.
 
 ## Service Registry commands

@@ -21,7 +21,7 @@ hand-written types go next to `models/`, for example
 | `registry` | [Service Registry 1.0.0](https://github.com/ga4gh-discovery/ga4gh-service-registry/tree/1.0.0) | – |
 | `tes` | [TES 1.1](https://github.com/ga4gh/task-execution-schemas/tree/v1.1) | `utils/patches/tes.patch` |
 | `drs` | [DRS 1.4.0](https://github.com/ga4gh/data-repository-service-schemas/tree/drs-1.4.0) | `utils/patches/drs.patch` |
-| `trs` | [TRS 2.0.1](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.1) | `utils/patches/trs.patch` |
+| `trs` | [TRS 2.0.2](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.2) | `utils/patches/trs.patch` |
 | `wes` | [WES 1.1.0](https://github.com/ga4gh/workflow-execution-service-schemas/tree/1.1.0) | `utils/patches/wes.patch` |
 
 The models are generated with OpenAPI Generator 7.9.0 and formatted with
