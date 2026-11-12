@@ -88,8 +88,8 @@ mod list_tasks_params;
 /// # }
 /// ```
 // Generated models (utils/build_models.sh): the generator writes `Default`
-// for enums by hand and constructors with one argument per required field.
-#[allow(clippy::derivable_impls, clippy::too_many_arguments)]
+// for enums by hand.
+#[allow(clippy::derivable_impls)]
 pub mod models;
 mod view;
 use crate::clients::serviceinfo::models::Service;

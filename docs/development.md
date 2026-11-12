@@ -67,8 +67,9 @@ against their schemas, lint the workflows with
 [actionlint](https://github.com/rhysd/actionlint), fix spelling with
 [typos](https://github.com/crate-ci/typos) (intended words that it flags go
 into [`_typos.toml`](../_typos.toml)), and run `cargo fmt --all` and
-`cargo clippy --workspace --all-targets --locked -- -D warnings`. When a hook changes
-files, the commit stops: review the changes, stage them, and commit again.
+`cargo clippy --workspace --all-targets --locked -- -D warnings`. When a
+hook changes files, the commit stops: review the changes, stage them, and
+commit again.
 
 The formatting and spelling hooks skip generated models in
 `lib/src/clients/*/models/`, because their text comes from the upstream
@@ -122,18 +123,23 @@ artifact of the `coverage` job are then still there, and the job log of
 
 `make clippy` checks all workspace targets and fails on any Clippy warning
 (`-- -D warnings`). The CI lint job runs the same command and checks
-formatting. Fix a new warning in the code; allow a lint only where the code
-that triggers it isn't hand-written, with a comment that says why:
+formatting. Fix a new warning in the code where you can. Otherwise allow the
+lint as narrowly as possible, with a comment that says why. Two allows cover
+code that isn't hand-written:
 
 - Generated models: `clippy::derivable_impls` (the generator writes
-  `Default` for enums by hand) and `clippy::too_many_arguments` (`new` takes
-  one argument per required field) are allowed on the `models` module of
-  each client that needs it, so that the models stay as the generator writes
-  them (see [Autogenerate OpenAPI models](autogenerate_OAI_models.md)).
+  `Default` for enums by hand) is allowed on the `models` module of the DRS,
+  TES, TRS and WES clients, and `clippy::too_many_arguments` (`new` takes
+  one argument per required field) on that of WES, so that the models stay
+  as the generator writes them (see
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). A new client
+  whose models trigger these lints needs the same attribute.
 - Python bindings: `clippy::useless_conversion` is allowed for the whole
   `python` crate, because PyO3 0.22's `#[pymethods]` code triggers it at
-  methods that return `PyResult`, and an `#[allow]` on the `impl`
-  block doesn't reach that code. Remove it after upgrading PyO3.
+  methods that return `PyResult`, and an `#[allow]` on the `impl` block or
+  the method doesn't reach that code. It is crate-wide rather than per file,
+  so that new binding files don't each need it. Remove it after upgrading
+  PyO3.
 
 Documentation lint enforcement remains in
 [#87](https://github.com/ga4gh/ga4gh-sdk/issues/87); it needs a policy for
@@ -147,7 +153,7 @@ on pushes to `main` and on manual dispatch:
 
 | Job | Name | What it does |
 | --- | --- | --- |
-| `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` without warnings |
+| `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` with `-D warnings` |
 | `test` | Test | `cargo test --workspace --locked` |
 | `build` | Build | Lockfile check, standalone library and CLI builds |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
