@@ -5,8 +5,8 @@ specification's models, or offer commands of their own. A downstream SDK for
 such a service can build on this SDK instead of forking it. This guide walks
 through [`examples/downstream-sdk/`](../examples/downstream-sdk/), a small
 crate that does so through public APIs only. CI builds and tests it (job
-`downstream`), so a change to the SDK that would break downstream crates
-fails CI.
+`downstream`), so a change that breaks the API paths exercised by this
+example fails CI.
 
 The example's extensions are made up: a TES service that offers
 `GET /tasks/{id}/usage` with the resource usage of a task, and a `priority`
@@ -40,6 +40,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 url = "2"
 ```
 
+Replace `<commit>` with the same commit SHA in both dependency entries.
 Use the same major versions of `clap` and `serde` as the SDK: the CLI hands
 out Clap 4 `Command`s, and the models implement Serde 1 traits. HTTP types
 are re-exported as `ga4gh_sdk::reqwest`, so a crate that needs them doesn't
@@ -63,14 +64,18 @@ pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
   root are rejected. `urlencode` encodes a path segment, such as an ID.
 - `UsageClient::from_transport(tes.transport.clone())` shares the transport
   of an SDK client, such as `TES`. The new client then uses the same base
-  path, user agent and HTTP client: timeouts, TLS settings and connection
-  pool. `UsageClient::new(&config)` creates its own.
+  path, user agent, configured credentials and HTTP client: timeouts, TLS
+  settings and connection pool. `UsageClient::new(&config)` creates its own
+  transport and applies the same configured credentials. An injected HTTP
+  client has a separate authentication policy; see the
+  [authentication guide](authentication.md#request-boundary-and-failures).
 - For other methods, headers or bodies, `request_builder` returns a
   `reqwest::RequestBuilder` for a path beneath the root, and
   `request_response` returns the response with its status and headers; see
   [Advanced transport](../README.md#advanced-transport).
-- An error status comes back as `ga4gh_sdk::utils::transport::HttpError`,
-  with the status and the (bounded) body.
+- An error status comes back as `ga4gh_sdk::utils::transport::HttpError`.
+  The status is inspectable. Its bounded body is available to Rust callers,
+  but omitted from default error messages because the server may echo secrets.
 - A custom section in the configuration file (any name besides the built-in
   ones) can hold the service's settings; read it with
   `Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))` and
@@ -137,18 +142,22 @@ everything else to the SDK:
 - `ga4gh_cli::printable` escapes control characters in values from the
   service, as the SDK's CLI does in its text output.
 
-Run it from the repository root, with the configuration file described in
-the [usage guide](usage.md#configuration-file):
+Run the built-in command from the repository root. Set the `TES` section in
+the configuration file as described in the [usage guide](usage.md#configuration-file).
+The `usage` command also needs a TES service that implements the example's
+additional endpoint. Replace the sample ID with an ID from that service:
 
 ```sh
-cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes usage <task-id>
 cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes list
+task_id='task-from-your-service'
+cargo run --manifest-path examples/downstream-sdk/Cargo.toml -- tes usage "$task_id"
 ```
 
 ## Checks
 
 `make downstream` runs what the CI job `downstream` runs: formatting, Clippy
-(warnings are errors) and the tests of the example. The example has its own
+(warnings are errors) and the tests of the example. One test runs the actual
+`downstream-cli` binary with an isolated configuration. The example has its own
 Cargo workspace, so that the SDK's crates are built as dependencies, as in a
 downstream repository; the workspace commands such as `make check` leave it
 out. It has no lockfile of its own: the target copies the repository's
@@ -156,18 +165,18 @@ out. It has no lockfile of its own: the target copies the repository's
 any other package isn't locked at a version and source from the root
 lockfile. The example thus builds with the SDK's dependency versions; a
 dependency that only the example needs must be added to the workspace
-first. Without
-`make downstream`, Cargo resolves the example's dependencies afresh.
+first. Without `make downstream`, Cargo resolves the example's dependencies
+afresh.
 
 When you change a public API that the example uses, update the example and
 this guide in the same pull request.
 
-## Not covered yet
+## Scope
 
-- Default clients don't send configured credentials yet
-  ([#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). A downstream client
-  can supply an authenticated `reqwest::Client` through
-  `Transport::with_client`.
+- The example checks that a configured Basic credential reaches both TES
+  discovery and the added endpoint. The SDK supports other credential sources
+  described in the [authentication guide](authentication.md); this example
+  does not exercise each one.
 - The example is Rust only. Building on the Python bindings is tracked in
   [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78), with the other
   remaining steps for downstream SDKs.

@@ -1,8 +1,8 @@
 //! Tests of the example against a mock TES service with extensions.
 //!
 //! Each test uses its own API root on the shared mock server, so that tests
-//! running in parallel don't see each other's mocks. Only one test sets
-//! `HOME`; checks that read the configuration file belong into that test.
+//! running in parallel don't see each other's mocks. The binary test sets
+//! `HOME` only in its child process.
 
 use downstream_sdk::cli;
 use downstream_sdk::task::PrioritizedTask;
@@ -10,10 +10,12 @@ use downstream_sdk::usage::{TaskUsage, UsageClient};
 use ga4gh_sdk::clients::tes::models::{TesExecutor, TesTask};
 use ga4gh_sdk::clients::tes::{TesView, TES};
 use ga4gh_sdk::reqwest;
-use ga4gh_sdk::utils::configuration::Configuration;
+use ga4gh_sdk::utils::configuration::{BasicAuth, Configuration};
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use mockito::{mock, Matcher, Mock};
 use serde_json::json;
+#[cfg(unix)]
+use std::process::Command;
 use std::process::ExitCode;
 use url::Url;
 
@@ -87,6 +89,41 @@ async fn usage_client_shares_the_tes_clients_transport() {
             extra: json!({"node": "n1"}).as_object().unwrap().clone(),
         }
     );
+}
+
+#[tokio::test]
+async fn usage_client_shares_configured_auth_with_tes() {
+    const AUTH: &str = "Basic ZGVtbzpzZWNyZXQ=";
+    let info = mock("GET", "/auth/ga4gh/tes/v1/service-info")
+        .match_header("authorization", AUTH)
+        .with_body(
+            json!({
+                "id": "org.example.tes",
+                "name": "Example TES",
+                "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
+                "organization": {"name": "Example", "url": "https://example.org"},
+                "version": "1.0.0"
+            })
+            .to_string(),
+        )
+        .create();
+    let usage_request = mock("GET", "/auth/ga4gh/tes/v1/tasks/task-1/usage")
+        .match_header("authorization", AUTH)
+        .with_body(r#"{"id":"task-1","cpu_seconds":2.0}"#)
+        .create();
+    let config = config("auth").with_basic_auth(BasicAuth {
+        username: "demo".into(),
+        password: Some("secret".into()),
+    });
+    let tes = TES::new(&config).await.unwrap();
+    info.assert();
+
+    let usage = UsageClient::from_transport(tes.transport.clone())
+        .task_usage("task-1")
+        .await
+        .unwrap();
+    assert_eq!(usage.cpu_seconds, Some(2.0));
+    usage_request.assert();
 }
 
 #[tokio::test]
@@ -242,10 +279,10 @@ async fn cli_extension_escapes_output_and_reports_errors() {
     assert_eq!(exit_code, None);
 }
 
-/// The binary's entry point, with the configuration file in a temporary
-/// home directory. The only test that reads `HOME`.
-#[tokio::test]
-async fn cli_run_reads_the_config_file_for_added_and_built_in_commands() {
+/// Run the binary with a temporary home, leaving the test process's HOME alone.
+#[cfg(unix)]
+#[test]
+fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
     let _info = service_info("cli-run");
     let _usage = mock("GET", "/cli-run/ga4gh/tes/v1/tasks/task-1/usage")
         .with_status(200)
@@ -262,20 +299,22 @@ async fn cli_run_reads_the_config_file_for_added_and_built_in_commands() {
         json!({"TES": {"base_path": api_root("cli-run")}}).to_string(),
     )
     .unwrap();
-    std::env::set_var("HOME", home.path());
-
     for (args, expected) in [
         (vec!["tes", "usage", "task-1"], "task-1\t-\t5\n"),
         (vec!["tes", "list"], "task-from-sdk"),
     ] {
-        let matches = cli::command()
-            .try_get_matches_from([cli::BIN_NAME].into_iter().chain(args.clone()))
+        let output = Command::new(env!("CARGO_BIN_EXE_downstream-cli"))
+            .args(&args)
+            .env("HOME", home.path())
+            .output()
             .unwrap();
-        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-        let exit_code = cli::run(&matches, &mut stdout, &mut stderr).await.unwrap();
-        let stdout = String::from_utf8(stdout).unwrap();
-        assert_eq!(exit_code, ExitCode::SUCCESS, "{args:?}: {stdout}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(stdout.contains(expected), "{args:?}: {stdout}");
-        assert!(stderr.is_empty(), "{args:?}");
+        assert!(output.stderr.is_empty(), "{args:?}: {stdout}");
     }
 }
