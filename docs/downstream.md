@@ -156,7 +156,9 @@ the example calls `context().with_profile_from(&matches)` before
 `load_config`, so that `downstream-cli --profile metered quota` reads the
 `QUOTA` section of the profile `metered`. The long name `--profile` is
 reserved in the whole command tree: an option of a binary's own with that
-long name, at the root or in a subcommand, fails Clap's checks. Arguments
+long name, at the root or in a subcommand, conflicts with the global option
+(Clap's debug assertions catch it in debug builds and tests, so call
+`command().debug_assert()` in a test; release builds don't check it). Arguments
 merely named `profile`, such as a positional one, are fine; the option's id
 is `ga4gh-cli-profile`.
 

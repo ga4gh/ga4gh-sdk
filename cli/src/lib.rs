@@ -187,9 +187,9 @@ impl CliContext {
     /// `env!("CARGO_PKG_VERSION")`.
     ///
     /// The configuration file defaults to `~/.<name>/config.json`, and
-    /// neither a profile variable nor a token variable is read. The texts are `&'static str`, as Clap's
-    /// command names are without its `string` feature; they are usually
-    /// literals or `env!` values.
+    /// neither a profile variable nor a token variable is read. The texts
+    /// are `&'static str`, as Clap's command names are without its `string`
+    /// feature; they are usually literals or `env!` values.
     pub fn new(name: &'static str, version: &'static str) -> Self {
         Self {
             name,

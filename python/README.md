@@ -107,8 +107,8 @@ For a task that is still running, call `task.cancel()`.
 
 `config.from_file()` reads a section of `~/.ga4gh-cli/config.json` (format in
 the [usage guide](../docs/usage.md#configuration-file)). In a file with
-[profiles](../docs/usage.md#profiles), it reads the default profile. Name a built-in
-section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`, `REGISTRY`), and
+[profiles](../docs/usage.md#profiles), it reads the default profile. Name a
+built-in section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`, `REGISTRY`), and
 any other section with a `str`. `config.get_extra()` returns the keys of the
 section that the SDK doesn't use itself, as a `dict` with the values as they are
 in the file, so don't log it if it can hold credentials:

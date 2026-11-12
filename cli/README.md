@@ -532,7 +532,7 @@ variable or token variable describes them in a `ga4gh_cli::CliContext`:
   the global option `--profile`, which `dispatch()` and `dispatch_to()`
   apply; for its own commands, a binary calls `with_profile_from(&matches)`
   before `load_config()`. Its own options can't use the long name
-  `--profile`.
+  `--profile`; a test that calls `command().debug_assert()` catches a clash.
 - `with_token_env("MY_CLI_TOKEN", [ServiceType::Custom("MY_SERVICE".into())])`
   supplies an OAuth access token to the listed sections when they set no
   credentials. Other sections never receive it.
