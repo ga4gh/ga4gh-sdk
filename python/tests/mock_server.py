@@ -10,6 +10,8 @@ client closes the connection before,
 ``GET /__disconnects__`` lists the request's path. Below ``/hang``,
 ``service-info`` answers at once and every other request gets no answer until
 the client leaves (at most 30 seconds), for tests of timed-out submissions.
+A route can answer with a ``Raw`` body instead of JSON, or be a function of the
+query parameters; ``{host}`` in a reply header becomes the request's host.
 """
 
 import base64
@@ -102,6 +104,14 @@ class Sequence:
         return iter(reply)
 
 
+class Raw:
+    """A reply body that is sent as it is, not as JSON."""
+
+    def __init__(self, data, content_type="text/plain"):
+        self.data = data
+        self.content_type = content_type
+
+
 PENDING = (202, {}, {"Retry-After": "1"})
 
 ROUTES.update(
@@ -165,11 +175,15 @@ class Handler(BaseHTTPRequestHandler):
     """Records each request and answers it from `ROUTES`."""
 
     def _reply(self, status, payload, headers=None):
-        data = json.dumps(payload).encode()
+        content_type = "application/json"
+        if isinstance(payload, Raw):
+            data, content_type = payload.data, payload.content_type
+        else:
+            data = json.dumps(payload).encode()
         self.send_response(status)
         for name, value in (headers or {}).items():
-            self.send_header(name, value)
-        self.send_header("Content-Type", "application/json")
+            self.send_header(name, value.replace("{host}", self.headers.get("Host", "")))
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -217,7 +231,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._reply(200, SERVICE_INFO)
             return
-        self._reply(*ROUTES.get((self.command, url.path), (404, {"msg": "not found"})))
+        reply = ROUTES.get((self.command, url.path), (404, {"msg": "not found"}))
+        if callable(reply):
+            reply = reply(parse_qs(url.query, keep_blank_values=True))
+        self._reply(*reply)
 
     def _client_left_within(self, seconds):
         """Waits up to `seconds`; tells whether the client closed the connection meanwhile."""
@@ -306,6 +323,130 @@ ROUTES.update(
         ("GET", "/wes-bad-list/runs"): (200, {"runs": [{"state": "COMPLETE"}]}),
     }
 )
+
+# TRS 2.0.1 below `/trs`, TRS 2.0.2 below `/trs2`, and a TRS that declares a version that
+# the SDK doesn't know below `/trs-next`. IDs that need encoding check that they reach the
+# server unchanged, as one path segment each.
+TRS_TOOL_ID = "#workflow/github.com/org/repo"
+TRS_VERSION_ID = "v1/rc 1"
+TRS_VERSION_PATH = f"tools/{quote(TRS_TOOL_ID, safe='')}/versions/{quote(TRS_VERSION_ID, safe='')}"
+
+TRS_VERSION = {
+    "url": "https://trs.example/tools/1/versions/1",
+    "id": TRS_VERSION_ID,
+    "name": "First release",
+    "author": ["Ada"],
+    "descriptor_type": ["CWL"],
+    "descriptor_type_version": {"CWL": ["v1.2"]},
+    "images": [{"registry_host": "quay.io", "image_name": "org/tool", "image_type": "Docker"}],
+    "is_production": True,
+    "verified": False,
+    "description": "The first release",
+    "extension_field": {"nested": [1, 2, 3]},
+}
+
+TRS_TOOL = {
+    "url": "https://trs.example/tools/1",
+    "id": TRS_TOOL_ID,
+    "aliases": ["repo"],
+    "organization": "org",
+    "name": "repo",
+    "toolclass": {"id": "1", "name": "Workflow", "extension_field": "kept"},
+    "description": "A workflow",
+    "has_checker": False,
+    "versions": [TRS_VERSION],
+    "extension_field": {"nested": [1, 2, 3]},
+}
+
+TRS_DESCRIPTOR = {
+    "content": "cwlVersion: v1.2\nclass: Workflow\n",
+    "url": "https://trs.example/raw/main.cwl",
+    "checksum": [{"checksum": "abc", "type": "sha-256"}],
+    "image_type": "CWL",
+    "extension_field": "kept",
+}
+
+TRS_PLAIN_DESCRIPTOR = "cwlVersion: v1.2\nclass: Workflow\n"
+
+TRS_FILES = [
+    {"path": "main.cwl", "file_type": "PRIMARY_DESCRIPTOR", "extension_field": "kept"},
+    {"path": "tools/align.cwl", "file_type": "SECONDARY_DESCRIPTOR"},
+    {"path": "notes.md", "file_type": "NOT_A_TRS_TYPE"},
+]
+
+# The smallest valid ZIP archive: an end-of-central-directory record.
+TRS_ZIP = b"PK\x05\x06" + bytes(18)
+
+
+def trs_service_info(version):
+    return {
+        **SERVICE_INFO,
+        "id": "org.example.trs",
+        "name": "Example TRS",
+        "type": {"group": "org.ga4gh", "artifact": "trs", "version": version},
+    }
+
+
+def trs_tools(query):
+    """Two pages of one tool each; the first links to the second."""
+    if query.get("offset") == ["1"]:
+        return (200, [{**TRS_TOOL, "id": "second"}], {"current_offset": "1"})
+    return (
+        200,
+        [TRS_TOOL],
+        {
+            "next_page": "http://{host}/trs/tools?offset=1&limit=1",
+            "last_page": "http://{host}/trs/tools?offset=1&limit=1",
+            "current_offset": "0",
+            "current_limit": "1",
+        },
+    )
+
+
+def trs_files(query):
+    """The file list, or the ZIP archive for `format=zip`."""
+    if query.get("format") == ["zip"]:
+        return (200, Raw(TRS_ZIP, "application/zip"))
+    return (200, TRS_FILES)
+
+
+for root, version in [("trs", "2.0.1"), ("trs2", "2.0.2"), ("trs-next", "9.9.9")]:
+    tool_path = f"/{root}/tools/{quote(TRS_TOOL_ID, safe='')}"
+    version_path = f"/{root}/{TRS_VERSION_PATH}"
+    ROUTES.update(
+        {
+            ("GET", f"/{root}/service-info"): (200, trs_service_info(version)),
+            ("GET", f"/{root}/toolClasses"): (200, [TRS_TOOL["toolclass"]]),
+            ("GET", f"/{root}/tools"): trs_tools,
+            ("GET", tool_path): (200, TRS_TOOL),
+            ("GET", f"{tool_path}/versions"): (200, [TRS_VERSION]),
+            ("GET", version_path): (200, TRS_VERSION),
+            ("GET", f"{version_path}/CWL/descriptor"): (200, TRS_DESCRIPTOR),
+            ("GET", f"{version_path}/PLAIN_CWL/descriptor"): (
+                200,
+                Raw(TRS_PLAIN_DESCRIPTOR.encode()),
+            ),
+            ("GET", f"{version_path}/CWL/descriptor/tools%2Falign.cwl"): (
+                200,
+                {**TRS_DESCRIPTOR, "content": "class: CommandLineTool\n"},
+            ),
+            ("GET", f"{version_path}/CWL/tests"): (200, [TRS_DESCRIPTOR]),
+            ("GET", f"{version_path}/PLAIN_CWL/tests"): (200, Raw(b"message: hello\n")),
+            ("GET", f"{version_path}/CWL/files"): trs_files,
+            ("GET", f"{version_path}/containerfile"): (
+                200,
+                [{"content": "FROM alpine\n", "image_type": "Docker"}],
+            ),
+            # Responses that don't fit the TRS models, and a registry that ignores
+            # `format=zip`.
+            ("GET", f"/{root}/tools/bad"): (200, {"id": "bad"}),
+            ("GET", f"/{root}/tools/bad-description"): (
+                200,
+                {**TRS_TOOL, "id": "bad-description", "versions": [{**TRS_VERSION, "description": 7}]},
+            ),
+            ("GET", f"/{root}/tools/t/versions/1/CWL/files"): (200, TRS_FILES),
+        }
+    )
 
 # WES roots whose `POST runs` answers with a failure or a malformed acknowledgement.
 BAD_ACKNOWLEDGEMENTS = {
