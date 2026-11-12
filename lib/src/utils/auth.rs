@@ -43,9 +43,11 @@
 //!   rejects a configuration with a provider; use
 //!   [`Transport::authorized_request_builder`](crate::utils::transport::Transport::authorized_request_builder).
 //!   Fetches of descriptors and result artifacts from other URLs never carry it.
-//! - A provider failure is a [`TokenProviderError`], not an HTTP error, and
-//!   nothing is sent. Default `Display` and `Debug` output omits the provider's
-//!   error text and audience because either may contain a secret. Rust callers
+//! - A provider failure is a [`TokenProviderError`], not an HTTP error. The
+//!   pending request is not sent. A read-only request that got `401` before a
+//!   failed refresh has already made its first attempt. Default `Display` and
+//!   `Debug` output omits the provider's error text and audience because either
+//!   may contain a secret. Rust callers
 //!   can explicitly inspect the underlying source error; treat it as sensitive.
 
 use async_trait::async_trait;
@@ -287,7 +289,9 @@ impl TokenSource {
     }
 }
 
-/// The token provider failed or gave a token that can't be sent; nothing was sent.
+/// The token provider failed or gave a token that can't be sent; the pending
+/// request was not sent. A preceding read-only attempt may already have received
+/// `401 Unauthorized`.
 #[non_exhaustive]
 pub enum TokenProviderError {
     /// The provider returned an error.

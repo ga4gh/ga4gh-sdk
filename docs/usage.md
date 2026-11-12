@@ -300,8 +300,10 @@ contract:
   The caller remains responsible for that client's redirect policy.
 - **Errors.** If the provider fails, or gives an empty token or one that
   can't be an HTTP header value, the request fails with a
-  `TokenProviderError` and nothing is sent. Its default `Display` and `Debug`
-  output omits the provider's error text and audience, which may be sensitive.
+  `TokenProviderError` and the pending request is not sent. If this happens
+  after a read-only request received `401`, that first attempt was sent. Its
+  default `Display` and `Debug` output omits the provider's error text and
+  audience, which may be sensitive.
   Rust callers may inspect its underlying source error explicitly.
 - **Your own requests.** `Transport::request_builder` returns an error when a
   provider is configured. Use `Transport::authorized_request_builder` (`async`)
@@ -515,9 +517,11 @@ request already has are an error.
 Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
 as `ga4gh_sdk::utils::transport::HttpError` (formerly `HttpStatusError`, still
 available under that name), which carries the status code and body. Downcast to
-it to distinguish, for example, a `404` from a network error. With a token
-provider, `ga4gh_sdk::utils::auth::TokenProviderError` and `AuthConflictError`
-mean that nothing was sent; see [Token providers](#token-providers).
-Its `Display` and `Debug` output omits the server body, because the server may
-echo a credential. The public `body` field retains the bounded raw response for
+it to distinguish, for example, a `404` from a network error. Its `Display` and
+`Debug` output omits the server body, because the server may echo a credential.
+The public `body` field retains the bounded raw response for
 explicit inspection; treat it as sensitive and do not log it by default.
+With a token provider, `ga4gh_sdk::utils::auth::TokenProviderError` means that
+the pending request was not sent; a prior read-only attempt may have received
+`401`. `AuthConflictError` means the configured sources conflict before any
+request. See [Token providers](#token-providers).
