@@ -25,21 +25,6 @@ fn service_info(artifact: &str) -> String {
     .to_string()
 }
 
-// WES 1.0 also permits this native capability document without the common
-// ServiceInfo fields. The client accepts the common form as well.
-fn wes_native_service_info() -> String {
-    json!({
-        "workflow_type_versions": {"CWL": {"workflow_type_version": ["v1.2"]}},
-        "supported_wes_versions": ["1.0.0"],
-        "supported_filesystem_protocols": ["file"],
-        "workflow_engine_versions": {},
-        "default_workflow_engine_parameters": [],
-        "system_state_counts": {},
-        "tags": {}
-    })
-    .to_string()
-}
-
 async fn dispatch(args: &[&str], config: &Configuration) -> ga4gh_cli::CommandOutput {
     let matches = command().try_get_matches_from(args).unwrap();
     dispatch_with_config(&matches, config)
@@ -75,13 +60,6 @@ async fn configured_basic_reaches_discovery_and_operations_in_every_service_fami
         ),
         (
             "wes",
-            vec!["ga4gh-cli", "wes", "list"],
-            wes_native_service_info(),
-            "runs",
-            json!({"runs": []}).to_string(),
-        ),
-        (
-            "wes-common",
             vec!["ga4gh-cli", "wes", "list"],
             service_info("wes"),
             "runs",
@@ -128,7 +106,7 @@ async fn wes_run_uses_the_same_configured_credential_for_discovery_and_submissio
     let prefix = "/cli-auth-submit";
     let discovery = mock("GET", "/cli-auth-submit/service-info")
         .match_header("authorization", "Basic Y2xpOnNlY3JldA==")
-        .with_body(wes_native_service_info())
+        .with_body(service_info("wes"))
         .create();
     let submission = mock("POST", "/cli-auth-submit/runs")
         .match_header("authorization", "Basic Y2xpOnNlY3JldA==")
