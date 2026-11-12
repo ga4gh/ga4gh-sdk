@@ -104,7 +104,8 @@ jobs:
             if [[ "$SUITE" == funnel ]]; then
               paths=("${common[@]}" run-integration-tests.sh lib/src/clients/tes/
                 lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
-                lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs)
+                lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs
+                cli/Cargo.toml cli/src/ cli/tests/funnel_cli.rs)
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
