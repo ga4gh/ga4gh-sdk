@@ -60,8 +60,9 @@ tests/run-trs-filer-integration.sh
 
 The script starts [TRS-Filer](https://github.com/elixir-cloud-aai/trs-filer)
 (the image of a `dev` commit that serves TRS 2.0.2, for `linux/amd64`) and
-MongoDB 7.0, both pinned by tag and digest, on a private Docker network, and publishes TRS-Filer on a free
-loopback port. It waits up to 120 seconds for `/ga4gh/trs/v2/service-info`
+MongoDB 7.0, both pinned by tag and digest, on a private Docker network, and
+publishes TRS-Filer on a free loopback port. It needs Docker and curl 7.76 or
+later (for `--fail-with-body`). It waits up to 120 seconds for `/ga4gh/trs/v2/service-info`
 (set `TRS_FILER_STARTUP_TIMEOUT_SECONDS` to change the limit), runs the
 library and CLI tests with the `trs_filer_integration_tests` feature, and
 removes the containers, their volumes and the network. On failure it prints
@@ -213,3 +214,8 @@ Gen3 bulk access behavior is unverified.
   public object and one unknown ID, recorded on 2026-11-10 and reformatted
   with sorted keys. It contains public metadata only and is used by
   [`drs_bulk.rs`](../lib/tests/drs_bulk.rs).
+- [`fixtures/trs-filer/tool.json`](fixtures/trs-filer/tool.json) is the CWL
+  workflow that
+  [`run-trs-filer-integration.sh`](run-trs-filer-integration.sh) registers in
+  TRS-Filer for [`trs_filer.rs`](../lib/tests/trs_filer.rs) and
+  [`cli/tests/trs_filer.rs`](../cli/tests/trs_filer.rs).

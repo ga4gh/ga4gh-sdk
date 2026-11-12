@@ -28,7 +28,8 @@ if ! command -v curl >/dev/null; then
   exit 1
 fi
 
-suffix="ga4gh-sdk-trs-$$"
+# Random part: names must not clash with containers of other runs.
+suffix="ga4gh-sdk-trs-$$-$RANDOM"
 network=
 mongodb_id=
 trs_filer_id=
@@ -50,6 +51,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 network=$(docker network create "$suffix")
+# TRS-Filer's default config connects to the MongoDB host "mongodb".
 mongodb_id=$(docker run -d --name "$suffix-mongodb" --network "$network" \
   --network-alias mongodb "$mongodb_image")
 # Port 0 on the host: Docker picks a free loopback port.
@@ -84,7 +86,10 @@ echo "TRS-Filer ready at $TRS_FILER_BASE_URL"
 tool_id=$(curl --silent --show-error --fail-with-body --max-time 30 \
   -H 'Content-Type: application/json' \
   --data-binary "@$repo_root/tests/fixtures/trs-filer/tool.json" \
-  "$TRS_FILER_BASE_URL/tools")
+  "$TRS_FILER_BASE_URL/tools") || {
+  echo "Tool registration failed: $tool_id" >&2
+  exit 1
+}
 if ! [[ $tool_id =~ ^\"[A-Za-z0-9]+\"$ ]]; then
   echo "Unexpected response to the tool registration: $tool_id" >&2
   exit 1
@@ -92,6 +97,7 @@ fi
 tool_id=${tool_id//\"/}
 export TRS_FILER_TOOL_ID=$tool_id
 echo "Registered tool $TRS_FILER_TOOL_ID"
+
 cd "$repo_root"
 cargo test --locked -p ga4gh-lib --features trs_filer_integration_tests \
   --test trs_filer -- --nocapture
