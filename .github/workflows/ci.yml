@@ -138,11 +138,15 @@ jobs:
         run: tests/run-wes-docker-integration.sh
 
   # Coverage of the unit tests, without the generated models; the report
-  # goes to the job summary and the `coverage` artifact (LCOV)
+  # goes to the job summary, the `coverage` artifact (LCOV) and Codecov
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      # Codecov upload with an OIDC token instead of a stored secret
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -172,6 +176,17 @@ jobs:
           name: coverage
           path: coverage/
           if-no-files-found: error
+      # Pull requests from forks get no OIDC token; Codecov accepts their
+      # uploads without one. An upload error doesn't fail the job, so that a
+      # Codecov outage doesn't block merges: the job summary and the
+      # artifact above stay the reference.
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: coverage/lcov.info
+          disable_search: true
+          use_oidc: ${{ !github.event.pull_request.head.repo.fork }}
+          fail_ci_if_error: false
 
   # Hooks from `.pre-commit-config.yaml`; the Rust hooks are skipped, because
   # the `lint` job runs the same commands
