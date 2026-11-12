@@ -56,3 +56,5 @@ rustls-native-roots = ["reqwest/rustls-tls-native-roots"]
 workflow-contracts = ["dep:jsonschema", "dep:num-bigint", "dep:num-rational"]
 integration_tests = []
 wes_docker_integration_tests = []
+# Runs the TES client against proTES and Funnel; see tests/README.md.
+protes_integration_tests = []

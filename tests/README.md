@@ -18,6 +18,39 @@ that endpoint, then runs the `integration_tests` feature suite.
 It waits up to 60 seconds by default; set `FUNNEL_STARTUP_TIMEOUT_SECONDS`
 to change the limit. It does not stop a Funnel process that it starts.
 
+## proTES/TES
+
+[proTES](https://github.com/elixir-cloud-aai/proTES) is a TES gateway: it
+serves the TES API itself, requires access tokens for tasks, and relays tasks
+to other TES instances. This suite runs the TES client against proTES 0.6.0
+relaying to Funnel, so the client meets a second TES implementation, with
+authentication, while tasks still run for real. It needs Docker with Compose,
+`curl`, and the `funnel` executable on `PATH` (as above) or in `FUNNEL_BIN`.
+
+```sh
+tests/run-protes-integration.sh
+```
+
+The script starts the services of [`protes/compose.yaml`](protes/compose.yaml):
+proTES and its worker, MongoDB, RabbitMQ, Funnel (the host's executable, in a
+container that uses the host's Docker daemon), and the fake identity provider
+of the proTES smoke test, whose file it downloads from a pinned proTES commit
+and checks against a checksum. proTES is published on `127.0.0.1:8090`; set
+`PROTES_PORT` to use another port. The script gets an access token of a test
+user from the identity provider and runs
+[`protes_tes.rs`](../lib/tests/protes_tes.rs): a task without inputs or
+outputs runs to completion through the gateway (state, logs, the backend tag
+of proTES and the list filter), a long task is canceled, and requests without
+a token get HTTP 401. The test passes the token as a default header of its own
+HTTP client, because the transport doesn't send the credentials of the
+configuration yet (#31). On exit, the script prints the service logs if a
+step failed and removes the services and its temporary files. Startup waits
+up to 300 seconds; set `PROTES_STARTUP_TIMEOUT_SECONDS` to change the limit.
+To update proTES, bump the image digests in the Compose file together with
+`protes_commit` and `fake_tes_sha256` in the script. The
+[CI workflow](../.github/workflows/ci.yml) runs this suite (`Integration
+(protes)`) when TES, shared library, dependency or its own files change.
+
 ## Starter Kit WES
 
 This suite needs a running Docker daemon with a usable Unix socket, plus
@@ -39,7 +72,7 @@ below, `wes cancel`, `wes run --attachment` and the paging of `wes list` are
 checked only against a mock server, in the default CLI tests.
 The [CI workflow](../.github/workflows/ci.yml) runs this suite on an Ubuntu
 runner when WES, CLI, shared library, dependency, or integration files change.
-It runs both integration suites on manual dispatch. The `CI passed` job checks
+It runs all integration suites on manual dispatch. The `CI passed` job checks
 their results alongside lint, unit tests, and builds.
 
 Starter Kit WES 0.2.0 only accepts a GitHub-shaped Nextflow project URL; its

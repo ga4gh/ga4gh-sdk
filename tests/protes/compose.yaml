@@ -1,0 +1,108 @@
+# proTES, a TES gateway, for the integration suite of
+# `tests/run-protes-integration.sh`: it relays tasks to a Funnel server
+# (`funnel`), and accepts access tokens of a fake identity provider
+# (`fake-tes`, the one of the proTES smoke test). The script provides the
+# Funnel executable, the file of the identity provider, a work directory and
+# the Docker socket. Not for deployments: only proTES is published, on the
+# host's loopback interface. The proTES images are pinned by digest; bump
+# them together with `protes_commit` of the script.
+
+x-protes: &protes
+  image: docker.io/elixircloud/protes:0.6.0@sha256:f9a6c5bb077f1744d0e3e4d4dcfc085d0703223761295d1b28f67833db01322a
+  environment: &protes-environment
+    CELERY_BROKER_URL: pyamqp://protes:protes@rabbitmq:5672//
+    FOCA_CONFIG_OVERLAY: /sdk/config.yaml
+  volumes:
+    - ./config.yaml:/sdk/config.yaml:ro
+  depends_on:
+    mongodb:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+    fake-tes:
+      condition: service_healthy
+    funnel:
+      condition: service_healthy
+
+services:
+  protes:
+    <<: *protes
+    ports:
+      - 127.0.0.1:${PROTES_PORT:-8090}:8080
+
+  protes-worker:
+    <<: *protes
+    command: [celery, --app, pro_tes.celery_worker, worker, --loglevel=info]
+    healthcheck:
+      test: [CMD-SHELL, "celery --app pro_tes.celery_worker inspect ping --destination celery@$$HOSTNAME --timeout 10"]
+      interval: 5s
+      timeout: 20s
+      retries: 12
+
+  # The identity provider only; its fake TES API is unused. The name is
+  # part of the issuer of its tokens (`ISSUER` of `fake_tes.py`)
+  fake-tes:
+    image: docker.io/elixircloud/protes:0.6.0@sha256:f9a6c5bb077f1744d0e3e4d4dcfc085d0703223761295d1b28f67833db01322a
+    command: [python, /smoke/fake_tes.py]
+    volumes:
+      - ${FAKE_TES_FILE:?path of fake_tes.py}:/smoke/fake_tes.py:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8080/oidc/.well-known/openid-configuration')"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # Funnel runs task containers with the Docker daemon of the host, which
+  # bind-mounts task directories from the work directory: the directory has
+  # the same path in this container as on the host
+  funnel:
+    image: docker.io/library/docker:28.5.2-cli@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d
+    entrypoint: [/usr/local/bin/funnel]
+    command:
+      - server
+      - run
+      - --Server.HostName=funnel
+      - --Server.HTTPPort=8000
+      - --Worker.WorkDir=${FUNNEL_WORK_DIR:?work directory}/tasks
+      - --BoltDB.Path=${FUNNEL_WORK_DIR}/funnel.db
+    volumes:
+      - ${FUNNEL_BIN:?path of the funnel executable}:/usr/local/bin/funnel:ro
+      - ${DOCKER_SOCKET:?path of the Docker socket}:/var/run/docker.sock
+      - ${FUNNEL_WORK_DIR}:${FUNNEL_WORK_DIR}
+    healthcheck:
+      test: [CMD, wget, --quiet, --spider, http://localhost:8000/healthz]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  rabbitmq:
+    image: docker.io/library/rabbitmq:4.3.7
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: protes
+      RABBITMQ_DEFAULT_PASS: protes
+    configs:
+      - source: rabbitmq-foca
+        target: /etc/rabbitmq/conf.d/90-foca.conf
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, --quiet, ping]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 10s
+
+  mongodb:
+    image: docker.io/library/mongo:7.0.45
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+# Celery declares transient non-exclusive queues, which RabbitMQ 4.3 denies
+# by default (as in the Compose file of proTES)
+configs:
+  rabbitmq-foca:
+    content: |
+      deprecated_features.permit.transient_nonexcl_queues = true
