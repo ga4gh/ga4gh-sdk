@@ -417,7 +417,11 @@ class ToolPage:
     def current_offset(self) -> str | None: ...
     @property
     def current_limit(self) -> str | None: ...
-    def headers(self) -> dict[str, str]: ...
+    def headers(self) -> dict[str, str]:
+        """All response headers by lowercase name; repeated ones joined with `", "`.
+
+        They can hold cookies, so don't log them.
+        """
     def __len__(self) -> int: ...
 
 class TRS:
@@ -469,8 +473,18 @@ class TRS:
         tags: Sequence[str] | None = None,
         offset: str | None = None,
         limit: int | None = None,
-    ) -> ToolPage: ...
-    def next_tools_page(self, next_page: str) -> ToolPage: ...
+    ) -> ToolPage:
+        """Lists tools, one page at a time; unset filters are not sent.
+
+        `tags` needs TRS 2.0.2 or `tag_filter="enabled"`, and no tag may be empty or
+        contain a comma; `limit` is between 1 and 2147483647. Otherwise `ValueError`.
+        """
+    def next_tools_page(self, next_page: str) -> ToolPage:
+        """Gets the page at `ToolPage.next_page`.
+
+        Only URLs of the tools endpoint of the client's API root are followed; others raise
+        `RuntimeError` before a request.
+        """
     def get_tool(self, id: str) -> Tool: ...
     def list_versions(self, id: str) -> list[ToolVersion]: ...
     def get_version(self, id: str, version_id: str) -> ToolVersion: ...
@@ -480,12 +494,23 @@ class TRS:
         version_id: str,
         descriptor_type: str,
         relative_path: str | None = None,
-    ) -> FileWrapper: ...
+    ) -> FileWrapper:
+        """Gets the primary descriptor, or the file at `relative_path` below it.
+
+        `descriptor_type` is a type such as `"CWL"`, or `"PLAIN_CWL"` for the bare file,
+        which comes as a `FileWrapper` with only `content`.
+        """
     def list_tests(self, id: str, version_id: str, descriptor_type: str) -> list[FileWrapper]: ...
-    def list_files(self, id: str, version_id: str, descriptor_type: str) -> list[ToolFile]: ...
+    def list_files(self, id: str, version_id: str, descriptor_type: str) -> list[ToolFile]:
+        """Lists the version's files; `descriptor_type` without `PLAIN_`, such as `"CWL"`."""
     def get_files_zip(
         self, id: str, version_id: str, descriptor_type: str, limit: int = 67108864
-    ) -> bytes: ...
+    ) -> bytes:
+        """Downloads the version's files as one ZIP archive of at most `limit` bytes.
+
+        A larger archive, or a response that isn't a ZIP archive, raises `RuntimeError`;
+        a `limit` below 1 raises `ValueError`.
+        """
     def get_containerfiles(self, id: str, version_id: str) -> list[FileWrapper]: ...
 
 class WesState(str, enum.Enum):

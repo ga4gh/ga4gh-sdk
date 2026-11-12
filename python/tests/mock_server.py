@@ -387,20 +387,24 @@ def trs_service_info(version):
     }
 
 
-def trs_tools(query):
-    """Two pages of one tool each; the first links to the second."""
-    if query.get("offset") == ["1"]:
-        return (200, [{**TRS_TOOL, "id": "second"}], {"current_offset": "1"})
-    return (
-        200,
-        [TRS_TOOL],
-        {
-            "next_page": "http://{host}/trs/tools?offset=1&limit=1",
-            "last_page": "http://{host}/trs/tools?offset=1&limit=1",
-            "current_offset": "0",
-            "current_limit": "1",
-        },
-    )
+def trs_tools(root):
+    """Two pages of one tool each below `root`; the first links to the second."""
+
+    def reply(query):
+        if query.get("offset") == ["1"]:
+            return (200, [{**TRS_TOOL, "id": "second"}], {"current_offset": "1"})
+        return (
+            200,
+            [TRS_TOOL],
+            {
+                "next_page": f"http://{{host}}/{root}/tools?offset=1&limit=1",
+                "last_page": f"http://{{host}}/{root}/tools?offset=1&limit=1",
+                "current_offset": "0",
+                "current_limit": "1",
+            },
+        )
+
+    return reply
 
 
 def trs_files(query):
@@ -417,7 +421,7 @@ for root, version in [("trs", "2.0.1"), ("trs2", "2.0.2"), ("trs-next", "9.9.9")
         {
             ("GET", f"/{root}/service-info"): (200, trs_service_info(version)),
             ("GET", f"/{root}/toolClasses"): (200, [TRS_TOOL["toolclass"]]),
-            ("GET", f"/{root}/tools"): trs_tools,
+            ("GET", f"/{root}/tools"): trs_tools(root),
             ("GET", tool_path): (200, TRS_TOOL),
             ("GET", f"{tool_path}/versions"): (200, [TRS_VERSION]),
             ("GET", version_path): (200, TRS_VERSION),

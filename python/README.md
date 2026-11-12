@@ -676,14 +676,17 @@ The Python test suite runs this file against a mock TRS.
 - `TRS.list_tools(*, id=None, alias=None, tool_class=None, descriptor_type=None,
   registry=None, organization=None, name=None, toolname=None, description=None,
   author=None, checker=None, tags=None, offset=None, limit=None)` returns a `ToolPage`. The
-  filters are keyword-only, and unset filters are not sent. `tags` is a list of tags (TRS
+  filters are keyword-only, and unset filters are not sent. `limit` must be between 1 and
+  2147483647, else it raises `ValueError`. `tags` is a list of tags (TRS
   2.0.2); they are sent as one comma-separated value, so a tag that is empty or contains a
   comma raises `ValueError`, as do tags for a server whose `tag_filter` doesn't allow them.
   Requested filters are never dropped silently.
 - A `ToolPage` has `tools` (a list of `Tool`) and the TRS paging headers: `next_page`,
   `last_page`, `self_link`, `current_offset` and `current_limit` (`str`s, or `None` if the
-  server didn't send them); `headers()` returns all response headers as a `dict`, by
-  lowercase name. They can hold cookies, so don't log them.
+  server didn't send them; a repeated header gives its first value);
+  `headers()` returns all response headers as a `dict`, by lowercase name, with repeated
+  headers joined by `", "` and headers that aren't text left out. They can hold cookies,
+  so don't log them.
   `TRS.next_tools_page(page.next_page)` gets the next page. It follows only URLs of the
   tools endpoint of the client's API root, and raises `RuntimeError` for others before a
   request, so credentials never go to another server.
@@ -700,10 +703,12 @@ The Python test suite runs this file against a mock TRS.
   `FileWrapper`s; for `PLAIN_` types, a bare test file comes as one `FileWrapper`.
   `TRS.get_containerfiles(id, version_id)` returns the container specifications, such as
   Dockerfiles, as `FileWrapper`s.
-- `TRS.list_files(id, version_id, descriptor_type)` returns the version's files as
+- `TRS.list_files(id, version_id, descriptor_type)` and `TRS.get_files_zip()` take
+  descriptor types without `PLAIN_`, such as `"CWL"`. `list_files()` returns the version's files as
   `ToolFile`s with `path` and `file_type`. `TRS.get_files_zip(id, version_id,
   descriptor_type, limit=67108864)` downloads them as one ZIP archive and returns it as
-  `bytes`; it reads at most `limit` bytes into memory. A larger archive, or a response
+  `bytes`; it reads at most `limit` bytes into memory, and a `limit` below 1 raises
+  `ValueError`. A larger archive, or a response
   that isn't a ZIP archive (such as the JSON file list of a registry that ignores
   `format=zip`), raises `RuntimeError`. The archive isn't extracted or checked further.
 - `TRS.list_tool_classes()` returns the registry's tool classes as `dict`s.
@@ -870,9 +875,10 @@ pattern; `clients::drs::register(py, m)` registers all of them.
 The WES classes (`PyWES`, `PyRun` and so on, in `clients::wes`) follow the same pattern;
 `clients::wes::register(py, m)` registers all of them, with the `WesState` enum.
 The TRS classes (`PyTRS`, `PyTool` and so on, in `clients::trs`) follow it too;
-`clients::trs::register(py, m)` registers all of them. `PyTRS::new(config)` builds a
-client with the default options for Rust code, and its `inner` field holds the
-library's `TRS`.
+`clients::trs::register(py, m)` registers all of them. For Rust code, `PyTRS::new(config)`
+builds a client with the default options and `PyTRS::with_options(config, options,
+discovery)` one with `TrsOptions`; its `inner` field holds the library's `TRS`.
+`PyToolPage` keeps the response's `HeaderMap` in `headers`.
 
 ## Documentation
 

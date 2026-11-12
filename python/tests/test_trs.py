@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from urllib.parse import quote
 
@@ -234,6 +235,15 @@ def test_list_tools_without_filters_sends_no_query(server, trs):
     assert server.last()["raw_query"] == ""
 
 
+@pytest.mark.parametrize("root", ["trs", "trs2"])
+def test_pages_follow_next_page_below_each_root(server, root):
+    trs = TRS(Configuration(f"{server.root}/{root}"))
+    first = trs.list_tools(limit=1)
+    assert first.next_page == f"{server.root}/{root}/tools?offset=1&limit=1"
+    trs.next_tools_page(first.next_page)
+    assert server.last()["path"] == f"/{root}/tools"
+
+
 def test_pages_follow_next_page(server, trs):
     first = trs.list_tools(limit=1)
     assert first.next_page == f"{server.root}/trs/tools?offset=1&limit=1"
@@ -279,6 +289,33 @@ def test_tags_need_trs_2_0_2_or_an_override(server, trs, trs_config):
 
     TRS(Configuration(f"{server.root}/trs2")).list_tools(tags=["genomics"])
     assert server.last()["query"] == {"tags": ["genomics"]}
+
+
+def test_tags_follow_the_tag_filter_override(server):
+    trs2 = TRS(Configuration(f"{server.root}/trs2"), tag_filter="disabled")
+    assert trs2.tag_filter == "caller_disabled"
+    before = server.paths()
+    with pytest.raises(ValueError, match="'tags' is not established"):
+        trs2.list_tools(tags=["genomics"])
+    assert server.paths() == before
+
+    trs = TRS(Configuration(f"{server.root}/trs"), api_version="2.0.1", tag_filter="enabled", discovery=False)
+    assert trs.tag_filter == "caller_enabled"
+    trs.list_tools(tags=["genomics"])
+    assert server.last()["query"] == {"tags": ["genomics"]}
+
+
+@pytest.mark.parametrize("limit", [0, -1, 2**31])
+def test_invalid_page_size_raises_value_error(server, trs, limit):
+    before = server.paths()
+    with pytest.raises(ValueError, match="limit must be between"):
+        trs.list_tools(limit=limit)
+    assert server.paths() == before
+
+
+def test_unknown_descriptor_type_filter_is_sent_as_given(server, trs):
+    trs.list_tools(descriptor_type="JUPYTER")
+    assert server.last()["query"] == {"descriptorType": ["JUPYTER"]}
 
 
 @pytest.mark.parametrize("tags", [["a,b"], [""]])
@@ -358,13 +395,16 @@ def test_get_files_zip(server, trs):
 
 
 def test_get_files_zip_checks_limit_and_signature(server, trs):
-    with pytest.raises(RuntimeError, match="Failed to get files as ZIP"):
+    with pytest.raises(RuntimeError, match="Failed to get files as ZIP: .*exceeds body limit of 4 bytes"):
         trs.get_files_zip(TRS_TOOL_ID, TRS_VERSION_ID, "CWL", limit=4)
     # A registry that ignores `format=zip` and sends the file list.
     with pytest.raises(RuntimeError, match="not a ZIP archive"):
         trs.get_files_zip("t", "1", "CWL")
-    with pytest.raises(ValueError, match="limit"):
-        trs.get_files_zip(TRS_TOOL_ID, TRS_VERSION_ID, "CWL", limit=0)
+    before = server.paths()
+    for limit in (0, -1):
+        with pytest.raises(ValueError, match="limit must be positive"):
+            trs.get_files_zip(TRS_TOOL_ID, TRS_VERSION_ID, "CWL", limit=limit)
+    assert server.paths() == before
 
 
 def test_get_containerfiles(server, trs):
@@ -406,9 +446,24 @@ def test_missing_tool_raises_runtime_error_with_status(server, trs):
     assert server.last()["path"] == "/trs/tools/missing"
 
 
-def test_response_that_does_not_fit_raises_runtime_error(trs):
-    with pytest.raises(RuntimeError, match="Failed to get tool"):
+def test_response_that_does_not_fit_raises_runtime_error(server, trs):
+    with pytest.raises(RuntimeError, match="Failed to get tool: .*missing field"):
         trs.get_tool("bad")
+    assert server.last()["path"] == "/trs/tools/bad"
+
+
+def test_client_can_be_used_from_several_threads(trs):
+    results = []
+
+    def get():
+        results.append(trs.get_tool(TRS_TOOL_ID).id)
+
+    threads = [threading.Thread(target=get) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert results == [TRS_TOOL_ID] * 4
 
 
 # Configuration, subclasses and the example

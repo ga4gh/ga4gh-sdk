@@ -21,11 +21,13 @@ use ga4gh_sdk::utils::transport::{BodyLimits, Transport};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple, PyType};
+use reqwest::header::HeaderMap;
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 
 /// The default size limit of `TRS.get_files_zip()`, as in the CLI: 64 MiB.
-pub const DEFAULT_ZIP_LIMIT: usize = 64 * 1024 * 1024;
+pub const DEFAULT_ZIP_LIMIT: i64 = 64 * 1024 * 1024;
 
 /// Registers the TRS classes in a module.
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -68,19 +70,18 @@ fn require_segment(value: &str, what: &str) -> PyResult<()> {
     Ok(())
 }
 
-/// A descriptor type name, such as `CWL` or `PLAIN_CWL`, as given: names that TRS doesn't
-/// define are sent unchanged.
-fn descriptor_type_with_plain(name: &str) -> PyResult<DescriptorTypeWithPlain> {
+/// A descriptor type, such as `CWL` (`DescriptorType`) or `PLAIN_CWL`
+/// (`DescriptorTypeWithPlain`), as given: names that TRS doesn't define are sent unchanged.
+fn parse_descriptor_type<T: DeserializeOwned>(name: &str) -> PyResult<T> {
     require_segment(name, "descriptor type")?;
     serde_json::from_value(Value::String(name.to_owned()))
         .map_err(|error| PyValueError::new_err(format!("Invalid descriptor type: {error}")))
 }
 
-/// A descriptor type name without the `PLAIN_` variants, such as `CWL`, as given.
-fn descriptor_type(name: &str) -> PyResult<DescriptorType> {
-    require_segment(name, "descriptor type")?;
-    serde_json::from_value(Value::String(name.to_owned()))
-        .map_err(|error| PyValueError::new_err(format!("Invalid descriptor type: {error}")))
+/// Checks a tool ID and a version ID, see [`require_segment`].
+fn require_ids(id: &str, version_id: &str) -> PyResult<()> {
+    require_segment(id, "tool ID")?;
+    require_segment(version_id, "version ID")
 }
 
 fn version_policy(api_version: &str) -> PyResult<VersionPolicy<TrsVersion>> {
@@ -479,43 +480,34 @@ impl PyToolFile {
 /// `next_page` is the URL of the next page that the server sent, or `None` on the last
 /// page; pass it to `TRS.next_tools_page()`.
 #[pyclass(name = "ToolPage", module = "ga4gh_sdk", subclass)]
-#[derive(Clone)]
 pub struct PyToolPage {
     pub tools: Vec<PyTool>,
-    /// The response headers, by lowercase name; repeated headers are joined with `, `.
-    /// Headers whose values aren't text are left out.
-    pub headers: Vec<(String, String)>,
+    /// The response headers as received.
+    pub headers: HeaderMap,
 }
 
 impl PyToolPage {
     /// Wraps a page of the Rust client.
     pub fn new(page: ToolPage) -> PyResult<Self> {
-        let mut headers: Vec<(String, String)> = Vec::new();
-        for name in page.headers.keys() {
-            let values: Vec<&str> = page
-                .headers
-                .get_all(name)
-                .iter()
-                .filter_map(|value| value.to_str().ok())
-                .collect();
-            if !values.is_empty() {
-                headers.push((name.as_str().to_owned(), values.join(", ")));
-            }
-        }
         let tools = page
             .tools
             .into_iter()
             .map(PyTool::new)
             .collect::<PyResult<_>>()?;
-        Ok(Self { tools, headers })
+        Ok(Self {
+            tools,
+            headers: page.headers,
+        })
     }
 
+    /// The first value of a header, as `ToolPage::next_page` reads it, or `None` if it is
+    /// missing, empty or not text.
     fn header(&self, name: &str) -> Option<String> {
         self.headers
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.clone())
+            .get(name)
+            .and_then(|value| value.to_str().ok())
             .filter(|value| !value.is_empty())
+            .map(str::to_owned)
     }
 }
 
@@ -556,11 +548,21 @@ impl PyToolPage {
         self.header("current_limit")
     }
 
-    /// All response headers as a new `dict`, by lowercase name.
-    pub fn headers<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    /// All response headers as a new `dict`, by lowercase name. Repeated headers are joined
+    /// with `", "`; headers whose values aren't text are left out.
+    #[pyo3(name = "headers")]
+    pub fn headers_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new_bound(py);
-        for (name, value) in &self.headers {
-            dict.set_item(name, value)?;
+        for name in self.headers.keys() {
+            let values: Vec<&str> = self
+                .headers
+                .get_all(name)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .collect();
+            if !values.is_empty() {
+                dict.set_item(name.as_str(), values.join(", "))?;
+            }
         }
         Ok(dict)
     }
@@ -596,6 +598,17 @@ impl PyTRS {
     /// releasing the GIL during discovery.
     pub fn new(config: &PyConfiguration) -> PyResult<Self> {
         Python::with_gil(|py| Self::connect(py, config, TrsOptions::default(), true))
+    }
+
+    /// Builds a TRS client with `options` for Rust extension crates, as `TRS(config,
+    /// api_version=..., tag_filter=..., discovery=...)` does, releasing the GIL during
+    /// discovery. Without discovery, `options.version` must be explicit.
+    pub fn with_options(
+        config: &PyConfiguration,
+        options: TrsOptions,
+        discovery: bool,
+    ) -> PyResult<Self> {
+        Python::with_gil(|py| Self::connect(py, config, options, discovery))
     }
 
     fn connect(
@@ -763,15 +776,23 @@ impl PyTRS {
         checker: Option<bool>,
         tags: Option<Vec<String>>,
         offset: Option<String>,
-        limit: Option<i32>,
+        limit: Option<i64>,
     ) -> PyResult<PyToolPage> {
+        let limit = limit
+            .map(|limit| {
+                i32::try_from(limit)
+                    .ok()
+                    .filter(|limit| *limit > 0)
+                    .ok_or_else(|| PyValueError::new_err("limit must be between 1 and 2147483647"))
+            })
+            .transpose()?;
         let filter = ToolFilter {
             id,
             alias,
             tool_class,
             descriptor_type: descriptor_type
                 .as_deref()
-                .map(self::descriptor_type)
+                .map(parse_descriptor_type::<DescriptorType>)
                 .transpose()?,
             registry,
             organization,
@@ -841,8 +862,7 @@ impl PyTRS {
         id: &str,
         version_id: &str,
     ) -> PyResult<PyToolVersion> {
-        require_segment(id, "tool ID")?;
-        require_segment(version_id, "version ID")?;
+        require_ids(id, version_id)?;
         let version = io(py, |rt| {
             rt.block_on(self.inner.get_version(id, version_id))
                 .map_err(|error| format!("Failed to get tool version: {error}"))
@@ -864,9 +884,8 @@ impl PyTRS {
         descriptor_type: &str,
         relative_path: Option<&str>,
     ) -> PyResult<PyFileWrapper> {
-        require_segment(id, "tool ID")?;
-        require_segment(version_id, "version ID")?;
-        let descriptor_type = descriptor_type_with_plain(descriptor_type)?;
+        require_ids(id, version_id)?;
+        let descriptor_type: DescriptorTypeWithPlain = parse_descriptor_type(descriptor_type)?;
         if let Some(path) = relative_path {
             require_segment(path, "relative path")?;
         }
@@ -900,9 +919,8 @@ impl PyTRS {
         version_id: &str,
         descriptor_type: &str,
     ) -> PyResult<Vec<PyFileWrapper>> {
-        require_segment(id, "tool ID")?;
-        require_segment(version_id, "version ID")?;
-        let descriptor_type = descriptor_type_with_plain(descriptor_type)?;
+        require_ids(id, version_id)?;
+        let descriptor_type: DescriptorTypeWithPlain = parse_descriptor_type(descriptor_type)?;
         let files = io(py, |rt| {
             rt.block_on(self.inner.list_tests(id, version_id, descriptor_type))
                 .map_err(|error| format!("Failed to list tests: {error}"))
@@ -918,9 +936,8 @@ impl PyTRS {
         version_id: &str,
         descriptor_type: &str,
     ) -> PyResult<Vec<PyToolFile>> {
-        require_segment(id, "tool ID")?;
-        require_segment(version_id, "version ID")?;
-        let descriptor_type = self::descriptor_type(descriptor_type)?;
+        require_ids(id, version_id)?;
+        let descriptor_type: DescriptorType = parse_descriptor_type(descriptor_type)?;
         let files = io(py, |rt| {
             rt.block_on(self.inner.list_files(id, version_id, descriptor_type))
                 .map_err(|error| format!("Failed to list files: {error}"))
@@ -939,14 +956,14 @@ impl PyTRS {
         id: &str,
         version_id: &str,
         descriptor_type: &str,
-        limit: usize,
+        limit: i64,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        require_segment(id, "tool ID")?;
-        require_segment(version_id, "version ID")?;
-        let descriptor_type = self::descriptor_type(descriptor_type)?;
-        if limit == 0 {
-            return Err(PyValueError::new_err("limit must be positive"));
-        }
+        require_ids(id, version_id)?;
+        let descriptor_type: DescriptorType = parse_descriptor_type(descriptor_type)?;
+        let limit = usize::try_from(limit)
+            .ok()
+            .filter(|limit| *limit > 0)
+            .ok_or_else(|| PyValueError::new_err("limit must be positive"))?;
         let archive = io(py, |rt| {
             rt.block_on(
                 self.inner
@@ -965,8 +982,7 @@ impl PyTRS {
         id: &str,
         version_id: &str,
     ) -> PyResult<Vec<PyFileWrapper>> {
-        require_segment(id, "tool ID")?;
-        require_segment(version_id, "version ID")?;
+        require_ids(id, version_id)?;
         let files = io(py, |rt| {
             rt.block_on(self.inner.get_containerfiles(id, version_id))
                 .map_err(|error| format!("Failed to get container files: {error}"))

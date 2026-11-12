@@ -25,6 +25,7 @@ def main() -> None:
     descriptor = trs.get_descriptor(args.tool_id, args.version_id, args.descriptor_type)
     content = descriptor.content or ""
     print("Descriptor:", f"{len(content)} characters", descriptor.url or "")
+    # File lists and ZIP archives take descriptor types without the PLAIN_ prefix.
     for file in trs.list_files(args.tool_id, args.version_id, args.descriptor_type.removeprefix("PLAIN_")):
         print("File:", file.file_type, file.path)
 
