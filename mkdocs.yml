@@ -80,8 +80,11 @@ nav:
   - Home: README.md
   - Guides:
       - Usage: docs/usage.md
+      - Authentication: docs/authentication.md
+      - API compatibility: docs/api_compatibility.md
       - Command-line tool: cli/README.md
       - Python bindings: python/README.md
+      - Downstream use: docs/downstream.md
       - Experimental:
           - Workflow contracts: docs/workflow-contracts.md
           - Result reuse: docs/result-reuse.md
@@ -99,6 +102,7 @@ nav:
       - Generated models: docs/autogenerate_OAI_models.md
       - Reviewing pull requests: docs/reviewer_framework.md
       - Releasing: docs/releasing.md
+      - Downstream example: examples/downstream-sdk/README.md
       - Provider contract proposals:
           - docs/rfcs/README.md
           - Leased sessions: docs/rfcs/leased-sessions.md

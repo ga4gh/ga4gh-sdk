@@ -138,8 +138,8 @@ examples. [Read the Docs](https://ga4gh-sdk.readthedocs.io/) publishes them
 as one site, built with [MkDocs](https://www.mkdocs.org/) and the
 [Material theme](https://squidfunk.github.io/mkdocs-material/), together with
 the Rust API reference of `cargo doc` for the `ga4gh_sdk` and `ga4gh_cli`
-crates. The site has a version per tag, `latest` from `main`, and a preview
-for every pull request.
+crates. Once the Read the Docs project is configured as described below, it
+serves `latest` from `main`, a version per tag, and pull request previews.
 
 - [`mkdocs.yml`](../mkdocs.yml) configures the site. Its `nav` lists the
   pages by their paths in the repository; Markdown files that it doesn't

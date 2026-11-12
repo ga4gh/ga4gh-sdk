@@ -249,8 +249,9 @@ def _rewrite(target: str, page_path: str, site_paths: set[str], ref: str) -> str
     exists = (ROOT / path).exists() if TRACKED is None else path in TRACKED
     if path.startswith("../") or path in site_paths or not exists:
         return target
+    query = f"?{parts.query}" if parts.query else ""
     fragment = f"#{parts.fragment}" if parts.fragment else ""
-    return _github_url(path, ref) + fragment
+    return _github_url(path, ref) + query + fragment
 
 
 def on_page_markdown(markdown: str, page: Any, config: MkDocsConfig, files: Files) -> str:

@@ -67,27 +67,27 @@ or `Disabled`, including for provider backports or incomplete implementations.
 `Specified` describes the selected contract, not a probe of the server. HTTP 200
 alone does not prove that a server applied a requested filter.
 
-```rust,no_run
+```rust
 use ga4gh_sdk::clients::trs::{responses, ToolFilter, TrsOptions, TrsVersion, TRS};
 use ga4gh_sdk::compatibility::{CapabilityOverride, VersionPolicy};
 use ga4gh_sdk::utils::{configuration::Configuration, transport::BodyLimits};
 
-# async fn example(config: &Configuration) -> Result<(), Box<dyn std::error::Error>> {
-let options = TrsOptions::default()
-    .with_version(VersionPolicy::Explicit(TrsVersion::V2_0_1))
-    // Enable only after establishing support on this specific deployment.
-    .with_tag_filter(CapabilityOverride::Enabled);
-let client = TRS::with_options(config, options).await?;
-let selection = client.compatibility().selection();
-assert_eq!(selection.profile(), TrsVersion::V2_0_1);
-let filter = ToolFilter { tags: vec!["genomics".into()], ..Default::default() };
-let page = responses::list_tools_page(&client, filter.query()?, BodyLimits::default()).await?;
-if let Some(next) = page.next_page()? {
-    let next_page = responses::next_tools_page(&client, next, BodyLimits::default()).await?;
-    println!("{} tools", next_page.tools.len());
+async fn example(config: &Configuration) -> Result<(), Box<dyn std::error::Error>> {
+    let options = TrsOptions::default()
+        .with_version(VersionPolicy::Explicit(TrsVersion::V2_0_1))
+        // Enable only after establishing support on this specific deployment.
+        .with_tag_filter(CapabilityOverride::Enabled);
+    let client = TRS::with_options(config, options).await?;
+    let selection = client.compatibility().selection();
+    assert_eq!(selection.profile(), TrsVersion::V2_0_1);
+    let filter = ToolFilter { tags: vec!["genomics".into()], ..Default::default() };
+    let page = responses::list_tools_page(&client, filter.query()?, BodyLimits::default()).await?;
+    if let Some(next) = page.next_page()? {
+        let next_page = responses::next_tools_page(&client, next, BodyLimits::default()).await?;
+        println!("{} tools", next_page.tools.len());
+    }
+    Ok(())
 }
-# Ok(())
-# }
 ```
 
 Pass `&TRS` to typed pagination helpers to keep the same capability policy on
