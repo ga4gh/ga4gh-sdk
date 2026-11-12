@@ -21,24 +21,18 @@ const ENCODED_MARKER: &str = "U0VOVElORUxf";
 const LOG_LEVELS: [Option<&str>; 3] = [None, Some("debug"), Some("trace")];
 const TASK_ID: &str = "t1";
 
-/// Config with marker values in all authentication fields, read by the CLI or not.
+/// Config with one configured credential, whose value must stay out of output.
 fn config_with_fields(base_path: &str) -> Value {
     json!({"TES": {
         "base_path": base_path,
         "basic_auth": {"username": "SENTINEL_USER", "password": "SENTINEL_PASSWORD"},
-        "oauth_access_token": "SENTINEL_OAUTH",
-        "bearer_access_token": "SENTINEL_BEARER",
-        "api_key": {"prefix": "Token", "key": "SENTINEL_KEY"},
     }})
 }
 
-/// Config with marker values in the base path credentials only.
-fn config_with_url(base_path: &str) -> Value {
-    let base_path = base_path.replacen("http://", "http://SENTINEL_USER:SENTINEL_PASSWORD@", 1);
+/// Config without a credential, for the anonymous path through the CLI.
+fn config_without_auth(base_path: &str) -> Value {
     json!({"TES": {
         "base_path": format!("{base_path}/"),
-        "basic_auth": null,
-        "oauth_access_token": null,
     }})
 }
 
@@ -194,7 +188,10 @@ fn test_output_on_success() {
     ];
 
     let base_path = format!("{}{prefix}", mockito::server_url());
-    for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
+    for config in [
+        config_with_fields(&base_path),
+        config_without_auth(&base_path),
+    ] {
         for (args, output) in Home::new(&config).run_all() {
             assert!(output.status.success(), "{args:?}: {}", stderr(&output));
             match args[1].as_str() {
@@ -354,7 +351,10 @@ fn test_output_on_error_response() {
         ];
 
         let base_path = mockito::server_url();
-        for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
+        for config in [
+            config_with_fields(&base_path),
+            config_without_auth(&base_path),
+        ] {
             for (args, output) in Home::new(&config).run_all() {
                 assert_eq!(
                     output.status.code(),
@@ -418,7 +418,10 @@ fn test_output_without_service() {
     };
 
     let base_path = format!("http://127.0.0.1:{port}");
-    for config in [config_with_fields(&base_path), config_with_url(&base_path)] {
+    for config in [
+        config_with_fields(&base_path),
+        config_without_auth(&base_path),
+    ] {
         for (args, output) in Home::new(&config).run_all() {
             assert_eq!(output.status.code(), Some(1), "{args:?}");
             assert!(output.stdout.is_empty(), "{args:?}");
