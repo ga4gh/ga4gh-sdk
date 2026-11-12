@@ -886,6 +886,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_version_rejects_malformed_description() {
+        let mut version = version_json();
+        version["description"] = serde_json::json!(42);
+        let m = get_mock("bad-description", &tool_version(""), &version.to_string());
+        for client in clients("bad-description") {
+            let error = client.get_version(TOOL_ID, VERSION_ID).await.unwrap_err();
+            assert!(error.to_string().contains("invalid type"), "{error}");
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
     async fn test_get_descriptor_per_type() {
         let cases = [
             (DescriptorTypeWithPlain::Cwl, "CWL"),
