@@ -69,18 +69,16 @@ that call `dispatch_with_config()` set them with
 
 ### Authentication
 
-The service commands read `basic_auth` and `oauth_access_token`, but do not yet
-send them with requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)).
-The experimental `workflow submit` is an exception: it sends
-`oauth_access_token` as a bearer token to WES; callers supplying a
-`Configuration` directly can also use `bearer_access_token`. It does not
-support Basic auth or API keys. [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203) tracks consistent
-authentication across the SDK and CLI. For other commands, use services that
-allow anonymous access or a proxy that adds credentials. Keep the file private
-(`chmod 600 ~/.ga4gh-cli/config.json`), since it can hold credentials. To keep
-a token out of the file, name an environment variable that holds it with
-`oauth_access_token_env`; the
-[usage guide](../docs/usage.md#configuration-file) describes all keys.
+Each built-in service command sends the single configured Basic, OAuth bearer,
+or generic bearer credential to its service, including discovery and
+submission. `workflow submit` uses the WES section and the same policy as
+`wes run`. Conflicting sources, unsupported `api_key` or URL userinfo, and
+invalid tokens fail before a request. An `_env` field can name a variable that
+holds the token. Keep the file private (`chmod 600 ~/.ga4gh-cli/config.json`).
+SDK-owned clients do not follow redirects. See the
+[authentication guide](../docs/authentication.md) for the source and redirect
+contracts. Dynamic token-provider integration is tracked in
+[#215](https://github.com/ga4gh/ga4gh-sdk/pull/215).
 
 ## Usage
 
@@ -441,8 +439,8 @@ the registry's API root:
 Replace `registry.example.org` with your registry's host.
 The CLI requests `services`, `services/{id}` and `services/types` below this
 path. Public reads need no token; a deployment that requires authentication
-needs an authenticating proxy until [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)
-adds configured authentication.
+can use one of the configured sources in the
+[authentication guide](../docs/authentication.md).
 
 1. To list the services, optionally only those of one type artifact (case
    ignored), run `registry list`:

@@ -52,7 +52,6 @@ built-in services, or any other name for a custom service:
   "TES": {
     "base_path": "https://example.org/ga4gh/tes/v1",
     "basic_auth": {"username": "alice", "password": "change-me"},
-    "oauth_access_token": "my-token",
     "timeouts": {"discovery": 30, "submission": 600}
   },
   "MY_SERVICE": {
@@ -71,6 +70,8 @@ built-in services, or any other name for a custom service:
   variable that holds the access token, so that the token needn't be in the
   file. Use it in place of `oauth_access_token`, not together with it. If the
   variable isn't set, reading the section is an error.
+- `bearer_access_token` or `bearer_access_token_env` (string, optional): a
+  generic bearer token, or the name of the variable that holds it.
 - `timeouts` (object, optional): time limits in seconds, as positive numbers:
   `connect`, `request`, `discovery` and `submission`. Limits that the object
   doesn't name keep their defaults; see [Timeouts](#timeouts).
@@ -79,23 +80,18 @@ built-in services, or any other name for a custom service:
   such as those of a downstream crate. In the example, `extra` holds
   `queue`. Rust's `Debug` output shows only the keys, but `extra`
   and `get_extra()` themselves return the values as they are, so don't log
-  them if they can hold credentials. The file doesn't set the other
-  `Configuration` fields: `user_agent`, `bearer_access_token` and `api_key`
-  in a section end up in `extra` as well.
+  them if they can hold credentials. The file doesn't set `user_agent`.
+  `api_key` is recognized but rejected because its header contract is not
+  defined.
 
 A missing file or section, or a field of the wrong type, is an error. Rust
 reads a custom section with `ServiceType::Custom("MY_SERVICE".into())`, Python
 with `config.from_file("MY_SERVICE")`. `Configuration::from_path(path, "TES")`
-reads a section from another file. Files written for earlier versions read as
-before; their `extra` is empty.
-
-Default SDK clients and CLI service commands read `basic_auth` and
-`oauth_access_token` but **do not send them yet** (see
-[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). They need an anonymous
-service or an authenticating proxy. The experimental `workflow submit` CLI
-command sends a configured OAuth bearer token; Rust callers can also supply an
-authenticated client through `WES::from_transport()`. Cross-surface consistency
-is tracked in [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
+reads a section from another file. One section may use one credential source:
+Basic, OAuth bearer, or generic bearer. Sources cannot be combined.
+The [authentication guide](authentication.md) describes how credentials reach
+Rust, Python, and CLI requests, and the behavior of redirects and injected
+clients. Previously stored credentials now take effect on requests.
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
@@ -171,6 +167,10 @@ roots, a proxy or default headers, build a `reqwest::Client`, wrap it with
 `WES::discover_with_transport`). The client's own connect and request timeouts
 then replace `connect` and `request`; `discovery` and `submission` still come
 from the transport's configuration.
+If the configuration also has credentials, use
+`Transport::with_client_and_configured_auth(&config, client)` to opt into
+applying them. The injected client's redirect policy remains yours; see the
+[authentication guide](authentication.md#request-boundary-and-failures).
 
 ## Rust library
 
@@ -199,13 +199,17 @@ use url::Url;
 // No authentication
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?);
 
-// Credentials are stored, but not yet sent with requests (see #31)
+// The selected bearer token is sent to this service's API root.
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_oauth_access_token("my-token".to_owned());
 
 // The token from an environment variable of your choice
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_oauth_access_token_from_env("MY_SERVICE_TOKEN")?;
+
+// A generic bearer token is another exclusive source.
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_bearer_access_token_from_env("MY_SERVICE_TOKEN")?;
 
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_basic_auth(BasicAuth {

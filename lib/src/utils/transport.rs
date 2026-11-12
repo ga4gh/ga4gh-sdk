@@ -33,7 +33,7 @@
 /// let response = transport.delete("users/1").await;
 /// };
 /// ```
-use crate::utils::configuration::Configuration;
+use crate::utils::configuration::{AuthError, Configuration, ConfiguredAuth};
 use crate::utils::query::query_pairs;
 use reqwest::multipart::Form;
 use reqwest::Client;
@@ -293,7 +293,8 @@ fn is_dot_segment(segment: &str) -> bool {
 #[derive(Clone)]
 pub struct Transport {
     pub config: Configuration,
-    pub client: reqwest::Client,
+    client: reqwest::Client,
+    apply_configured_auth: bool,
 }
 
 impl fmt::Debug for Transport {
@@ -321,25 +322,53 @@ impl Transport {
         Self::build(config).expect("default HTTP client initialization failed")
     }
 
-    // A client with the connect and request timeouts of `config.timeouts`.
+    // SDK-owned clients never follow redirects implicitly: a redirect can
+    // leave the configured API root or replay a submission.
     fn build(config: &Configuration) -> reqwest::Result<Self> {
         Client::builder()
             .connect_timeout(config.timeouts.connect)
             .timeout(config.timeouts.request)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map(|client| Self::with_client(config, client))
+            .map(|client| Self {
+                config: config.clone(),
+                client,
+                apply_configured_auth: true,
+            })
     }
 
     /// Inject a configured client, for connection budgets, TLS and downstream use.
     ///
     /// The client's own connect and request timeouts apply, and
     /// `config.timeouts.connect` and `request` are not used; the `discovery` and
-    /// `submission` limits still come from `config.timeouts`.
+    /// `submission` limits still come from `config.timeouts`. The configured
+    /// credentials are not applied. If both are present, requests fail with
+    /// [`AuthError::CallerOwnedClient`]; use
+    /// [`with_client_and_configured_auth`](Self::with_client_and_configured_auth)
+    /// to opt in. The caller retains responsibility for redirect policy.
     pub fn with_client(config: &Configuration, client: Client) -> Self {
         Self {
             config: config.clone(),
             client,
+            apply_configured_auth: false,
         }
+    }
+
+    /// Explicitly apply configured credentials to a caller-owned HTTP client.
+    /// The caller owns that client's redirect policy and must prevent credential
+    /// forwarding outside the configured API root and replay of submissions.
+    pub fn with_client_and_configured_auth(config: &Configuration, client: Client) -> Self {
+        Self {
+            config: config.clone(),
+            client,
+            apply_configured_auth: true,
+        }
+    }
+
+    /// Read-only access to the underlying HTTP client. Requests made through a
+    /// clone of it do not acquire SDK-configured authentication automatically.
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     /// Creates a transport with these connect and request timeouts in place of
@@ -517,16 +546,30 @@ impl Transport {
 
     /// Shared API-relative request construction. Service-specific callers can
     /// add headers, streaming bodies or custom methods without losing policies.
-    /// Authentication remains controlled by the configured/injected client;
-    /// see #31 for configuration-based authentication support.
+    /// SDK-owned clients apply one configured Basic or bearer credential.
+    /// Caller-owned clients retain their policy; configured credentials require
+    /// [`with_client_and_configured_auth`](Self::with_client_and_configured_auth).
     pub fn request_builder(
         &self,
         method: reqwest::Method,
         endpoint: &str,
-    ) -> Result<reqwest::RequestBuilder, EndpointError> {
+    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+        let auth = self.config.configured_auth()?;
+        if !self.apply_configured_auth && !matches!(auth, ConfiguredAuth::None) {
+            return Err(Box::new(AuthError::CallerOwnedClient));
+        }
         let mut request = self.client.request(method, self.endpoint(endpoint)?);
         if let Some(agent) = &self.config.user_agent {
             request = request.header(reqwest::header::USER_AGENT, agent);
+        }
+        if self.apply_configured_auth {
+            request = match auth {
+                ConfiguredAuth::None => request,
+                ConfiguredAuth::Basic(basic) => {
+                    request.basic_auth(&basic.username, basic.password.as_deref())
+                }
+                ConfiguredAuth::Bearer(token) => request.bearer_auth(token),
+            };
         }
         Ok(request)
     }
