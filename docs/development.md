@@ -101,6 +101,23 @@ cargo llvm-cov report --html --open \
   --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
 ```
 
+In CI, the `codecov` job uploads `coverage/lcov.info` from the `coverage`
+job to [Codecov](https://codecov.io/gh/ga4gh/ga4gh-sdk), which shows the
+coverage of `main` in the README badge and, on pull requests, the change in
+coverage as a comment and as the `codecov/project` and `codecov/patch`
+statuses. [`codecov.yml`](../codecov.yml) makes these statuses
+informational: they never fail, and `CI passed` remains the only required
+check.
+
+The upload authenticates with an OIDC token of the workflow run, so the
+repository needs no Codecov secret; uploads from forks need no token. Uploads
+need the Codecov GitHub app, which the ga4gh organization has installed for
+this repository. Dependabot pull requests may get no OIDC token, and then no
+Codecov report.
+A failed upload doesn't fail the job: the job summary and the `coverage`
+artifact of the `coverage` job are then still there, and the job log of
+`codecov` shows the reason.
+
 ## Lints
 
 `make clippy` checks all workspace targets. The CI lint job runs the same
@@ -123,6 +140,7 @@ on pushes to `main` and on manual dispatch:
 | `wheels` | Python wheels | Full platform wheel and sdist matrix on `main` pushes and manual runs; skipped on PRs |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
+| `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
 | `passed` | CI passed | Requires all applicable jobs to succeed; accepts the intentionally skipped wheel matrix on PRs |
 

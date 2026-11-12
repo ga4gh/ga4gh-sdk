@@ -1,5 +1,6 @@
 # GA4GH SDK
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Coverage](https://codecov.io/gh/ga4gh/ga4gh-sdk/graph/badge.svg?branch=main)](https://codecov.io/gh/ga4gh/ga4gh-sdk)
 
 ## Synopsis
 
