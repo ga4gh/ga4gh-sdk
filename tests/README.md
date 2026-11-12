@@ -36,7 +36,7 @@ working tree and checks that:
 1. the build context holds every tracked file of the workspace manifests and
    the `lib/`, `cli/` and `python/` crates, and leaves out probe files that
    look like environment files, keys, credential stores, build output and
-   other directories, while keeping `.env.example` (the probe files are
+   other directories, while keeping `lib/.env.example` (the probe files are
    created in the working tree and removed again, together with directories
    created for them); the Rust image of the `Dockerfile` matches
    `rust-toolchain.toml`;

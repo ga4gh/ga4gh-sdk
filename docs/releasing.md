@@ -36,8 +36,8 @@ create a GitHub release; that comes with the CLI binaries
    `linux/amd64` also against Funnel) and pushes each platform image by
    digest, without a tag. The push rebuilds the checked image from the
    builder's layer cache, with the source and revision labels and
-   reproducible timestamps, and runs `--version` on the pushed digest. CI runs the same build and checks on every pull
-   request, without pushing.
+   reproducible timestamps, and runs `--version` on the pushed digest. CI
+   runs the same build and checks on every pull request, without pushing.
 4. **Publish package** waits for the wheels and the image, so that nothing
    reaches PyPI unless every artefact is built. It uploads all files with
    [trusted publishing](https://docs.pypi.org/trusted-publishers/): there is no
@@ -84,15 +84,16 @@ environment. The tag is the workspace version, such as `0.2.0` or
 `0.2.0-rc.1` (a `+` of build metadata becomes `_`, which OCI tags allow).
 There is no `latest` tag. An upstream TestPyPI rehearsal (`PYPI_INDEX` set
 to `testpypi` in `ga4gh/ga4gh-sdk`) pushes the platform images by digest
-but tags no image, and **Publish image** is skipped. Unlike files on PyPI, a tag can be moved: a re-run
-of **Publish image** points the version tag at the images of that run, and
-earlier digests stay available.
+but tags no image, and **Publish image** is skipped. Unlike files on PyPI,
+a tag can be moved: a re-run of **Publish image** points the version tag at
+the images of that run, and earlier digests stay available.
 
 On the first push, GitHub creates the `ga4gh-cli` package, connected to this
 repository. Check after the first release that the package is public (the
 package's settings on GitHub, **Change visibility**) and that it inherits
 access from the repository; organization settings can restrict who creates
-public packages.
+public packages. Then remove the notes in `README.md` and
+`docs/container-image.md` that say no release includes the image yet.
 
 ## One-time setup
 

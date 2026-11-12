@@ -33,6 +33,10 @@ for value in "$timeout_seconds" "$poll_seconds"; do
     esac
 done
 
+# A signal during the submission is acted on once the task ID is known
+stopped=
+trap 'stopped=1' INT TERM
+
 if ! task_id=$(ga4gh-cli tes create "$task_file"); then
     echo 'Could not submit the task' >&2
     exit 1
@@ -41,12 +45,16 @@ printf 'task_id=%s\n' "$task_id"
 
 # Cancels the task; prints the result given as $1 and exits 1
 give_up() {
+    trap '' INT TERM
     echo "$2; canceling task $task_id" >&2
     ga4gh-cli tes cancel "$task_id" >&2 || echo "Could not cancel task $task_id" >&2
     printf 'result=%s\n' "$1"
     exit 1
 }
 trap 'give_up INTERRUPTED "Stopped by a signal"' INT TERM
+if [ -n "$stopped" ]; then
+    give_up INTERRUPTED 'Stopped by a signal'
+fi
 
 deadline=$(($(date +%s) + timeout_seconds))
 while :; do
@@ -66,7 +74,7 @@ while :; do
     fi
     sleep "$poll_seconds"
 done
-trap - INT TERM
+trap '' INT TERM
 
 # Captured, so that the JSON always ends with a newline
 if full_view=$(ga4gh-cli tes get "$task_id" FULL); then

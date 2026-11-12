@@ -56,6 +56,19 @@ case $funnel_check in
         ;;
 esac
 
+# Removes only the probe files, then the directories created for them if they
+# are empty again, deepest first
+remove_probes() {
+    for path in "${probe_files[@]}"; do
+        rm -f "${repo_root:?}/$path"
+    done
+    for ((i = ${#probe_dirs[@]} - 1; i >= 0; i--)); do
+        rmdir "${repo_root:?}/${probe_dirs[i]}" 2>/dev/null || true
+    done
+    probe_files=()
+    probe_dirs=()
+}
+
 temp_dir=$(mktemp -d)
 funnel_pid=
 probe_files=()
@@ -69,14 +82,7 @@ cleanup() {
         fi
         kill "$funnel_pid" 2>/dev/null || true
     fi
-    # Only the probe files, then the directories created for them if they
-    # are empty again, deepest first
-    for path in "${probe_files[@]}"; do
-        rm -f "${repo_root:?}/$path"
-    done
-    for ((i = ${#probe_dirs[@]} - 1; i >= 0; i--)); do
-        rmdir "${repo_root:?}/${probe_dirs[i]}" 2>/dev/null || true
-    done
+    remove_probes
     docker image rm "$context_image" >/dev/null 2>&1 || true
     rm -rf "$temp_dir"
     exit "$result"
@@ -100,7 +106,7 @@ excluded=(.env.image-test lib/.env.image-test image-test.pem lib/image-test.key
     .git-credentials .netrc lib/credentials-image-test.json .ga4gh-cli/config.json
     target/image-test lib/target/image-test cli/image-test.log
     docs/image-test.md examples/image-test.json)
-included=(.env.example)
+included=(lib/.env.example)
 for path in "${excluded[@]}" "${included[@]}"; do
     if [[ -e "$repo_root/$path" ]]; then
         fail "$path exists already; move it away before running this test"
@@ -144,6 +150,9 @@ while IFS= read -r path; do
     grep -qxF -- "$path" <<< "$listing" || fail "$path is missing from the build context"
 done < <(git -C "$repo_root" ls-files -- Cargo.toml Cargo.lock rust-toolchain.toml \
     README.md LICENSE lib cli python; printf '%s\n' "${included[@]}")
+# Before the image build, so that its context (and layer cache) is the
+# same as that of a later build from the checkout
+remove_probes
 echo 'ok: the context holds the workspace sources, without probe files'
 
 echo '--- Image'
