@@ -454,9 +454,10 @@ impl PyTask {
         let cancellation = settings.options.operation.cancellation.clone();
         // Python runs signal handlers in the main thread only; other threads just wait.
         let threading = py.import_bound("threading")?;
+        // Idents, since `current_thread()` would register threads that Python didn't start.
         let main_thread = threading
-            .call_method0("current_thread")?
-            .is(&threading.call_method0("main_thread")?);
+            .call_method0("get_ident")?
+            .eq(threading.call_method0("main_thread")?.getattr("ident")?)?;
         let (end, interrupt) = io(py, |rt| {
             let waiting = wait_task(&self.inner, settings);
             tokio::pin!(waiting);
