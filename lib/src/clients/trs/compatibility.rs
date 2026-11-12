@@ -4,13 +4,13 @@ use crate::compatibility::{
 };
 use std::fmt;
 
-/// Wire contracts currently tested by the TRS client.
+/// API contracts currently tested by the TRS client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TrsVersion {
-    /// GA4GH TRS 2.0.1 response contract; tag filtering is not specified.
+    /// GA4GH TRS 2.0.1 contract; tag filtering is not specified.
     V2_0_1,
-    /// GA4GH TRS 2.0.2 response contract; tag filtering is specified.
+    /// GA4GH TRS 2.0.2 contract; tag filtering is specified.
     V2_0_2,
 }
 

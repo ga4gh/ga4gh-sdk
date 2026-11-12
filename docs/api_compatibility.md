@@ -24,14 +24,15 @@ The operation contract is:
 
 | Operations | 2.0.1 profile | 2.0.2 profile |
 | --- | --- | --- |
-| Tool, version, lists, and tool pages | 2.0.1 decoding; unknown fields stay in `extra`. | 2.0.2 validation, including nested version descriptions; same public result types. |
+| Tool, version, lists, and tool pages | Shared public models; unknown fields stay in `extra`. | Same models and decoding; the optional version description is available as a string through `description()` when valid. |
 | Tag-filtered tools/pages | Rejected unless the caller enables a known backport. | Allowed unless the caller disables support. |
 | Tool classes, descriptors, file lists, test files | Shared request and model paths. | Same paths and models; these contracts did not change. |
 | ZIP download | Available with bounded bytes and a signature check. | Same behavior. |
 
-Local HTTP tests exercise common operations under both profiles and the version
-boundaries above. Public registry smoke tests cover selected read operations;
-they do not establish tag filtering or every response shape on those servers.
+Local HTTP tests exercise common operations under both profiles, version
+boundaries, and nonconforming optional descriptions. Public registry smoke tests
+cover selected read operations; they do not establish tag filtering or every
+response shape on those servers.
 
 ## Selection and capabilities
 
@@ -48,8 +49,8 @@ software version in the top-level `version` field.
 Default fallback retains interoperability with registries that advertise an
 unrecognized version. It is unverified interpretation, not inferred semantic
 version compatibility. Applications that require a recognized declaration should use
-`RequireKnown`. Reading a response never changes the selection or retries with
-an older decoder after a failure.
+`RequireKnown`. Reading a response never changes the selection or retries an
+operation after a decoding failure.
 
 Missing required service-info fields, malformed JSON, authentication failures,
 and timeouts remain errors, including with `Explicit`. For a known deployment
@@ -89,9 +90,9 @@ if let Some(next) = page.next_page()? {
 # }
 ```
 
-Pass `&TRS` to typed pagination helpers to keep the same profile and capability
-policy on every page. Their older `&Transport` form remains available; it uses
-the unverified 2.0.1 baseline and disallows tags. Both forms reject pagination
+Pass `&TRS` to typed pagination helpers to keep the same capability policy on
+every page. Their older `&Transport` form remains available; it uses the shared
+models without an established tag-filter capability. Both forms reject pagination
 URLs outside the configured tools endpoint and retain opaque query tokens.
 
 The [CLI](../cli/README.md#trs-examples) exposes the same options. Python has no
@@ -100,36 +101,34 @@ TRS client wrapper yet; this change does not add one or alter other bindings.
 ## Models and failures
 
 The public `trs::models` path re-exports the generated 2.0.1 models stored under
-`trs/wire/v2_0_1/models/`. Both profiles return these types. The 2.0.2 adapter
-checks its one changed model field, `ToolVersion.description`, before decoding
-the original JSON with the shared model. The value stays in `extra` and is
-available through `description()`. Unknown fields and string enum variants
-retain the existing extension-preservation behavior.
+`trs/wire/v2_0_1/models/`. Both profiles decode into these types. TRS 2.0.2
+adds an optional `ToolVersion.description`; it stays in `extra` and is
+available through `description()` when it is a string. Unknown fields and
+string enum variants retain the existing extension-preservation behavior.
 
-For example, `description: {"provider": 42}` is extension data under 2.0.1,
-but an error under 2.0.2, where the property is a string. The SDK accepts
-`null` as it does for other optional fields. The original value stays in
-`extra` and in serialized JSON. The check applies to single versions, version
-lists, nested versions inside tools, and paginated tools. One invalid nested
-version rejects the whole result; it is never returned as a successful partial
-list. `RequireKnown` controls version selection, not response validation.
-Direct `serde_json::from_value::<ToolVersion>` uses the public model only;
-version-specific validation is a client operation.
+For example, a registry may send `description: {"provider": 42}` even though
+2.0.2 specifies a string. The SDK keeps that raw optional value in `extra`
+and returns the tool or list; `description()` returns `None`. This applies to
+single versions, versions nested in tools, lists, and paginated tools. It does
+not drop an item or claim that the server response conforms to the schema.
+`null` is also retained as an optional value. `RequireKnown` checks only the
+declared API version; it does not make response parsing strict.
 
 TRS JSON reads decode the bounded original response bytes. Invalid UTF-8,
-malformed JSON, missing required fields, and incompatible field types return
-errors. Non-success HTTP responses retain an inspectable `HttpError`; they are
-not disguised as model errors. No fallback decoder, fabricated required field,
-or automatic replay turns an invalid response into success. The existing
+malformed JSON, missing required fields, and incompatible represented field
+types return errors. Non-success HTTP responses retain an inspectable
+`HttpError`; they are not disguised as model errors. No fabricated required
+field or automatic replay turns an invalid response into success. The existing
 Dockstore exception for non-string service-info timestamps stays limited to
 that discovery path.
 
-Generated deserialization checks required fields and Rust-represented types.
-The 2.0.2 adapter checks the new description field; it is not a complete
-OpenAPI validator. Format constraints and every semantic relationship are not
-checked. Typed serialization preserves unknown JSON values but does not
-promise byte-for-byte preservation. Text and raw ZIP helpers retain their
-existing decoding and streaming contracts.
+Generated deserialization checks required fields and Rust-represented types;
+it is not a complete OpenAPI validator. The non-string optional description is
+a documented interoperability exception, not a claim of schema conformance.
+Format constraints and every semantic relationship are not checked. Typed
+serialization preserves unknown JSON values but does not promise byte-for-byte
+preservation. Text and raw ZIP helpers retain their existing decoding and
+streaming contracts.
 
 ## Rust source migration
 
@@ -148,7 +147,7 @@ existing decoding and streaming contracts.
 
 ## Implementation and extension
 
-The design separates three responsibilities:
+The design separates two responsibilities:
 
 - `lib/src/compatibility.rs` owns generic selection policy, provenance,
   capability overrides, and inspectable selection errors. It performs no I/O
@@ -157,10 +156,9 @@ The design separates three responsibilities:
   tracks adoption by other clients.
 - `clients/trs/compatibility.rs` defines supported TRS profiles, the fallback,
   and their capabilities. `TRS` owns this state together with its transport and
-  discovery snapshot. CLI flags translate to these SDK options.
-- `clients/trs/protocol/` contains hand-written response adapters. The `TRS`
-  client and typed pagination helpers call the selected adapter and return
-  public models. The adapters do not own transport or discovery policy.
+  discovery snapshot. CLI flags translate to these SDK options. TRS operations
+  and typed pagination helpers decode into the shared public models. The two
+  current profiles differ in tag-filter support, not response representation.
 
 ### Model layout
 
@@ -169,25 +167,22 @@ TRS keeps the following layout:
 ```text
 lib/src/clients/trs/
 ├── mod.rs                  Re-exports wire/v2_0_1/models as trs::models
-├── wire/v2_0_1/models/     Generated from the pinned 2.0.1 schema
-└── protocol/
-    ├── mod.rs              Dispatch by the selected TRS profile
-    ├── v2_0_1.rs           Decode directly into public models
-    └── v2_0_2.rs           Check changed field, then decode into public models
+├── compatibility.rs        Version profiles and capability rules
+└── wire/v2_0_1/models/     Generated from the pinned 2.0.1 schema
 ```
 
 The physical location identifies the pinned wire schema; the public import path
 remains `trs::models`. The 2.0.2 schema adds only an optional description to
 generated response models, so a second 16-file model set and a second decode
-pass would add maintenance cost without changing the public result. Its
-version-specific check stays in the adapter. This choice is local to TRS:
-other APIs can choose a different public representation when their contracts
-diverge. If a future profile needs distinct wire types, generate its own
-`wire/vX/models/` set and define an explicit conversion to the public API;
-do not discard information or silently change a public type's meaning.
+pass would add maintenance cost without changing the public result. There is
+no version-specific decoder until a contract needs one. This choice is local
+to TRS: other APIs can choose a different public representation when their
+contracts diverge. If a future profile needs distinct wire types, generate
+its own `wire/vX/models/` set and define an explicit conversion to the public
+API; do not discard information or silently change a public type's meaning.
 
-`./utils/build_models_wrapper.sh trs` regenerates the 2.0.1 set. Keep adapters
-and accessors outside generated directories. See the
+`./utils/build_models_wrapper.sh trs` regenerates the 2.0.1 set. Keep future
+adapters and current accessors outside generated directories. See the
 [model generation guide](autogenerate_OAI_models.md#pinned-specs) for the
 pinned source and regeneration procedure.
 
@@ -200,10 +195,10 @@ pinned source and regeneration procedure.
    and check the new responses. Give it a separate destination and module path;
    verify that regeneration reproduces every retained set.
 3. Add the profile and capability rules in the service's compatibility module.
-   Add adapters for actual contract differences. Keep common HTTP behavior in
-   the client and transport; do not copy entire clients or create version
-   directories for identical logic. Never select a fallback decoder because
-   a response failed to decode.
+   Add adapters only for actual contract differences that the shared models
+   cannot represent. Keep common HTTP behavior in the client and transport;
+   do not copy entire clients or create version directories for identical
+   logic. Never select a fallback decoder because a response failed to decode.
 4. Test the new and retained profiles through the public client, including
    changed fields, extension preservation, malformed responses, capabilities,
    and pagination where applicable. Update the support table, user-facing
@@ -211,7 +206,7 @@ pinned source and regeneration procedure.
 
 Regression tests live in `lib/tests/trs_compatibility.rs` and
 `cli/tests/trs_compatibility.rs`. They exercise actual HTTP responses and CLI
-subprocesses, including decoder differences, extensions, tag guards,
+subprocesses, including optional metadata tolerance, extensions, tag guards,
 pagination, discovery failures, malformed data, and bounded HTTP errors.
 Live registry tests in `lib/tests/trs_public_registries.rs` provide separate
 interoperability evidence; they do not prove conformance of every deployment.

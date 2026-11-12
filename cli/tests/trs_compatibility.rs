@@ -86,6 +86,33 @@ fn strict_mode_rejects_unknown_declarations_without_tools_request() {
 }
 
 #[test]
+fn strict_mode_keeps_unusual_optional_metadata_on_a_known_version() {
+    let discovery = mock("GET", "/cli-compat-strict-known/service-info")
+        .with_status(200)
+        .with_body(info("2.0.2"))
+        .create();
+    let version = mock("GET", "/cli-compat-strict-known/tools/t/versions/v1")
+        .with_status(200)
+        .with_body(r#"{"id":"v1","url":"https://example.org","description":{"extension":42}}"#)
+        .create();
+    let output = run(
+        "cli-compat-strict-known",
+        &["--api-version", "strict", "version", "t", "v1"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["description"],
+        json!({"extension": 42})
+    );
+    discovery.assert();
+    version.assert();
+}
+
+#[test]
 fn no_discovery_requires_explicit_version_before_network_io() {
     let discovery = mock("GET", "/cli-compat-no-version/service-info")
         .expect(0)
@@ -101,7 +128,7 @@ fn no_discovery_requires_explicit_version_before_network_io() {
 }
 
 #[test]
-fn selected_profile_controls_decoding_and_keeps_description_in_output() {
+fn both_profiles_keep_optional_description_in_output() {
     let discovery = mock("GET", "/cli-compat-profile/service-info")
         .expect(0)
         .create();
@@ -139,8 +166,15 @@ fn selected_profile_controls_decoding_and_keeps_description_in_output() {
             "v1",
         ],
     );
-    assert!(!new.status.success());
-    assert!(new.stdout.is_empty());
+    assert!(
+        new.status.success(),
+        "{}",
+        String::from_utf8_lossy(&new.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&new.stdout).unwrap()["description"],
+        json!({"extension": 42})
+    );
     discovery.assert();
     version.assert();
 }

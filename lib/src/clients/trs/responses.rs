@@ -1,8 +1,8 @@
-//! Response-preserving TRS helpers. Pass `&TRS` to retain its selected profile.
-//! Passing `&Transport` uses the unverified 2.0.1 baseline without tag filtering.
+//! Response-preserving TRS helpers. Pass `&TRS` to retain its capability policy.
+//! Passing `&Transport` uses the shared model without tag-filter support.
 //! `next_page` is a server-provided URL, never a guessed numeric offset.
 use super::models::{DescriptorType, Tool};
-use super::{TrsVersion, TRS};
+use super::TRS;
 use crate::compatibility::CapabilitySupport;
 use crate::utils::transport::{response_json, response_text, urlencode, BodyLimits, Transport};
 use reqwest::{header::HeaderMap, Method, Response};
@@ -27,11 +27,10 @@ impl ToolPage {
 }
 
 /// A typed pagination context. Construct it from a client to preserve its policy,
-/// or from a transport for the legacy, unverified 2.0.1 read contract.
+/// or from a transport for legacy reads without an established tag capability.
 #[derive(Clone, Copy, Debug)]
 pub struct Context<'a> {
     transport: &'a Transport,
-    profile: TrsVersion,
     tags: CapabilitySupport,
 }
 
@@ -39,7 +38,6 @@ impl<'a> From<&'a TRS> for Context<'a> {
     fn from(client: &'a TRS) -> Self {
         Self {
             transport: client.transport(),
-            profile: client.compatibility().selection().profile(),
             tags: client.compatibility().tag_filter(),
         }
     }
@@ -49,7 +47,6 @@ impl<'a> From<&'a Transport> for Context<'a> {
     fn from(transport: &'a Transport) -> Self {
         Self {
             transport,
-            profile: TrsVersion::V2_0_1,
             tags: CapabilitySupport::Unknown,
         }
     }
@@ -89,14 +86,11 @@ async fn page(
             context.tags.require("TRS", "tags")?;
         }
     }
-    let (headers, body) = json(context.transport, endpoint, params, limits).await?;
-    Ok(ToolPage {
-        tools: context.profile.decode_tools(body)?,
-        headers,
-    })
+    let (headers, tools) = json(context.transport, endpoint, params, limits).await?;
+    Ok(ToolPage { tools, headers })
 }
 
-/// Fetch one page using the client's selected decoder and capability policy.
+/// Fetch one page using the client's capability policy.
 /// Use [`super::ToolFilter::query`] to validate typed filters first.
 pub async fn list_tools_page<'a>(
     context: impl Into<Context<'a>>,

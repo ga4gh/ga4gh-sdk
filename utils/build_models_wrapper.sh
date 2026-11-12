@@ -15,7 +15,8 @@
 # An API may have several entries for retained versions when their models
 # differ. Selecting that API regenerates every entry; each owns a distinct
 # models directory. A supported profile with a compatible shape can reuse an
-# existing generated set through a hand-written protocol adapter.
+# existing generated set directly. Add a protocol adapter only when behavior
+# or response shapes actually differ.
 # Pin every spec to a tag. Hand edits of the generated models go into
 # utils/patches/<api_name>.patch, which build_models.sh applies after
 # generation. Hand-written types don't go into `models/`, because that folder

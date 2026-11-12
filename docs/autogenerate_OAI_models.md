@@ -28,9 +28,11 @@ hand-written types go next to `models/`, for example
 TRS also supports the [2.0.2 contract](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.2),
 whose only additional generated model field is optional
 `ToolVersion.description`. The 2.0.2 spec still declares `info.version: 2.1.0`;
-the client does not treat a server declaration of `2.1.0` as 2.0.2. The
-hand-written 2.0.2 adapter checks the new field without generating a duplicate
-model set. `utils/build_models_wrapper.sh trs` regenerates the 2.0.1 models in
+the client does not treat a server declaration of `2.1.0` as 2.0.2. Both
+profiles use the same public model: the optional description remains in `extra`
+and may be read through `description()` when it is a string. No duplicate
+model set or version-specific decoder is needed.
+`utils/build_models_wrapper.sh trs` regenerates the 2.0.1 models in
 `lib/src/clients/trs/wire/v2_0_1/models/` with `-m`; the TRS module re-exports
 them as `trs::models`. See the [model layout decision](api_compatibility.md#model-layout)
 and the
