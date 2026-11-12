@@ -62,8 +62,7 @@ the identity provider and runs [`protes_tes.rs`](../lib/tests/protes_tes.rs):
 - a long task is canceled;
 - requests without a token, or with an invalid one, get HTTP 401.
 
-The test passes the token as a default header of its own HTTP client, because
-the transport doesn't send the credentials of the configuration yet (#31). On
+The test passes the token with `Configuration::with_oauth_access_token`. On
 exit, the script prints the service logs if a step failed and removes the
 services and its temporary files.
 
