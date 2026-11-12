@@ -667,6 +667,7 @@ dependencies = [
 name = "ga4gh"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "ga4gh-lib",
  "pyo3",
  "pyo3-async-runtimes",

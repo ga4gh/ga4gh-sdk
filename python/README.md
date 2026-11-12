@@ -74,7 +74,7 @@ pytest
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys; `set_timeouts()` and `get_timeouts()` set and give the time limits of requests. See [Reading the configuration file](#reading-the-configuration-file) and [Timeouts](#timeouts). |
+| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys; `set_timeouts()` and `get_timeouts()` set and give the time limits of requests; `set_token_provider()` sets a callable that gives a bearer token for each request. See [Reading the configuration file](#reading-the-configuration-file), [Timeouts](#timeouts) and [Token providers](#token-providers). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
@@ -88,7 +88,8 @@ appear in Python automatically. For each SDK change, decide whether to expose
 it here, then update the wrapper, this table, and the mock-backed tests and
 examples. CI checks the documented Python behavior, but it cannot infer that
 a new Rust API needs a Python counterpart. The SDK currently stores configured
-credentials without sending them in requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)); use an anonymous service or an authenticating proxy.
+credentials without sending them in requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31));
+use a [token provider](#token-providers), an anonymous service or an authenticating proxy.
 
 ## Usage
 
@@ -177,6 +178,50 @@ Clients and `Transport` read the limits when they are built, so set them first.
 Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
 timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
 
+## Token providers
+
+`config.set_token_provider(provider)` makes the clients and `Transport` built from
+`config` ask `provider` for a bearer token before each request, including the
+service check of `TES(config)` and the other clients. `provider(audience)` gets the
+API root (or the `audience` given to `set_token_provider()`) and returns the token
+as a `str`, or as a `(str, float)` tuple with the seconds for which the SDK may
+reuse it:
+
+```python
+from ga4gh_sdk import Configuration, TES
+
+
+def token_provider(audience: str) -> tuple[str, float]:
+    token, expires_in = get_token_for(audience)  # your code
+    return token, expires_in - 30  # reuse it until 30 seconds before it expires
+
+
+config = Configuration("https://example.org/ga4gh/tes/v1")
+config.set_token_provider(token_provider)
+# Or with the audience of a token exchange:
+# config.set_token_provider(token_provider, audience="https://example.org/ga4gh/tes")
+tes = TES(config)
+```
+
+- Set the provider after `from_file()`, which replaces all settings. Clients and
+  `Transport` take it when they are built; `set_token_provider(None)` removes it
+  for those built later.
+- After `401 Unauthorized`, a `GET` request is sent once more with a new token from
+  the provider; submissions such as `TES.create()` and `WES.run()` are never sent
+  twice. A reused token is dropped after `401`.
+- If the provider raises, returns something else or a token that can't be an HTTP
+  header value, the call raises `RuntimeError` with the provider's exception text,
+  and nothing is sent. Keep secrets out of the provider's exception messages; the
+  SDK doesn't show tokens.
+- A provider can't be combined with other credentials from the configuration file
+  (`basic_auth`, `oauth_access_token`, or a user or password in `base_path`): calls
+  then raise `RuntimeError` before anything is sent.
+- The provider runs on a thread of the SDK's runtime, with the GIL, also for the
+  [asyncio](#asyncio) classes. It may block, for example on a token endpoint, but
+  each call waits for it.
+
+The [usage guide](../docs/usage.md#token-providers) describes the contract.
+
 ## Network behavior
 
 The Python build uses rustls for HTTPS and loads trusted certificates from the
@@ -187,7 +232,8 @@ Synchronous network methods release the Python GIL while Rust waits for I/O.
 They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
 connections remain reusable between calls. Inputs are decoded before releasing
 the GIL and Python results/exceptions are constructed after reacquiring it.
-No Python callback runs on the runtime. The [asyncio](#asyncio) classes run
+No Python callback runs on the runtime, except a [token provider](#token-providers),
+on a blocking thread of its own. The [asyncio](#asyncio) classes run
 their requests on the same runtime. Use multiprocessing's `spawn` mode rather
 than forking a process after starting threaded I/O.
 
