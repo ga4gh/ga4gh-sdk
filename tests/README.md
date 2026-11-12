@@ -50,6 +50,51 @@ a remote project. This server returns a fixed run list instead of recently
 submitted runs, and its cancellation endpoint does not stop a run. The test
 accounts for both limitations and does not claim that a run was canceled.
 
+## TRS-Filer/TRS
+
+This suite needs a running Docker daemon and `curl`.
+
+```sh
+tests/run-trs-filer-integration.sh
+```
+
+The script starts [TRS-Filer](https://github.com/elixir-cloud-aai/trs-filer)
+(the image of a `dev` commit that serves TRS 2.0.2, for `linux/amd64`) and
+MongoDB 7.0, both pinned by tag and digest, on a private Docker network, and
+publishes TRS-Filer on a free loopback port. It needs Docker and curl 7.76 or
+later (for `--fail-with-body`). It waits up to 120 seconds for `/ga4gh/trs/v2/service-info`
+(set `TRS_FILER_STARTUP_TIMEOUT_SECONDS` to change the limit), runs the
+library and CLI tests with the `trs_filer_integration_tests` feature, and
+removes the containers, their volumes and the network. On failure it prints
+the TRS-Filer logs.
+
+The script then registers the CWL workflow in
+[`fixtures/trs-filer/tool.json`](fixtures/trs-filer/tool.json) (`POST /tools`,
+an extension of TRS-Filer), with a primary and a secondary descriptor, a file
+of type `OTHER` and two tags, and passes its ID to the tests in
+`TRS_FILER_TOOL_ID`. The tests compare the responses with the fixture. The
+library test lists tools by tags, reads the version with its `description`,
+fetches the descriptor, the file list with all three file types, the `OTHER`
+file by relative path and the ZIP archive of all files. The CLI test does the
+same through `trs tools --tag`, `versions`, `version`, `descriptor --path`,
+`files` and `files --zip`.
+
+TRS-Filer doesn't serve the `PLAIN_` descriptor types (`--plain`) yet, and it
+doesn't find files in subdirectories by a relative path sent as one encoded
+path segment (`tools%2Fecho.cwl`), as the SDK sends it. The suite therefore
+fetches a top-level file by relative path; `PLAIN_` types and nested relative
+paths are checked only against mock servers, in the default tests.
+
+The [CI workflow](../.github/workflows/ci.yml) runs this suite as the job
+`Integration (trs-filer)` when the TRS, Service Info or shared library code,
+the CLI, the dependencies or the suite's own files change (see the path lists
+in the workflow), and on manual dispatch.
+
+To update TRS-Filer, pin `trs_filer_image` in the script to a release or a
+`sha-<commit>` tag of `elixircloud/trs-filer`, not to `dev`, together with its
+digest, e.g. from `docker buildx imagetools inspect
+elixircloud/trs-filer:sha-<commit>`.
+
 ## Verified TRS CWL bundle with Toil WES
 
 The bundle unit tests use a local TRS fixture and a capturing mock WES to compare
@@ -169,3 +214,8 @@ Gen3 bulk access behavior is unverified.
   public object and one unknown ID, recorded on 2026-11-10 and reformatted
   with sorted keys. It contains public metadata only and is used by
   [`drs_bulk.rs`](../lib/tests/drs_bulk.rs).
+- [`fixtures/trs-filer/tool.json`](fixtures/trs-filer/tool.json) is the CWL
+  workflow that
+  [`run-trs-filer-integration.sh`](run-trs-filer-integration.sh) registers in
+  TRS-Filer for [`trs_filer.rs`](../lib/tests/trs_filer.rs) and
+  [`cli/tests/trs_filer.rs`](../cli/tests/trs_filer.rs).

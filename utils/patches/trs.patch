@@ -1,4 +1,4 @@
-Hand edits of the TRS 2.0.1 models, applied by utils/build_models.sh.
+Hand edits of the TRS 2.0.2 models, applied by utils/build_models.sh.
 
 - `FileWrapperImageType` (`FileWrapper.image_type`) is an untagged enum of
   `ImageType` and `DescriptorType`. Both keep unknown values in

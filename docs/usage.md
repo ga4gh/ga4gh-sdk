@@ -337,19 +337,34 @@ server's JSON, including fields that the models don't know.
 ### TRS
 
 ```rust
+use ga4gh_sdk::clients::trs::models::DescriptorType;
 use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
 
 let config = Configuration::new(Url::parse("https://workflowhub.eu/ga4gh/trs/v2")?);
 let trs = TRS::new(&config).await?;
 let tools = trs.list_tools(&ToolFilter {
     tool_class: Some("Workflow".to_owned()),
+    tags: vec!["genomics".to_owned()],
     limit: Some(10),
     ..Default::default()
 }).await?;
 for tool in tools {
     println!("{}", tool.id);
 }
+
+// All files of one version as a ZIP archive, at most 10 MiB.
+let archive = trs
+    .get_files_zip("TOOL_ID", "VERSION_ID", DescriptorType::Cwl, 10 * 1024 * 1024)
+    .await?;
 ```
+
+The client follows TRS 2.0.2. `tags` are registry-specific and sent as one
+comma-separated value (the comma is percent-encoded, as `%2C`), so a tag
+must not be empty or contain a comma.
+`ToolVersion.description` holds the description of a version, if the registry
+sends one. `get_files_zip` reads the whole archive into memory and returns it as bytes,
+without extracting it;
+a body larger than the limit, or one that isn't a ZIP archive, is an error.
 
 ### Models
 
