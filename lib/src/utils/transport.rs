@@ -33,7 +33,9 @@
 /// let response = transport.delete("users/1").await;
 /// };
 /// ```
-use crate::utils::auth::{AuthConflictError, TokenProviderError};
+use crate::utils::auth::{
+    AuthConflictError, CredentialError, CredentialErrorReason, TokenProviderError,
+};
 use crate::utils::configuration::Configuration;
 use crate::utils::query::query_pairs;
 use reqwest::multipart::Form;
@@ -270,6 +272,30 @@ fn is_dot_segment(segment: &str) -> bool {
     dots == 1 || dots == 2
 }
 
+/// Whether `url` uses plain `http` to a host other than `localhost` or a
+/// loopback address, so that a credential would travel unencrypted.
+pub(crate) fn is_plain_http_to_remote(url: &Url) -> bool {
+    if url.scheme() != "http" {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Domain(domain)) => !domain.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(address)) => !address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => !address.is_loopback(),
+        None => true,
+    }
+}
+
+/// Logs, once per process, that a credential is sent over plain `http`.
+fn warn_plain_http_once() {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        log::warn!(
+            "Sending credentials over plain http to a host that isn't a loopback address; use https"
+        );
+    }
+}
+
 // note: could implement custom certs handling, such as in-TEE generated ephemeral certs
 #[derive(Clone)]
 pub struct Transport {
@@ -503,10 +529,11 @@ impl Transport {
     /// Shared API-relative request construction. Service-specific callers can
     /// add headers, streaming bodies or custom methods without losing policies.
     ///
-    /// The request carries no token from a token provider; use
+    /// The request carries neither a token from a token provider nor the static
+    /// credential of the configuration, except a user and password in
+    /// `base_path`; use
     /// [`authorized_request_builder`](Self::authorized_request_builder) for
-    /// that. Static credentials of the configuration are not sent yet (see #31);
-    /// those of an injected client are.
+    /// those. The default headers of an injected client are sent.
     pub fn request_builder(
         &self,
         method: reqwest::Method,
@@ -520,7 +547,8 @@ impl Transport {
     }
 
     /// Like [`request_builder`](Self::request_builder), with the token of the
-    /// configured token provider, if there is one (see [`crate::utils::auth`]).
+    /// configured token provider or, without one, the static credential of the
+    /// configuration, if there is one (see [`crate::utils::auth`]).
     ///
     /// The request is sent once, as the caller sends it; there is no further
     /// attempt after `401 Unauthorized`.
@@ -528,8 +556,9 @@ impl Transport {
     /// # Errors
     ///
     /// An [`EndpointError`], an [`AuthConflictError`] if the configuration has
-    /// other credentials as well, or a [`TokenProviderError`]. Nothing has been
-    /// sent then.
+    /// more than one credential, a [`CredentialError`] for an unsupported or
+    /// unusable static credential, or a [`TokenProviderError`]. Nothing has
+    /// been sent then.
     pub async fn authorized_request_builder(
         &self,
         method: reqwest::Method,
@@ -540,18 +569,22 @@ impl Transport {
     }
 
     /// Adds the provider's token to `request`, a new one if `after_rejection`.
-    /// Without a provider, `request` stays as it is.
+    /// Without a provider, adds the static credential of the configuration, if
+    /// there is one (see [`crate::utils::auth`]).
     async fn authorize(
         &self,
         request: reqwest::RequestBuilder,
         after_rejection: bool,
     ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
         let Some(source) = &self.config.token_provider else {
-            return Ok(request);
+            return self.add_static_credential(request);
         };
         let sources = self.config.static_credentials();
         if !sources.is_empty() {
-            return Err(Box::new(AuthConflictError { sources }));
+            return Err(Box::new(AuthConflictError {
+                sources,
+                token_provider: true,
+            }));
         }
         let audience = self.config.token_audience();
         let token = source.token(&audience, after_rejection).await?;
@@ -564,6 +597,73 @@ impl Transport {
         let mut value =
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token.secret()))
                 .map_err(|_| invalid())?;
+        value.set_sensitive(true);
+        Ok(request.header(reqwest::header::AUTHORIZATION, value))
+    }
+
+    /// Adds the one static credential of the configuration to `request`.
+    ///
+    /// A user and password in `base_path` are left to `reqwest`, which sends
+    /// them as Basic credentials. More than one credential, an `api_key` or an
+    /// unusable token is an error, and nothing is sent.
+    fn add_static_credential(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+        let config = &self.config;
+        if config.api_key.is_some() {
+            return Err(Box::new(CredentialError {
+                source: "api_key",
+                reason: CredentialErrorReason::Unsupported,
+            }));
+        }
+        let bearer = match (&config.oauth_access_token, &config.bearer_access_token) {
+            (Some(oauth), Some(bearer)) if oauth != bearer => {
+                return Err(Box::new(AuthConflictError {
+                    sources: vec!["oauth_access_token", "bearer_access_token"],
+                    token_provider: false,
+                }))
+            }
+            (Some(token), _) => Some(("oauth_access_token", token)),
+            (None, Some(token)) => Some(("bearer_access_token", token)),
+            (None, None) => None,
+        };
+        let in_url =
+            !config.base_path.username().is_empty() || config.base_path.password().is_some();
+        let mut sources = Vec::new();
+        if config.basic_auth.is_some() {
+            sources.push("basic_auth");
+        }
+        if let Some((field, _)) = bearer {
+            sources.push(field);
+        }
+        if in_url {
+            sources.push("the user or password in base_path");
+        }
+        if sources.len() > 1 {
+            return Err(Box::new(AuthConflictError {
+                sources,
+                token_provider: false,
+            }));
+        }
+        if !sources.is_empty() && is_plain_http_to_remote(&config.base_path) {
+            warn_plain_http_once();
+        }
+        if let Some(basic) = &config.basic_auth {
+            return Ok(request.basic_auth(&basic.username, basic.password.as_ref()));
+        }
+        let Some((field, token)) = bearer else {
+            return Ok(request);
+        };
+        let invalid = || CredentialError {
+            source: field,
+            reason: CredentialErrorReason::InvalidToken,
+        };
+        if token.is_empty() {
+            return Err(Box::new(invalid()));
+        }
+        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(|_| invalid())?;
         value.set_sensitive(true);
         Ok(request.header(reqwest::header::AUTHORIZATION, value))
     }
@@ -1350,10 +1450,9 @@ mod tests {
                 .with_oauth_access_token("SENTINEL_OAUTH".to_owned());
             let error = Transport::new(&config).get("a", None).await.unwrap_err();
             assert!(!format!("{error} {error:?}").contains("SENTINEL"));
-            assert_eq!(
-                error.downcast_ref::<AuthConflictError>().unwrap().sources,
-                ["oauth_access_token"]
-            );
+            let conflict = error.downcast_ref::<AuthConflictError>().unwrap();
+            assert_eq!(conflict.sources, ["oauth_access_token"]);
+            assert!(conflict.token_provider);
             let mut url = base("auth-conflict");
             url.set_username("alice").unwrap();
             let config = Configuration::new(url).with_shared_token_provider(provider.clone());
@@ -1407,6 +1506,323 @@ mod tests {
             assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
             request.assert();
             assert_eq!(provider.calls().len(), 1);
+        }
+    }
+
+    mod static_credentials {
+        use crate::utils::auth::{AuthConflictError, CredentialError, CredentialErrorReason};
+        use crate::utils::configuration::{ApiKey, BasicAuth, Configuration};
+        use crate::utils::transport::{is_plain_http_to_remote, HttpError, Transport};
+        use mockito::{mock, Matcher};
+        use url::Url;
+
+        // Base64 of `alice:secret` and of `alice:`.
+        const BASIC: &str = "Basic YWxpY2U6c2VjcmV0";
+        const BASIC_NO_PASSWORD: &str = "Basic YWxpY2U6";
+
+        fn base(root: &str) -> Url {
+            Url::parse(&format!("{}/{root}", mockito::server_url())).unwrap()
+        }
+
+        fn basic(password: Option<&str>) -> BasicAuth {
+            BasicAuth {
+                username: "alice".to_owned(),
+                password: password.map(str::to_owned),
+            }
+        }
+
+        /// Sends GET, POST, PUT, DELETE and multipart requests below `/<root>`
+        /// with `config`, and checks that each carries `expected`.
+        async fn assert_every_method_sends(root: &str, config: Configuration, expected: &str) {
+            let mocks = [
+                ("GET", "a"),
+                ("POST", "b"),
+                ("PUT", "c"),
+                ("DELETE", "d"),
+                ("POST", "e"),
+            ]
+            .map(|(method, path)| {
+                mock(method, format!("/{root}/{path}").as_str())
+                    .match_header("authorization", expected)
+                    .with_status(200)
+                    .with_body("ok")
+                    .expect(1)
+                    .create()
+            });
+            let transport = Transport::new(&config);
+            transport.get("a", None).await.unwrap();
+            transport.post("b", None).await.unwrap();
+            transport.put("c", serde_json::json!({})).await.unwrap();
+            transport.delete("d").await.unwrap();
+            let form = reqwest::multipart::Form::new().text("x", "y");
+            transport.post_multipart("e", form).await.unwrap();
+            for mock in mocks {
+                mock.assert();
+            }
+        }
+
+        #[tokio::test]
+        async fn test_sends_basic_auth_for_every_method() {
+            let config =
+                Configuration::new(base("static-basic")).with_basic_auth(basic(Some("secret")));
+            assert_every_method_sends("static-basic", config, BASIC).await;
+        }
+
+        #[tokio::test]
+        async fn test_sends_basic_auth_without_a_password() {
+            let config = Configuration::new(base("static-basic-user")).with_basic_auth(basic(None));
+            assert_every_method_sends("static-basic-user", config, BASIC_NO_PASSWORD).await;
+        }
+
+        #[tokio::test]
+        async fn test_sends_the_oauth_access_token_for_every_method() {
+            let config = Configuration::new(base("static-oauth"))
+                .with_oauth_access_token("my-token".to_owned());
+            assert_every_method_sends("static-oauth", config, "Bearer my-token").await;
+        }
+
+        #[tokio::test]
+        async fn test_sends_the_bearer_access_token_for_every_method() {
+            let mut config = Configuration::new(base("static-bearer"));
+            config.bearer_access_token = Some("my-token".to_owned());
+            assert_every_method_sends("static-bearer", config, "Bearer my-token").await;
+        }
+
+        #[tokio::test]
+        async fn test_both_bearer_fields_with_the_same_token() {
+            let mut config = Configuration::new(base("static-both"))
+                .with_oauth_access_token("my-token".to_owned());
+            config.bearer_access_token = Some("my-token".to_owned());
+            assert_every_method_sends("static-both", config, "Bearer my-token").await;
+        }
+
+        #[tokio::test]
+        async fn test_user_and_password_in_base_path_are_sent_as_before() {
+            let mut url = base("static-url");
+            url.set_username("alice").unwrap();
+            url.set_password(Some("secret")).unwrap();
+            assert_every_method_sends("static-url", Configuration::new(url), BASIC).await;
+        }
+
+        #[tokio::test]
+        async fn test_conflicting_credentials_send_nothing() {
+            let request = mock("GET", Matcher::Regex("^/static-conflict".into()))
+                .expect(0)
+                .create();
+            let mut url = base("static-conflict");
+            url.set_username("SENTINEL_USER").unwrap();
+            let mut different = Configuration::new(base("static-conflict"))
+                .with_oauth_access_token("SENTINEL_OAUTH".to_owned());
+            different.bearer_access_token = Some("SENTINEL_BEARER".to_owned());
+            let cases = [
+                (
+                    Configuration::new(base("static-conflict"))
+                        .with_basic_auth(basic(Some("SENTINEL_PASSWORD")))
+                        .with_oauth_access_token("SENTINEL_OAUTH".to_owned()),
+                    vec!["basic_auth", "oauth_access_token"],
+                ),
+                (different, vec!["oauth_access_token", "bearer_access_token"]),
+                (
+                    Configuration::new(url.clone())
+                        .with_oauth_access_token("SENTINEL_OAUTH".to_owned()),
+                    vec!["oauth_access_token", "the user or password in base_path"],
+                ),
+                (
+                    Configuration::new(url).with_basic_auth(basic(Some("SENTINEL_PASSWORD"))),
+                    vec!["basic_auth", "the user or password in base_path"],
+                ),
+            ];
+            for (config, sources) in cases {
+                let error = Transport::new(&config).get("a", None).await.unwrap_err();
+                let text = format!("{error} {error:?}");
+                assert!(!text.contains("SENTINEL"), "{text}");
+                let conflict = error.downcast_ref::<AuthConflictError>().unwrap();
+                assert_eq!(conflict.sources, sources);
+                assert!(!conflict.token_provider);
+                assert!(error.to_string().contains("Only one credential"), "{error}");
+            }
+            request.assert();
+        }
+
+        #[tokio::test]
+        async fn test_unsupported_and_invalid_credentials_send_nothing() {
+            let request = mock("GET", Matcher::Regex("^/static-invalid".into()))
+                .expect(0)
+                .create();
+            let mut api_key = Configuration::new(base("static-invalid"));
+            api_key.api_key = Some(ApiKey {
+                prefix: Some("Token".to_owned()),
+                key: "SENTINEL_KEY".to_owned(),
+            });
+            let mut bearer = Configuration::new(base("static-invalid"));
+            bearer.bearer_access_token = Some("SENTINEL\nTOKEN".to_owned());
+            let cases = [
+                (api_key, "api_key", CredentialErrorReason::Unsupported),
+                (
+                    Configuration::new(base("static-invalid"))
+                        .with_oauth_access_token(String::new()),
+                    "oauth_access_token",
+                    CredentialErrorReason::InvalidToken,
+                ),
+                (
+                    Configuration::new(base("static-invalid"))
+                        .with_oauth_access_token("SENTINEL\u{7f}".to_owned()),
+                    "oauth_access_token",
+                    CredentialErrorReason::InvalidToken,
+                ),
+                (
+                    bearer,
+                    "bearer_access_token",
+                    CredentialErrorReason::InvalidToken,
+                ),
+            ];
+            for (config, source, reason) in cases {
+                let error = Transport::new(&config).get("a", None).await.unwrap_err();
+                let text = format!("{error} {error:?}");
+                assert!(!text.contains("SENTINEL"), "{text}");
+                let error = error.downcast_ref::<CredentialError>().unwrap();
+                assert_eq!((error.source, error.reason), (source, reason));
+            }
+            request.assert();
+        }
+
+        #[tokio::test]
+        async fn test_a_401_is_returned_without_another_attempt() {
+            let request = mock("GET", "/static-401/a")
+                .match_header("authorization", "Bearer wrong")
+                .with_status(401)
+                .with_body("denied")
+                .expect(1)
+                .create();
+            let config =
+                Configuration::new(base("static-401")).with_oauth_access_token("wrong".to_owned());
+            let error = Transport::new(&config).get("a", None).await.unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<HttpError>().unwrap().status,
+                reqwest::StatusCode::UNAUTHORIZED
+            );
+            request.assert();
+        }
+
+        #[tokio::test]
+        async fn test_configured_credential_replaces_a_client_default() {
+            let request = mock("GET", "/static-client/a")
+                .match_header("authorization", "Bearer configured")
+                .match_header("x-client", "kept")
+                .with_status(200)
+                .expect(1)
+                .create();
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert("authorization", "Bearer client".parse().unwrap());
+            headers.insert("x-client", "kept".parse().unwrap());
+            let client = reqwest::Client::builder()
+                .default_headers(headers)
+                .build()
+                .unwrap();
+            let config = Configuration::new(base("static-client"))
+                .with_oauth_access_token("configured".to_owned());
+            Transport::with_client(&config, client)
+                .get("a", None)
+                .await
+                .unwrap();
+            request.assert();
+        }
+
+        #[tokio::test]
+        async fn test_a_client_default_stays_without_a_configured_credential() {
+            let request = mock("GET", "/static-client-only/a")
+                .match_header("authorization", "Bearer client")
+                .with_status(200)
+                .expect(1)
+                .create();
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert("authorization", "Bearer client".parse().unwrap());
+            let client = reqwest::Client::builder()
+                .default_headers(headers)
+                .build()
+                .unwrap();
+            Transport::with_client(&Configuration::new(base("static-client-only")), client)
+                .get("a", None)
+                .await
+                .unwrap();
+            request.assert();
+        }
+
+        #[tokio::test]
+        async fn test_credential_is_dropped_on_a_redirect_to_another_host() {
+            // mockito listens on 127.0.0.1; `localhost` is another host to reqwest.
+            let port = Url::parse(&mockito::server_url()).unwrap().port().unwrap();
+            let redirect = mock("GET", "/static-redirect/a")
+                .match_header("authorization", "Bearer my-token")
+                .with_status(302)
+                .with_header(
+                    "location",
+                    &format!("http://localhost:{port}/static-elsewhere"),
+                )
+                .expect(1)
+                .create();
+            let elsewhere = mock("GET", "/static-elsewhere")
+                .match_header("authorization", Matcher::Missing)
+                .with_status(200)
+                .with_body("ok")
+                .expect(1)
+                .create();
+            let config = Configuration::new(base("static-redirect"))
+                .with_oauth_access_token("my-token".to_owned());
+            Transport::new(&config).get("a", None).await.unwrap();
+            redirect.assert();
+            elsewhere.assert();
+        }
+
+        #[tokio::test]
+        async fn test_authorized_request_builder_and_discovery_send_it() {
+            let request = mock("PATCH", "/static-builder/a")
+                .match_header("authorization", BASIC)
+                .with_status(204)
+                .expect(1)
+                .create();
+            let config =
+                Configuration::new(base("static-builder")).with_basic_auth(basic(Some("secret")));
+            let transport = Transport::new(&config);
+            let response = transport
+                .authorized_request_builder(reqwest::Method::PATCH, "a")
+                .await
+                .unwrap()
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+            request.assert();
+            let discovery = mock("GET", "/static-builder/service-info")
+                .match_header("authorization", BASIC)
+                .with_status(200)
+                .with_body("{}")
+                .expect(1)
+                .create();
+            transport
+                .get_within("service-info", std::time::Duration::from_secs(5))
+                .await
+                .unwrap();
+            discovery.assert();
+        }
+
+        #[test]
+        fn test_plain_http_to_remote() {
+            for (url, expected) in [
+                ("http://example.org/tes", true),
+                ("http://10.0.0.1/tes", true),
+                ("https://example.org/tes", false),
+                ("http://localhost:8000/tes", false),
+                ("http://127.0.0.1:8000/tes", false),
+                ("http://127.1.2.3/tes", false),
+                ("http://[::1]:8000/tes", false),
+            ] {
+                assert_eq!(
+                    is_plain_http_to_remote(&Url::parse(url).unwrap()),
+                    expected,
+                    "{url}"
+                );
+            }
         }
     }
 }

@@ -1,4 +1,6 @@
-//! Bearer tokens from a caller-supplied provider.
+//! Credentials of requests: bearer tokens from a caller-supplied provider, and
+//! the static credentials of the configuration (see
+//! [Static credentials](#static-credentials)).
 //!
 //! A [`TokenProvider`] gives the transport a token for each request, so that a
 //! client can live longer than one token and can use a different token per
@@ -35,7 +37,7 @@
 //!   `basic_auth`, `oauth_access_token`, `bearer_access_token`, `api_key` or a
 //!   user or password in `base_path`. Such a combination fails with an
 //!   [`AuthConflictError`] before anything is sent. Without a provider, the
-//!   transport behaves as before.
+//!   transport sends the static credential, as described below.
 //! - A provider set on the configuration of
 //!   [`Transport::with_client`](crate::utils::transport::Transport::with_client)
 //!   applies to that client's requests too, and its header takes the place of an
@@ -50,6 +52,46 @@
 //!   nothing is sent. Token values never appear in `Debug` output, errors or logs
 //!   of the SDK. The text of a provider's own error is shown as the provider wrote
 //!   it, so keep secrets out of it.
+//!
+//! # Static credentials
+//!
+//! Without a token provider, the transport sends the static credential of the
+//! configuration on the same request paths as a provider's token (all requests
+//! except those of
+//! [`Transport::request_builder`](crate::utils::transport::Transport::request_builder)):
+//!
+//! - `basic_auth` as `Authorization: Basic`, with an empty password if it has
+//!   none;
+//! - `oauth_access_token` or `bearer_access_token` as `Authorization: Bearer`.
+//!   Both may be set only to the same token;
+//! - a user and password in `base_path`, as before: `reqwest` sends them as
+//!   `Authorization: Basic`.
+//!
+//! At most one of these may be set. Otherwise each request fails with an
+//! [`AuthConflictError`] that names them, and nothing is sent; no credential
+//! takes precedence over another. `api_key` isn't supported, as the
+//! configuration doesn't say which header or query parameter it belongs in: it
+//! fails each request with a [`CredentialError`], as does an empty token or one
+//! that an HTTP header can't hold. The transport answers a `401 Unauthorized`
+//! to a request with a static credential with an
+//! [`HttpError`](crate::utils::transport::HttpError) and doesn't send the
+//! request again.
+//!
+//! The credential goes only to the API root: endpoints that resolve elsewhere
+//! are rejected before anything is sent, and `reqwest` drops the
+//! `Authorization` header when a redirect leads to another host or port.
+//! Redirects to the same host and port keep it, also to paths outside the API
+//! root; the redirect contract is tracked in
+//! [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
+//! Over plain `http` to a host other than `localhost` or a loopback address,
+//! the transport logs a warning once per process, as the credential then
+//! travels unencrypted.
+//!
+//! The configuration's credential also applies to the requests of a client
+//! given to
+//! [`Transport::with_client`](crate::utils::transport::Transport::with_client),
+//! and takes the place of an `Authorization` default header of that client. A
+//! client's default header stays when the configuration has no credential.
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -313,25 +355,77 @@ impl Error for TokenProviderError {
     }
 }
 
-/// A token provider is configured together with other credentials; nothing was sent.
+/// The configuration has more than one credential; nothing was sent.
+///
+/// Either a token provider together with static credentials, or more than one
+/// static credential, such as `basic_auth` together with `oauth_access_token`.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct AuthConflictError {
-    /// The other credentials, by field name, such as `oauth_access_token`.
+    /// The static credentials, by field name, such as `oauth_access_token`.
     pub sources: Vec<&'static str>,
+    /// Whether a token provider is configured as well as `sources`.
+    pub token_provider: bool,
 }
 
 impl fmt::Display for AuthConflictError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "A token provider can't be combined with other credentials; remove {} or the token provider",
-            self.sources.join(", ")
-        )
+        if self.token_provider {
+            write!(
+                f,
+                "A token provider can't be combined with other credentials; remove {} or the token provider",
+                self.sources.join(", ")
+            )
+        } else {
+            write!(
+                f,
+                "Only one credential can be configured, but there are several: {}; keep one of them",
+                self.sources.join(", ")
+            )
+        }
     }
 }
 
 impl Error for AuthConflictError {}
+
+/// A static credential of the configuration can't be sent; nothing was sent.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct CredentialError {
+    /// The credential, by field name, such as `api_key`.
+    pub source: &'static str,
+    /// Why it can't be sent.
+    pub reason: CredentialErrorReason,
+}
+
+/// Why a static credential can't be sent; see [`CredentialError`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CredentialErrorReason {
+    /// The transport doesn't send this kind of credential.
+    Unsupported,
+    /// The token is empty or has characters that an HTTP header can't hold.
+    InvalidToken,
+}
+
+impl fmt::Display for CredentialError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.reason {
+            CredentialErrorReason::Unsupported => write!(
+                f,
+                "{} isn't supported by the SDK transport; remove it, or use basic_auth, oauth_access_token or a token provider",
+                self.source
+            ),
+            CredentialErrorReason::InvalidToken => write!(
+                f,
+                "{} is empty or isn't a valid HTTP header value",
+                self.source
+            ),
+        }
+    }
+}
+
+impl Error for CredentialError {}
 
 /// Gives the same token each time, without reuse.
 #[cfg(test)]
@@ -457,10 +551,32 @@ mod tests {
         assert_eq!(error.source().unwrap().to_string(), "no session");
         let error = AuthConflictError {
             sources: vec!["basic_auth", "oauth_access_token"],
+            token_provider: true,
         };
         assert_eq!(
             error.to_string(),
             "A token provider can't be combined with other credentials; remove basic_auth, oauth_access_token or the token provider"
+        );
+        let error = AuthConflictError {
+            sources: vec!["basic_auth", "oauth_access_token"],
+            token_provider: false,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Only one credential can be configured, but there are several: basic_auth, oauth_access_token; keep one of them"
+        );
+        let error = CredentialError {
+            source: "api_key",
+            reason: CredentialErrorReason::Unsupported,
+        };
+        assert!(error.to_string().starts_with("api_key isn't supported"));
+        let error = CredentialError {
+            source: "oauth_access_token",
+            reason: CredentialErrorReason::InvalidToken,
+        };
+        assert_eq!(
+            error.to_string(),
+            "oauth_access_token is empty or isn't a valid HTTP header value"
         );
     }
 }

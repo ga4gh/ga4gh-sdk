@@ -51,14 +51,13 @@ fn run_with_section(section: Value, args: &[&str]) -> Output {
     output
 }
 
-/// Runs the CLI against `base_path`, with marker values in the credentials.
+/// Runs the CLI against `base_path`, with marker values in the credentials,
+/// which the CLI sends.
 fn run(base_path: &str, args: &[&str]) -> Output {
-    let base_path = base_path.replacen("http://", "http://SENTINEL_USER:SENTINEL_PASSWORD@", 1);
     run_with_section(
         json!({"REGISTRY": {
             "base_path": base_path,
             "basic_auth": {"username": "SENTINEL_USER", "password": "SENTINEL_PASSWORD"},
-            "oauth_access_token": "SENTINEL_OAUTH",
         }}),
         args,
     )
