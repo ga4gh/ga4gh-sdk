@@ -115,6 +115,14 @@ they build with the other tests but only run on request:
 cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
 ```
 
+The Python bindings have the same smoke tests. They are skipped unless
+`GA4GH_TRS_PUBLIC_TESTS=1` is set; run them from `python/` after building the
+bindings as described in the [Python guide](../python/README.md):
+
+```sh
+GA4GH_TRS_PUBLIC_TESTS=1 python -m pytest tests/test_trs_public.py
+```
+
 ## Public Service Registry
 
 The first ignored smoke test reads all four Service Registry 1.0 endpoints
