@@ -1,4 +1,7 @@
 //! Bulk calls: `BulkPolicy`, `BulkOutcome` and `BulkReport`.
+
+// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
+// clippy reports at every method that returns one, as in `tes.rs`.
 #![allow(clippy::useless_conversion)]
 
 use super::helpers::{count, seconds};
@@ -12,8 +15,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyMapping, PyString};
 use serde_json::Value;
 
-/// Limits of `DRS.get_bulk_objects()` and `DRS.get_bulk_access_urls()`,
-/// invalid ones raise `ValueError` there.
+/// Limits of `DRS.get_bulk_objects()` and `DRS.get_bulk_access_urls()`.
+///
+/// The values are checked when a bulk call starts; invalid ones raise `ValueError` there.
 #[pyclass(name = "BulkPolicy", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyBulkPolicy {
@@ -22,6 +26,7 @@ pub struct PyBulkPolicy {
 
 #[pymethods]
 impl PyBulkPolicy {
+    /// All arguments are optional. Delays are in seconds.
     #[new]
     #[pyo3(signature = (
         chunk_size=100, advertised_limit=None, concurrency=4, max_requests=1000,
@@ -57,6 +62,8 @@ impl PyBulkPolicy {
         })
     }
 
+    /// A copy of the policy that also keeps to the `maxBulkRequestLength` of a service's
+    /// service info (a `dict` or JSON text), if it has one.
     fn with_service_info(&self, service_info: &Bound<'_, PyAny>) -> PyResult<Self> {
         let raw = to_json(service_info, "service info")?;
         let inner = self
@@ -73,7 +80,7 @@ impl PyBulkPolicy {
         self.inner.chunk_size
     }
 
-    /// The service's most IDs per request, if known, it lowers `chunk_size`.
+    /// The service's most IDs per request, if known; it lowers `chunk_size`.
     #[getter]
     fn advertised_limit(&self) -> Option<usize> {
         self.inner.advertised_limit
@@ -91,7 +98,7 @@ impl PyBulkPolicy {
         self.inner.max_requests
     }
 
-    /// request rejection by server as too large (413) is halved.
+    /// How often a request that the server rejects as too large (413) is halved.
     #[getter]
     fn max_split_depth(&self) -> usize {
         self.inner.max_split_depth
@@ -103,7 +110,7 @@ impl PyBulkPolicy {
         self.inner.retry.max_attempts
     }
 
-    /// The delay before the first retry, in seconds, it doubles up to `max_delay`.
+    /// The delay before the first retry, in seconds; it doubles up to `max_delay`.
     #[getter]
     fn initial_delay(&self) -> f64 {
         self.inner.retry.initial_delay.as_secs_f64()
@@ -117,6 +124,9 @@ impl PyBulkPolicy {
 }
 
 /// The outcome for one requested ID (or ID pair) of a bulk call.
+///
+/// `repr()` shows counts only, as resolved access URLs and error texts may hold
+/// credentials.
 #[pyclass(name = "BulkOutcome", module = "ga4gh_sdk", subclass)]
 pub struct PyBulkOutcome {
     pub object_id: String,
@@ -130,14 +140,15 @@ pub struct PyBulkOutcome {
 }
 
 impl PyBulkOutcome {
-    /// Converts a lib outcome, checking each resolved entry against its model
+    /// Converts a lib outcome, checking each resolved entry against its model as
+    /// `get_bulk_objects` and `get_bulk_access_urls` do.
     pub(super) fn convert<T: IntoPy<PyObject>>(
         py: Python<'_>,
         key: BulkKey,
         outcome: ObjectOutcome<Value>,
         parse: impl Fn(Value) -> Result<T, String>,
     ) -> Self {
-        // Rebuilt with the entries that fit the model so that
+        // Rebuilt with the entries that fit the model (as placeholders), so that
         // `is_success` is the lib's own `ObjectOutcome::is_success`.
         let mut checked = ObjectOutcome {
             failure_codes: outcome.failure_codes,
@@ -184,13 +195,14 @@ impl PyBulkOutcome {
         self.object_id.clone()
     }
 
-    /// The access ID of the pair, for `get_bulk_access_urls()`, else `None`.
+    /// The access ID of the pair, for `get_bulk_access_urls()`; else `None`.
     #[getter]
     fn access_id(&self) -> Option<String> {
         self.access_id.clone()
     }
 
-    /// The `DrsObject`s or `BulkAccessURL`s that the server returned for the ID
+    /// The `DrsObject`s or `BulkAccessURL`s that the server returned for the ID; one, if all
+    /// went well.
     #[getter]
     fn resolved(&self, py: Python<'_>) -> Vec<PyObject> {
         self.resolved
@@ -241,7 +253,8 @@ impl PyBulkOutcome {
     }
 }
 
-/// The result of a bulk call: one `BulkOutcome` per distinct requested ID
+/// The result of a bulk call: one `BulkOutcome` per distinct requested ID (or ID pair),
+/// sorted by ID, and the problems with the server's answers that belong to no ID.
 #[pyclass(name = "BulkReport", module = "ga4gh_sdk", subclass)]
 pub struct PyBulkReport {
     pub outcomes: Vec<Py<PyBulkOutcome>>,

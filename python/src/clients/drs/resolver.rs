@@ -1,4 +1,7 @@
 //! `DrsResolver` and `AccessPlan`: plan access to the objects of `drs://` URIs.
+
+// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
+// clippy reports at every method that returns one, as in `tes.rs`.
 #![allow(clippy::useless_conversion)]
 
 use super::helpers::{budget, count, plan_error, require_attempts};
@@ -14,7 +17,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 use serde_json::Value;
 
-
+/// How to fetch a DRS object's bytes: an access method, its URL and its headers.
+///
+/// The URL and headers may hold credentials, so `repr()` shows only the URL's origin.
 #[pyclass(name = "AccessPlan", module = "ga4gh_sdk", subclass)]
 pub struct PyAccessPlan {
     pub inner: AccessPlan,
@@ -43,7 +48,8 @@ impl PyAccessPlan {
         self.inner.url.to_string()
     }
 
-    /// The headers to send with a request to `url`, as `(name, value)` pairs
+    /// The headers to send with a request to `url`, as `(name, value)` pairs (unlike the
+    /// `"Name: value"` strings of `AccessURL`).
     #[getter]
     fn headers(&self) -> Vec<(String, String)> {
         self.inner
@@ -89,6 +95,10 @@ pub(super) fn parse_access_type(name: &str) -> PyResult<Type> {
 }
 
 /// Turns hostname-based DRS URIs into `AccessPlan`s.
+///
+/// By default, a URI's host is asked anonymously at `https://<host>/ga4gh/drs/v1`.
+/// `with_service()` maps a host to a `Transport` with its own API root and settings;
+/// settings are never sent to other hosts. It never downloads object bytes.
 #[pyclass(name = "DrsResolver", module = "ga4gh_sdk", subclass)]
 pub struct PyDrsResolver {
     pub inner: DrsResolver,
@@ -155,6 +165,10 @@ impl PyDrsResolver {
 
     /// Asks once for the object of `uri` and, if needed, its access URL. Returns an
     /// `AccessPlan`, or a `PendingResolution` if the server is still preparing an answer.
+    ///
+    /// `protocols` and `regions` list the access method types and regions to choose from,
+    /// in order of preference; `method_index` picks one of the object's access methods
+    /// instead.
     #[pyo3(signature = (uri, protocols=None, regions=None, method_index=None, timeout=60.0))]
     pub fn access_plan_once(
         &self,
@@ -180,7 +194,9 @@ impl PyDrsResolver {
         })
     }
 
-    /// while server asks wait while it prepares an answer
+    /// Like `access_plan_once()`, but waits as the server asks while it prepares an
+    /// answer. Gives up after `max_attempts` requests per step or `timeout` seconds in
+    /// all, with `RuntimeError`.
     #[pyo3(signature = (
         uri, protocols=None, regions=None, method_index=None, timeout=60.0, max_attempts=5
     ))]

@@ -1,4 +1,7 @@
 //! A hostname-based DRS URI, such as `drs://drs.example.org/object-id`.
+
+// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
+// clippy reports at every method that returns one, as in `tes.rs`.
 #![allow(clippy::useless_conversion)]
 
 use crate::utils::convert::check_extra_args;
@@ -7,14 +10,14 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 
-
+/// A hostname-based DRS URI, such as `drs://drs.example.org/object-id`.
 #[pyclass(name = "DrsUri", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyDrsUri {
     pub inner: DrsUri,
 }
 
-/// Malformed DRS URI raise `ValueError`.
+/// Parses a DRS URI; unsupported or malformed ones raise `ValueError`.
 pub(super) fn parse_uri(uri: &str) -> PyResult<DrsUri> {
     DrsUri::parse(uri).map_err(|error| PyValueError::new_err(format!("Invalid DRS URI: {error}")))
 }
@@ -49,7 +52,7 @@ impl PyDrsUri {
         self.inner.object_id.clone()
     }
 
-    /// URI implies the API root, `https://<authority>/ga4gh/drs/v1`.
+    /// The API root that the URI implies, `https://<authority>/ga4gh/drs/v1`.
     fn default_api_root(&self) -> String {
         self.inner.default_api_root().to_string()
     }

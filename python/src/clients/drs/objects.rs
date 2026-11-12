@@ -1,6 +1,8 @@
 //! Results that keep the JSON the server sent: `DrsObject`, `AccessURL` and
 //! `BulkAccessURL`.
 
+// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
+// clippy reports at every method that returns one, as in `tes.rs`.
 #![allow(clippy::useless_conversion)]
 
 use super::helpers::{invalid_response, parse_model};
@@ -11,10 +13,15 @@ use pyo3::prelude::*;
 use serde_json::Value;
 
 /// A DRS object's metadata, as returned by the server.
+///
+/// `json()` and `to_dict()` return the object's JSON as received, including fields that the
+/// DRS models don't know.
 #[pyclass(name = "DrsObject", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyDrsObject {
+    /// The object parsed into the DRS model; derived from `raw`.
     pub inner: DrsObject,
+    /// The object's JSON as received.
     pub raw: Value,
 }
 
@@ -118,10 +125,15 @@ impl PyDrsObject {
 }
 
 /// An access URL of a DRS object, as returned by the server.
+///
+/// The URL and headers may hold credentials, such as a signature or a bearer token, so
+/// `repr()` doesn't show them.
 #[pyclass(name = "AccessURL", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyAccessURL {
+    /// The access URL parsed into the DRS model; derived from `raw`.
     pub inner: AccessUrl,
+    /// The access URL's JSON as received.
     pub raw: Value,
 }
 
@@ -166,10 +178,14 @@ impl PyAccessURL {
 }
 
 /// An access URL from `DRS.get_bulk_access_urls()`, with the IDs it belongs to.
+///
+/// Like `AccessURL`, `repr()` doesn't show the URL or headers.
 #[pyclass(name = "BulkAccessURL", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyBulkAccessURL {
+    /// The access URL parsed into the DRS model; derived from `raw`.
     pub inner: BulkAccessUrl,
+    /// The entry's JSON as received.
     pub raw: Value,
 }
 

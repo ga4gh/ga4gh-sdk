@@ -1,11 +1,11 @@
-//! Reading JSON results classes keep, and reporting responses that don't fit.
+//! Reading the JSON that result classes keep, and errors for responses that don't fit.
 
 use crate::utils::convert::to_python;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde_json::Value;
 
-/// A field of a JSON object as a Python object
+/// A field of a JSON object as a Python object, or `None` if it is missing or `null`.
 pub fn field(py: Python<'_>, raw: &Value, key: &str) -> PyResult<Option<PyObject>> {
     match raw.get(key) {
         None | Some(Value::Null) => Ok(None),

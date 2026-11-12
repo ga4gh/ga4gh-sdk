@@ -1,4 +1,7 @@
 //! `DRS`: the client for one DRS service.
+
+// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
+// clippy reports at every method that returns one, as in `tes.rs`.
 #![allow(clippy::useless_conversion)]
 
 use super::bulk::{access_pairs, PyBulkPolicy, PyBulkReport};
@@ -20,13 +23,16 @@ use pyo3::types::{PyDict, PyTuple, PyType};
 use serde_json::Value;
 
 /// A DRS client. Subclass it to add endpoints, using `self.transport`.
-
+///
+/// The public `inner` preserves the Rust extension API and is safe to share
+/// between Python threads while synchronous requests release the GIL.
 #[pyclass(name = "DRS", module = "ga4gh_sdk", subclass)]
 pub struct PyDRS {
     pub inner: DRS,
 }
 
 impl PyDRS {
+    /// Build a DRS client for Rust extension crates while releasing the GIL during discovery.
     pub fn new(config: &PyConfiguration) -> PyResult<Self> {
         Python::with_gil(|py| Self::new_with_gil(py, config))
     }
@@ -39,7 +45,7 @@ impl PyDRS {
         })
     }
 
-    /// Sends one request for `endpoint`, a pending answer is not an error.
+    /// Sends one request for `endpoint`; a pending answer is not an error.
     fn once(&self, py: Python<'_>, endpoint: String, what: &str) -> PyResult<Resolution<String>> {
         let reference = self.inner.resolution_reference(endpoint);
         io(py, |rt| {
@@ -48,7 +54,7 @@ impl PyDRS {
         })
     }
 
-    /// Sends one request for `endpoint`, a pending answer raises `RuntimeError`.
+    /// Sends one request for `endpoint`; a pending answer raises `RuntimeError`.
     fn ready(&self, py: Python<'_>, endpoint: String, what: &str) -> PyResult<Value> {
         match self.once(py, endpoint, what)? {
             Resolution::Ready(body) => parse_body(&body),
@@ -123,7 +129,7 @@ impl PyDRS {
                 })
                 .map_err(|error| error.to_string()))
         })?;
-        // The bulk calls report request failures per ID, an error means invalid input.
+        // The bulk calls report request failures per ID; an error means invalid input.
         answer.map_err(|error| PyValueError::new_err(format!("Invalid bulk request: {error}")))
     }
 }
@@ -161,7 +167,7 @@ impl PyDRS {
 
     /// Gets an object's metadata as a `DrsObject`.
     ///
-    /// If the server is still preparing the object, this raises `RuntimeError`, use
+    /// If the server is still preparing the object, this raises `RuntimeError`; use
     /// `get_object_once()` or `resolve_object()` to handle that case.
     pub fn get_object(&self, py: Python<'_>, object_id: &str) -> PyResult<PyDrsObject> {
         let raw = self.ready(py, object_endpoint(object_id)?, "DRS object")?;
@@ -169,6 +175,7 @@ impl PyDRS {
     }
 
     /// Gets the object's complete JSON as a `dict`, without model validation.
+    /// This also accepts provider extensions such as `created_time: null`.
     pub fn get_object_raw(&self, py: Python<'_>, object_id: &str) -> PyResult<PyObject> {
         let raw = self.ready(py, object_endpoint(object_id)?, "DRS object")?;
         response_object(py, &raw)
@@ -182,6 +189,8 @@ impl PyDRS {
     }
 
     /// Gets an object, waiting as the server asks while it prepares the object.
+    ///
+    /// Gives up after `max_attempts` requests or `timeout` seconds, with `RuntimeError`.
     #[pyo3(signature = (object_id, timeout=60.0, max_attempts=5))]
     pub fn resolve_object(
         &self,
@@ -197,6 +206,9 @@ impl PyDRS {
 
     /// Gets an access URL of an object as an `AccessURL`. `access_id` is the `access_id` of
     /// one of the object's access methods.
+    ///
+    /// If the server is still preparing the URL, this raises `RuntimeError`; use
+    /// `get_access_url_once()` or `resolve_access_url()` to handle that case.
     pub fn get_access_url(
         &self,
         py: Python<'_>,
@@ -231,6 +243,8 @@ impl PyDRS {
     }
 
     /// Gets an access URL, waiting as the server asks while it prepares the URL.
+    ///
+    /// Gives up after `max_attempts` requests or `timeout` seconds, with `RuntimeError`.
     #[pyo3(signature = (object_id, access_id, timeout=60.0, max_attempts=5))]
     pub fn resolve_access_url(
         &self,
@@ -246,6 +260,10 @@ impl PyDRS {
     }
 
     /// Gets the metadata of several objects with `POST objects` (DRS 1.4).
+    ///
+    /// `ids` is an iterable of object IDs; repeated IDs are asked for once. Returns a
+    /// `BulkReport` whose outcomes hold `DrsObject`s. Failures of single IDs or requests
+    /// are in the outcomes; invalid IDs or policies raise `ValueError`.
     #[pyo3(signature = (ids, passports=None, policy=None, timeout=60.0))]
     pub fn get_bulk_objects(
         &self,
@@ -268,6 +286,7 @@ impl PyDRS {
     }
 
     /// Like `get_bulk_objects()`, but each resolved entry is a complete JSON `dict`.
+    /// The library still correlates entries by ID and records reply dialects.
     #[pyo3(signature = (ids, passports=None, policy=None, timeout=60.0))]
     pub fn get_bulk_objects_raw(
         &self,
@@ -290,6 +309,10 @@ impl PyDRS {
     }
 
     /// Gets access URLs of several objects with `POST objects/access` (DRS 1.4).
+    ///
+    /// `pairs` maps object IDs to access IDs, or is an iterable of `(object_id, access_id)`
+    /// pairs; each object may have one access ID per call. Returns a `BulkReport` whose
+    /// outcomes hold `BulkAccessURL`s.
     #[pyo3(signature = (pairs, passports=None, policy=None, timeout=60.0))]
     pub fn get_bulk_access_urls(
         &self,

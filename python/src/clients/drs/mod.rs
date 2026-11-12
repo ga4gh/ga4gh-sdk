@@ -1,10 +1,11 @@
-//! DRS client python binding.
+//! Python bindings of the DRS client.
 //!
-//! The DRS service reads objects and access URLs, one at a time
-//! or in bulk, and can wait for objects that the server is still preparing.
-//! Consisted of:
-//! - `DrsResolver` - turns hostname-based `drs://` URIs into access plans,
-//! - `DrsObject` / `AccessURL` / `BulkAccessURL` - results that keep the JSON they were built from.
+//! `DRS` is the client for one DRS service: it reads objects and access URLs, one at a time
+//! or in bulk, and can wait for objects that the server is still preparing. `DrsResolver`
+//! turns hostname-based `drs://` URIs into access plans. `DrsObject`, `AccessURL` and
+//! `BulkAccessURL` are results that keep the JSON they were built from.
+//!
+//! The modules:
 //!
 //! - `client`: `DRS`, the client.
 //! - `objects`: `DrsObject`, `AccessURL` and `BulkAccessURL`.

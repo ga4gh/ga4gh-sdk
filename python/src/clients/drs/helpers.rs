@@ -28,6 +28,9 @@ pub(super) fn parse_model<T: DeserializeOwned>(raw: &Value) -> Result<T, String>
 
 /// Describes a model mismatch without quoting the server's values, which may be
 /// credentials such as a signed URL or a bearer token in an access URL.
+///
+/// serde_json has no structured access to the field of an error, so this relies on its
+/// message text; `test_invalid_responses_raise_runtime_error` pins it.
 pub(super) fn model_error(error: &serde_json::Error) -> String {
     let message = error.to_string();
     if message.starts_with("missing field") {
@@ -57,7 +60,8 @@ pub(super) fn plan_error(error: &(dyn std::error::Error + 'static)) -> String {
     error.to_string()
 }
 
-/// Converts a Python `int` to a count, negative values raise `ValueError`
+/// Converts a Python `int` to a count; negative values raise `ValueError`, not the
+/// `OverflowError` of a direct conversion.
 pub(super) fn count(value: i64, what: &str) -> PyResult<usize> {
     usize::try_from(value)
         .map_err(|_| PyValueError::new_err(format!("{what} must not be negative")))
@@ -102,6 +106,7 @@ pub(super) fn budget(timeout: f64) -> PyResult<Operation> {
     if duration.is_zero() {
         return Err(invalid());
     }
+    // `Operation::new` adds the budget to the current time, which must not overflow.
     if std::time::Instant::now().checked_add(duration).is_none() {
         return Err(PyValueError::new_err("timeout is too long"));
     }
@@ -125,7 +130,7 @@ pub(super) fn seconds(value: f64, what: &str) -> PyResult<Duration> {
     })
 }
 
-/// Collects the `str` items of an iterable, a `str` itself is not taken as one.
+/// Collects the `str` items of an iterable; a `str` itself is not taken as one.
 pub(super) fn strings(values: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<String>> {
     let error = || PyValueError::new_err(format!("{what} must be an iterable of str"));
     if values.is_instance_of::<PyString>() {

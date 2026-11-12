@@ -1,5 +1,7 @@
 //! `PendingResolution`: the server is still preparing an answer.
 
+// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
+// clippy reports at every method that returns one, as in `tes.rs`.
 #![allow(clippy::useless_conversion)]
 
 use super::helpers::parse_body;
@@ -8,7 +10,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use serde_json::Value;
 
-/// ask every `retry_after` seconds for objet or access URL from server
+/// The server is still preparing an object or access URL: ask again after `retry_after`
+/// seconds.
+///
+/// `api_root` and `endpoint` say what to ask for; they hold no credentials.
 #[pyclass(name = "PendingResolution", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyPendingResolution {
@@ -23,12 +28,14 @@ impl PyPendingResolution {
         self.inner.reference.api_root.clone()
     }
 
-    /// The endpoint to ask for bulk call, it is `objects` or `objects/access`
+    /// The endpoint to ask again, below `api_root`. For a bulk call, it is `objects` or
+    /// `objects/access`; call `get_bulk_objects()` or `get_bulk_access_urls()` again.
     #[getter]
     fn endpoint(&self) -> String {
         self.inner.reference.endpoint.clone()
     }
 
+    /// The seconds to wait before asking again (at least 1).
     #[getter]
     fn retry_after(&self) -> u64 {
         self.inner.retry_after_secs
