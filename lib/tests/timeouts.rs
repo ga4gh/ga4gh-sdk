@@ -329,7 +329,10 @@ async fn clients_accept_a_ready_transport() {
             }
             _ => {
                 let trs = TRS::with_transport(transport).await.unwrap();
-                assert_eq!(trs.config.user_agent.as_deref(), Some("custom agent"));
+                assert_eq!(
+                    trs.configuration().user_agent.as_deref(),
+                    Some("custom agent")
+                );
             }
         }
     }

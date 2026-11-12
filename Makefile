@@ -9,7 +9,7 @@ CARGO ?= cargo
 PRE_COMMIT ?= pre-commit
 
 # Generated OpenAPI models are left out of the coverage report (see AGENTS.md)
-COVERAGE_IGNORE ?= lib/src/clients/[^/]+/models/
+COVERAGE_IGNORE ?= lib/src/clients/[^/]+/(wire/[^/]+/)?models/
 COVERAGE_DIR ?= coverage
 
 .DEFAULT_GOAL := help

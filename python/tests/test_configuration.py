@@ -31,7 +31,6 @@ def test_built_in_sections_have_empty_extra(write_config):
             "TES": {
                 "base_path": "https://example.org/ga4gh/tes/v1",
                 "basic_auth": {"username": "alice", "password": "change-me"},
-                "oauth_access_token": "my-token",
             },
             "WES": {"base_path": "https://example.org/ga4gh/wes/v1"},
             "REGISTRY": {"base_path": "https://example.org/ga4gh/registry/v1"},
