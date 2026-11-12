@@ -111,7 +111,8 @@ jobs:
             elif [[ "$SUITE" == protes ]]; then
               paths=("${common[@]}" tests/run-protes-integration.sh tests/protes/
                 lib/src/clients/tes/ lib/src/clients/serviceinfo/ lib/src/clients/wait.rs
-                lib/src/utils/ lib/src/clients/mod.rs lib/src/lib.rs lib/tests/protes_tes.rs)
+                lib/src/utils/ lib/src/clients/mod.rs lib/src/lib.rs lib/tests/protes_tes.rs
+                cli/Cargo.toml cli/src/ cli/tests/protes_cli.rs)
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/

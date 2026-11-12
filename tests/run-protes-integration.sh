@@ -2,9 +2,10 @@
 # Integration suite of the TES client against proTES, a TES gateway that
 # requires access tokens, relaying tasks to Funnel (see tests/README.md).
 # Starts the services of tests/protes/compose.yaml, gets an access token of
-# the fake identity provider, runs `lib/tests/protes_tes.rs` and removes the
-# services again. Needs Docker with Compose, curl and the `funnel`
-# executable on PATH (or in FUNNEL_BIN), as for run-integration-tests.sh.
+# the fake identity provider, runs `lib/tests/protes_tes.rs` and
+# `cli/tests/protes_cli.rs` and removes the services again. Needs Docker
+# with Compose, curl and the `funnel` executable on PATH (or in
+# FUNNEL_BIN), as for run-integration-tests.sh.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -103,3 +104,5 @@ echo "proTES ready at $PROTES_TES_URL"
 cd "$repo_root"
 RUST_BACKTRACE=1 cargo test --locked -p ga4gh-lib --features protes_integration_tests \
   --test protes_tes -- --nocapture
+RUST_BACKTRACE=1 cargo test --locked -p ga4gh-cli --features protes_integration_tests \
+  --test protes_cli -- --nocapture

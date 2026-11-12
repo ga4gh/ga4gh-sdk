@@ -26,6 +26,9 @@ env_logger = "0.11.5"
 [features]
 # Runs the CLI against Starter Kit WES; see tests/README.md.
 wes_docker_integration_tests = []
+# Runs the `tes` commands against proTES with an access token; see
+# tests/README.md.
+protes_integration_tests = []
 # Runs the `tes` commands against Funnel; see tests/README.md.
 integration_tests = []
 

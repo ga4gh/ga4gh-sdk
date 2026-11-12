@@ -63,8 +63,21 @@ the identity provider and runs [`protes_tes.rs`](../lib/tests/protes_tes.rs):
 - requests without a token, or with an invalid one, get HTTP 401.
 
 The test passes the token as a default header of its own HTTP client, because
-the transport doesn't send the credentials of the configuration yet (#31). On
-exit, the script prints the service logs if a step failed and removes the
+the transport doesn't send the credentials of the configuration yet (#31).
+
+It then runs the CLI suite, [`protes_cli.rs`](../cli/tests/protes_cli.rs).
+It runs the `ga4gh-cli` binary with a temporary home directory whose config
+points to proTES and holds the access token as `oauth_access_token`, so the
+token reaches proTES from the CLI configuration only:
+
+- a task runs to completion with `tes create`, `tes status`, `tes get` and
+  `tes list` (with a tag filter);
+- a running task is canceled with `tes cancel`;
+- with a config without a token, `tes create`, `tes status`, `tes get`,
+  `tes list` and `tes cancel` (`status`, `get` and `cancel` on an existing
+  task of the test user) fail with a non-zero exit status, empty stdout, and HTTP 401 on stderr.
+
+On exit, the script prints the service logs if a step failed and removes the
 services and its temporary files.
 
 | Variable | Default | Meaning |
@@ -78,8 +91,8 @@ All images are pinned by digest. To update proTES, bump its image digest in
 the Compose file together with `protes_commit` and `fake_tes_sha256` in the
 script; the Docker CLI image of Funnel is `DOCKER_CLI_IMAGE` in the script.
 The [CI workflow](../.github/workflows/ci.yml) installs Funnel as for the
-Funnel suite and runs this suite (`Integration (protes)`) when TES, shared
-library, dependency or its own files change.
+Funnel suite and runs this suite (`Integration (protes)`) when TES, CLI,
+shared library, dependency or its own files change.
 
 ## Starter Kit WES
 
