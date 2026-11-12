@@ -392,7 +392,9 @@ or server errors; missing arguments use exit code 2. `--zip` never replaces
 an existing file, doesn't extract the archive, and downloads at most 64 MiB;
 the file appears under its name only when it is complete (until then, it is a
 hidden `.<name>.partial-<pid>` file in the same directory, which an interrupted
-download may leave behind).
+download may leave behind, so the name may be up to about 18 bytes shorter than
+the filesystem allows). On filesystems without hard links, such as FAT, the
+archive is written to the file directly.
 A tag must not be empty or contain a comma, because the registry receives all
 tags as one comma-separated value. Error messages and JSON
 output escape terminal control and bidirectional formatting characters.

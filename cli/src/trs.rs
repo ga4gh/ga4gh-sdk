@@ -238,8 +238,10 @@ struct NewFile {
 
 impl NewFile {
     fn create(target: &Path) -> Result<Self, Box<dyn Error>> {
+        // `file_name` ignores a trailing separator, which names a directory.
         let name = target
             .file_name()
+            .filter(|_| !target.as_os_str().to_string_lossy().ends_with(['/', '\\']))
             .ok_or_else(|| format!("{} is not a file path", target.display()))?;
         let mut temp_name = std::ffi::OsString::from(".");
         temp_name.push(name);
@@ -262,14 +264,37 @@ impl NewFile {
             .write_all(bytes)
             .and_then(|()| self.file.sync_all())
             .map_err(|error| format!("Can't write {}: {error}", self.temp.display()))?;
-        std::fs::hard_link(&self.temp, &self.target)
-            .map_err(|error| format!("Can't create {}: {error}", self.target.display()))?;
+        match std::fs::hard_link(&self.temp, &self.target) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(format!("Can't create {}: {error}", self.target.display()).into());
+            }
+            // Filesystems without hard links (e.g. FAT): write the target
+            // directly, still without replacing a file.
+            Err(_) => write_new(&self.target, bytes)?,
+        }
         Ok(format!(
             "Wrote {} bytes to {}\n",
             bytes.len(),
             printable(&self.target.display().to_string())
         ))
     }
+}
+
+// Creates `path`, which must not exist, with `bytes`; removes it again if
+// writing fails.
+fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("Can't create {}: {error}", path.display()))?;
+    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(format!("Can't write {}: {error}", path.display()).into());
+    }
+    Ok(())
 }
 
 impl Drop for NewFile {
@@ -463,9 +488,23 @@ mod tests {
     }
 
     #[test]
+    fn write_new_never_replaces_files() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let path = directory.path().join("direct.zip");
+        super::write_new(&path, b"PK one").unwrap();
+        let error = super::write_new(&path, b"PK two").unwrap_err().to_string();
+        assert!(error.contains("Can't create"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"PK one");
+    }
+
+    #[test]
     fn new_file_fails_early_for_unusable_paths() {
         let directory = tempfile::TempDir::new().unwrap();
-        for path in [directory.path().join("missing/workflow.zip"), "".into()] {
+        for path in [
+            directory.path().join("missing/workflow.zip"),
+            directory.path().join("out/"),
+            "".into(),
+        ] {
             assert!(NewFile::create(&path).is_err(), "{path:?}");
         }
     }
