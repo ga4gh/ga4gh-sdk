@@ -1,7 +1,7 @@
 # proTES downstream companion
 
-A standalone consumer of SDK transport with an explicitly configured bearer
-client and the proTES API
+A standalone consumer of SDK transport with explicit configured-auth opt-in
+for a caller-owned client and the proTES API
 at `55c4d1591cd3be883ad0b4fd2da01d49976414cb`. Proprietary endpoints and gateway
 choices stay here, outside standard GA4GH clients. Tracks
 [ecosystem #98](https://github.com/elixir-cloud-aai/generic-issues/issues/98).
@@ -27,8 +27,8 @@ transport headers and the escaped `tasks/{id}/provenance` endpoint. HTTP errors
 retain their status/body: 403 may cover a non-owned or unknown task; 404 can mean
 absent provenance or another documented absent case. The consumer does not guess
 which case occurred. Set `oauth_access_token` in that config section for CLI
-bearer authentication; the companion injects one authenticated reqwest client
-into shared SDK transport for discovery, provenance and explicit create. It
+bearer authentication; the companion explicitly enables SDK-configured auth
+for its caller-owned reqwest client during discovery, provenance and explicit create. It
 does not implement login/refresh or silently treat unsupported auth as anonymous.
 The configured connect, request, discovery and submission limits also apply.
 Library callers can inject another authenticated transport. Inspection never

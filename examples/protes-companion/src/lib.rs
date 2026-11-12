@@ -221,33 +221,20 @@ pub fn prepare_rerun(original: &Value, choices: Choices) -> Result<RerunPlan, Co
     })
 }
 
-/// Configure the shared transport with a caller's current OAuth bearer token.
-/// Main SDK #31 does not yet apply Configuration authentication fields itself.
-/// Library callers can always inject their own authenticated Transport into fetch.
+/// Configure a caller-owned client with explicit SDK bearer authentication.
+/// Library callers can inject another authenticated Transport into fetch.
 pub fn configured_transport(
     config: &ga4gh_sdk::utils::configuration::Configuration,
 ) -> Result<Transport, CompanionError> {
-    use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
     if config.basic_auth.is_some() || config.api_key.is_some() {
         return Err("CLI supports OAuth bearer authentication; inject another authenticated Transport through the library".into());
     }
-    let mut headers = HeaderMap::new();
-    if let Some(token) = config
-        .oauth_access_token
-        .as_ref()
-        .or(config.bearer_access_token.as_ref())
-    {
-        let mut value = HeaderValue::from_str(&format!("Bearer {token}"))?;
-        value.set_sensitive(true);
-        headers.insert(AUTHORIZATION, value);
-    }
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .default_headers(headers)
         .connect_timeout(config.timeouts.connect)
         .timeout(config.timeouts.request)
         .build()?;
-    Ok(Transport::with_client(config, client))
+    Ok(Transport::with_client_and_configured_auth(config, client))
 }
 /// Compose an authenticated standard TES client without a second anonymous discovery.
 pub async fn tes_client(
