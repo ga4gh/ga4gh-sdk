@@ -23,8 +23,10 @@
 //! ```
 //!
 //! A binary with its own name, version, configuration file, profile
-//! variable or token variable describes them in a [`CliContext`] and uses its methods in place
-//! of [`command`], [`dispatch`] and [`dispatch_to`]. [`CommandOutput`] and
+//! variable or token variable describes them in a [`CliContext`] and uses
+//! its methods in place of [`command`], [`dispatch`] and [`dispatch_to`].
+//! The command tree has the global option `--profile`, which selects a
+//! profile of the configuration file. [`CommandOutput`] and
 //! [`printable`] give its own commands the output and exit codes of the
 //! built-in ones.
 
