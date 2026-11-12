@@ -264,10 +264,14 @@ impl TES {
         })?;
         let operation =
             crate::utils::operation::Operation::new(self.transport.config.timeouts.submission);
-        let request = self
-            .transport
-            .authorized_request_builder(reqwest::Method::POST, "tasks")
-            .await?
+        // The token provider runs within the operation; running out of time
+        // there is not an ambiguous submission, as nothing was sent.
+        let request = operation
+            .run(
+                self.transport
+                    .authorized_request_builder(reqwest::Method::POST, "tasks"),
+            )
+            .await??
             .json(&task);
         let response_body = self
             .transport

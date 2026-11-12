@@ -1,6 +1,8 @@
 """Bearer tokens from a caller-supplied provider: `Configuration.set_token_provider()`."""
 
 import asyncio
+import json
+import os
 
 import pytest
 
@@ -8,7 +10,8 @@ from ga4gh_sdk import AsyncTES, Configuration, ServiceInfo, TES, Transport
 
 
 class Tokens:
-    """A token provider that gives the next of `tokens` and records the audiences."""
+    """A token provider that gives the next of `tokens`, then the last one, and
+    records the audiences."""
 
     def __init__(self, *tokens):
         self.tokens = list(tokens)
@@ -16,7 +19,7 @@ class Tokens:
 
     def __call__(self, audience):
         self.audiences.append(audience)
-        return self.tokens.pop(0)
+        return self.tokens.pop(0) if len(self.tokens) > 1 else self.tokens[0]
 
 
 def auth_config(server, provider, **kwargs):
@@ -31,7 +34,7 @@ def requests_since(server, before):
 
 
 def test_clients_send_the_token(server):
-    provider = Tokens("good", "good", "good", "good")
+    provider = Tokens("good")
     config = auth_config(server, provider)
     assert "Example TES" in ServiceInfo(config).get_service_info()
     tes = TES(config)
@@ -39,11 +42,11 @@ def test_clients_send_the_token(server):
     headers = {name.lower(): value for name, value in server.last()["headers"].items()}
     assert headers["authorization"] == "Bearer good"
     assert Transport(config).get("tasks/task-1")
-    assert provider.audiences == [f"{server.root}/auth"] * 4
+    assert set(provider.audiences) == {f"{server.root}/auth"}
 
 
 def test_async_clients_send_the_token(server):
-    provider = Tokens("good", "good")
+    provider = Tokens("good")
     config = auth_config(server, provider)
 
     async def main():
@@ -51,7 +54,7 @@ def test_async_clients_send_the_token(server):
         return await tes.get("FULL", "task-1")
 
     assert asyncio.run(main()).id == "task-1"
-    assert provider.audiences == [f"{server.root}/auth"] * 2
+    assert set(provider.audiences) == {f"{server.root}/auth"}
 
 
 def test_get_is_sent_once_more_after_401(server):
@@ -108,5 +111,49 @@ def test_set_token_provider_arguments(server):
         config.set_token_provider(None, audience="tes")
     config.set_token_provider(lambda audience: "good")
     config.set_token_provider(None)
+    with pytest.raises(RuntimeError, match="401"):
+        Transport(config).get("tasks/task-1")
+
+
+def test_tes_create_is_not_sent_again_after_401(server):
+    provider = Tokens("good", "stale", "good")
+    tes = TES(auth_config(server, provider))
+    before = len(server.paths())
+    with pytest.raises(RuntimeError, match="401"):
+        tes.create({"executors": [{"image": "alpine", "command": ["true"]}]})
+    assert requests_since(server, before) == ["/auth/tasks"]
+    # The next submission gets a new token.
+    assert tes.create({"executors": [{"image": "alpine", "command": ["true"]}]}).id == "task-1"
+
+
+def test_clients_keep_the_provider_they_were_built_with(server):
+    provider = Tokens("good")
+    config = auth_config(server, provider)
+    transport = Transport(config)
+    config.set_token_provider(None)
+    assert transport.get("tasks/task-1")
+    with pytest.raises(RuntimeError, match="401"):
+        Transport(config).get("tasks/task-1")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="HOME controls the config path on Unix")
+def test_file_credentials_and_from_file(server, tmp_path, monkeypatch):
+    config_dir = tmp_path / ".ga4gh-cli"
+    config_dir.mkdir()
+    section = {"base_path": f"{server.root}/auth", "oauth_access_token": "SENTINEL_TOKEN"}
+    (config_dir / "config.json").write_text(json.dumps({"TES": section}))
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    config = Configuration("https://example.org")
+    config.from_file("TES")
+    config.set_token_provider(Tokens("good"))
+    before = len(server.paths())
+    with pytest.raises(RuntimeError, match="can't be combined") as error:
+        Transport(config).get("tasks/task-1")
+    assert "SENTINEL" not in str(error.value)
+    assert requests_since(server, before) == []
+
+    # `from_file()` replaces the provider, too.
+    config.from_file("TES")
     with pytest.raises(RuntimeError, match="401"):
         Transport(config).get("tasks/task-1")

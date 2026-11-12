@@ -18,14 +18,19 @@
 //!   audience until that instant, by all transports built from clones of the
 //!   configuration. Return an earlier instant than the token's expiry to leave
 //!   a margin.
-//! - If the service answers `401 Unauthorized` to a replayable request (a `GET`
-//!   or `HEAD`, or a request sent with
-//!   [`ReplaySafety::ReadOnly`](crate::utils::operation::ReplaySafety::ReadOnly)),
-//!   the transport drops the reused token, asks the provider once more with
-//!   [`TokenRequest::after_rejection`] set, and sends the request once more.
+//! - If the service answers `401 Unauthorized`, the transport drops the reused
+//!   token, and asks the provider with [`TokenRequest::after_rejection`] set
+//!   the next time. A replayable request is sent once more right away with the
+//!   new token: a `GET` or `HEAD` of the transport's helpers and pages, or a
+//!   request of
+//!   [`Transport::request_with_policy`](crate::utils::transport::Transport::request_with_policy)
+//!   with [`ReplaySafety::ReadOnly`](crate::utils::operation::ReplaySafety::ReadOnly).
 //!   Other requests, such as task and run submissions, are never sent twice;
 //!   their `401` comes back as an
 //!   [`HttpError`](crate::utils::transport::HttpError).
+//! - Asking the provider counts towards the time limit of discovery, of a page
+//!   and of a submission. Running out of time there is not an ambiguous
+//!   submission, as nothing was sent.
 //! - A provider is one credential source on its own: it can't be combined with
 //!   `basic_auth`, `oauth_access_token`, `bearer_access_token`, `api_key` or a
 //!   user or password in `base_path`. Such a combination fails with an
@@ -35,6 +40,12 @@
 //!   [`Transport::with_client`](crate::utils::transport::Transport::with_client)
 //!   applies to that client's requests too, and its header takes the place of an
 //!   `Authorization` default header of the client.
+//! - [`Transport::request_builder`](crate::utils::transport::Transport::request_builder)
+//!   adds no token, so a request built with it and sent with
+//!   [`Transport::send_once`](crate::utils::transport::Transport::send_once)
+//!   carries none; use
+//!   [`Transport::authorized_request_builder`](crate::utils::transport::Transport::authorized_request_builder).
+//!   Fetches of descriptors and result artifacts from other URLs never carry it.
 //! - A provider failure is a [`TokenProviderError`], not an HTTP error, and
 //!   nothing is sent. Token values never appear in `Debug` output, errors or logs
 //!   of the SDK. The text of a provider's own error is shown as the provider wrote
@@ -139,13 +150,31 @@ pub trait TokenProvider: Send + Sync {
     async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError>;
 }
 
+impl AccessToken {
+    /// Whether the transport may still reuse the token at `now`.
+    fn is_reusable(&self, now: Instant) -> bool {
+        self.reusable_until.is_some_and(|until| now < until)
+    }
+}
+
+/// The reused token of one audience.
+#[derive(Default)]
+struct Slot {
+    token: Option<AccessToken>,
+    /// Counts rejections, so that a provider call that started before one
+    /// doesn't put back the token that was rejected.
+    generation: u64,
+    /// Whether the service rejected a token since the provider was last asked.
+    rejected: bool,
+}
+
 /// A [`TokenProvider`] with the tokens it allowed to reuse, per audience.
 ///
 /// Clones share the provider and the reused tokens.
 #[derive(Clone)]
 pub struct TokenSource {
     provider: Arc<dyn TokenProvider>,
-    reused: Arc<Mutex<HashMap<String, AccessToken>>>,
+    reused: Arc<Mutex<HashMap<String, Slot>>>,
 }
 
 impl fmt::Debug for TokenSource {
@@ -163,6 +192,23 @@ impl TokenSource {
         }
     }
 
+    fn slots(&self) -> std::sync::MutexGuard<'_, HashMap<String, Slot>> {
+        // A poisoned lock only means that another thread panicked while it held
+        // it; the map stays usable.
+        self.reused.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Drops the reused token of `audience` after the service rejected a token,
+    /// so that the next request asks the provider, with
+    /// [`TokenRequest::after_rejection`] set.
+    pub(crate) fn reject(&self, audience: &str) {
+        let mut slots = self.slots();
+        let slot = slots.entry(audience.to_owned()).or_default();
+        slot.token = None;
+        slot.generation += 1;
+        slot.rejected = true;
+    }
+
     /// A token for `audience`: a reusable one, unless `after_rejection`, or a
     /// new one from the provider.
     pub(crate) async fn token(
@@ -170,42 +216,48 @@ impl TokenSource {
         audience: &str,
         after_rejection: bool,
     ) -> Result<AccessToken, TokenProviderError> {
-        {
-            // A poisoned lock only means that another thread panicked while it held
-            // it; the map stays usable.
-            let mut reused = self.reused.lock().unwrap_or_else(|e| e.into_inner());
-            if after_rejection {
-                reused.remove(audience);
-            } else if let Some(token) = reused.get(audience) {
-                if token
-                    .reusable_until
-                    .is_some_and(|until| Instant::now() < until)
-                {
-                    return Ok(token.clone());
-                }
-                reused.remove(audience);
-            }
+        if after_rejection {
+            self.reject(audience);
         }
+        let (generation, after_rejection) = {
+            let mut slots = self.slots();
+            let slot = slots.entry(audience.to_owned()).or_default();
+            if let Some(token) = slot
+                .token
+                .as_ref()
+                .filter(|t| t.is_reusable(Instant::now()))
+            {
+                return Ok(token.clone());
+            }
+            slot.token = None;
+            (slot.generation, std::mem::take(&mut slot.rejected))
+        };
         let request = TokenRequest {
             audience,
             after_rejection,
         };
-        let token =
-            self.provider
-                .token(&request)
-                .await
-                .map_err(|source| TokenProviderError::Failed {
+        let token = match self.provider.token(&request).await {
+            Ok(token) => token,
+            Err(source) => {
+                // The next call asks after the rejection again.
+                if after_rejection {
+                    self.slots()
+                        .entry(audience.to_owned())
+                        .or_default()
+                        .rejected = true;
+                }
+                return Err(TokenProviderError::Failed {
                     audience: audience.to_owned(),
                     source,
-                })?;
-        if token
-            .reusable_until
-            .is_some_and(|until| Instant::now() < until)
-        {
-            self.reused
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(audience.to_owned(), token.clone());
+                });
+            }
+        };
+        if token.is_reusable(Instant::now()) {
+            let mut slots = self.slots();
+            let slot = slots.entry(audience.to_owned()).or_default();
+            if slot.generation == generation {
+                slot.token = Some(token.clone());
+            }
         }
         Ok(token)
     }
@@ -254,6 +306,7 @@ impl Error for TokenProviderError {
 
 /// A token provider is configured together with other credentials; nothing was sent.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct AuthConflictError {
     /// The other credentials, by field name, such as `oauth_access_token`.
     pub sources: Vec<&'static str>,
@@ -341,6 +394,31 @@ mod tests {
         source.token("a", false).await.unwrap();
         source.token("a", false).await.unwrap();
         assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    }
+
+    /// Records `after_rejection` of each call.
+    #[derive(Default)]
+    struct Rejections(Mutex<Vec<bool>>);
+
+    #[async_trait]
+    impl TokenProvider for Rejections {
+        async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+            let mut calls = self.0.lock().unwrap();
+            calls.push(request.after_rejection);
+            let token = AccessToken::new(format!("token-{}", calls.len()));
+            Ok(token.reusable_until(Instant::now() + Duration::from_secs(60)))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_reject_asks_again_after_the_rejection() {
+        let provider = Arc::new(Rejections::default());
+        let source = TokenSource::new(provider.clone());
+        assert_eq!(source.token("a", false).await.unwrap().secret(), "token-1");
+        source.reject("a");
+        assert_eq!(source.token("a", false).await.unwrap().secret(), "token-2");
+        assert_eq!(source.token("a", false).await.unwrap().secret(), "token-2");
+        assert_eq!(*provider.0.lock().unwrap(), [false, true]);
     }
 
     #[test]

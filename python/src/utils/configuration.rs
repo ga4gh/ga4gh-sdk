@@ -1,6 +1,6 @@
 use crate::utils::convert::{check_extra_args, to_python};
 use crate::ServiceSection;
-use ga4gh_sdk::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest};
+use ga4gh_sdk::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest, TokenSource};
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::timeouts::Timeouts;
 use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyTypeError, PyValueError};
@@ -154,12 +154,10 @@ impl PyConfiguration {
         if !provider.is_callable() {
             return Err(PyTypeError::new_err("provider must be callable or None"));
         }
-        let mut config = self
-            .inner
-            .clone()
-            .with_token_provider(PyTokenProvider(Arc::new(provider.unbind())));
-        config.token_audience = audience;
-        self.inner = config;
+        let provider: Arc<dyn TokenProvider> =
+            Arc::new(PyTokenProvider(Arc::new(provider.unbind())));
+        self.inner.token_provider = Some(TokenSource::new(provider));
+        self.inner.token_audience = audience;
         Ok(())
     }
 

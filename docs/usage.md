@@ -242,6 +242,7 @@ only asks it.
 use ga4gh_sdk::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest};
 use ga4gh_sdk::utils::configuration::Configuration;
 use std::time::{Duration, Instant};
+use url::Url;
 
 struct MyProvider;
 
@@ -255,6 +256,7 @@ impl TokenProvider for MyProvider {
     }
 }
 
+// In a function that returns a `Result`:
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_token_provider(MyProvider)
     // Optional: the audience to ask for; without it, it is the API root.
@@ -272,11 +274,17 @@ contract:
 - **Reuse.** A token returned with `reusable_until(instant)` is reused for its
   audience until that instant, by every transport and client built from clones
   of the configuration. Without it, the provider is asked for every request.
-- **`401 Unauthorized`.** A replayable request (`GET` or `HEAD`, or a request
-  sent with `ReplaySafety::ReadOnly`) is sent once more with a new token: the
-  SDK drops the reused token and asks the provider again with
-  `TokenRequest::after_rejection` set. Other requests, such as task and run
-  submissions, are never sent twice; their `401` comes back as an `HttpError`.
+- **`401 Unauthorized`.** The SDK drops the reused token and asks the
+  provider with `TokenRequest::after_rejection` set the next time. A
+  replayable request is sent once more right away with the new token: a `GET`
+  or `HEAD` of `Transport`'s helpers, discovery and pages, or a request of
+  `Transport::request_with_policy` with `ReplaySafety::ReadOnly`. Other
+  requests, such as task and run submissions, are never sent twice; their
+  `401` comes back as an `HttpError`.
+- **Time limits.** Asking the provider counts towards the time limit of
+  discovery, of a page and of a submission (see [Timeouts](#timeouts)).
+  Running out of time there is an `OperationError`, not an
+  `AmbiguousSubmissionError`, as nothing was sent.
 - **One credential source.** A token provider can't be combined with
   `basic_auth`, `oauth_access_token`, `bearer_access_token`, `api_key` or a
   user or password in `base_path`; requests then fail with an
@@ -291,9 +299,12 @@ contract:
   `TokenProviderError` and nothing is sent. The SDK never shows token values
   in `Debug` output, errors or logs. The text of the provider's own error is
   shown as it is, so keep secrets out of it.
-- **Your own requests.** `Transport::request_builder` doesn't add the token;
-  use `Transport::authorized_request_builder` (`async`) for requests that you
-  build yourself. They are sent once, as you send them.
+- **Your own requests.** `Transport::request_builder` doesn't add the token,
+  so a request built with it and sent with `Transport::send_once` carries
+  none; use `Transport::authorized_request_builder` (`async`) for requests
+  that you build yourself. They are sent once, as you send them. Fetches of
+  workflow descriptors and result artifacts from other URLs never carry the
+  token.
 
 Python sets a callable with `Configuration.set_token_provider()`; see the
 [Python README](../python/README.md#token-providers). The CLI doesn't use

@@ -194,7 +194,8 @@ impl Pager {
             ServiceKind::Tes => "tasks",
             ServiceKind::Wes => "runs",
         };
-        // An unusable path is a failure of this page before any request.
+        // An unusable path is a failure of this page before any request is
+        // counted; `send_authorized` checks it again when it builds the request.
         self.transport.endpoint(path).map_err(|e| self.failure(e))?;
         self.requests += 1;
         let body = self
@@ -203,9 +204,13 @@ impl Pager {
             .run(async {
                 let response = self
                     .transport
-                    .send_authorized(reqwest::Method::GET, path, true, |request| {
-                        Ok(request.query(&pairs))
-                    })
+                    .send_authorized(
+                        reqwest::Method::GET,
+                        path,
+                        true,
+                        |request| Ok(request.query(&pairs)),
+                        None,
+                    )
                     .await?;
                 response_text(response, self.options.limits).await
             })

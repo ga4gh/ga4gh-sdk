@@ -206,12 +206,15 @@ tes = TES(config)
 - Set the provider after `from_file()`, which replaces all settings. Clients and
   `Transport` take it when they are built; `set_token_provider(None)` removes it
   for those built later.
-- After `401 Unauthorized`, a `GET` request is sent once more with a new token from
-  the provider; submissions such as `TES.create()` and `WES.run()` are never sent
-  twice. A reused token is dropped after `401`.
+- After `401 Unauthorized`, the SDK drops a reused token and asks the provider
+  again; a `GET` request is sent once more right away with the new token, while
+  submissions such as `TES.create()` and `WES.run()` are never sent twice. The
+  provider isn't told about the rejection, so don't let it cache tokens itself:
+  return a `(str, float)` tuple and let the SDK reuse the token instead.
 - If the provider raises, returns something else or a token that can't be an HTTP
   header value, the call raises `RuntimeError` with the provider's exception text,
-  and nothing is sent. Keep secrets out of the provider's exception messages; the
+  and nothing is sent. HTTP errors such as `401` raise `RuntimeError` as well; the
+  message tells them apart. Keep secrets out of the provider's exception messages; the
   SDK doesn't show tokens.
 - A provider can't be combined with other credentials from the configuration file
   (`basic_auth`, `oauth_access_token`, or a user or password in `base_path`): calls

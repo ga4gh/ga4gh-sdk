@@ -352,9 +352,13 @@ impl Transport {
         operation
             .run(async {
                 let response = self
-                    .send_authorized(reqwest::Method::GET, endpoint, true, |request| {
-                        Ok(request.timeout(timeout))
-                    })
+                    .send_authorized(
+                        reqwest::Method::GET,
+                        endpoint,
+                        true,
+                        |request| Ok(request.timeout(timeout)),
+                        None,
+                    )
                     .await?;
                 response_text(response, BodyLimits::default()).await
             })
@@ -387,7 +391,15 @@ impl Transport {
             .await;
         match result {
             Ok(Ok(body)) => Ok(body),
-            Ok(Err(error)) if error.downcast_ref::<HttpError>().is_some() => Err(error),
+            Ok(Err(error)) if error.downcast_ref::<HttpError>().is_some() => {
+                if error
+                    .downcast_ref::<HttpError>()
+                    .is_some_and(|e| e.status == reqwest::StatusCode::UNAUTHORIZED)
+                {
+                    self.reject_token();
+                }
+                Err(error)
+            }
             Ok(Err(error)) => Err(Box::new(AmbiguousSubmissionError {
                 reason: error.to_string(),
             })),
@@ -416,21 +428,21 @@ impl Transport {
             1
         };
         for attempt in 1..=attempts {
-            let mut attempted = false;
+            // Set when the request is sent, after the token provider (if any)
+            // gave its token: a deadline before that is not an ambiguous submission.
+            let sent = std::sync::atomic::AtomicBool::new(false);
             let result = options
                 .operation
-                .run(async {
-                    attempted = true;
-                    self.request_response_with(
-                        method.clone(),
-                        endpoint,
-                        data.clone(),
-                        params.clone(),
-                        options.safety == ReplaySafety::ReadOnly,
-                    )
-                    .await
-                })
+                .run(self.request_response_with(
+                    method.clone(),
+                    endpoint,
+                    data.clone(),
+                    params.clone(),
+                    options.safety == ReplaySafety::ReadOnly,
+                    Some(&sent),
+                ))
                 .await;
+            let attempted = sent.load(std::sync::atomic::Ordering::SeqCst);
             let response = match result {
                 Ok(Ok(response)) => response,
                 Err(error) if attempted && options.safety == ReplaySafety::NonReplayable => {
@@ -564,26 +576,42 @@ impl Transport {
         Ok(request.header(reqwest::header::AUTHORIZATION, value))
     }
 
+    /// Drops the reused token of the token provider, if there is one, after the
+    /// service answered `401 Unauthorized`.
+    fn reject_token(&self) {
+        if let Some(source) = &self.config.token_provider {
+            source.reject(&self.config.token_audience());
+        }
+    }
+
     /// Builds a request with [`authorized_request_builder`](Self::authorized_request_builder)
     /// and `build`, and sends it. If it is `replayable`, a token provider is
     /// configured and the service answers `401 Unauthorized`, builds and sends it
-    /// once more with a new token.
+    /// once more with a new token. `sent`, if given, is set just before the first
+    /// request is sent.
     pub(crate) async fn send_authorized(
         &self,
         method: reqwest::Method,
         endpoint: &str,
         replayable: bool,
         build: impl Fn(reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder, Box<dyn Error>>,
+        sent: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<reqwest::Response, Box<dyn Error>> {
         let request = build(
             self.authorized_request_builder(method.clone(), endpoint)
                 .await?,
         )?;
+        if let Some(sent) = sent {
+            sent.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         let response = request.send().await?;
-        if !replayable
-            || response.status() != reqwest::StatusCode::UNAUTHORIZED
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED
             || self.config.token_provider.is_none()
         {
+            return Ok(response);
+        }
+        if !replayable {
+            self.reject_token();
             return Ok(response);
         }
         drop(response);
@@ -646,7 +674,7 @@ impl Transport {
         params: Option<Value>,
     ) -> Result<reqwest::Response, Box<dyn Error>> {
         let replayable = matches!(method, reqwest::Method::GET | reqwest::Method::HEAD);
-        self.request_response_with(method, endpoint, data, params, replayable)
+        self.request_response_with(method, endpoint, data, params, replayable, None)
             .await
     }
 
@@ -657,24 +685,31 @@ impl Transport {
         data: Option<Value>,
         params: Option<Value>,
         replayable: bool,
+        sent: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<reqwest::Response, Box<dyn Error>> {
         let pairs = match params {
             Some(ref params_value) => query_pairs(params_value).map_err(std::io::Error::from)?,
             None => Vec::new(),
         };
-        self.send_authorized(method, endpoint, replayable, |mut request_builder| {
-            if !pairs.is_empty() {
-                request_builder = request_builder.query(&pairs);
-            }
-            if let Some(ref data) = data {
-                if serde_json::to_string(&data).is_ok() {
-                    request_builder = request_builder.json(&data);
-                } else {
-                    log::error!("Parameters are invalid, and can't convert to JSON");
+        self.send_authorized(
+            method,
+            endpoint,
+            replayable,
+            |mut request_builder| {
+                if !pairs.is_empty() {
+                    request_builder = request_builder.query(&pairs);
                 }
-            }
-            Ok(request_builder)
-        })
+                if let Some(ref data) = data {
+                    if serde_json::to_string(&data).is_ok() {
+                        request_builder = request_builder.json(&data);
+                    } else {
+                        log::error!("Parameters are invalid, and can't convert to JSON");
+                    }
+                }
+                Ok(request_builder)
+            },
+            sent,
+        )
         .await
     }
 
@@ -956,11 +991,15 @@ mod tests {
             lifetime: Option<Duration>,
             fail: bool,
             token: Option<&'static str>,
+            delay: Option<Duration>,
         }
 
         #[async_trait::async_trait]
         impl TokenProvider for Recording {
             async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+                if let Some(delay) = self.delay {
+                    tokio::time::sleep(delay).await;
+                }
                 let mut requests = self.requests.lock().unwrap();
                 requests.push((request.audience.to_owned(), request.after_rejection));
                 if self.fail {
@@ -1157,6 +1196,77 @@ mod tests {
                 .unwrap_err();
             assert!(error.downcast_ref::<HttpError>().is_some(), "{error}");
             submission.assert();
+        }
+
+        #[tokio::test]
+        async fn test_rejected_submission_drops_the_reused_token() {
+            let provider = Arc::new(Recording {
+                lifetime: Some(Duration::from_secs(60)),
+                ..Default::default()
+            });
+            let transport = transport("auth-drop", &provider);
+            let rejected = mock("POST", "/auth-drop/a")
+                .match_header("authorization", "Bearer token-1")
+                .with_status(401)
+                .expect(1)
+                .create();
+            let accepted = mock("POST", "/auth-drop/a")
+                .match_header("authorization", "Bearer token-2")
+                .with_status(200)
+                .expect(1)
+                .create();
+            assert!(transport.post("a", None).await.is_err());
+            transport.post("a", None).await.unwrap();
+            rejected.assert();
+            accepted.assert();
+            let root = base("auth-drop").to_string();
+            assert_eq!(provider.calls(), [(root.clone(), false), (root, true)]);
+
+            // The same after `send_once`, as TES and WES submissions use it.
+            let rejected = mock("POST", "/auth-drop/once")
+                .match_header("authorization", "Bearer token-2")
+                .with_status(401)
+                .expect(1)
+                .create();
+            let operation = crate::utils::operation::Operation::new(Duration::from_secs(10));
+            let request = transport
+                .authorized_request_builder(reqwest::Method::POST, "once")
+                .await
+                .unwrap();
+            let error = transport
+                .send_once(request, &operation, Default::default())
+                .await
+                .unwrap_err();
+            assert!(error.downcast_ref::<HttpError>().is_some(), "{error}");
+            rejected.assert();
+            transport
+                .authorized_request_builder(reqwest::Method::POST, "once")
+                .await
+                .unwrap();
+            assert_eq!(provider.calls().len(), 3);
+            assert!(provider.calls()[2].1);
+        }
+
+        #[tokio::test]
+        async fn test_slow_provider_is_not_an_ambiguous_submission() {
+            use crate::utils::operation::{AmbiguousSubmissionError, OperationError};
+            let provider = Arc::new(Recording {
+                delay: Some(Duration::from_secs(5)),
+                ..Default::default()
+            });
+            let transport = transport("auth-slow", &provider);
+            let request = mock("POST", "/auth-slow/a").expect(0).create();
+            let options = RequestOptions::new(Duration::from_millis(50));
+            let error = transport
+                .request_with_policy(reqwest::Method::POST, "a", None, None, &options)
+                .await
+                .unwrap_err();
+            assert!(error.downcast_ref::<AmbiguousSubmissionError>().is_none());
+            assert!(matches!(
+                error.downcast_ref::<OperationError>(),
+                Some(OperationError::Deadline)
+            ));
+            request.assert();
         }
 
         #[tokio::test]
