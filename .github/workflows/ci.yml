@@ -85,7 +85,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [funnel, wes-starter-kit]
+        suite: [funnel, wes-starter-kit, trs-filer]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,6 +105,11 @@ jobs:
               paths=("${common[@]}" run-integration-tests.sh lib/src/clients/tes/
                 lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
                 lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs)
+            elif [[ "$SUITE" == trs-filer ]]; then
+              paths=("${common[@]}" tests/run-trs-filer-integration.sh
+                lib/src/clients/trs/ lib/src/clients/serviceinfo/ lib/src/utils/
+                lib/src/clients/mod.rs lib/src/lib.rs lib/tests/trs_filer.rs
+                cli/Cargo.toml cli/src/ cli/tests/trs_filer.rs)
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
@@ -136,6 +141,9 @@ jobs:
       - name: Test against Starter Kit WES
         if: matrix.suite == 'wes-starter-kit' && steps.changes.outputs.run == 'true'
         run: tests/run-wes-docker-integration.sh
+      - name: Test against TRS-Filer
+        if: matrix.suite == 'trs-filer' && steps.changes.outputs.run == 'true'
+        run: tests/run-trs-filer-integration.sh
 
   # Coverage of the unit tests, without the generated models; the report
   # goes to the job summary and the `coverage` artifact (LCOV)

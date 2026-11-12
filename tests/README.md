@@ -50,6 +50,42 @@ a remote project. This server returns a fixed run list instead of recently
 submitted runs, and its cancellation endpoint does not stop a run. The test
 accounts for both limitations and does not claim that a run was canceled.
 
+## TRS-Filer/TRS
+
+This suite needs a running Docker daemon and `curl`.
+
+```sh
+tests/run-trs-filer-integration.sh
+```
+
+The script starts [TRS-Filer](https://github.com/elixir-cloud-aai/trs-filer)
+(its `dev` image, which serves TRS 2.0.2) and MongoDB 7.0, both pinned by
+digest, on a private Docker network, and publishes TRS-Filer on a free
+loopback port. It waits up to 120 seconds for `/ga4gh/trs/v2/service-info`
+(set `TRS_FILER_STARTUP_TIMEOUT_SECONDS` to change the limit), runs the
+library and CLI tests with the `trs_filer_integration_tests` feature, and
+removes the containers, their volumes and the network. On failure it prints
+the TRS-Filer logs.
+
+Each test registers its own CWL workflow (`POST /tools`, an extension of
+TRS-Filer) with a primary and a secondary descriptor and a file of type
+`OTHER`, tagged with a unique tag. The library test lists tools by tags,
+reads the version with its `description`, fetches the descriptor, a file by
+relative path, the file list with all three file types, the `OTHER` file and
+the ZIP archive of all files. The CLI test does the same through
+`trs tools --tag`, `version`, `descriptor --path`, `files` and `files --zip`.
+TRS-Filer doesn't serve the `PLAIN_` descriptor types (`--plain`) yet, and
+it doesn't find files in subdirectories by a relative path sent as one encoded
+path segment (`tools%2Fecho.cwl`), as the SDK sends it. The suite therefore
+fetches a top-level file by relative path; `PLAIN_` types and nested relative
+paths are checked only against mock servers, in the default tests. The [CI workflow](../.github/workflows/ci.yml) runs
+this suite when TRS, CLI, shared library, dependency or integration files
+change, and on manual dispatch.
+
+To update TRS-Filer, replace the digest of `trs_filer_image` in the script
+with the digest of a newer image, e.g. from `docker buildx imagetools inspect
+elixircloud/trs-filer:dev`.
+
 ## Verified TRS CWL bundle with Toil WES
 
 The bundle unit tests use a local TRS fixture and a capturing mock WES to compare
