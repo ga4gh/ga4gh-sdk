@@ -12,8 +12,8 @@ from types import MappingProxyType
 
 import pytest
 
-import GA4GH
-from GA4GH import (
+import ga4gh_sdk
+from ga4gh_sdk import (
     ListTasksParams,
     ListTasksResponse,
     Task,
@@ -60,14 +60,14 @@ def test_state_enum_members_are_strings():
     assert str(TesState.RUNNING) == "RUNNING"
     assert f"{TesState.RUNNING:<9}|" == "RUNNING  |"
     assert json.dumps({"state": TesState.RUNNING}) == '{"state": "RUNNING"}'
-    assert TesState.__module__ == "GA4GH"
+    assert TesState.__module__ == "ga4gh_sdk"
     assert pickle.loads(pickle.dumps(TesState.QUEUED)) is TesState.QUEUED
 
 
 def test_state_enum_leaves_the_package_alone():
-    assert GA4GH.__file__.endswith("__init__.py")
-    assert not hasattr(GA4GH, "enum")
-    assert sys.modules["GA4GH"] is GA4GH
+    assert ga4gh_sdk.__file__.endswith("__init__.py")
+    assert not hasattr(ga4gh_sdk, "enum")
+    assert sys.modules["ga4gh_sdk"] is ga4gh_sdk
 
 
 def test_state_enum_rejects_unknown_names():

@@ -36,6 +36,7 @@ jsonschema = { version = "0.61", default-features = false, optional = true }
 
 [dependencies.reqwest]
 version = "^0.11"
+default-features = false
 features = ["json", "multipart", "stream"]
 
 [dev-dependencies]
@@ -49,6 +50,9 @@ name = "ga4gh_sdk"
 path = "src/lib.rs"
 
 [features]
+default = ["reqwest/default-tls"]
+# Python wheels opt into rustls with the host's trusted certificate roots.
+rustls-native-roots = ["reqwest/rustls-tls-native-roots"]
 workflow-contracts = ["dep:jsonschema", "dep:num-bigint", "dep:num-rational"]
 integration_tests = []
 wes_docker_integration_tests = []

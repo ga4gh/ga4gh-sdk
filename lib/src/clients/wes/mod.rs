@@ -147,31 +147,35 @@ pub struct WES {
 }
 
 impl WES {
-    /// Creates a new `WES` instance.
+    /// Creates a new `WES` instance. The `timeouts` of `config` set the time
+    /// limits (see [`Timeouts`](crate::utils::timeouts::Timeouts)).
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::from_transport(Transport::new(config)).await
+        Self::with_transport(Transport::new(config)).await
     }
 
-    /// Discover using a caller-owned transport, including its authenticated client.
-    pub async fn from_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
-        let config = transport.config.clone();
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            transport.get("service-info", None),
-        )
-        .await?;
-        let service = response
-            .and_then(|body| service_from_info(serde_json::from_str(&body)?))
+    /// Creates a new `WES` instance that sends its requests with `transport`, for
+    /// example one from [`Transport::with_client`]. The client's configuration is
+    /// the transport's.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        let service = crate::clients::serviceinfo::fetch_raw(&transport, "service-info")
+            .await
+            .and_then(|body| service_from_info(from_str(&body)?))
             .map_err(|error| access_error(error.as_ref()))?;
 
         let instance = WES {
-            config,
+            config: transport.config.clone(),
             transport,
             service: Ok(service),
         };
 
         instance.check()?;
         Ok(instance)
+    }
+
+    /// Discovers WES with a caller-owned transport, including its authenticated
+    /// client. Kept for callers that used this name before `with_transport`.
+    pub async fn from_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_transport(transport).await
     }
 
     fn check(&self) -> Result<(), String> {
@@ -194,6 +198,13 @@ impl WES {
     }
 
     /// Creates a workflow run with optional uploaded workflow files.
+    ///
+    /// The request is sent once, within the `submission` limit of the
+    /// transport's configuration, including the upload. If it runs out of time
+    /// or loses its connection after its request started, the error is an
+    /// [`AmbiguousSubmissionError`](crate::utils::operation::AmbiguousSubmissionError):
+    /// the service may have created the run. For a deadline or cancellation of
+    /// your own, use [`Self::run_workflow_streaming`].
     pub async fn run_workflow_with_attachments(
         &self,
         request: RunRequest,
@@ -209,7 +220,7 @@ impl WES {
         self.run_workflow_streaming(
             request,
             attachments,
-            &crate::utils::operation::Operation::new(std::time::Duration::from_secs(60)),
+            &crate::utils::operation::Operation::new(self.transport.config.timeouts.submission),
         )
         .await
     }
@@ -400,7 +411,7 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(error.contains(&status.to_string()), "{error}");
-            assert!(error.contains("service failure"), "{error}");
+            assert!(!error.contains("service failure"), "{error}");
             assert_eq!(error.contains("base_path"), status == 404, "{error}");
         }
     }
@@ -462,6 +473,38 @@ mod tests {
             }),
         };
         assert!(wes.run_workflow(valid_request()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_wes_run_sends_the_provider_token_once() {
+        let rejected = mock("POST", "/wes-auth/runs")
+            .match_header("authorization", "Bearer run-token")
+            .with_status(401)
+            .expect(1)
+            .create();
+        let base = Url::parse(&format!("{}/wes-auth", server_url())).unwrap();
+        let config = Configuration::new(base)
+            .with_token_provider(crate::utils::auth::FixedToken("run-token"));
+        let wes = WES {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service {
+                r#type: Box::new(ServiceType {
+                    artifact: "wes".to_string(),
+                    ..Default::default()
+                }),
+                ..Service::default()
+            }),
+        };
+        let error = wes.run_workflow(valid_request()).await.unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<crate::utils::transport::HttpError>()
+                .unwrap()
+                .status,
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        rejected.assert();
     }
 
     #[tokio::test]
@@ -923,8 +966,9 @@ mod tests {
                 .downcast_ref::<crate::utils::transport::HttpError>()
                 .unwrap_or_else(|| panic!("not an HttpError: {error}"));
             assert_eq!(http.status, status);
+            assert_eq!(http.body, body);
             assert_eq!(error.to_string(), http.to_string());
-            assert!(error.to_string().contains(body), "{error}");
+            assert!(!error.to_string().contains(body), "{error}");
         }
     }
 }

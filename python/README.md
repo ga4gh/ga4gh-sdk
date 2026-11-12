@@ -1,11 +1,31 @@
 ## GA4GH-SDK Python Bindings
 
-This directory provides Python bindings for the GA4GH SDK using [PyO3](https://docs.rs/pyo3/latest/pyo3).
-These instructions build the bindings from this repository. Start at the
-repository root; after `cd python`, run later commands from `python/` with the
-virtual environment active.
+This directory provides Python bindings for the GA4GH SDK using
+[PyO3](https://docs.rs/pyo3/latest/pyo3). Releases use the PyPI distribution
+name `ga4gh-sdk`. The other instructions build the bindings from this
+repository. Start at the repository root; after `cd python`, run later commands
+from `python/` with the virtual environment active.
+
+## Install from PyPI
+
+Once the first release is published, install it into a CPython 3.11+ environment:
+
+```sh
+python -m pip install ga4gh-sdk
+python -c 'from ga4gh_sdk import TES; print(TES.__name__)'
+```
+
+pip skips pre-releases such as `0.2.0rc1` unless you add `--pre` or name the
+version (`ga4gh-sdk==0.2.0rc1`). The release workflow builds wheels for Linux
+(x86-64 and aarch64, glibc 2.28 or newer), macOS (x86-64 and arm64) and
+Windows (x86-64); installing them needs no Rust toolchain. Elsewhere, for
+example on musl-based Linux such as Alpine or with an older glibc, pip builds
+the bindings from the sdist, which needs the prerequisites below. See the
+[release guide](../docs/releasing.md) for the publication process.
 
 ## Prerequisites
+
+To build the bindings from source:
 
 - CPython 3.11 or newer (PyPy and free-threaded builds are not supported)
 - The [Rust toolchain](../README.md#installation)
@@ -21,11 +41,14 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install 'maturin>=1.7,<2'
 maturin develop --locked
-python -c 'from GA4GH import TES; print(TES.__name__)'
+python -c 'from ga4gh_sdk import TES; print(TES.__name__)'
 ```
 
 Use a Python 3.11+ executable if `python3` points to an older version. The
-distribution is named `GA4GH-SDK`; the import name is `GA4GH`.
+distribution is named `ga4gh-sdk`; the import name is `ga4gh_sdk`. Earlier
+source builds used `from GA4GH import ...`; update those imports before using
+the released package. An uppercase import alias is not shipped because it can
+collide with the older `ga4gh` package on case-insensitive file systems.
 
 ## Build a wheel
 
@@ -51,7 +74,7 @@ pytest
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. See [Reading the configuration file](#reading-the-configuration-file). |
+| `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. `set_token_provider()` supplies dynamic bearer tokens. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication), [Timeouts](#timeouts) and [Token providers](#token-providers). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
@@ -64,8 +87,7 @@ The Python API is maintained by hand; a new Rust SDK method or model does not
 appear in Python automatically. For each SDK change, decide whether to expose
 it here, then update the wrapper, this table, and the mock-backed tests and
 examples. CI checks the documented Python behavior, but it cannot infer that
-a new Rust API needs a Python counterpart. The SDK currently stores configured
-credentials without sending them in requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)); use an anonymous service or an authenticating proxy.
+a new Rust API needs a Python counterpart.
 
 ## Usage
 
@@ -79,7 +101,7 @@ root, so its path from `python/` is `../examples/tes-hello.json`. It runs
 `echo` in an Alpine container without external storage.
 
 ```python
-from GA4GH import Configuration, ServiceInfo, ServiceType, TES
+from ga4gh_sdk import Configuration, ServiceInfo, ServiceType, TES
 
 config = Configuration("http://localhost:8000/ga4gh/tes/v1")
 # Or read the TES section of ~/.ga4gh-cli/config.json:
@@ -113,25 +135,122 @@ section that the SDK doesn't use itself, as a `dict` with the values as they are
 in the file, so don't log it if it can hold credentials:
 
 ```python
-from GA4GH import Configuration, ServiceType
+from ga4gh_sdk import Configuration, ServiceType
 
 config = Configuration("https://example.org")
 config.from_file(ServiceType.TES)
 config.from_file("MY_SERVICE")
-timeout = config.get_extra().get("timeout_seconds")
+queue = config.get_extra().get("queue")
 ```
 
 A section can name an environment variable for its token with
-`oauth_access_token_env`. A missing section or an unset variable raises
-`ValueError`, a missing file `FileNotFoundError`.
+`oauth_access_token_env` or `bearer_access_token_env`. A missing section or an
+unset variable raises `ValueError`, a missing file `FileNotFoundError`.
+
+## Authentication
+
+Set one source before constructing a client: `set_basic_auth(username,
+password=None)`, `set_oauth_access_token(token)`,
+`set_bearer_access_token(token)`, or a [token provider](#token-providers). Use
+`clear_auth()` before choosing a different source. `from_file()` can read
+static credentials from the selected service section.
+The client uses that credential for discovery and later operations; invalid or
+conflicting sources raise an exception before sending the request. The SDK does
+not follow redirects automatically. See the
+[authentication guide](../docs/authentication.md) for file keys, injected
+transport boundaries and errors. The [token-provider section](#token-providers)
+describes dynamic credentials.
+
+## Timeouts
+
+`config.set_timeouts()` sets time limits of requests, in seconds, as keyword
+arguments; `config.get_timeouts()` returns all four as a `dict`. A section of
+the configuration file sets them with its `timeouts` object:
+
+```python
+from ga4gh_sdk import Configuration, TES
+
+config = Configuration("https://example.org/ga4gh/tes/v1")
+config.set_timeouts(discovery=30, submission=600)
+config.get_timeouts()
+# {'connect': 10.0, 'discovery': 30.0, 'request': 60.0, 'submission': 600.0}
+tes = TES(config)
+```
+
+- `connect` (default 10): opening each connection.
+- `request` (default 60): each request that the limits below don't apply to.
+- `discovery` (default 10): the service check of `TES(config)`, `AsyncTES`,
+  `WES(config)` and `DRS(config)`, in place of `request`.
+- `submission` (default 300): `TES.create()`, `AsyncTES.create()` and
+  `WES.run()`, including uploads, in place of `request`. A submission that runs
+  out of time after its request started raises `RuntimeError` with "submission may have
+  been accepted"; look for the task or run before you submit it again.
+
+Clients and `Transport` read the limits when they are built, so set them first.
+Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
+timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
+
+## Token providers
+
+`config.set_token_provider(provider)` makes the clients and `Transport` built from
+`config` ask `provider` for a bearer token before each request, including the
+service check of `TES(config)` and the other clients. `provider(audience)` gets the
+API root (or the `audience` given to `set_token_provider()`) and returns the token
+as a `str`, or as a `(str, float)` tuple with the seconds for which the SDK may
+reuse it:
+
+```python
+from ga4gh_sdk import Configuration, TES
+
+
+def token_provider(audience: str) -> tuple[str, float]:
+    token, expires_in = get_token_for(audience)  # your code
+    return token, expires_in - 30  # reuse it until 30 seconds before it expires
+
+
+config = Configuration("https://example.org/ga4gh/tes/v1")
+config.set_token_provider(token_provider)
+# Or with the audience of a token exchange:
+# config.set_token_provider(token_provider, audience="https://example.org/ga4gh/tes")
+tes = TES(config)
+```
+
+- Set the provider after `from_file()`, which replaces all settings. Clients and
+  `Transport` take it when they are built; `set_token_provider(None)` removes it
+  for those built later.
+- After `401 Unauthorized`, the SDK drops a reused token and asks the provider
+  again; a `GET` request is sent once more right away with a current token, while
+  submissions such as `TES.create()` and `WES.run()` are never sent twice. The
+  provider isn't told about the rejection, so don't let it cache tokens itself:
+  return a `(str, float)` tuple and let the SDK reuse the token instead.
+- If the provider raises, returns something else or a token that can't be an HTTP
+  header value, the call raises `RuntimeError` and the pending request is not
+  sent. A read-only request may already have received `401` before a failed
+  refresh. The default message omits the provider's exception text, which
+  could contain a secret.
+  HTTP errors such as `401` also raise `RuntimeError`; the message distinguishes
+  them from provider failures.
+- A provider can't be combined with other credentials from the configuration file
+  (`basic_auth`, `oauth_access_token`, or a user or password in `base_path`): calls
+  then raise `RuntimeError` before anything is sent.
+- The provider runs on a thread of the SDK's runtime, with the GIL, also for the
+  [asyncio](#asyncio) classes. It may block, for example on a token endpoint, but
+  each call waits for it.
+
+The [usage guide](../docs/usage.md#token-providers) describes the contract.
 
 ## Network behavior
+
+The Python build uses rustls for HTTPS and loads trusted certificates from the
+host system. On Linux, install the system CA certificate bundle for HTTPS
+requests; building the bindings does not need OpenSSL development headers.
 
 Synchronous network methods release the Python GIL while Rust waits for I/O.
 They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
 connections remain reusable between calls. Inputs are decoded before releasing
 the GIL and Python results/exceptions are constructed after reacquiring it.
-No Python callback runs on the runtime. The [asyncio](#asyncio) classes run
+No Python callback runs on the runtime, except a [token provider](#token-providers),
+on a blocking thread of its own. The [asyncio](#asyncio) classes run
 their requests on the same runtime. Use multiprocessing's `spawn` mode rather
 than forking a process after starting threaded I/O.
 
@@ -150,7 +269,7 @@ arguments also raise `ValueError`.
 need neither task files on disk nor JSON parsing:
 
 ```python
-from GA4GH import Configuration, ListTasksParams, TES, TesState, TesTask
+from ga4gh_sdk import Configuration, ListTasksParams, TES, TesState, TesTask
 
 tes = TES(Configuration("http://localhost:8000/ga4gh/tes/v1"))
 
@@ -186,7 +305,8 @@ for listed in page.tasks:
   `FileNotFoundError` (an `OSError`). Failed requests and responses that don't fit the TES
   models raise `RuntimeError`. If task creation fails after submission, the error may
   mean the server created the task but its acknowledgement was lost or malformed;
-  do not retry automatically.
+  do not retry automatically. HTTP failures include the status in the exception
+  message but omit the server's untrusted response body.
 
 ### Task objects
 
@@ -226,7 +346,7 @@ same methods as `TES` and `Task`, take the same arguments and give the same resu
 ```python
 import asyncio
 
-from GA4GH import AsyncTES, Configuration, TesState
+from ga4gh_sdk import AsyncTES, Configuration, TesState
 
 
 async def main():
@@ -270,7 +390,7 @@ asyncio.run(main())
 
 ### Type hints
 
-The package ships type stubs (`GA4GH.pyi`, with a `py.typed` marker), so editors and
+The package ships type stubs (`ga4gh_sdk.pyi`, with a `py.typed` marker), so editors and
 type checkers such as mypy see every class and method. `tests/test_stubs.py` checks that
 the stubs declare every class and member of the module.
 
@@ -281,7 +401,7 @@ requests as `dict`s, and workflow files as `bytes` or paths:
 
 ```python
 from pathlib import Path
-from GA4GH import Configuration, WES, WesState
+from ga4gh_sdk import Configuration, WES, WesState
 
 wes = WES(Configuration("https://your-wes.example/ga4gh/wes/v1"))
 
@@ -321,16 +441,18 @@ print(run.task(tasks.task_logs[0].id).stderr)
   `os.PathLike`); as for `TES.create()`, a `str` is always a path, so pass JSON text as
   `RunRequest.from_json(text)`. `workflow_type`, `workflow_type_version`, `workflow_url`
   and `workflow_params` are required; `workflow_params` must be a JSON object.
-  The request goes to the server as the fields of
-  the WES `RunRequest` form; fields that the WES models don't know are kept in the
-  `RunRequest` but not sent.
+  The request goes to the server as the fields of the WES `RunRequest` form. Fields
+  that the WES models don't know, such as a server's extension fields, go as further
+  form parts: strings as they are, other values as JSON. A `workflow_attachment` field
+  raises `ValueError` before a request; pass files with `attachments` instead.
 - `attachments` maps filenames to contents, as `bytes` (or `bytearray`) or as the path of
   a file (`os.PathLike`, such as `pathlib.Path`), which is streamed rather than read into
   memory. A list of `(filename, content)` pairs works too. Filenames are relative paths
   with `/` separators, such as `tools/echo.cwl`; absolute paths, `..`, backslashes,
   colons and repeated filenames raise `ValueError` before a request. Refer to an
   attachment in `workflow_url` by its filename. The upload and the server's answer must
-  finish within 60 seconds.
+  finish within the `submission` limit of the configuration, 300 seconds by default
+  (see [Timeouts](#timeouts)).
 - `Run` addresses a run on the server by its `id`. `Run.status()` returns a `WesState`,
   `Run.cancel()` cancels the run and returns `None`, and `Run.log()` returns a `RunLog`.
   `Run.tasks(page_size=None, page_token=None)` returns a `TaskListResponse` with
@@ -412,7 +534,7 @@ CI runs this exact script against a mock service and checks the submitted task b
 access URLs, one at a time or in bulk. It never downloads object bytes:
 
 ```python
-from GA4GH import Configuration, DRS, PendingResolution
+from ga4gh_sdk import Configuration, DRS, PendingResolution
 
 drs = DRS(Configuration("https://your-drs.example/ga4gh/drs/v1"))
 
@@ -501,7 +623,7 @@ The Python test suite runs this file against a mock DRS service.
 value)` pairs, unlike the `"Name: value"` strings of `AccessURL`), and its `region`:
 
 ```python
-from GA4GH import Configuration, DrsResolver, DrsUri, Transport
+from ga4gh_sdk import Configuration, DrsResolver, DrsUri, Transport
 
 resolver = DrsResolver().with_service(
     "drs.example.org", Transport(Configuration("https://drs.example.org/ga4gh/drs/v1"))
@@ -611,7 +733,7 @@ The methods are `get(endpoint, params=None)`, `post(endpoint, data=None, params=
 
 ```python
 from pathlib import Path
-from GA4GH import Configuration, Transport
+from ga4gh_sdk import Configuration, Transport
 
 transport = Transport(Configuration("https://your-wes.example/ga4gh/wes/v1"))
 transport.post_multipart(
@@ -637,7 +759,7 @@ order), `task.to_dict()` as a `dict`. `TES.create()` sends such fields as given,
 `ListTasksParams` takes the filters of the TES `ListTasks` request as keyword arguments:
 
 ```python
-from GA4GH import ListTasksParams
+from ga4gh_sdk import ListTasksParams
 
 params = ListTasksParams(state="running", tag_key=["project"], tag_value=["demo"], page_size=50)
 page = tes.list(params)
@@ -661,7 +783,7 @@ that the sync and the async classes share are public functions in `clients::tes`
 `get_task()` and `task_status()`; an async extension method can run them with
 `clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
 `clients::tes_async` does. The extension module gets its own copies of the base classes,
-which don't mix with those of the `GA4GH` module: a `GA4GH.Configuration` can't be passed
+which don't mix with those of the `ga4gh_sdk` module: a `ga4gh_sdk.Configuration` can't be passed
 to it. So register every base class that its users need
 (`m.add_class::<PyConfiguration>()` and so on, and `m.add("TesState",
 tes_state_type(py)?)` for the state enum) in the extension module, and import everything

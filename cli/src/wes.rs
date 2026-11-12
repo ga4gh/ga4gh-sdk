@@ -16,9 +16,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
-/// Time allowed for preparing, uploading and acknowledging one submission.
-const SUBMISSION_BUDGET: Duration = Duration::from_secs(300);
-
 /// Build the WES command and its subcommands.
 pub fn command() -> Command {
     Command::new("wes")
@@ -185,7 +182,8 @@ async fn submit(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Comm
         Ok(wes) => wes,
         Err(error) => return Ok(CommandOutput::failure(error)),
     };
-    let operation = Operation::new(SUBMISSION_BUDGET);
+    // Preparing, uploading and acknowledging the run, within the submission limit.
+    let operation = Operation::new(config.timeouts.submission);
     Ok(
         match wes
             .run_workflow_streaming(request, attachments, &operation)
