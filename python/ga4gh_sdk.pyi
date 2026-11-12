@@ -587,6 +587,7 @@ class Task:
         max_interval: float | None = None,
         view: str,
     ) -> TesTask: ...
+    @overload
     def wait(
         self,
         timeout: float | None = None,
@@ -613,7 +614,7 @@ class WaitTimeoutError(TimeoutError):
     """
 
     id: str | None
-    """The task's ID."""
+    """The task's ID; `None` on an error raised by other code."""
     last_state: TesState | None
     """The task's last polled state, or `None` if no poll succeeded."""
 
@@ -717,6 +718,7 @@ class AsyncTask:
         max_interval: float | None = None,
         view: str,
     ) -> asyncio.Future[TesTask]: ...
+    @overload
     def wait(
         self,
         timeout: float | None = None,

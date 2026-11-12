@@ -73,20 +73,23 @@ static TES_STATE: GILOnceCell<Py<PyType>> = GILOnceCell::new();
 /// The `TesState` Python enum (a `str` enum, created once per interpreter).
 pub fn tes_state_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     TES_STATE
-        .get_or_try_init(py, || {
-            // Runs in a namespace of its own. `PyModule::from_code_bound` would register a
-            // module in `sys.modules` and, under the name `ga4gh_sdk`, overwrite the package's
-            // attributes; the class itself names `ga4gh_sdk` as its module.
-            let namespace = PyDict::new_bound(py);
-            namespace.set_item("__name__", "ga4gh_sdk")?;
-            py.run_bound(TES_STATE_SOURCE, Some(&namespace), None)?;
-            Ok(namespace
-                .get_item("TesState")?
-                .ok_or_else(|| PyRuntimeError::new_err("TesState is not defined"))?
-                .downcast_into::<PyType>()?
-                .unbind())
-        })
+        .get_or_try_init(py, || define_type(py, TES_STATE_SOURCE, "TesState"))
         .map(|cls| cls.bind(py))
+}
+
+/// Runs the Python `source` of a class and gives the class `name` that it defines.
+fn define_type(py: Python<'_>, source: &str, name: &str) -> PyResult<Py<PyType>> {
+    // Runs in a namespace of its own. `PyModule::from_code_bound` would register a
+    // module in `sys.modules` and, under the name `ga4gh_sdk`, overwrite the package's
+    // attributes; the class itself names `ga4gh_sdk` as its module.
+    let namespace = PyDict::new_bound(py);
+    namespace.set_item("__name__", "ga4gh_sdk")?;
+    py.run_bound(source, Some(&namespace), None)?;
+    Ok(namespace
+        .get_item(name)?
+        .ok_or_else(|| PyRuntimeError::new_err(format!("{name} is not defined")))?
+        .downcast_into::<PyType>()?
+        .unbind())
 }
 
 /// Converts a TES state to the matching `TesState` member.
@@ -206,7 +209,9 @@ class WaitTimeoutError(TimeoutError):
     """Raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
 
     `id` is the task's ID, and `last_state` its last polled state as a `TesState`, or
-    `None` if no poll succeeded. The task goes on running.
+    `None` if no poll succeeded. The wait doesn't cancel the task, which may still be
+    running (if the time ran out while getting an ended task in a view, `last_state` is
+    its final state). Both are `None` on an error raised by other code.
     """
 
     __module__ = "ga4gh_sdk"
@@ -221,24 +226,13 @@ static WAIT_TIMEOUT_ERROR: GILOnceCell<Py<PyType>> = GILOnceCell::new();
 pub fn wait_timeout_error_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     WAIT_TIMEOUT_ERROR
         .get_or_try_init(py, || {
-            // In a namespace of its own, like `TesState`.
-            let namespace = PyDict::new_bound(py);
-            namespace.set_item("__name__", "ga4gh_sdk")?;
-            py.run_bound(WAIT_TIMEOUT_ERROR_SOURCE, Some(&namespace), None)?;
-            Ok(namespace
-                .get_item("WaitTimeoutError")?
-                .ok_or_else(|| PyRuntimeError::new_err("WaitTimeoutError is not defined"))?
-                .downcast_into::<PyType>()?
-                .unbind())
+            define_type(py, WAIT_TIMEOUT_ERROR_SOURCE, "WaitTimeoutError")
         })
         .map(|cls| cls.bind(py))
 }
 
 /// How long a sync wait blocks without the GIL before it checks for signals, such as Ctrl-C.
 const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
-
-/// The longest interval between polls if the caller gives none (or a shorter `poll_interval`).
-const DEFAULT_MAX_INTERVAL: Duration = Duration::from_secs(10);
 
 /// The settings of a wait, from the arguments of `wait()`.
 pub struct WaitSettings {
@@ -276,17 +270,18 @@ pub fn wait_settings(
     if poll_interval.is_zero() {
         return Err(PyValueError::new_err("poll_interval must be more than 0"));
     }
+    let view = view.map(parse_view).transpose()?;
+    let mut options = WaitOptions::new(budget);
     let max_interval = match max_interval {
         Some(max_interval) => seconds("max_interval", max_interval)?,
-        None => DEFAULT_MAX_INTERVAL.max(poll_interval),
+        // The library's default (10 seconds), unless `poll_interval` is longer.
+        None => options.max_interval.max(poll_interval),
     };
     if max_interval < poll_interval {
         return Err(PyValueError::new_err(
             "max_interval must be at least poll_interval",
         ));
     }
-    let view = view.map(parse_view).transpose()?;
-    let mut options = WaitOptions::new(budget);
     options.poll_interval = poll_interval;
     options.max_interval = max_interval;
     Ok(WaitSettings { options, view })
@@ -374,7 +369,9 @@ pub fn wait_result(py: Python<'_>, id: &str, end: WaitEnd) -> PyResult<PyObject>
             error.setattr("last_state", last_state)?;
             Err(PyErr::from_value_bound(error))
         }
-        WaitEnd::Interrupted => Err(PyRuntimeError::new_err("The wait was stopped")),
+        // Not expected: the sync wait raises the signal handler's exception instead, and
+        // the async one drops the waiter rather than cancelling it.
+        WaitEnd::Interrupted => Err(PyRuntimeError::new_err("The wait was stopped locally")),
         WaitEnd::Failed(error) => Err(PyRuntimeError::new_err(error)),
     }
 }
@@ -455,27 +452,30 @@ impl PyTask {
     ) -> PyResult<PyObject> {
         let settings = wait_settings(timeout, poll_interval, max_interval, view)?;
         let cancellation = settings.options.operation.cancellation.clone();
+        // Python runs signal handlers in the main thread only; other threads just wait.
+        let threading = py.import_bound("threading")?;
+        let main_thread = threading
+            .call_method0("current_thread")?
+            .is(&threading.call_method0("main_thread")?);
         let (end, interrupt) = io(py, |rt| {
-            Ok(rt.block_on(async {
-                let waiting = wait_task(&self.inner, settings);
-                tokio::pin!(waiting);
-                let mut checks = tokio::time::interval(SIGNAL_CHECK_INTERVAL);
-                let mut interrupt = None;
-                loop {
-                    tokio::select! {
-                        end = &mut waiting => break (end, interrupt),
-                        _ = checks.tick(), if interrupt.is_none() => {
-                            // Runs the signal handlers, such as the one that raises
-                            // `KeyboardInterrupt`, if this is the main thread.
-                            if let Err(error) = Python::with_gil(|py| py.check_signals()) {
-                                // Stops the waiter, which then ends at once.
-                                cancellation.cancel();
-                                interrupt = Some(error);
-                            }
-                        }
-                    }
+            let waiting = wait_task(&self.inner, settings);
+            tokio::pin!(waiting);
+            if !main_thread {
+                return Ok((rt.block_on(waiting), None));
+            }
+            loop {
+                let slice =
+                    async { tokio::time::timeout(SIGNAL_CHECK_INTERVAL, &mut waiting).await };
+                if let Ok(end) = rt.block_on(slice) {
+                    return Ok((end, None));
                 }
-            }))
+                // Outside `block_on`, so that handlers can make sync calls of their own.
+                if let Err(error) = Python::with_gil(|py| py.check_signals()) {
+                    // Stops the waiter, which then ends at once.
+                    cancellation.cancel();
+                    return Ok((rt.block_on(waiting), Some(error)));
+                }
+            }
         })?;
         match interrupt {
             Some(error) => Err(error),

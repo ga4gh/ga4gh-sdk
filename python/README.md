@@ -373,13 +373,17 @@ print(details.state, details.logs)
 - `timeout` is the time in seconds for the whole wait, including the polls and the
   request for the view; `None` waits as long as it takes. When the time runs out, it
   raises `WaitTimeoutError`, a `TimeoutError`, whose `id` is the task's ID and
-  `last_state` the last polled state (`None` if no poll succeeded). Each request also
-  keeps the configuration's [timeouts](#timeouts).
+  `last_state` the last polled state (`None` if no poll succeeded). If the time runs
+  out while it gets an ended task in a view, `last_state` is that task's final state.
+  Each request also keeps the configuration's [timeouts](#timeouts).
 - A failed poll, for example an HTTP error or a response without a state, raises
   `RuntimeError`; polls are not retried. Invalid arguments, such as a negative timeout,
   a `poll_interval` of 0 or a `max_interval` below `poll_interval`, raise `ValueError`.
-- The wait releases the GIL, so other threads run meanwhile. Ctrl-C stops it with
-  `KeyboardInterrupt` within about 0.1 seconds.
+- The wait releases the GIL, so other threads run meanwhile. In the main thread, it
+  runs signal handlers within about 0.1 seconds: Ctrl-C stops it with
+  `KeyboardInterrupt`, as does any exception that a handler raises. Handlers may call
+  the SDK, for example `task.cancel()`. Python runs signal handlers in the main thread
+  only, so a wait in another thread goes on until it ends or times out.
 - A wait never cancels the task: not when the time runs out, not on Ctrl-C, not when a
   poll fails. Call `Task.cancel()` for that. To keep waiting, call `wait()` again, also
   with a new `Task(id, transport)` in another process.
@@ -421,7 +425,11 @@ asyncio.run(main())
 - `await task.wait(...)` waits for a task like `Task.wait()`, with the same arguments,
   results and errors. Cancelling the awaiting coroutine, for example with
   `asyncio.wait_for()`, stops polling; the task on the server goes on. A pending wait
-  takes one of the 256 call threads (see below) for as long as it waits.
+  takes one of the 256 call threads (see below) for as long as it waits; with 256
+  pending waits, further async calls, including `cancel()`, queue until one ends. Give
+  waits a `timeout` when an app may wait for many tasks at once: a wait that is still
+  queued raises `WaitTimeoutError` (with `last_state` `None`) about a second after its
+  timeout.
 - The requests run on the runtime of the sync API without the GIL, so they don't block
   the event loop, and several of them run at the same time. Because the SDK's futures
   aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256

@@ -3,8 +3,12 @@
 import _thread
 import asyncio
 import math
+import pickle
+import signal
 import threading
 import time
+import uuid
+from types import FrameType
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
@@ -51,7 +55,7 @@ def requests_to(server: MockServer, path: str) -> int:
 
     Args:
         server: The mock server.
-        path: The request path, such as `/api/tasks/progress`.
+        path: The request path, such as `/api/tasks/state-RUNNING`.
 
     Returns:
         The number of requests for the path so far.
@@ -93,6 +97,23 @@ def test_timeout_error_is_a_timeout_error_of_the_package() -> None:
     assert (str(error), error.id, error.last_state) == ("message", None, None)
 
 
+def test_timeout_error_can_be_pickled(config: Configuration) -> None:
+    """A `WaitTimeoutError` keeps its message, ID and last state through `pickle`.
+
+    Args:
+        config: The mock TES's configuration.
+    """
+    with pytest.raises(WaitTimeoutError) as raised:
+        task(config, "state-QUEUED").wait(0.05, **FAST)
+    copy = pickle.loads(pickle.dumps(raised.value))
+    assert type(copy) is WaitTimeoutError
+    assert (str(copy), copy.id, copy.last_state) == (
+        "Timed out waiting for task state-QUEUED",
+        "state-QUEUED",
+        TesState.QUEUED,
+    )
+
+
 @pytest.mark.parametrize("state", TERMINAL_STATES)
 def test_wait_returns_the_terminal_state(
     server: MockServer, config: Configuration, state: str
@@ -117,9 +138,9 @@ def test_wait_polls_until_the_task_ends(server: MockServer, config: Configuratio
         server: The mock server.
         config: The mock TES's configuration.
     """
-    before = requests_to(server, "/api/tasks/progress")
-    assert task(config, "progress").wait(**FAST) is TesState.COMPLETE
-    assert requests_to(server, "/api/tasks/progress") - before == 3
+    task_id = f"progress-{uuid.uuid4()}"
+    assert task(config, task_id).wait(**FAST) is TesState.COMPLETE
+    assert requests_to(server, f"/api/tasks/{task_id}") == 3
 
 
 def test_wait_returns_the_task_in_a_view(server: MockServer, config: Configuration) -> None:
@@ -206,6 +227,102 @@ def test_wait_raises_runtime_error_when_a_poll_fails(config: Configuration) -> N
     """
     with pytest.raises(RuntimeError, match="Failed to wait for task"):
         task(config, "missing").wait(**FAST)
+
+
+def test_wait_raises_runtime_error_for_a_response_without_a_state(
+    config: Configuration,
+) -> None:
+    """A poll whose response has no state ends the wait with `RuntimeError`.
+
+    Args:
+        config: The mock TES's configuration.
+    """
+    with pytest.raises(RuntimeError, match="no string state"):
+        task(config, "bad").wait(**FAST)
+
+
+def test_wait_raises_runtime_error_when_the_view_fails(config: Configuration) -> None:
+    """A failed request for the ended task in a view raises `RuntimeError`.
+
+    Args:
+        config: The mock TES's configuration.
+    """
+    with pytest.raises(RuntimeError, match="Failed to get task"):
+        task(config, "ended").wait(view="FULL", **FAST)
+
+
+def test_timeout_covers_the_request_for_the_view(config: Configuration) -> None:
+    """The time running out during the request for the view raises `WaitTimeoutError`.
+
+    Its last state is then the ended task's final state.
+
+    Args:
+        config: The mock TES's configuration.
+    """
+    started = time.monotonic()
+    with pytest.raises(WaitTimeoutError) as raised:
+        task(config, "ended").wait(0.3, view="BASIC", **FAST)
+    assert time.monotonic() - started < 1.5
+    assert raised.value.last_state is TesState.COMPLETE
+
+
+def test_wait_in_another_thread(config: Configuration) -> None:
+    """A wait outside the main thread, where no signal handlers run, ends as usual.
+
+    Args:
+        config: The mock TES's configuration.
+    """
+    results: list[object] = []
+
+    def wait() -> None:
+        """Waits for a task that ends and one that keeps running."""
+        results.append(task(config, f"progress-{uuid.uuid4()}").wait(**FAST))
+        try:
+            task(config, "state-RUNNING").wait(0.2, **FAST)
+        except WaitTimeoutError as error:
+            results.append(error.last_state)
+
+    waiter = threading.Thread(target=wait)
+    waiter.start()
+    waiter.join(timeout=10)
+    assert not waiter.is_alive()
+    assert results == [TesState.COMPLETE, TesState.RUNNING]
+
+
+def test_signal_handlers_can_call_the_sdk(server: MockServer, config: Configuration) -> None:
+    """A signal handler during a wait may make sync calls, such as `cancel()`.
+
+    The exception that the handler raises ends the wait.
+
+    Args:
+        server: The mock server.
+        config: The mock TES's configuration.
+    """
+    states: list[TesState] = []
+
+    def handler(signum: int, frame: FrameType | None) -> None:
+        """Gets a task's state, then stops the wait.
+
+        Args:
+            signum: The signal's number.
+            frame: The interrupted frame.
+
+        Raises:
+            KeyboardInterrupt: Always.
+        """
+        states.append(task(config, "state-COMPLETE").status())
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGINT, handler)
+    timer = threading.Timer(0.2, _thread.interrupt_main)
+    timer.start()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            task(config, "state-RUNNING").wait(5, **FAST)
+    finally:
+        timer.cancel()
+        signal.signal(signal.SIGINT, previous)
+    assert states == [TesState.COMPLETE]
 
 
 @pytest.mark.parametrize(
@@ -400,3 +517,33 @@ def test_cancelling_the_async_wait_stops_polling_only(
     time.sleep(0.2)
     assert requests_to(server, "/api/tasks/state-RUNNING") == polls
     assert not [path for path in server.paths() if path.endswith(":cancel")]
+
+
+def test_a_queued_async_wait_still_times_out(config: Configuration) -> None:
+    """A wait queued behind 256 pending ones raises `WaitTimeoutError` soon after its timeout.
+
+    Args:
+        config: The mock TES's configuration.
+    """
+
+    async def main() -> float:
+        """Fills the call threads with waits, then waits once more with a timeout.
+
+        Returns:
+            How long the queued wait took, in seconds.
+        """
+        running = async_task(config, "state-RUNNING")
+        pending = [asyncio.ensure_future(running.wait(poll_interval=10)) for _ in range(256)]
+        try:
+            await asyncio.sleep(0.2)
+            started = time.monotonic()
+            with pytest.raises(WaitTimeoutError) as raised:
+                await running.wait(0.3)
+            assert raised.value.last_state is None
+            return time.monotonic() - started
+        finally:
+            for waiting in pending:
+                waiting.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    assert run(main) < 5
