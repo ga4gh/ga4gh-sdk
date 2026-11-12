@@ -387,9 +387,12 @@ the selected version profile (pass `ToolFilter::query()` as parameters).
 Use `responses::files_zip(trs.transport(), ...)` to stream large archives.
 The [compatibility guide](docs/api_compatibility.md) explains version selection,
 tag-filter capabilities, and connecting to deployments without usable discovery.
-Authentication isn't supported yet: the SDK's transport doesn't send
-the configured tokens, so only public registries and tools work. The CLI's
-`trs` commands use this client; see the [CLI README](cli/README.md#trs-examples).
+The default transport does not apply tokens from `Configuration`. For an
+authenticated registry, supply a configured `reqwest::Client` through
+`Transport::with_client` and `TRS::with_transport`; see the
+[usage guide](docs/usage.md#timeouts). The CLI's `trs` commands use the default
+transport and currently work with public endpoints; see the
+[CLI README](cli/README.md#trs-examples).
 
 ## Testing
 Unit tests run by default. Integration suites are opt-in.
