@@ -9,3 +9,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Base image digests in the `Dockerfile`. The Rust version must match
+  # `rust-toolchain.toml`, so new Rust versions are changed by hand.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: rust
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch

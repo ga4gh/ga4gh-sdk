@@ -34,7 +34,9 @@ create a GitHub release; that comes with the CLI binaries
    the [CLI image](container-image.md) natively for `linux/amd64` and
    `linux/arm64`, checks each with `tests/run-image-tests.sh` (on
    `linux/amd64` also against Funnel) and pushes each platform image by
-   digest, without a tag. CI runs the same build and checks on every pull
+   digest, without a tag. The push rebuilds the checked image from the
+   builder's layer cache, with the source and revision labels and
+   reproducible timestamps, and runs `--version` on the pushed digest. CI runs the same build and checks on every pull
    request, without pushing.
 4. **Publish package** waits for the wheels and the image, so that nothing
    reaches PyPI unless every artefact is built. It uploads all files with
@@ -80,7 +82,9 @@ the variable afterwards, or the next tag goes to TestPyPI, too.
 The workflow pushes with the job's `GITHUB_TOKEN`; it needs no secret and no
 environment. The tag is the workspace version, such as `0.2.0` or
 `0.2.0-rc.1` (a `+` of build metadata becomes `_`, which OCI tags allow).
-There is no `latest` tag. Unlike files on PyPI, a tag can be moved: a re-run
+There is no `latest` tag. An upstream TestPyPI rehearsal (`PYPI_INDEX` set
+to `testpypi` in `ga4gh/ga4gh-sdk`) pushes the platform images by digest
+but tags no image, and **Publish image** is skipped. Unlike files on PyPI, a tag can be moved: a re-run
 of **Publish image** points the version tag at the images of that run, and
 earlier digests stay available.
 

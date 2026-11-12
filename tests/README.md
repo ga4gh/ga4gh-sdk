@@ -20,9 +20,11 @@ to change the limit. It does not stop a Funnel process that it starts.
 
 ## CLI image
 
-This suite needs a running Docker daemon with
+This suite needs bash 4.4 or later, a running Docker daemon with
 [Buildx](https://docs.docker.com/build/concepts/overview/#buildx), and for
-its last part `curl` and the `funnel` executable (see above).
+its last part `curl` and the `funnel` executable (see above;
+`tests/install-funnel.sh DIRECTORY` installs the pinned version on Linux
+x86-64).
 
 ```sh
 tests/run-image-tests.sh
@@ -31,9 +33,13 @@ tests/run-image-tests.sh
 The script builds the [CLI image](../docs/container-image.md) from the
 working tree and checks that:
 
-1. the build context leaves out probe files that look like environment
-   files, keys and build output, and keeps `.env.example` and the sources
-   (the probe files are created in the working tree and removed again);
+1. the build context holds every tracked file of the workspace manifests and
+   the `lib/`, `cli/` and `python/` crates, and leaves out probe files that
+   look like environment files, keys, credential stores, build output and
+   other directories, while keeping `.env.example` (the probe files are
+   created in the working tree and removed again, together with directories
+   created for them); the Rust image of the `Dockerfile` matches
+   `rust-toolchain.toml`;
 2. the image's entrypoint is `ga4gh-cli`, `--help` and the default command
    print the help, `--version` prints the workspace version, it runs as UID
    10001 with `HOME=/home/ga4gh` and contains no sources;
@@ -41,11 +47,13 @@ working tree and checks that:
    [site check script](../examples/kubernetes/tes-site-check.sh) runs in the
    image against Funnel on `localhost:8000`, with the configuration mounted
    read-only and a read-only root file system. It exits 0 with
-   `result=COMPLETE` for the example task, 1 with `result=EXECUTOR_ERROR` for
-   a task whose command fails, and 1 with `result=TIMEOUT` for a task that
-   runs too long, which it cancels.
+   `result=COMPLETE` for the example task; 1 with `result=EXECUTOR_ERROR` for
+   a task whose command fails; 1 with `result=TIMEOUT` for a task that runs
+   too long, which it cancels; and 1 without submitting a task for an
+   unreachable TES and for an invalid `TIMEOUT_SECONDS`.
 
-The script starts Funnel if it isn't running and stops it at the end. Set
+The script starts Funnel if nothing answers at `localhost:8000/healthz`, and
+stops it at the end; otherwise it uses the service already there. Set
 `IMAGE` to choose the tag of the built image (default `ga4gh-cli:test`),
 `PLATFORM` to build for another platform, such as `linux/arm64`, and
 `FUNNEL_CHECK` to `true` or `false` to require or skip the third part

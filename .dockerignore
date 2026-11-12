@@ -1,8 +1,21 @@
-# Keeps secrets, build output and local state out of the image build context
-# (see docs/container-image.md); tests/run-image-tests.sh checks these rules.
+# Keeps everything but the sources that the image build needs out of the
+# build context (see docs/container-image.md); tests/run-image-tests.sh
+# checks these rules with probe files.
 
-# Environment files may hold credentials; only the examples are kept
-.env*
+# Only the workspace manifests and its member crates
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!README.md
+!LICENSE
+!lib/
+!cli/
+!python/
+!.env.example
+
+# Within those, no environment files (they may hold credentials), except
+# the examples
 **/.env*
 !.env.example
 !**/.env.example
@@ -19,25 +32,20 @@
 **/id_ed25519*
 **/.ssh/
 **/.gnupg/
-**/.netrc
-**/.pypirc
+**/.kube/
+**/kubeconfig*
+**/.aws/
+**/.cargo/
 **/.docker/
-**/credentials*.json
+**/.git-credentials
+**/.netrc
+**/.npmrc
+**/.pypirc
+**/credentials*
 **/.ga4gh-cli/
 
-# Build output, caches and local tooling
-target/
+# Build output and local state
 **/target/
-.git/
-coverage/
-debug/
-funnel-work-dir/
-funnel/
-node_modules/
-.venv/
-venv/
-env/
+**/.venv/
 **/__pycache__/
-*.log
-.idea/
-.vscode/
+**/*.log

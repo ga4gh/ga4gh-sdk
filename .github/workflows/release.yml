@@ -128,10 +128,11 @@ jobs:
 
   # Runs after the package is on the index: tags the multi-platform image with
   # the version and records its build provenance. A re-run moves the tag to
-  # the images of that run.
+  # the images of that run. An upstream TestPyPI rehearsal tags no image.
   image-publish:
     name: Publish image
     needs: [prepare, image, publish]
+    if: needs.prepare.outputs.index == 'pypi' || github.repository != 'ga4gh/ga4gh-sdk'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -161,8 +162,9 @@ jobs:
           for file in digests/*; do
             sources+=("$repository@$(cat "$file")")
           done
-          if [[ "${#sources[@]}" -ne 2 ]]; then
-            echo "::error::Expected 2 platform images, found ${#sources[@]}"
+          # A missing platform fails the Release image job, so this job doesn't run
+          if [[ "${#sources[@]}" -eq 0 ]]; then
+            echo "::error::No platform images found"
             exit 1
           fi
           docker buildx imagetools create --tag "$tag" "${sources[@]}"

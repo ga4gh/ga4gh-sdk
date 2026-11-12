@@ -42,13 +42,8 @@ jobs:
         if: matrix.funnel
         shell: bash
         run: |
-          archive=funnel-linux-amd64-v0.11.14.tar.gz
-          curl --fail --location --silent --show-error \
-            --output "$RUNNER_TEMP/$archive" \
-            "https://github.com/calypr/funnel/releases/download/v0.11.14/$archive"
-          echo "007e85ee808f131034854f6868efc9b11d3205f2fc1c778f339b484e9271996b  $RUNNER_TEMP/$archive" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" funnel
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          tests/install-funnel.sh "$RUNNER_TEMP/funnel"
+          echo "$RUNNER_TEMP/funnel" >> "$GITHUB_PATH"
       # Shared with the push below, so that it reuses the layers just checked;
       # the BuildKit image is pinned by digest
       - name: Set up the image builder
@@ -88,6 +83,8 @@ jobs:
           digest="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' "$RUNNER_TEMP/metadata.json")"
           mkdir -p "$RUNNER_TEMP/digests"
           echo "$digest" > "$RUNNER_TEMP/digests/$ID"
+          # The pushed image runs, too
+          docker run --rm --platform "$PLATFORM" "$repository@$digest" --version
           echo "Pushed $repository@$digest ($PLATFORM)" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: inputs.push

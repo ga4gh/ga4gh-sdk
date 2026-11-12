@@ -108,7 +108,7 @@ jobs:
           else
             common=(.github/workflows/ci.yml Cargo.toml Cargo.lock lib/Cargo.toml rust-toolchain.toml)
             if [[ "$SUITE" == funnel ]]; then
-              paths=("${common[@]}" run-integration-tests.sh lib/src/clients/tes/
+              paths=("${common[@]}" run-integration-tests.sh tests/install-funnel.sh lib/src/clients/tes/
                 lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
                 lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs)
             else
@@ -129,13 +129,8 @@ jobs:
         if: matrix.suite == 'funnel' && steps.changes.outputs.run == 'true'
         shell: bash
         run: |
-          archive=funnel-linux-amd64-v0.11.14.tar.gz
-          curl --fail --location --silent --show-error \
-            --output "$RUNNER_TEMP/$archive" \
-            "https://github.com/calypr/funnel/releases/download/v0.11.14/$archive"
-          echo "007e85ee808f131034854f6868efc9b11d3205f2fc1c778f339b484e9271996b  $RUNNER_TEMP/$archive" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" funnel
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          tests/install-funnel.sh "$RUNNER_TEMP/funnel"
+          echo "$RUNNER_TEMP/funnel" >> "$GITHUB_PATH"
       - name: Test against Funnel
         if: matrix.suite == 'funnel' && steps.changes.outputs.run == 'true'
         run: bash run-integration-tests.sh

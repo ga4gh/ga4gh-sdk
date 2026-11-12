@@ -65,7 +65,9 @@ docker run --rm \
 The container's exit status is the CLI's: 0 on success, 1 for request,
 server and input errors, 2 for usage errors. Results go to stdout, errors and
 logs to stderr. To reach a TES on the host, such as a local Funnel, add
-`--network host` on Linux.
+`--network host` on Linux. Set time limits for slow or unreachable services
+with `timeouts` in the configuration file (see
+[Configuration](../cli/README.md#configuration)).
 
 The image works with a read-only root file system and without Linux
 capabilities (`--read-only --cap-drop ALL --security-opt no-new-privileges`),
@@ -76,8 +78,9 @@ as long as outputs go to a mounted volume.
 [`examples/kubernetes/`](../examples/kubernetes/README.md) has a Kubernetes
 Job that checks a TES deployment, such as TESK, from inside the cluster: it
 submits one small, disposable task, prints its ID, waits until it ends and
-prints its `FULL` view. The Job exits 0 only if the task completes. It needs
-no public ingress to the TES API.
+prints its `FULL` view. The Job exits 0 only if the task completes, and 1
+otherwise; if it stops waiting before the task ends, it cancels the task. It
+needs no public ingress to the TES API.
 
 The Job runs once (`backoffLimit: 0`, `restartPolicy: Never`), because TES
 task creation is not idempotent: a retried Pod would submit a second task.
@@ -88,8 +91,9 @@ submissions.
 ## Site-level test against a real TES
 
 CI checks the image against a local Funnel only (see
-[Testing the image](#testing-the-image)). To test it against your own TES,
-an operator can run the site check on demand:
+[Testing the image](#testing-the-image)); it never contacts a real TES. To
+test the image against your own TES, an operator can run the site check on
+demand:
 
 1. Follow the steps in [`examples/kubernetes/`](../examples/kubernetes/README.md)
    with the TES `base_path` that the cluster's Pods use, for example the
@@ -98,8 +102,8 @@ an operator can run the site check on demand:
    the final state:
 
    ```sh
-   kubectl wait --for=condition=complete --timeout=15m "job/$job"
-   kubectl logs "job/$job"
+   kubectl --namespace "$namespace" wait --for=condition=complete --timeout=15m "$job"
+   kubectl --namespace "$namespace" logs "$job"
    ```
 
 3. Delete the test task from the TES if the service keeps tasks and your
@@ -130,14 +134,19 @@ sources with the workspace lockfile (`cargo build --locked`) in a pinned
 Rust image, then copies only the `ga4gh-cli` binary into a pinned Debian
 image. Both base images are pinned by digest; the Debian packages (OpenSSL,
 CA certificates, build headers) come from the Debian archive at build time.
-The Rust toolchain comes from [`rust-toolchain.toml`](../rust-toolchain.toml);
-when you change it, change the Rust image in the `Dockerfile` to the same
-version, or the build first downloads that toolchain.
+The build uses the Rust channel of
+[`rust-toolchain.toml`](../rust-toolchain.toml), without its `clippy` and
+`rustfmt` components. When you change the channel, change the Rust image in
+the `Dockerfile` to the same version; `tests/run-image-tests.sh` fails while
+they differ. Dependabot updates the digests of both base images, but not the
+Rust version.
 
-[`.dockerignore`](../.dockerignore) leaves environment files (except
-`.env.example`), keys and certificates, credential files, `target/` and other
-build output out of the build context, so they can't end up in an image
-layer.
+[`.dockerignore`](../.dockerignore) admits only the workspace manifests, the
+lockfile, `README.md`, `LICENSE` and the member crates `lib/`, `cli/` and
+`python/`. Within them, it leaves out environment files (except
+`.env.example`), keys and certificates, credential files and stores (such as
+`.ssh/`, `.kube/`, `.aws/`, `.cargo/`, `.netrc`), `target/` and logs. Only the
+`ga4gh-cli` binary goes from the build stage into the image.
 
 ## Testing the image
 
@@ -148,7 +157,8 @@ tests/run-image-tests.sh
 The script builds the image and checks the build context, the entrypoint,
 the version, the user and the absence of sources in the image. If `funnel` is
 on `PATH`, it also runs the site check script in the image against a local
-Funnel: for a task that completes, one that fails and one that runs too long.
+Funnel: for a task that completes, one that fails, one that runs too long,
+an unreachable TES and an invalid setting.
 The [integration test guide](../tests/README.md#cli-image) has the details.
 The **CLI image** job of CI runs it on `linux/amd64` (with Funnel) and
 `linux/arm64` (without) for every pull request.

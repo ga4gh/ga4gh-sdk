@@ -24,7 +24,12 @@ The check:
 
 The Job succeeds (exit status 0) only if the task is `COMPLETE`. Any failed
 request, any other final state or the time limit makes it fail with exit
-status 1.
+status 1. If a request fails after the submission (`result=REQUEST_FAILED`),
+or the Pod is stopped (`result=INTERRUPTED`), the script cancels the task
+before it exits; if canceling fails too, the log says so, and the task may
+still run. Each request has the CLI's time limits; set `timeouts` in
+`config.json` to change them (see
+[Configuration](../../cli/README.md#configuration)).
 
 The Job never retries: `backoffLimit: 0` and `restartPolicy: Never`. TES task
 creation is not idempotent, so a retried Pod would submit a second task. If a
@@ -78,7 +83,8 @@ commands send it.
 
 The Pod runs as UID 10001, without a service account token, with a read-only
 root file system, no Linux capabilities and the `RuntimeDefault` seccomp
-profile, so it is admitted under the `restricted` Pod Security Standard. On
+profile; these settings are meant to meet the `restricted` Pod Security
+Standard. On
 platforms that assign their own UIDs, such as OpenShift, remove `runAsUser`,
 `runAsGroup` and `fsGroup` from the manifest; the CLI still finds its
 configuration, because `HOME` is set in the image.
@@ -98,4 +104,5 @@ The test task stays in the TES's task list, tagged
 [`tests/run-image-tests.sh`](../../tests/run-image-tests.sh) runs
 `tes-site-check.sh` in the image against a local Funnel, with the same
 read-only mounts as the Job, for a task that completes, one that fails and
-one that runs too long; CI runs it on every pull request.
+one that runs too long, and with an unreachable TES; CI runs it on every
+pull request. The manifest itself is not tested in CI.
