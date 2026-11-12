@@ -691,14 +691,35 @@ mod tests {
 
     #[test]
     fn test_from_path_reads_token_from_named_environment_variable() {
-        // PATH is set wherever tests run; setting a variable here would race with
-        // other test threads that read the environment.
-        let expected = std::env::var("PATH").unwrap();
+        // A child owns this fixture variable; changing the parent environment
+        // would race with other test threads. PATH may contain spaces, so it
+        // cannot stand in for a valid bearer token.
+        const TOKEN_ENV: &str = "GA4GH_SDK_TEST_CONFIG_TOKEN";
+        const CHILD_ENV: &str = "GA4GH_SDK_TEST_CONFIG_TOKEN_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "utils::configuration::tests::test_from_path_reads_token_from_named_environment_variable",
+                ])
+                .env(CHILD_ENV, "1")
+                .env(TOKEN_ENV, "fixture-token")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let expected = std::env::var(TOKEN_ENV).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         std::fs::write(
             &path,
-            r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"PATH"}}"#,
+            r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"GA4GH_SDK_TEST_CONFIG_TOKEN"}}"#,
         )
         .unwrap();
         let config = Configuration::from_path(&path, "custom").unwrap();
@@ -707,20 +728,20 @@ mod tests {
 
         std::fs::write(
             &path,
-            r#"{"custom":{"base_path":"https://example.org","bearer_access_token_env":"PATH"}}"#,
+            r#"{"custom":{"base_path":"https://example.org","bearer_access_token_env":"GA4GH_SDK_TEST_CONFIG_TOKEN"}}"#,
         )
         .unwrap();
         let config = Configuration::from_path(&path, "custom").unwrap();
         assert_eq!(
             config.bearer_access_token,
-            Some(std::env::var("PATH").unwrap())
+            Some(std::env::var(TOKEN_ENV).unwrap())
         );
         assert!(config.extra.is_empty());
 
         // `null` means unset, for both keys.
         std::fs::write(
             &path,
-            r#"{"custom":{"base_path":"https://example.org","oauth_access_token":null,"oauth_access_token_env":"PATH"}}"#,
+            r#"{"custom":{"base_path":"https://example.org","oauth_access_token":null,"oauth_access_token_env":"GA4GH_SDK_TEST_CONFIG_TOKEN"}}"#,
         )
         .unwrap();
         let config = Configuration::from_path(&path, "custom").unwrap();
