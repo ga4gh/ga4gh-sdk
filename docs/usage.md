@@ -13,7 +13,7 @@ the [README](../README.md#installation).
 | TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES |
 | DRS | Objects, access URLs, bulk, and `drs://` URIs | `drs get`, `access` | `DRS`, `DrsResolver` |
 | WES | Runs and attachments | `wes run`, `list`, `get`, `status`, `cancel` | `WES`, `Run` |
-| TRS | Tools and descriptors | `trs tools`, `tool`, `versions`, `version`, `descriptor`, `files`, `tests` | Not yet |
+| TRS | Tools and descriptors | `trs tools`, `tool`, `versions`, `version`, `descriptor`, `files`, `tests` | `TRS` |
 | Service Registry | `ServiceRegistry` | `registry list`, `get`, `types` | Not yet |
 
 `ServiceInfo` reads the discovery endpoint of one configured service. The

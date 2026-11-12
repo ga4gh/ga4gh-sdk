@@ -70,6 +70,13 @@ python -m pip install pytest
 pytest
 ```
 
+The tests use mock services. Smoke tests of the TRS bindings against
+WorkflowHub and Dockstore need network access and run only on request:
+
+```bash
+GA4GH_TRS_PUBLIC_TESTS=1 pytest tests/test_trs_public.py
+```
+
 ## Supported surface
 
 | Python API | Current behavior |
@@ -81,7 +88,8 @@ pytest
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
 | `DRS`, `DrsResolver` | Read DRS objects and access URLs, one at a time or in bulk, wait while the server prepares them, and plan access for `drs://` URIs; read full JSON including unknown fields. See [Using DRS](#using-drs). |
 | `WES`, `Run`, `RunRequest` | Start runs (with workflow attachments), list, inspect, poll, and cancel WES runs, and read their tasks; read full JSON including unknown fields. See [Using WES](#using-wes). |
-| TRS, Service Registry | Available in the Rust SDK, not yet as Python client classes. |
+| `TRS`, `Tool`, `ToolVersion`, `FileWrapper`, `ToolFile`, `ToolPage` | List tools page by page, read tools, versions, descriptors, test files, file lists, ZIP archives and container files of TRS 2.0.1 and 2.0.2 registries; read full JSON including unknown fields. See [Using TRS](#using-trs). |
+| Service Registry | Available in the Rust SDK, not yet as a Python client class. |
 
 The Python API is maintained by hand; a new Rust SDK method or model does not
 appear in Python automatically. For each SDK change, decide whether to expose
@@ -179,7 +187,8 @@ tes = TES(config)
 - `connect` (default 10): opening each connection.
 - `request` (default 60): each request that the limits below don't apply to.
 - `discovery` (default 10): the service check of `TES(config)`, `AsyncTES`,
-  `WES(config)` and `DRS(config)`, in place of `request`.
+  `WES(config)`, `DRS(config)` and `TRS(config)`, and `TRS.service_info()`, in
+  place of `request`.
 - `submission` (default 300): `TES.create()`, `AsyncTES.create()` and
   `WES.run()`, including uploads, in place of `request`. A submission that runs
   out of time after its request started raises `RuntimeError` with "submission may have
@@ -617,6 +626,138 @@ To read a DRS section of `~/.ga4gh-cli/config.json`, use
 listed in the [usage guide](../docs/usage.md#drs); `DRS::resolve_reference`, which
 resumes from a stored reference, is not bound yet.
 
+## Using TRS
+
+`TRS` is a client for a Tool Registry Service (TRS 2.0.1 and 2.0.2), such as WorkflowHub
+or Dockstore. It reads tools, their versions, descriptors and files through the Rust TRS
+client, so it checks IDs, versions and filters as the Rust SDK and the CLI do:
+
+```python
+from ga4gh_sdk import TRS, Configuration
+
+trs = TRS(Configuration("https://workflowhub.eu/ga4gh/trs/v2"))
+print(trs.api_version, trs.version_source)  # 2.0.1 declared
+
+page = trs.list_tools(tool_class="Workflow", limit=10)
+for tool in page.tools:
+    print(tool.id, tool.name, [version.id for version in tool.versions])
+if page.next_page:
+    page = trs.next_tools_page(page.next_page)
+
+version = trs.get_version("26", "1")
+print(version.name, version.descriptor_type)
+
+descriptor = trs.get_descriptor("26", "1", "CWL")  # JSON: content, url, checksum
+plain = trs.get_descriptor("26", "1", "PLAIN_CWL")  # the bare file, as content
+other = trs.get_descriptor("26", "1", "CWL", relative_path="ro-crate-metadata.json")
+
+for file in trs.list_files("26", "1", "CWL"):
+    print(file.file_type, file.path)
+archive = trs.get_files_zip("26", "1", "CWL")  # bytes, at most 64 MiB by default
+```
+
+The checked-in [TRS example](examples/trs_read.py) reads a version, its descriptor and its
+file list. Run it from `python/`:
+
+```sh
+python examples/trs_read.py https://workflowhub.eu/ga4gh/trs/v2 26 1 CWL
+```
+
+The Python test suite runs this file against a mock TRS.
+
+- `TRS(config, *, api_version="auto", tag_filter="auto", discovery=True)` reads the service
+  info and raises `RuntimeError` if the service isn't reachable or isn't a TRS. It reads
+  responses by the TRS version that the service declares:
+  - `api_version="auto"` uses 2.0.1 or 2.0.2 as declared. A service that declares another
+    version, or none, is read as 2.0.1, and `version_source` is `"baseline"`: the SDK
+    hasn't checked that the service works with that.
+  - `api_version="strict"` raises `RuntimeError` for such a service instead.
+  - `api_version="2.0.1"` or `"2.0.2"` reads responses by that version, whatever the
+    service declares.
+  - `discovery=False` sends no service info request; it needs `api_version="2.0.1"` or
+    `"2.0.2"`, and doesn't check that the service is a TRS.
+  - `tag_filter="enabled"` or `"disabled"` says whether the server supports the `tags`
+    filter of `list_tools()`, whatever its TRS version says. Use it only if you know
+    the server.
+  Invalid options raise `ValueError` before a request.
+- `api_version` is the TRS version that responses are read with, `declared_version` the
+  version that the service info declares (`None` without discovery), and `version_source`
+  where the choice comes from: `"declared"`, `"caller"` or `"baseline"`. `tag_filter` is
+  `"specified"` (TRS 2.0.2) or `"caller_enabled"` if `list_tools(tags=...)` may be sent;
+  otherwise it is `"not_specified"`, `"caller_disabled"` or `"unknown"`.
+  `discovered_service_info` is the service info as a `dict`; `service_info()` reads it again.
+- `TRS.list_tools(*, id=None, alias=None, tool_class=None, descriptor_type=None,
+  registry=None, organization=None, name=None, toolname=None, description=None,
+  author=None, checker=None, tags=None, offset=None, limit=None)` returns a `ToolPage`. The
+  filters are keyword-only, and unset filters are not sent. `limit` must be between 1 and
+  2147483647, else it raises `ValueError`. `tags` is a list of tags (TRS
+  2.0.2); they are sent as one comma-separated value, so a tag that is empty or contains a
+  comma raises `ValueError`, as do tags for a server whose `tag_filter` doesn't allow them.
+  Requested filters are never dropped silently.
+- A `ToolPage` has `tools` (a list of `Tool`) and the TRS paging headers: `next_page`,
+  `last_page`, `self_link`, `current_offset` and `current_limit` (`str`s, or `None` if the
+  server didn't send them; a repeated header gives its first value);
+  `headers()` returns all response headers as a `dict`, by lowercase name, with repeated
+  headers joined by `", "` and headers that aren't text left out. They can hold cookies,
+  so don't log them.
+  `TRS.next_tools_page(page.next_page)` gets the next page. It follows only URLs of the
+  tools endpoint of the client's API root, and raises `RuntimeError` for others before a
+  request, so credentials never go to another server.
+- `TRS.get_tool(id)` returns a `Tool`, `TRS.list_versions(id)` a list of `ToolVersion`s and
+  `TRS.get_version(id, version_id)` one `ToolVersion`. Some registries, such as Dockstore,
+  take the version's `name` as `version_id`.
+- `TRS.get_descriptor(id, version_id, descriptor_type, relative_path=None)` returns the
+  primary descriptor, or the file at `relative_path` below it, as a `FileWrapper`.
+  `descriptor_type` is a TRS descriptor type such as `"CWL"`, `"WDL"`, `"NFL"`, `"GALAXY"`
+  or `"SMK"`, or the same with `PLAIN_`, for which the server sends the bare file; it
+  comes as a `FileWrapper` with only `content` set. Types are sent as given, also those
+  that TRS doesn't define, so use the spec's uppercase names.
+- `TRS.list_tests(id, version_id, descriptor_type)` returns the test parameter files as
+  `FileWrapper`s; for `PLAIN_` types, a bare test file comes as one `FileWrapper`.
+  `TRS.get_containerfiles(id, version_id)` returns the container specifications, such as
+  Dockerfiles, as `FileWrapper`s.
+- `TRS.list_files(id, version_id, descriptor_type)` returns the version's files as
+  `ToolFile`s with `path` and `file_type`. `TRS.get_files_zip(id, version_id,
+  descriptor_type, limit=None)` downloads them as one ZIP archive and returns it as
+  `bytes`; it reads at most `limit` bytes into memory (`None`: 64 MiB), and a `limit`
+  below 1 raises `ValueError`. Both take descriptor types without `PLAIN_`, such as
+  `"CWL"`. A larger archive, or a response
+  that isn't a ZIP archive (such as the JSON file list of a registry that ignores
+  `format=zip`), raises `RuntimeError`. The archive isn't extracted or checked further.
+- `TRS.list_tool_classes()` returns the registry's tool classes as `dict`s.
+- Credentials set on the configuration (see [Authentication](#authentication)) go with
+  the service info request and every TRS request, including `next_tools_page()`, which
+  only follows URLs at the client's API root.
+- IDs, version IDs and relative paths are sent unchanged, as one percent-encoded URL path
+  segment each, so IDs such as Dockstore's `#workflow/github.com/org/repo` work. Empty
+  values, `.` and `..` raise `ValueError` before a request.
+- Errors: failed requests, such as a missing tool (`404`), and responses that don't fit the
+  TRS models raise `RuntimeError`; the message has the HTTP status, not the server's
+  response body. A version's
+  `description` (TRS 2.0.2) that isn't a string is kept in the JSON, and the
+  `description` property is `None` then.
+
+The results are typed objects with properties. They hold the JSON of the Rust SDK's TRS
+models, including fields that those models don't know: `to_dict()` returns it as a new
+`dict` and `json()` as JSON text. Fields of the TRS models that the server sent as `null`
+are left out.
+
+- `Tool`: `id`, `url`, `aliases`, `organization`, `name`, `toolclass` (a `dict`),
+  `description`, `meta_version`, `has_checker`, `checker_url` and `versions` (a list of
+  `ToolVersion`).
+- `ToolVersion`: `id`, `url`, `name`, `author`, `description`, `is_production`, `images`,
+  `descriptor_type` (a list of `str`), `descriptor_type_version`, `containerfile`,
+  `meta_version`, `verified`, `verified_source`, `signed` and `included_apps`.
+- `FileWrapper`: `content`, `url`, `checksum` and `image_type`. Its `repr()` shows the
+  length of `content`, not the content.
+- `ToolFile`: `path`, `file_type` (as the server sent it, such as `"PRIMARY_DESCRIPTOR"`)
+  and `checksum`.
+
+Nested values, such as `images` and `checksum`, come as `dict`s and `list`s. To read a TRS
+section of `~/.ga4gh-cli/config.json`, use `config.from_file(ServiceType.TRS)`. The
+streaming ZIP download (`responses::files_zip`) of the Rust SDK is not bound yet; use
+`TRS.get_files_zip()` with a `limit`.
+
 ## Extending the bindings
 
 The bindings are meant as a base for clients of services that add endpoints or
@@ -638,6 +779,12 @@ request. A subclass without its own `__init__` accepts only the base arguments.
 result classes (`DrsObject`, `AccessURL`, `BulkAccessURL`, `PendingResolution`,
 `BulkOutcome`, `BulkReport` and `AccessPlan`) allow subclasses as well, for Rust crates
 that extend them, but the clients return instances of the base classes.
+
+`TRS` can be subclassed in the same way; it reads the service info, unless
+`discovery=False`, before a subclass's `__init__` runs. Its keyword arguments
+(`api_version`, `tag_filter` and `discovery`) are taken by the base class; a subclass's
+`__init__` receives them too. The result classes (`Tool`, `ToolVersion`, `FileWrapper`,
+`ToolFile` and `ToolPage`) allow subclasses for Rust crates, like those of DRS.
 
 ### Further endpoints
 
@@ -744,7 +891,11 @@ The DRS classes (`PyDRS`, `PyDrsResolver` and so on, in `clients::drs`) follow t
 pattern; `clients::drs::register(py, m)` registers all of them.
 The WES classes (`PyWES`, `PyRun` and so on, in `clients::wes`) follow the same pattern;
 `clients::wes::register(py, m)` registers all of them, with the `WesState` enum.
-Further bindings, such as TRS, will too.
+The TRS classes (`PyTRS`, `PyTool` and so on, in `clients::trs`) follow it too;
+`clients::trs::register(py, m)` registers all of them. For Rust code, `PyTRS::new(config)`
+builds a client with the default options and `PyTRS::with_options(config, options,
+discovery)` one with `TrsOptions`; its `inner` field holds the library's `TRS`.
+`PyToolPage` keeps the response's `HeaderMap` in `headers`.
 
 ## Documentation
 

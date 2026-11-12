@@ -95,8 +95,9 @@ every page. Their older `&Transport` form remains available; it uses the shared
 models without an established tag-filter capability. Both forms reject pagination
 URLs outside the configured tools endpoint and retain opaque query tokens.
 
-The [CLI](../cli/README.md#trs-examples) exposes the same options. Python has no
-TRS client wrapper yet; this change does not add one or alter other bindings.
+The [CLI](../cli/README.md#trs-examples) exposes the same options, and so does
+the [Python `TRS` class](../python/README.md#using-trs) (`api_version`,
+`tag_filter` and `discovery=False`). Other bindings are unchanged.
 
 ## Models and failures
 
