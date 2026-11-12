@@ -17,3 +17,6 @@ node_modules/
 
 # Coverage reports (`make coverage`)
 coverage/
+
+# Copied from the root by `make downstream` (see docs/downstream.md)
+examples/downstream-sdk/Cargo.lock
