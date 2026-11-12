@@ -412,10 +412,9 @@ async fn selected_drs_verification_uses_owning_resolver_and_only_object_headers(
         .expect(1)
         .create();
     let metadata=mockito::mock("GET","/selected-drs/objects/report").match_header("authorization","Bearer resolver-only").with_body(json!({"id":"report","self_uri":"drs://drs.example/report","size":6,"created_time":"2026-01-01T00:00:00Z","checksums":[],"access_methods":[{"type":"https","access_url":{"url":format!("{}/selected-store",mockito::server_url()),"headers":["Authorization: Bearer object-only"]}}]}).to_string()).expect(1).create();
-    let mut config = Configuration::new(
+    let config = Configuration::new(
         url::Url::parse(&format!("{}/selected-drs", mockito::server_url())).unwrap(),
     );
-    config.bearer_access_token = Some("resolver-only".into());
     let resolver = DrsResolver::default()
         .with_service(
             "drs.example",

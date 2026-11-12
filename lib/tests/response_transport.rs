@@ -230,10 +230,15 @@ async fn dropping_a_response_stops_the_producer() {
 }
 
 #[tokio::test]
-async fn trs_relative_page_link_keeps_configured_url_auth_scoped_to_the_api() {
+async fn trs_relative_page_link_keeps_configured_basic_auth_scoped_to_the_api() {
     use ga4gh_sdk::clients::trs::responses::next_tools_page;
-    let base = server_url().replacen("http://", "http://user:pass@", 1);
-    let transport = Transport::new(&Configuration::new(url::Url::parse(&base).unwrap()));
+    use ga4gh_sdk::utils::configuration::BasicAuth;
+    let transport = Transport::new(
+        &Configuration::new(url::Url::parse(&server_url()).unwrap()).with_basic_auth(BasicAuth {
+            username: "user".into(),
+            password: Some("pass".into()),
+        }),
+    );
     let request = mock("GET", "/tools?offset=opaque")
         .match_header("authorization", "Basic dXNlcjpwYXNz")
         .with_body("[]")
@@ -246,5 +251,25 @@ async fn trs_relative_page_link_keeps_configured_url_auth_scoped_to_the_api() {
             .tools
             .is_empty()
     );
+    request.assert();
+}
+
+#[tokio::test]
+async fn strict_json_validates_utf8_even_in_ignored_properties() {
+    let request = mock("GET", "/strict-json-ignored-utf8")
+        .with_status(200)
+        .with_body(b"{\"ignored\":\"\xff\"}")
+        .create();
+    let response = transport()
+        .request_response(Method::GET, "strict-json-ignored-utf8", None, None)
+        .await
+        .unwrap();
+    let error = ga4gh_sdk::utils::transport::response_json::<serde::de::IgnoredAny>(
+        response,
+        BodyLimits::default(),
+    )
+    .await
+    .expect_err("invalid UTF-8 must not be skipped with an unknown field");
+    assert!(error.downcast_ref::<std::str::Utf8Error>().is_some());
     request.assert();
 }

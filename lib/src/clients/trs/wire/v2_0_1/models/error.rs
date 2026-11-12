@@ -10,30 +10,26 @@
 
 #![allow(unused_imports)]
 #![allow(clippy::empty_docs)]
-use crate::clients::trs::models;
+use crate::clients::trs::wire::v2_0_1::models;
 use serde::{Deserialize, Serialize};
 
-/// ServiceOrganization : Organization providing the service
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ServiceOrganization {
-    /// Name of the organization responsible for the service
-    #[serde(rename = "name")]
-    pub name: String,
-    /// URL of the website of the organization (RFC 3986 format)
-    #[serde(rename = "url")]
-    pub url: String,
+pub struct Error {
+    #[serde(rename = "code")]
+    pub code: i32,
+    #[serde(rename = "message", skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     /// Fields that the spec doesn't define, kept as received, so that writing
     /// the model back doesn't drop them.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-impl ServiceOrganization {
-    /// Organization providing the service
-    pub fn new(name: String, url: String) -> ServiceOrganization {
-        ServiceOrganization {
-            name,
-            url,
+impl Error {
+    pub fn new(code: i32) -> Error {
+        Error {
+            code,
+            message: None,
             extra: serde_json::Map::new(),
         }
     }
