@@ -318,6 +318,29 @@ The `trs` commands browse a GA4GH Tool Registry Service (TRS), such as
 WorkflowHub or Dockstore, and download workflow files from it. They only read
 from the registry; nothing is changed there.
 
+The CLI uses the SDK's [TRS compatibility policy](../docs/api_compatibility.md).
+`--api-version auto` (default) recognizes 2.0.1 and 2.0.2. An unknown declaration
+uses the 2.0.1 read contract without assuming tag-filter support.
+`--api-version strict` requires a recognized declaration;
+`--api-version 2.0.1` or `2.0.2` selects an API profile explicitly.
+These flags can appear before or after a TRS subcommand.
+
+`--tag-filter enabled` allows a known deployment's backported tag filter;
+`--tag-filter disabled` blocks filtering on a deployment that does not implement
+it. Neither option changes the response contract. Use overrides only with
+independent knowledge of the server, not just because it returned HTTP 200.
+For a known endpoint without usable service-info, combine `--no-discovery`
+with an explicit version. Discovery failures never trigger this automatically.
+
+```sh
+# Require a recognized server declaration.
+ga4gh-cli trs --api-version strict tools --limit 1
+# Use a known 2.0.1 deployment's backported tag filter.
+ga4gh-cli trs --api-version 2.0.1 --tag-filter enabled tools --tag genomics
+# Read a known endpoint that does not expose service-info.
+ga4gh-cli trs --no-discovery --api-version 2.0.1 tools --limit 1
+```
+
 #### 1. Configure the registry
 
 The `trs` commands need to know which registry to talk to. They read it from
@@ -356,7 +379,7 @@ or WDL. Replace `TOOL_ID` and `VERSION_ID` below with values returned by the
 registry:
 
 ```sh
-# Find tools. All filters are optional.
+# Find tools. All filters are optional; repeat --tag for several tags.
 ga4gh-cli trs tools --tool-class Workflow --descriptor-type CWL --limit 5
 
 # Look at one tool and its versions.
@@ -367,17 +390,20 @@ ga4gh-cli trs version 'TOOL_ID' 'VERSION_ID'
 # See which files the version has, then download the main workflow file.
 ga4gh-cli trs files 'TOOL_ID' 'VERSION_ID' --type CWL
 ga4gh-cli trs descriptor 'TOOL_ID' 'VERSION_ID' --type CWL --plain > main.cwl
+
+# Or download all files of the version as one ZIP archive.
+ga4gh-cli trs files 'TOOL_ID' 'VERSION_ID' --type CWL --zip workflow.zip
 ```
 
 #### Commands
 
 | Command | Result |
 | --- | --- |
-| `trs tools [filters]` | A list of tools, optionally filtered. |
+| `trs tools [filters]` | A list of tools, optionally filtered by `--tool-class`, `--descriptor-type`, `--organization`, `--name` and `--tag` (repeatable), paged with `--offset` and `--limit`. |
 | `trs tool <TOOL_ID>` | One tool and its versions. |
 | `trs versions <TOOL_ID>` | The versions of a tool. |
-| `trs version <TOOL_ID> <VERSION_ID>` | One version and its descriptor types. |
-| `trs files <TOOL_ID> <VERSION_ID> --type <TYPE>` | The paths and types of its files. |
+| `trs version <TOOL_ID> <VERSION_ID>` | One version, its descriptor types and, if the registry sends one, its description. |
+| `trs files <TOOL_ID> <VERSION_ID> --type <TYPE>` | The paths and types of its files; `--zip <FILE>` writes all files as one ZIP archive to `FILE` instead. |
 | `trs descriptor <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its primary descriptor; `--path <RELATIVE_PATH>` selects another file. |
 | `trs tests <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its test parameter files. |
 
@@ -385,7 +411,15 @@ Results are JSON by default. `trs descriptor --plain` prints the descriptor
 content without a JSON wrapper. `trs tests --plain` prints one inline test file;
 if the server returns several files or only a URL, omit `--plain` to inspect
 their JSON instead. The commands exit with code 0 on success and 1 on request
-or server errors; missing arguments use exit code 2. Error messages and JSON
+or server errors; missing arguments use exit code 2. `--zip` never replaces
+an existing file, doesn't extract the archive, and downloads at most 64 MiB;
+the file appears under its name only when it is complete (until then, it is a
+hidden `.<name>.partial-<pid>` file in the same directory, which an interrupted
+download may leave behind, so the name may be up to about 18 bytes shorter than
+the filesystem allows). On filesystems without hard links, such as FAT, the
+archive is written to the file directly.
+A tag must not be empty or contain a comma, because the registry receives all
+tags as one comma-separated value. Error messages and JSON
 output escape terminal control and bidirectional formatting characters.
 
 ## Service Registry commands

@@ -138,19 +138,39 @@ pub async fn response_text(
     response: reqwest::Response,
     limits: BodyLimits,
 ) -> Result<String, Box<dyn Error>> {
+    let response = checked_response(response, limits).await?;
+    Ok(String::from_utf8_lossy(&response.body).into_owned())
+}
+
+/// Decode bounded JSON from the original bytes. Invalid UTF-8 and malformed JSON
+/// return a decoding error. Non-success responses retain the existing HttpError.
+pub async fn response_json<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+    limits: BodyLimits,
+) -> Result<T, Box<dyn Error>> {
+    let response = checked_response(response, limits).await?;
+    // Validate the whole document even when T ignores unknown properties.
+    // A byte deserializer may skip UTF-8 checks for discarded string values.
+    let text = std::str::from_utf8(&response.body)?;
+    Ok(serde_json::from_str(text)?)
+}
+
+async fn checked_response(
+    response: reqwest::Response,
+    limits: BodyLimits,
+) -> Result<BufferedResponse, Box<dyn Error>> {
     let limit = if response.status().is_success() {
         limits.success
     } else {
         limits.error
     };
     let response = read_bounded(response, limit).await?;
-    let body = String::from_utf8_lossy(&response.body).into_owned();
     if response.status.is_success() {
-        Ok(body)
+        Ok(response)
     } else {
         Err(Box::new(HttpError {
             status: response.status,
-            body,
+            body: String::from_utf8_lossy(&response.body).into_owned(),
         }))
     }
 }
@@ -348,6 +368,21 @@ impl Transport {
         let operation = crate::utils::operation::Operation::new(timeout);
         operation
             .run(async { response_text(request.send().await?, BodyLimits::default()).await })
+            .await?
+    }
+
+    /// Strict JSON discovery under the configured absolute discovery budget.
+    pub(crate) async fn get_json_within<T: serde::de::DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        timeout: std::time::Duration,
+    ) -> Result<T, Box<dyn Error>> {
+        let request = self
+            .request_builder(reqwest::Method::GET, endpoint)?
+            .header(reqwest::header::ACCEPT, "application/json")
+            .timeout(timeout);
+        crate::utils::operation::Operation::new(timeout)
+            .run(async { response_json(request.send().await?, BodyLimits::default()).await })
             .await?
     }
 

@@ -98,7 +98,7 @@ suites are not included. For an HTML report of the same data, run this after
 
 ```sh
 cargo llvm-cov report --html --open \
-  --ignore-filename-regex 'lib/src/clients/[^/]+/models/'
+  --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
 ```
 
 ## Lints

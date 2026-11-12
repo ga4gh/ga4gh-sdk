@@ -10,13 +10,13 @@
 
 #![allow(unused_imports)]
 #![allow(clippy::empty_docs)]
-use crate::clients::trs::models;
+use crate::clients::trs::wire::v2_0_1::models;
 use serde::{Deserialize, Serialize};
 
-/// DescriptorType : The type of descriptor that represents this version of the tool. Note that these files can also include associated Docker/container files  and test parameters that further describe a version of a tool.
-/// The type of descriptor that represents this version of the tool. Note that these files can also include associated Docker/container files  and test parameters that further describe a version of a tool.
+/// DescriptorTypeWithPlain : The output type of the descriptor. Plain types return the raw text while the \"non-plain\" types return the application/json
+/// The output type of the descriptor. Plain types return the raw text while the \"non-plain\" types return the application/json
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub enum DescriptorType {
+pub enum DescriptorTypeWithPlain {
     #[serde(rename = "CWL")]
     Cwl,
     #[serde(rename = "WDL")]
@@ -27,12 +27,22 @@ pub enum DescriptorType {
     Galaxy,
     #[serde(rename = "SMK")]
     Smk,
+    #[serde(rename = "PLAIN_CWL")]
+    PlainCwl,
+    #[serde(rename = "PLAIN_WDL")]
+    PlainWdl,
+    #[serde(rename = "PLAIN_NFL")]
+    PlainNfl,
+    #[serde(rename = "PLAIN_GALAXY")]
+    PlainGalaxy,
+    #[serde(rename = "PLAIN_SMK")]
+    PlainSmk,
     /// A value that the spec doesn't define, kept as received.
     #[serde(untagged)]
     Unrecognized(String),
 }
 
-impl std::fmt::Display for DescriptorType {
+impl std::fmt::Display for DescriptorTypeWithPlain {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Cwl => write!(f, "CWL"),
@@ -40,13 +50,18 @@ impl std::fmt::Display for DescriptorType {
             Self::Nfl => write!(f, "NFL"),
             Self::Galaxy => write!(f, "GALAXY"),
             Self::Smk => write!(f, "SMK"),
+            Self::PlainCwl => write!(f, "PLAIN_CWL"),
+            Self::PlainWdl => write!(f, "PLAIN_WDL"),
+            Self::PlainNfl => write!(f, "PLAIN_NFL"),
+            Self::PlainGalaxy => write!(f, "PLAIN_GALAXY"),
+            Self::PlainSmk => write!(f, "PLAIN_SMK"),
             Self::Unrecognized(value) => write!(f, "{}", value),
         }
     }
 }
 
-impl Default for DescriptorType {
-    fn default() -> DescriptorType {
+impl Default for DescriptorTypeWithPlain {
+    fn default() -> DescriptorTypeWithPlain {
         Self::Cwl
     }
 }

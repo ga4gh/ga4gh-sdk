@@ -46,7 +46,7 @@ fn service_info(expected_calls: usize) -> Mock {
             json!({
                 "id": "org.example.trs",
                 "name": "Example TRS",
-                "type": {"group": "org.ga4gh", "artifact": "trs", "version": "2.0.1"},
+                "type": {"group": "org.ga4gh", "artifact": "trs", "version": "2.0.2"},
                 "organization": {"name": "Example", "url": "https://example.org"},
                 "version": "1.0.0",
             })
@@ -99,6 +99,7 @@ fn tools_sends_filters_and_prints_json() {
             Matcher::UrlEncoded("name".into(), "repo".into()),
             Matcher::UrlEncoded("offset".into(), "page-2".into()),
             Matcher::UrlEncoded("limit".into(), "5".into()),
+            Matcher::UrlEncoded("tags".into(), "a b,c".into()),
         ]))
         .with_status(200)
         .with_body(json!([tool()]).to_string())
@@ -122,6 +123,10 @@ fn tools_sends_filters_and_prints_json() {
             "page-2",
             "--limit",
             "5",
+            "--tag",
+            "a b",
+            "--tag",
+            "c",
         ],
     );
     let listed = stdout_json(&output);
@@ -141,7 +146,7 @@ fn tool_versions_and_version_encode_ids() {
     );
     let version = get(
         &format!("tools/{TOOL_ID}/versions/v%201%2Fbeta"),
-        &json!({"url": "https://example.org/v1", "id": "v 1/beta", "name": "beta", "descriptor_type": ["CWL"]})
+        &json!({"url": "https://example.org/v1", "id": "v 1/beta", "name": "beta", "descriptor_type": ["CWL"], "description": "Beta release"})
             .to_string(),
     );
     let home = home_with_trs_config();
@@ -153,6 +158,7 @@ fn tool_versions_and_version_encode_ids() {
     let one = stdout_json(&run(&home, &["trs", "version", TOOL_ID, "v 1/beta"]));
     assert_eq!(one["name"], "beta");
     assert_eq!(one["descriptor_type"][0], "CWL");
+    assert_eq!(one["description"], "Beta release");
     assert_eq!(
         stdout_json(&run(&home, &["trs", "versions", TOOL_ID]))[0]["name"],
         "first"
@@ -269,6 +275,97 @@ fn files_and_tests_print_json_or_plain_content() {
 }
 
 #[test]
+fn files_zip_writes_the_archive_without_overwriting_files() {
+    let service = service_info(1);
+    let bytes = include_bytes!("../../tests/fixtures/trs/workflow.zip");
+    let zip = mock(
+        "GET",
+        format!("{ROOT}/tools/{TOOL_ID}/versions/v1/CWL/files").as_str(),
+    )
+    .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+    .with_status(200)
+    .with_header("content-type", "application/zip")
+    .with_body(bytes.as_slice())
+    .expect(1)
+    .create();
+    let home = home_with_trs_config();
+    let archive = home.path().join("workflow.zip");
+    let archive_arg = archive.to_str().unwrap();
+    let args = [
+        "trs",
+        "files",
+        TOOL_ID,
+        "v1",
+        "--type",
+        "CWL",
+        "--zip",
+        archive_arg,
+    ];
+
+    let written = stdout(&run(&home, &args));
+    assert!(
+        written.starts_with(&format!("Wrote {} bytes to ", bytes.len())),
+        "{written}"
+    );
+    assert_eq!(fs::read(&archive).unwrap(), bytes);
+
+    // An existing file is kept, and the registry isn't contacted again.
+    fs::write(&archive, "keep").unwrap();
+    let output = run(&home, &args);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("already exists"));
+    assert_eq!(fs::read_to_string(&archive).unwrap(), "keep");
+    service.assert();
+    zip.assert();
+}
+
+#[test]
+fn files_zip_writes_no_file_if_the_download_fails() {
+    let service = service_info(2);
+    let version = format!("{ROOT}/tools/{TOOL_ID}/versions/v2");
+    let not_zip = mock("GET", format!("{version}/CWL/files").as_str())
+        .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+        .with_status(200)
+        .with_body(json!([{"path": "main.cwl"}]).to_string())
+        .expect(1)
+        .create();
+    let missing = mock("GET", format!("{version}/WDL/files").as_str())
+        .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+        .with_status(404)
+        .expect(1)
+        .create();
+    let home = home_with_trs_config();
+    let archive = home.path().join("workflow.zip");
+
+    for (descriptor_type, expected) in [("CWL", "not a ZIP archive"), ("WDL", "404")] {
+        let output = run(
+            &home,
+            &[
+                "trs",
+                "files",
+                TOOL_ID,
+                "v2",
+                "--type",
+                descriptor_type,
+                "--zip",
+                archive.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{stderr}");
+        assert!(!archive.exists());
+        // No temporary file is left either; only the config directory.
+        assert_eq!(fs::read_dir(home.path()).unwrap().count(), 1);
+    }
+    service.assert();
+    not_zip.assert();
+    missing.assert();
+}
+
+#[test]
 fn plain_tests_reject_url_only_wrappers_without_printing_a_false_file() {
     let service = service_info(1);
     let test_files = get(
@@ -331,6 +428,14 @@ fn invalid_arguments_fail_before_contacting_the_registry() {
         (
             vec!["trs", "tools", "--limit", "ten"],
             "Invalid limit 'ten'",
+        ),
+        (
+            vec!["trs", "tools", "--tag", "a,b"],
+            "TRS tags must not be empty or contain a comma",
+        ),
+        (
+            vec!["trs", "tools", "--tag", ""],
+            "TRS tags must not be empty or contain a comma",
         ),
         (vec!["trs", "tool", ".."], "TOOL_ID must not be empty"),
         (
