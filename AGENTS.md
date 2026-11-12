@@ -24,6 +24,9 @@ different directory is shown.
 - For implementation work, use the routing table in the
   [engineering principles](docs/engineering_principles.md). Apply the sections
   relevant to the affected contract; they do not require unrelated refactoring.
+- Before reviewing or updating an existing PR, read the
+  [reviewer framework](docs/reviewer_framework.md). For updates, follow its
+  procedure for maintaining an existing PR.
 - For documentation and repository instructions, follow the
   [technical writing guide](docs/technical_writing.md). Preserve technical
   meaning, conditions, exceptions, and API identifiers.
