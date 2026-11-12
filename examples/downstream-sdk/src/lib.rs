@@ -8,11 +8,13 @@
 //! - [`task`]: a model that extends
 //!   [`TesTask`](ga4gh_sdk::clients::tes::models::TesTask) with a field
 //!   that the TES specification doesn't define
-//! - [`cli`]: a CLI that adds a subcommand to the SDK's CLI
+//! - [`cli`]: a CLI with its own name, configuration file and token
+//!   variable that adds subcommands to the SDK's CLI
 //!
-//! The extensions themselves (`GET /tasks/{id}/usage` and a `priority` field
-//! on tasks) are made up for the example. The CI workflow builds and tests
-//! this crate, so that changes to the SDK can't break it unnoticed.
+//! The extensions themselves (`GET /tasks/{id}/usage`, a `priority` field
+//! on tasks and `GET /quota`) are made up for the example. The CI workflow
+//! builds and tests this crate, so that changes to the SDK can't break it
+//! unnoticed.
 
 pub mod cli;
 pub mod task;

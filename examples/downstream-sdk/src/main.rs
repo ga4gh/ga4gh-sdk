@@ -1,7 +1,8 @@
-//! The `downstream-cli` binary: the SDK's CLI plus `tes usage`.
+//! The `downstream-cli` binary: the SDK's CLI plus `tes usage` and `quota`.
 //!
-//! Like `ga4gh-cli`, it reads each service's section from
-//! `~/.ga4gh-cli/config.json`; `tes usage` reads the `TES` section.
+//! It reads each service's section from `~/.downstream-cli/config.json`, and
+//! a token from `DOWNSTREAM_CLI_TOKEN` for sections without credentials; see
+//! [`downstream_sdk::cli::context`].
 
 use downstream_sdk::cli;
 use std::process::ExitCode;

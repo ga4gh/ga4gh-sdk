@@ -547,6 +547,32 @@ binary's own text output. SDK log messages can hold a service's response, so
 a downstream binary that writes logs should pass them through `printable()`
 too, as the `ga4gh-cli` binary does in [its logger setup](src/main.rs). See the
 [downstream CLI test](tests/downstream_cli.rs) for a working example. A
-downstream command can read its own section of the configuration file with
-`Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))`; keys
-that the SDK doesn't use itself are in `Configuration::extra`.
+downstream command that shares the `ga4gh-cli` file can read its own section
+with `Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))`;
+keys that the SDK doesn't use itself are in `Configuration::extra`.
+
+A downstream binary with its own name, version, configuration file or token
+variable describes them in a `ga4gh_cli::CliContext`:
+
+- `CliContext::new("my-cli", env!("CARGO_PKG_VERSION"))` sets the name and
+  version; `with_about()` sets the help text.
+- The configuration file defaults to `~/.my-cli/config.json`. The name must
+  then be usable as a directory name; `with_config_path()` sets another
+  path. `load_config()` reads a section from the file, for built-in and
+  custom services alike.
+- `with_token_env("MY_CLI_TOKEN", [ServiceType::Custom("MY_SERVICE".into())])`
+  supplies an OAuth access token to the listed sections when they set no
+  credentials. Other sections never receive it. If a listed section has no
+  credential, the variable must be present and contain a valid token;
+  otherwise the command fails before sending a request.
+- Its `command()`, `dispatch()` and `dispatch_to()` replace the free
+  functions, which keep the settings of `ga4gh-cli`. `dispatch_with_config()`
+  and `dispatch_with_config_to()` take a configuration from the caller and
+  don't need a context.
+- Its own commands can build their output as the built-in ones do:
+  `CommandOutput::json()` and `failure()` escape their content and set the
+  exit code, `success()` takes text that is already escaped, and
+  `write_to()` writes both streams and returns the exit code.
+
+The guide [Build on this SDK](../docs/downstream.md) walks through an example
+crate.

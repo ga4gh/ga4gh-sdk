@@ -1,5 +1,5 @@
 //! Offline workflow contract commands; submission is explicit and uses WES configuration.
-use crate::CommandOutput;
+use crate::{CliContext, CommandOutput};
 use clap::{Arg, ArgMatches, Command};
 use ga4gh_sdk::{
     clients::{
@@ -103,6 +103,16 @@ pub async fn run(
     args: &ArgMatches,
     service_config: Option<&Configuration>,
 ) -> anyhow::Result<CommandOutput> {
+    run_with_context(args, service_config, &CliContext::default()).await
+}
+
+/// Like [`run`]; without a supplied configuration, submission reads the
+/// WES section of `context`'s configuration file.
+pub(crate) async fn run_with_context(
+    args: &ArgMatches,
+    service_config: Option<&Configuration>,
+    context: &CliContext,
+) -> anyhow::Result<CommandOutput> {
     let result: Result<Value, Box<dyn std::error::Error>> = async {
         let (name, m) = args.subcommand().ok_or("missing workflow command")?;
         let get = |key: &str| {
@@ -136,7 +146,9 @@ pub async fn run(
                 } else {
                     let config = match service_config {
                         Some(config) => config.clone(),
-                        None => Configuration::from_file(ServiceType::WES)?,
+                        None => context
+                            .load_config(ServiceType::WES)
+                            .map_err(|error| error.to_string())?,
                     };
                     let wes = WES::new(&config).await?;
                     let attachments = m

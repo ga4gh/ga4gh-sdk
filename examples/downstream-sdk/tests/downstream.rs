@@ -2,7 +2,7 @@
 //!
 //! Each test uses its own API root on the shared mock server, so that tests
 //! running in parallel don't see each other's mocks. The binary test sets
-//! `HOME` only in its child process.
+//! `HOME` and the token variable only in its child process.
 
 use downstream_sdk::cli;
 use downstream_sdk::task::PrioritizedTask;
@@ -210,14 +210,14 @@ fn prioritized_task_writes_priority_once_or_not_at_all() {
 }
 
 #[test]
-fn cli_keeps_the_built_in_commands_and_adds_one() {
+fn cli_keeps_the_built_in_commands_and_adds_its_own() {
     let command = cli::command();
     assert_eq!(command.get_name(), cli::BIN_NAME);
     let tes = command.find_subcommand("tes").unwrap();
     for name in ["create", "list", "get", "status", "cancel", "usage"] {
         assert!(tes.find_subcommand(name).is_some(), "missing tes {name}");
     }
-    for name in ["drs", "trs", "wes", "workflow", "registry"] {
+    for name in ["drs", "trs", "wes", "workflow", "registry", "quota"] {
         assert!(command.find_subcommand(name).is_some(), "missing {name}");
     }
     cli::command().debug_assert();
@@ -229,6 +229,35 @@ fn cli_keeps_the_built_in_commands_and_adds_one() {
         error.kind(),
         clap::error::ErrorKind::MissingRequiredArgument
     );
+    let version = cli::command()
+        .try_get_matches_from([cli::BIN_NAME, "--version"])
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        version,
+        format!("{} {}\n", cli::BIN_NAME, env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(cli::context().token_env(), Some(cli::TOKEN_ENV));
+}
+
+#[tokio::test]
+async fn quota_uses_the_sdk_output_helpers() {
+    let _quota = mock("GET", "/quota-ok/quota")
+        .with_body("{\"user\":\"a\u{202e}\",\"cpu_hours\":10}")
+        .create();
+    let _error = mock("GET", "/quota-error/quota")
+        .with_status(403)
+        .with_body("denied")
+        .create();
+    let quota_config = |root: &str| {
+        Configuration::new(Url::parse(&format!("{}/{root}/", mockito::server_url())).unwrap())
+    };
+    let output = cli::quota(&quota_config("quota-ok")).await;
+    assert_eq!(output.exit_code, ExitCode::SUCCESS);
+    assert_eq!(output.stdout, "{\"user\":\"a\\u202e\",\"cpu_hours\":10}");
+    let output = cli::quota(&quota_config("quota-error")).await;
+    assert_eq!(output.exit_code, ExitCode::FAILURE);
+    assert!(output.stderr.contains("403"), "{}", output.stderr);
 }
 
 #[tokio::test]
@@ -292,20 +321,31 @@ fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
         .with_status(200)
         .with_body(r#"{"tasks":[{"id":"task-from-sdk","state":"COMPLETE"}]}"#)
         .create();
+    let _quota = mock("GET", "/cli-run-quota/quota")
+        .match_header("authorization", "Bearer from-file")
+        .with_body(r#"{"cpu_hours":3}"#)
+        .create();
     let home = tempfile::tempdir().unwrap();
-    std::fs::create_dir(home.path().join(".ga4gh-cli")).unwrap();
+    std::fs::create_dir(home.path().join(".downstream-cli")).unwrap();
     std::fs::write(
-        home.path().join(".ga4gh-cli/config.json"),
-        json!({"TES": {"base_path": api_root("cli-run")}}).to_string(),
+        home.path().join(".downstream-cli/config.json"),
+        json!({
+            "TES": {"base_path": api_root("cli-run")},
+            "QUOTA": {"base_path": format!("{}/cli-run-quota/", mockito::server_url()), "oauth_access_token": "from-file"}
+        }).to_string(),
     )
     .unwrap();
+    std::fs::create_dir(home.path().join(".ga4gh-cli")).unwrap();
+    std::fs::write(home.path().join(".ga4gh-cli/config.json"), "{}").unwrap();
     for (args, expected) in [
         (vec!["tes", "usage", "task-1"], "task-1\t-\t5\n"),
         (vec!["tes", "list"], "task-from-sdk"),
+        (vec!["quota"], "{\"cpu_hours\":3}"),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_downstream-cli"))
             .args(&args)
             .env("HOME", home.path())
+            .env(cli::TOKEN_ENV, "from-env")
             .output()
             .unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
@@ -317,4 +357,12 @@ fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
         assert!(stdout.contains(expected), "{args:?}: {stdout}");
         assert!(output.stderr.is_empty(), "{args:?}: {stdout}");
     }
+    let output = Command::new(env!("CARGO_BIN_EXE_downstream-cli"))
+        .args(["tes", "list"])
+        .env("HOME", home.path())
+        .env_remove(cli::TOKEN_ENV)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains(cli::TOKEN_ENV));
 }
