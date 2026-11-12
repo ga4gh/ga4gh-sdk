@@ -2,7 +2,26 @@ use ga4gh_sdk::utils::configuration::{AuthError, BasicAuth, Configuration};
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use mockito::{mock, Matcher};
 use reqwest::{header, multipart::Form, Client, Method, StatusCode};
+use std::sync::Mutex;
 use url::Url;
+
+struct WarningLogger(Mutex<Vec<String>>);
+
+static WARNING_LOGGER: WarningLogger = WarningLogger(Mutex::new(Vec::new()));
+
+impl log::Log for WarningLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() == log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            self.0.lock().unwrap().push(record.args().to_string());
+        }
+    }
+
+    fn flush(&self) {}
+}
 
 fn config(path: &str) -> Configuration {
     Configuration::new(Url::parse(&format!("{}{path}", mockito::server_url())).unwrap())
@@ -90,6 +109,63 @@ async fn invalid_or_conflicting_sources_fail_before_network_io() {
     ));
     assert!(!error.to_string().contains("bad"));
     request.assert();
+}
+
+#[tokio::test]
+async fn basic_control_characters_fail_before_network_io_without_leaking_values() {
+    let request = mock("GET", "/basic-invalid/objects").expect(0).create();
+    for (username, password, field) in [
+        ("alice\nSENTINEL", "safe", "username"),
+        ("alice", "secret\rSENTINEL", "password"),
+    ] {
+        let config = config("/basic-invalid").with_basic_auth(BasicAuth {
+            username: username.into(),
+            password: Some(password.into()),
+        });
+        let error = Transport::new(&config)
+            .get("objects", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<AuthError>(),
+            Some(AuthError::InvalidBasicControlCharacter { field: found }) if *found == field
+        ));
+        assert!(!error.to_string().contains("SENTINEL"));
+    }
+    request.assert();
+}
+
+#[test]
+fn configured_credentials_warn_once_for_remote_plain_http_without_sending() {
+    log::set_logger(&WARNING_LOGGER).unwrap();
+    log::set_max_level(log::LevelFilter::Warn);
+
+    let remote = Url::parse("http://192.0.2.1/tes").unwrap();
+    let _ = Transport::new(&Configuration::new(remote.clone()))
+        .request_builder(Method::GET, "tasks")
+        .unwrap();
+    let loopback = Configuration::new(Url::parse("http://127.0.0.1/tes").unwrap()).with_basic_auth(
+        BasicAuth {
+            username: "alice".into(),
+            password: Some("SENTINEL".into()),
+        },
+    );
+    let _ = Transport::new(&loopback)
+        .request_builder(Method::GET, "tasks")
+        .unwrap();
+    assert!(WARNING_LOGGER.0.lock().unwrap().is_empty());
+
+    let remote = Configuration::new(remote).with_basic_auth(BasicAuth {
+        username: "alice".into(),
+        password: Some("SENTINEL".into()),
+    });
+    let transport = Transport::new(&remote);
+    let _ = transport.request_builder(Method::GET, "tasks").unwrap();
+    let _ = transport.request_builder(Method::GET, "tasks").unwrap();
+    let warnings = WARNING_LOGGER.0.lock().unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("HTTP"));
+    assert!(!warnings[0].contains("SENTINEL"));
 }
 
 #[tokio::test]

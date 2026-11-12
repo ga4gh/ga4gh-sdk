@@ -181,6 +181,8 @@ pub enum AuthError {
     InvalidBearer { source: &'static str },
     /// A Basic username cannot contain the separator used by Basic auth.
     InvalidBasicUsername,
+    /// A Basic username or password contains an HTTP control character.
+    InvalidBasicControlCharacter { field: &'static str },
     /// A caller-owned client and configured credentials require explicit opt-in.
     CallerOwnedClient,
     /// A token provider requires the asynchronous request builder.
@@ -196,6 +198,9 @@ impl fmt::Display for AuthError {
             Self::Unsupported { source } => write!(f, "Unsupported authentication source: {source}"),
             Self::InvalidBearer { source } => write!(f, "Invalid bearer token in {source}"),
             Self::InvalidBasicUsername => f.write_str("Basic auth username must not contain ':'"),
+            Self::InvalidBasicControlCharacter { field } => {
+                write!(f, "Basic auth {field} must not contain control characters")
+            }
             Self::CallerOwnedClient => f.write_str(
                 "Configured credentials cannot be applied to a caller-owned HTTP client without explicit opt-in",
             ),
@@ -386,6 +391,16 @@ impl Configuration {
         if let Some(basic) = &self.basic_auth {
             if basic.username.contains(':') {
                 return Err(AuthError::InvalidBasicUsername);
+            }
+            if basic.username.bytes().any(|byte| byte.is_ascii_control()) {
+                return Err(AuthError::InvalidBasicControlCharacter { field: "username" });
+            }
+            if basic
+                .password
+                .as_deref()
+                .is_some_and(|password| password.bytes().any(|byte| byte.is_ascii_control()))
+            {
+                return Err(AuthError::InvalidBasicControlCharacter { field: "password" });
             }
             return Ok(ConfiguredAuth::Basic(basic));
         }
@@ -1149,5 +1164,19 @@ mod tests {
                 "the user or password in base_path"
             ]
         );
+    }
+
+    #[test]
+    fn file_rejects_basic_control_characters_without_printing_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"TES":{"base_path":"https://example.org/tes","basic_auth":{"username":"alice","password":"SENTINEL\nsecret"}}}"#,
+        )
+        .unwrap();
+        let error = Configuration::from_path(&path, "TES").unwrap_err();
+        assert!(error.to_string().contains("Basic auth password"));
+        assert!(!error.to_string().contains("SENTINEL"));
     }
 }
