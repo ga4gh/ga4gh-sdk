@@ -82,7 +82,8 @@ pub async fn run(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> anyhow::Result<ExitCode> {
-    let context = context();
+    // `--profile` selects the profile for this crate's own commands too.
+    let context = context().with_profile_from(matches);
     // Only this crate's own commands read their sections here.
     let exit_code = if usage_task_id(matches).is_some() {
         let config = context.load_config(ServiceType::TES)?;

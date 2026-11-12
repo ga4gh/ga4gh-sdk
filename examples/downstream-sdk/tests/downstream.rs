@@ -359,4 +359,26 @@ async fn cli_run_reads_the_config_file_for_added_and_built_in_commands() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("'QUOTA'"), "{error}");
+
+    // `--profile` selects the profile for the binary's own commands as well.
+    std::fs::write(
+        home.path().join(".downstream-cli/config.json"),
+        json!({"profiles": {
+            "default": {"TES": {"base_path": api_root("cli-run")}},
+            "metered": {"QUOTA": {
+                "base_path": format!("{}/cli-run-quota/", mockito::server_url())
+            }}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let matches = cli::command()
+        .try_get_matches_from([cli::BIN_NAME, "--profile", "metered", "quota"])
+        .unwrap();
+    let mut stdout = Vec::new();
+    let exit_code = cli::run(&matches, &mut stdout, &mut Vec::new())
+        .await
+        .unwrap();
+    assert_eq!(exit_code, ExitCode::SUCCESS);
+    assert!(String::from_utf8(stdout).unwrap().contains("cpu_hours"));
 }
