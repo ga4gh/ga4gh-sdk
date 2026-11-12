@@ -57,8 +57,8 @@ clean-coverage: ## Remove coverage data and reports
 docs: ## Build the API documentation (target/doc)
 	$(CARGO) doc --workspace --no-deps --locked
 
-# As Read the Docs (`.readthedocs.yaml`) and the CI `docs` job build it;
-# rustdoc's warnings, such as broken links, fail the build
+# As Read the Docs (`.readthedocs.yaml`) and the CI `docs` job build it.
+# Any rustdoc warning fails it.
 site: ## Build the documentation site in site/, strictly (needs MkDocs)
 	RUSTDOCFLAGS="$${RUSTDOCFLAGS:-} -D warnings" \
 		$(CARGO) doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli

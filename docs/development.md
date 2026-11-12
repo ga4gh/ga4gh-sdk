@@ -146,14 +146,21 @@ python3 -m pip install --group python/pyproject.toml:docs
 make site
 ```
 
-`make site` runs `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` with
-`RUSTDOCFLAGS="-D warnings"`, so that rustdoc's warnings, such as bare URLs
-(write `<https://...>` or `[text](https://...)`) and unresolved links, fail
-the build, and `mkdocs build --strict`, which fails on warnings such as links
-to missing files or anchors. Fixes in the docs of generated models go into
-their patch in `utils/patches/` (see
-[Autogenerate OpenAPI models](autogenerate_OAI_models.md)); the DRS models
-are exempt from the rustdoc check until they are fixed.
+`make site` runs two strict builds:
+
+- `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` with
+  `RUSTDOCFLAGS="-D warnings"`, so that any rustdoc warning fails it, such as
+  a bare URL (write `<https://...>` or `[text](https://...)`) or an
+  unresolved link. `make docs` builds the whole workspace and stays lenient.
+  Fixes in the docs of generated models go into their patch in
+  `utils/patches/` (see
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). Until the
+  docs of the DRS models are fixed, the DRS module (`lib/src/clients/drs/`)
+  is exempt from the bare-URL and broken-link checks (an `#[allow]` on
+  `pub mod drs` in `lib/src/clients/mod.rs`).
+- `mkdocs build --strict`, which fails on warnings such as links to missing
+  files or anchors.
+
 `python3 -m pytest docs/test_hooks.py` tests the hooks; CI
 runs both. After the first `make site`, `mkdocs serve` shows the site
 at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
