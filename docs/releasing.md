@@ -28,7 +28,12 @@ release; that comes with the CLI binaries
    bundling OpenSSL. Elsewhere (for example musl-based Linux such as Alpine,
    or glibc older than 2.28), pip builds from the sdist, which needs the Rust
    toolchain (see the [Python guide](../python/README.md#prerequisites)).
-   CI runs the same build on every pull request, without publishing.
+   CI builds the same matrix after each merge to `main` and on manual runs,
+   without publishing. PRs run the Python binding tests, which build a local
+   wheel for their selected interpreter; they do not run the full platform
+   matrix by default. For packaging, native dependency or platform changes,
+   run CI manually on the PR branch before merging (see the
+   [development guide](development.md#ci)).
 3. **Publish package** uploads all files with
    [trusted publishing](https://docs.pypi.org/trusted-publishers/): there is no
    API token, PyPI accepts the upload because it comes from this workflow and

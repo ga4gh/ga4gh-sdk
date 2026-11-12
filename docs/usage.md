@@ -3,7 +3,8 @@
 This guide covers the configuration file, the `ga4gh-cli` command-line tool
 and the Rust library (`ga4gh-lib`, imported as `ga4gh_sdk`). For the Python
 bindings, see the [Python README](../python/README.md). For installation, see
-the [README](../README.md#installation).
+the [README](../README.md#installation). To build your own SDK or CLI on top
+of this one, see [Build on this SDK](downstream.md).
 
 ## Available interfaces
 
@@ -52,7 +53,6 @@ built-in services, or any other name for a custom service:
   "TES": {
     "base_path": "https://example.org/ga4gh/tes/v1",
     "basic_auth": {"username": "alice", "password": "change-me"},
-    "oauth_access_token": "my-token",
     "timeouts": {"discovery": 30, "submission": 600}
   },
   "MY_SERVICE": {
@@ -71,6 +71,8 @@ built-in services, or any other name for a custom service:
   variable that holds the access token, so that the token needn't be in the
   file. Use it in place of `oauth_access_token`, not together with it. If the
   variable isn't set, reading the section is an error.
+- `bearer_access_token` or `bearer_access_token_env` (string, optional): a
+  generic bearer token, or the name of the variable that holds it.
 - `timeouts` (object, optional): time limits in seconds, as positive numbers:
   `connect`, `request`, `discovery` and `submission`. Limits that the object
   doesn't name keep their defaults; see [Timeouts](#timeouts).
@@ -79,26 +81,73 @@ built-in services, or any other name for a custom service:
   such as those of a downstream crate. In the example, `extra` holds
   `queue`. Rust's `Debug` output shows only the keys, but `extra`
   and `get_extra()` themselves return the values as they are, so don't log
-  them if they can hold credentials. The file doesn't set the other
-  `Configuration` fields: `user_agent`, `bearer_access_token` and `api_key`
-  in a section end up in `extra` as well.
+  them if they can hold credentials. The file doesn't set `user_agent`.
+  `api_key` is recognized but rejected because its header contract is not
+  defined.
 
 A missing file or section, or a field of the wrong type, is an error. Rust
 reads a custom section with `ServiceType::Custom("MY_SERVICE".into())`, Python
 with `config.from_file("MY_SERVICE")`. `Configuration::from_path(path, "TES")`
-reads a section from another file. Files written for earlier versions read as
-before; their `extra` is empty.
-
-Default SDK clients and CLI service commands read `basic_auth` and
-`oauth_access_token` but **do not send them yet** (see
-[#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)). They need an anonymous
-service or an authenticating proxy. The experimental `workflow submit` CLI
-command sends a configured OAuth bearer token; Rust callers can also supply an
-authenticated client through `WES::from_transport()`. Cross-surface consistency
-is tracked in [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
+reads a section from another file. One section may use one credential source:
+Basic, OAuth bearer, or generic bearer. Sources cannot be combined.
+The [authentication guide](authentication.md) describes how credentials reach
+Rust, Python, and CLI requests, and the behavior of redirects and injected
+clients. Previously stored credentials now take effect on requests. Rust and
+Python callers can instead set a [token provider](#token-providers); the
+configuration file and CLI cannot set one.
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
+
+### Profiles
+
+To switch between sets of services, such as local and remote deployments,
+put the sections into named profiles under a top-level `profiles` object.
+Each profile holds sections with the keys described above, and
+`default_profile` names the profile to use when none is selected:
+
+```json
+{
+  "default_profile": "local",
+  "profiles": {
+    "local": {
+      "TES": {"base_path": "http://localhost:8000/ga4gh/tes/v1"}
+    },
+    "remote": {
+      "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oauth_access_token_env": "REMOTE_TES_TOKEN"
+      },
+      "WES": {"base_path": "https://wes.example.org/ga4gh/wes/v1"}
+    }
+  }
+}
+```
+
+- The CLI uses the profile given with `--profile NAME`, else the one in the
+  environment variable `GA4GH_CLI_PROFILE`, else `default_profile`, else the
+  profile `default`. An empty variable or `--profile ""` is an error, so a
+  mistyped selection cannot silently use another service.
+  `--profile` and the variable apply to the CLI and `ga4gh_cli::CliContext`
+  only, not to the Rust and Python library functions below.
+- Rust `Configuration::from_path_with_profile(path, Some("remote"), "TES")`
+  reads a section of a given profile; with `None`, and in
+  `Configuration::from_path` and `from_file`, it reads the default profile
+  (`default_profile`, else `default`). Python `Configuration.from_file()`
+  reads the default profile as well.
+- A file without `profiles`, with its sections at the top level as in
+  [Configuration file](#configuration-file), counts as one profile named
+  `default`, so existing files keep working. Existing custom service sections
+  named `profiles` or `default_profile` remain valid when they have a
+  `base_path`. A `default_profile` setting without a profile map is an error.
+  A file with a profile map can't also have top-level
+  sections (keys starting with `$`, such as `$schema`, are allowed), and
+  naming a profile the file doesn't have is an error that lists the
+  profiles it has.
+- Profiles change only which sections are read. To keep a profile's tokens
+  out of the file, name an environment variable per section with
+  `oauth_access_token_env`, as `remote` does above; credentials are sent only
+  where described in the previous section.
 
 ## Command-line tool
 
@@ -171,6 +220,10 @@ roots, a proxy or default headers, build a `reqwest::Client`, wrap it with
 `WES::discover_with_transport`). The client's own connect and request timeouts
 then replace `connect` and `request`; `discovery` and `submission` still come
 from the transport's configuration.
+If the configuration also has credentials, use
+`Transport::with_client_and_configured_auth(&config, client)` to opt into
+applying them. The injected client's redirect policy remains yours; see the
+[authentication guide](authentication.md#request-boundary-and-failures).
 
 ## Rust library
 
@@ -199,13 +252,17 @@ use url::Url;
 // No authentication
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?);
 
-// Credentials are stored, but not yet sent with requests (see #31)
+// The selected bearer token is sent to this service's API root.
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_oauth_access_token("my-token".to_owned());
 
 // The token from an environment variable of your choice
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_oauth_access_token_from_env("MY_SERVICE_TOKEN")?;
+
+// A generic bearer token is another exclusive source.
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_bearer_access_token_from_env("MY_SERVICE_TOKEN")?;
 
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_basic_auth(BasicAuth {
@@ -223,6 +280,92 @@ let queue = config.extra.get("queue").and_then(|value| value.as_str());
 ```
 
 `ServiceType` is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm.
+
+### Token providers
+
+A token provider gives the SDK a bearer token for each request, so that a
+client can live longer than one token, and can use a different token for each
+service, for example from OAuth 2.0 token exchange. Implement
+`ga4gh_sdk::utils::auth::TokenProvider` and set it with
+`Configuration::with_token_provider` (or `with_shared_token_provider` for one
+`Arc` that several configurations use). How the provider gets its tokens
+(a device flow, token exchange, refresh) is up to the application; the SDK
+only asks it.
+
+```rust
+use ga4gh_sdk::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest};
+use ga4gh_sdk::utils::configuration::Configuration;
+use std::time::{Duration, Instant};
+use url::Url;
+
+struct MyProvider;
+
+#[async_trait::async_trait]
+impl TokenProvider for MyProvider {
+    async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+        let token = get_token_for(request.audience).await?; // your code
+        // Let the SDK reuse it until 30 seconds before it expires (here in 5 minutes).
+        let until = Instant::now() + Duration::from_secs(300 - 30);
+        Ok(AccessToken::new(token).reusable_until(until))
+    }
+}
+
+// In a function that returns a `Result`:
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_token_provider(MyProvider)
+    // Optional: the audience to ask for; without it, it is the API root.
+    .with_token_audience("https://example.org/ga4gh/tes".to_owned());
+```
+
+The trait uses the [`async-trait`](https://docs.rs/async-trait) crate. The
+contract:
+
+- **When the provider is asked.** Before each request, including the
+  `service-info` check when a client is created, with the configured
+  `token_audience` or, without one, the API root without user, password, query
+  and fragment (`Configuration::token_audience()` gives it). The token is sent
+  as `Authorization: Bearer <token>`.
+- **Reuse.** A token returned with `reusable_until(instant)` is reused for its
+  audience until that instant, by every transport and client built from clones
+  of the configuration. Without it, the provider is asked for every request.
+- **`401 Unauthorized`.** The SDK stops reusing the rejected token and asks the
+  provider with `TokenRequest::after_rejection` set the next time. A
+  replayable request is sent once more right away with a current token: a `GET`
+  or `HEAD` of `Transport`'s helpers, discovery and pages, or a request of
+  `Transport::request_with_policy` with `ReplaySafety::ReadOnly`. Other
+  requests, such as task and run submissions, are never sent twice; their
+  `401` comes back as an `HttpError`.
+- **Time limits.** Asking the provider counts towards the time limit of
+  discovery, of a page and of a submission (see [Timeouts](#timeouts)).
+  Running out of time there is an `OperationError`, not an
+  `AmbiguousSubmissionError`, as nothing was sent.
+- **One credential source.** A token provider can't be combined with
+  `basic_auth`, `oauth_access_token`, `bearer_access_token`, `api_key` or a
+  user or password in `base_path`; requests then fail with an
+  `AuthConflictError` before anything is sent. Without a token provider,
+  nothing changes.
+- **Injected clients.** A token provider in the configuration of
+  `Transport::with_client` requires explicit opt-in through
+  `Transport::with_client_and_configured_auth`. The provider's
+  `Authorization` header then takes the place of a client's default header.
+  The caller remains responsible for that client's redirect policy.
+- **Errors.** If the provider fails, or gives an empty token or one that
+  can't be an HTTP header value, the request fails with a
+  `TokenProviderError` and the pending request is not sent. If this happens
+  after a read-only request received `401`, that first attempt was sent. Its
+  default `Display` and `Debug` output omits the provider's error text and
+  audience, which may be sensitive.
+  Rust callers may inspect its underlying source error explicitly.
+- **Your own requests.** `Transport::request_builder` returns an error when a
+  provider is configured. Use `Transport::authorized_request_builder` (`async`)
+  for requests that you build yourself. They are sent once, as you send them.
+  Fetches of
+  workflow descriptors and result artifacts from other URLs never carry the
+  token.
+
+Python sets a callable with `Configuration.set_token_provider()`; see the
+[Python README](../python/README.md#token-providers). The CLI doesn't use
+token providers.
 
 ### ServiceInfo
 
@@ -337,6 +480,7 @@ server's JSON, including fields that the models don't know.
 ### TRS
 
 ```rust
+use ga4gh_sdk::clients::trs::models::DescriptorType;
 use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
 
 let config = Configuration::new(Url::parse("https://workflowhub.eu/ga4gh/trs/v2")?);
@@ -349,7 +493,37 @@ let tools = trs.list_tools(&ToolFilter {
 for tool in tools {
     println!("{}", tool.id);
 }
+
+// All files of one version as a ZIP archive, at most 10 MiB.
+let archive = trs
+    .get_files_zip("TOOL_ID", "VERSION_ID", DescriptorType::Cwl, 10 * 1024 * 1024)
+    .await?;
 ```
+
+The client selects a TRS 2.0.1 or 2.0.2 API profile from the API version
+in `service-info.type.version`. An unknown declaration uses the 2.0.1 read
+contract and records compatibility as unverified. Use `TrsOptions` to require
+a known declaration or select a profile explicitly. Selection belongs to each
+client; one process can connect to different versions at the same time. See
+[API compatibility](api_compatibility.md) for options, limitations, and migration.
+
+The `tags` filter requires the 2.0.2 contract or an explicit deployment override.
+Tags are registry-specific and sent as one comma-separated value, so a tag
+must not be empty or contain a comma. A declared version is evidence of intended
+support, not proof that the server implements filtering correctly.
+
+`ToolVersion::description()` returns a string description when present; the
+original value remains in `extra` and in serialized JSON. If a registry sends
+a non-string value, `description()` returns `None` while the raw value stays
+available in `extra` under either profile. This tolerance is limited to an
+optional field; malformed JSON and invalid required fields still return errors.
+The existing public model fields remain unchanged.
+
+`get_files_zip` reads the response into memory and returns bytes without
+extracting them. A body larger than the caller's limit, or one without a ZIP
+signature, is an error. The archive's contents are not fully validated. ZIP
+responses are defined in both supported TRS versions; actual provider support
+can differ.
 
 ### Models
 
@@ -394,4 +568,11 @@ request already has are an error.
 Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
 as `ga4gh_sdk::utils::transport::HttpError` (formerly `HttpStatusError`, still
 available under that name), which carries the status code and body. Downcast to
-it to distinguish, for example, a `404` from a network error.
+it to distinguish, for example, a `404` from a network error. Its `Display` and
+`Debug` output omits the server body, because the server may echo a credential.
+The public `body` field retains the bounded raw response for
+explicit inspection; treat it as sensitive and do not log it by default.
+With a token provider, `ga4gh_sdk::utils::auth::TokenProviderError` means that
+the pending request was not sent; a prior read-only attempt may have received
+`401`. `AuthConflictError` means the configured sources conflict before any
+request. See [Token providers](#token-providers).

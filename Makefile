@@ -9,13 +9,21 @@ CARGO ?= cargo
 PRE_COMMIT ?= pre-commit
 
 # Generated OpenAPI models are left out of the coverage report (see AGENTS.md)
-COVERAGE_IGNORE ?= lib/src/clients/[^/]+/models/
+COVERAGE_IGNORE ?= lib/src/clients/[^/]+/(wire/[^/]+/)?models/
 COVERAGE_DIR ?= coverage
+
+# Example crate with its own workspace (see docs/downstream.md)
+DOWNSTREAM_DIR ?= examples/downstream-sdk
+# Lists the packages of a lockfile as "name version source", sorted
+LOCK_PACKAGES = awk '/^\[\[package\]\]/ {if (n != "") print n, v, s; n = v = s = ""} \
+	/^name = / {n = $$3} /^version = / {v = $$3} /^source = / {s = $$3} \
+	END {if (n != "") print n, v, s}' $(1) | tr -d '"' | sort
+DOWNSTREAM_LISTS = $(DOWNSTREAM_DIR)/target/lockfile-check
 
 .DEFAULT_GOAL := help
 
 .PHONY: help build test fmt fmt-check clippy lint check coverage docs models \
-	pre-commit clean-coverage
+	pre-commit clean-coverage downstream
 
 help: ## Show this list of targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -52,6 +60,26 @@ coverage: ## Measure test coverage (needs cargo-llvm-cov)
 clean-coverage: ## Remove coverage data and reports
 	$(CARGO) llvm-cov clean --workspace
 	rm -rf $(COVERAGE_DIR)
+
+downstream: ## Check, lint and test the downstream example crate
+	cp Cargo.lock $(DOWNSTREAM_DIR)/Cargo.lock
+	@# Adds the example to the copied lockfile; then every other package must
+	@# have a version and source from the root lockfile
+	$(CARGO) metadata --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml \
+		--format-version 1 > /dev/null
+	mkdir -p $(DOWNSTREAM_LISTS)
+	$(call LOCK_PACKAGES,Cargo.lock) > $(DOWNSTREAM_LISTS)/root.txt
+	$(call LOCK_PACKAGES,$(DOWNSTREAM_DIR)/Cargo.lock) > $(DOWNSTREAM_LISTS)/example.txt
+	grep -q '^ga4gh-lib ' $(DOWNSTREAM_LISTS)/root.txt
+	@extra=$$(comm -13 $(DOWNSTREAM_LISTS)/root.txt $(DOWNSTREAM_LISTS)/example.txt \
+		| awk '$$1 != "downstream-sdk"'); \
+	if [ -n "$$extra" ]; then \
+		echo "Packages not in the root Cargo.lock:"; echo "$$extra"; exit 1; \
+	fi
+	$(CARGO) fmt --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml --check
+	$(CARGO) clippy --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml --all-targets \
+		--locked -- -D warnings
+	$(CARGO) test --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml --locked
 
 docs: ## Build the API documentation (target/doc)
 	$(CARGO) doc --workspace --no-deps --locked

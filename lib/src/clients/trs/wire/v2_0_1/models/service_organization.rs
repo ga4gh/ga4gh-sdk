@@ -10,37 +10,31 @@
 
 #![allow(unused_imports)]
 #![allow(clippy::empty_docs)]
-use crate::clients::trs::models;
+use crate::clients::trs::wire::v2_0_1::models;
 use serde::{Deserialize, Serialize};
 
-/// ImageType : Indicates what kind of container is this image is.
-/// Indicates what kind of container is this image is.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub enum ImageType {
-    #[serde(rename = "Docker")]
-    Docker,
-    #[serde(rename = "Singularity")]
-    Singularity,
-    #[serde(rename = "Conda")]
-    Conda,
-    /// A value that the spec doesn't define, kept as received.
-    #[serde(untagged)]
-    Unrecognized(String),
+/// ServiceOrganization : Organization providing the service
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ServiceOrganization {
+    /// Name of the organization responsible for the service
+    #[serde(rename = "name")]
+    pub name: String,
+    /// URL of the website of the organization (RFC 3986 format)
+    #[serde(rename = "url")]
+    pub url: String,
+    /// Fields that the spec doesn't define, kept as received, so that writing
+    /// the model back doesn't drop them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-impl std::fmt::Display for ImageType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Docker => write!(f, "Docker"),
-            Self::Singularity => write!(f, "Singularity"),
-            Self::Conda => write!(f, "Conda"),
-            Self::Unrecognized(value) => write!(f, "{}", value),
+impl ServiceOrganization {
+    /// Organization providing the service
+    pub fn new(name: String, url: String) -> ServiceOrganization {
+        ServiceOrganization {
+            name,
+            url,
+            extra: serde_json::Map::new(),
         }
-    }
-}
-
-impl Default for ImageType {
-    fn default() -> ImageType {
-        Self::Docker
     }
 }

@@ -1,5 +1,6 @@
 # GA4GH SDK
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Coverage](https://codecov.io/gh/ga4gh/ga4gh-sdk/graph/badge.svg?branch=main)](https://codecov.io/gh/ga4gh/ga4gh-sdk)
 
 ## Synopsis
 
@@ -333,6 +334,13 @@ for the public sequence-QC example, offline commands and evidence boundaries.
 The same optional feature provides [exact result reuse](docs/result-reuse.md)
 from a trusted receipt and freshly checked artifacts; it does not submit a job.
 
+## Build on this SDK
+
+An SDK for a service with API extensions can build on this SDK without
+forking it: add clients that share its transport, extend its models and add
+CLI subcommands. The guide [Build on this SDK](docs/downstream.md) walks
+through an example crate that CI builds and tests.
+
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).
@@ -345,7 +353,7 @@ cargo build --workspace --locked
 ## TRS client
 
 The library includes a client for the
-[GA4GH Tool Registry Service (TRS) API 2.0.1][trs], for registries such as
+[GA4GH Tool Registry Service (TRS) API][trs], versions 2.0.1 and 2.0.2, for registries such as
 [WorkflowHub][workflowhub] or [Dockstore][dockstore]. Set
 `Configuration.base_path` to the TRS API root, including its path prefix,
 with or without a trailing slash, e.g. `https://workflowhub.eu/ga4gh/trs/v2`
@@ -369,9 +377,11 @@ let descriptor = trs
     .await?;
 ```
 
-`TRS` covers `service-info`, `toolClasses`, `tools` with all filters, single
-tools, versions, descriptors (also by relative path), test files, file
-listings and container files. Tool IDs, version IDs and relative paths are
+`TRS` covers `service-info`, `toolClasses`, `tools` with all filters
+(including the `tags` filter of 2.0.2), single tools, versions, descriptors
+(also by relative path), test files, file listings, ZIP archives of all files
+of a version (`get_files_zip`, read into memory up to a limit you choose) and
+container files. Tool IDs, version IDs and relative paths are
 percent-encoded as single path segments, so Dockstore IDs such as
 `#workflow/github.com/org/repo` work as they are. For `PLAIN_*` descriptor
 types, the bare file is returned as a `FileWrapper` with only `content` set;
@@ -380,11 +390,17 @@ the registry sends a JSON array of them). Dockstore sends the
 service-info timestamps `createdAt` and `updatedAt` as numbers; the client
 drops such non-string values instead of failing.
 The basic `list_tools` method returns a page without headers. Use
-`clients::trs::responses` with the client's transport for server-provided paging
-URLs and opaque `format=zip` downloads (see the advanced transport API above).
-Authentication isn't supported yet: the SDK's transport doesn't send
-the configured tokens, so only public registries and tools work. The CLI's
-`trs` commands use this client; see the [CLI README](cli/README.md#trs-examples).
+`clients::trs::responses` with `&trs` for server-provided paging URLs, retaining
+the selected version profile (pass `ToolFilter::query()` as parameters).
+Use `responses::files_zip(trs.transport(), ...)` to stream large archives.
+The [compatibility guide](docs/api_compatibility.md) explains version selection,
+tag-filter capabilities, and connecting to deployments without usable discovery.
+The default transport does not apply tokens from `Configuration`. For an
+authenticated registry, supply a configured `reqwest::Client` through
+`Transport::with_client` and `TRS::with_transport`; see the
+[usage guide](docs/usage.md#timeouts). The CLI's `trs` commands use the default
+transport and currently work with public endpoints; see the
+[CLI README](cli/README.md#trs-examples).
 
 ## Testing
 Unit tests run by default. Integration suites are opt-in.

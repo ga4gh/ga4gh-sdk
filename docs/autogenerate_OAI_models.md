@@ -1,9 +1,10 @@
 ## Motivation
 
-The models in `lib/src/clients/<api>/models/` are generated from the
-[OpenAPI](https://www.openapis.org/) specification of each GA4GH API. They
-hold the request and response bodies of the API calls. Regenerate them when
-a spec version changes, or generate models for a new API.
+The models in `lib/src/clients/<api>/models/` and versioned directories
+such as `lib/src/clients/trs/wire/v2_0_1/models/` are generated from the
+[OpenAPI](https://www.openapis.org/) specifications of GA4GH APIs. They
+represent request and response bodies. Regenerate them when a pinned source,
+template, or patch changes, or generate a model set for an additional contract.
 
 The `models/` folders are generated code: every run replaces them. Don't edit
 them by hand. Hand edits go into a patch (see [Hand edits](#hand-edits)), and
@@ -21,8 +22,22 @@ hand-written types go next to `models/`, for example
 | `registry` | [Service Registry 1.0.0](https://github.com/ga4gh-discovery/ga4gh-service-registry/tree/1.0.0) | – |
 | `tes` | [TES 1.1](https://github.com/ga4gh/task-execution-schemas/tree/v1.1) | `utils/patches/tes.patch` |
 | `drs` | [DRS 1.4.0](https://github.com/ga4gh/data-repository-service-schemas/tree/drs-1.4.0) | `utils/patches/drs.patch` |
-| `trs` | [TRS 2.0.1](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.1) | `utils/patches/trs.patch` |
+| `trs` versioned wire models, re-exported as `trs::models` | [TRS 2.0.1](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.1) | `utils/patches/trs.patch` |
 | `wes` | [WES 1.1.0](https://github.com/ga4gh/workflow-execution-service-schemas/tree/1.1.0) | `utils/patches/wes.patch` |
+
+TRS also supports the [2.0.2 contract](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.2),
+whose only additional generated model field is optional
+`ToolVersion.description`. The 2.0.2 spec still declares `info.version: 2.1.0`;
+the client does not treat a server declaration of `2.1.0` as 2.0.2. Both
+profiles use the same public model: the optional description remains in `extra`
+and may be read through `description()` when it is a string. No duplicate
+model set or version-specific decoder is needed.
+`utils/build_models_wrapper.sh trs` regenerates the 2.0.1 models in
+`lib/src/clients/trs/wire/v2_0_1/models/` with `-m`; the TRS module re-exports
+them as `trs::models`. See the [model layout decision](api_compatibility.md#model-layout)
+and the
+[profile extension steps](api_compatibility.md#adding-a-profile) before adding
+a version. Treat every `models/` directory as generated code.
 
 The models are generated with OpenAPI Generator 7.9.0 and formatted with
 `rustfmt`. Running the wrapper on a clean checkout must not change any file in
@@ -104,13 +119,22 @@ From the root of the repository:
 ./utils/build_models_wrapper.sh
 # Only some APIs
 ./utils/build_models_wrapper.sh wes tes
+# TRS wire models (2.0.1, re-exported through trs::models)
+./utils/build_models_wrapper.sh trs
 git status lib/src/clients
 ```
 
-To move an API to a new spec version, change its entry in `SPECS` in
-`utils/build_models_wrapper.sh`, run the wrapper for it, update its patch if
-it no longer applies (see below), and adapt the client in
-`lib/src/clients/<api>/mod.rs` to the changed models.
+To add a model set while retaining supported versions, add an entry to `SPECS`
+in `utils/build_models_wrapper.sh` with the API name, pinned source, a separate
+destination, and its Rust module path. Keep the retained entries. The wrapper
+regenerates every matching entry when given that API name. Follow the
+[profile extension steps](api_compatibility.md#adding-a-profile) to integrate
+the generated types with client behavior and tests.
+
+Replace an existing entry only when intentionally changing that model set's
+contract. Check the effect on supported servers and public Rust types first.
+Run the wrapper for the affected API, update its patch if needed (see below),
+and adapt the client and migration guidance to the changed models.
 
 ### Generate models for a single spec, or for another crate
 

@@ -10,34 +10,34 @@
 
 #![allow(unused_imports)]
 #![allow(clippy::empty_docs)]
-use crate::clients::trs::models;
+use crate::clients::trs::wire::v2_0_1::models;
 use serde::{Deserialize, Serialize};
 
-/// ServiceType : Type of a GA4GH service
+/// ToolClass : Describes a class (type) of tool allowing us to categorize workflows, tasks, and maybe even other entities (such as services) separately.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ServiceType {
-    /// Namespace in reverse domain name format. Use `org.ga4gh` for implementations compliant with official GA4GH specifications. For services with custom APIs not standardized by GA4GH, or implementations diverging from official GA4GH specifications, use a different namespace (e.g. your organization's reverse domain name).
-    #[serde(rename = "group")]
-    pub group: String,
-    /// Name of the API or GA4GH specification implemented. Official GA4GH types should be assigned as part of standards approval process. Custom artifacts are supported.
-    #[serde(rename = "artifact")]
-    pub artifact: String,
-    /// Version of the API or specification. GA4GH specifications use semantic versioning.
-    #[serde(rename = "version")]
-    pub version: String,
+pub struct ToolClass {
+    /// The unique identifier for the class.
+    #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// A short friendly name for the class.
+    #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// A longer explanation of what this class is and what it can accomplish.
+    #[serde(rename = "description", skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Fields that the spec doesn't define, kept as received, so that writing
     /// the model back doesn't drop them.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-impl ServiceType {
-    /// Type of a GA4GH service
-    pub fn new(group: String, artifact: String, version: String) -> ServiceType {
-        ServiceType {
-            group,
-            artifact,
-            version,
+impl ToolClass {
+    /// Describes a class (type) of tool allowing us to categorize workflows, tasks, and maybe even other entities (such as services) separately.
+    pub fn new() -> ToolClass {
+        ToolClass {
+            id: None,
+            name: None,
+            description: None,
             extra: serde_json::Map::new(),
         }
     }
