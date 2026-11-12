@@ -88,7 +88,8 @@ GA4GH_CLI_PROFILE=remote ga4gh-cli tes list
 
 `--profile` takes precedence over the variable, and the variable over
 `default_profile`; without any of them, the CLI uses the profile `default`.
-A file without `profiles`, like the example above, is the profile `default`.
+A file without `profiles`, with its sections at the top level as in the
+[configuration example](#configuration-example), is the profile `default`.
 Naming a profile the file doesn't have is an error that lists the profiles it
 has. The [usage guide](../docs/usage.md#profiles) has the details.
 
@@ -525,11 +526,13 @@ variable or token variable describes them in a `ga4gh_cli::CliContext`:
   then be usable as a directory name; `with_config_path()` sets another
   path. `load_config()` reads a section from the file, for built-in and
   custom services alike.
-- The profile variable defaults to `MY_CLI_PROFILE`; `with_profile_env()`
-  sets another and `without_profile_env()` none. `with_profile()` selects a
-  profile directly. The command tree has the global option `--profile`,
-  which `dispatch()` and `dispatch_to()` apply; for its own commands, a
-  binary calls `with_profile_from(&matches)` before `load_config()`.
+- `with_profile_env("MY_CLI_PROFILE")` reads the profile from a variable
+  (`ga4gh-cli` reads `GA4GH_CLI_PROFILE`; other contexts read none unless
+  set). `with_profile()` selects a profile directly. The command tree has
+  the global option `--profile`, which `dispatch()` and `dispatch_to()`
+  apply; for its own commands, a binary calls `with_profile_from(&matches)`
+  before `load_config()`. Its own options can't use the long name
+  `--profile`.
 - `with_token_env("MY_CLI_TOKEN", [ServiceType::Custom("MY_SERVICE".into())])`
   supplies an OAuth access token to the listed sections when they set no
   credentials. Other sections never receive it.

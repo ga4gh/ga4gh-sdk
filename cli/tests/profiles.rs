@@ -50,18 +50,14 @@ fn tes_base_path(context: &CliContext) -> String {
 }
 
 #[test]
-fn profile_variables_default_to_the_binary_name() {
+fn only_the_default_context_has_a_profile_variable() {
     assert_eq!(
         CliContext::default().profile_env(),
         Some("GA4GH_CLI_PROFILE")
     );
     assert_eq!(
         CliContext::new("downstream-cli", "1.0.0").profile_env(),
-        Some("DOWNSTREAM_CLI_PROFILE")
-    );
-    assert_eq!(
-        CliContext::new("my.cli2", "1.0.0").profile_env(),
-        Some("MY_CLI2_PROFILE")
+        None
     );
     let context = CliContext::new("my-cli", "1.0.0").with_profile_env("OTHER");
     assert_eq!(context.profile_env(), Some("OTHER"));
@@ -179,7 +175,9 @@ fn profile_option_is_global() {
     ] {
         let matches = command.clone().try_get_matches_from(args).unwrap();
         assert_eq!(
-            matches.get_one::<String>("profile").map(String::as_str),
+            matches
+                .get_one::<String>("ga4gh-cli-profile")
+                .map(String::as_str),
             Some("remote"),
             "{args:?}"
         );
@@ -192,6 +190,22 @@ fn profile_option_is_global() {
         .unwrap();
     let context = CliContext::default().with_profile("kept");
     assert_eq!(context.with_profile_from(&matches).profile(), Some("kept"));
+    // An empty `--profile` counts as not given.
+    let matches = command
+        .clone()
+        .try_get_matches_from(["ga4gh-cli", "--profile", "", "tes", "list"])
+        .unwrap();
+    assert_eq!(context.with_profile_from(&matches).profile(), Some("kept"));
+    // A subcommand's own argument `profile` isn't the configuration profile.
+    let matches = CliContext::default()
+        .command()
+        .subcommand(clap::Command::new("deploy").arg(clap::Arg::new("profile")))
+        .try_get_matches_from(["ga4gh-cli", "deploy", "aws-prod"])
+        .unwrap();
+    assert_eq!(
+        CliContext::default().with_profile_from(&matches).profile(),
+        None
+    );
     // A command tree without the option leaves the context unchanged.
     let matches = clap::Command::new("bare")
         .try_get_matches_from(["bare"])

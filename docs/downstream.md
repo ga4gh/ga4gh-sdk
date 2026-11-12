@@ -129,7 +129,7 @@ CliContext::new("downstream-cli", env!("CARGO_PKG_VERSION"))
 | Version (`--version`) | as given | the CLI crate's version | the example crate's version |
 | Configuration file | `~/.<name>/config.json`; `with_config_path` sets another | `~/.ga4gh-cli/config.json` | `~/.downstream-cli/config.json` |
 | Token variable | none; `with_token_env` sets one and its sections | none | `DOWNSTREAM_CLI_TOKEN` for `TES` and `QUOTA` |
-| Profile variable | `<NAME>_PROFILE`; `with_profile_env` sets another, `without_profile_env` none | `GA4GH_CLI_PROFILE` | `DOWNSTREAM_CLI_PROFILE` |
+| Profile variable | none; `with_profile_env` sets one | `GA4GH_CLI_PROFILE`; `without_profile_env` turns it off | none |
 
 The name, version and help text are `&'static str`, usually literals or
 `env!` values. For the default configuration file, the name must be usable
@@ -150,13 +150,15 @@ the SDK sends credentials (see [Not covered yet](#not-covered-yet)).
 The configuration file can hold
 [profiles](usage.md#profiles). The context's command tree has the global
 option `--profile`; `dispatch` and `dispatch_to` apply it to built-in
-commands. Otherwise, the profile variable selects the profile, then the
-file's `default_profile`. `<NAME>` is the binary's name in upper case, with
-`_` for characters other than ASCII letters and digits. For its own commands,
+commands. Otherwise, the profile variable selects the profile, if the
+context has one, then the file's `default_profile`. For its own commands,
 the example calls `context().with_profile_from(&matches)` before
 `load_config`, so that `downstream-cli --profile metered quota` reads the
-`QUOTA` section of the profile `metered`. A binary that adds its own global
-`--profile` option clashes with this one.
+`QUOTA` section of the profile `metered`. The long name `--profile` is
+reserved in the whole command tree: an option of a binary's own with that
+long name, at the root or in a subcommand, fails Clap's checks. Arguments
+merely named `profile`, such as a positional one, are fine; the option's id
+is `ga4gh-cli-profile`.
 
 [`cli::command`](../examples/downstream-sdk/src/cli.rs) starts from the
 context's command tree and adds `tes usage <ID>` and a top-level `quota`:

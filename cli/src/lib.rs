@@ -46,6 +46,11 @@ use ga4gh_sdk::utils::configuration::Configuration;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+/// The id of the global option `--profile`, which selects a profile. It
+/// differs from the long name, so that a downstream subcommand's own argument
+/// `profile` isn't taken for it.
+const PROFILE_ARG: &str = "ga4gh-cli-profile";
+
 /// Output of a command. Callers decide where to write each stream.
 ///
 /// Downstream commands can build it with [`success`](Self::success),
@@ -167,27 +172,13 @@ pub struct CliContext {
     token_sections: Vec<String>,
 }
 
-/// The default profile variable of a binary: its name in upper case, with
-/// `_` for characters other than ASCII letters and digits, and `_PROFILE`.
-fn default_profile_env(name: &str) -> String {
-    let stem: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    format!("{stem}_PROFILE")
-}
-
 impl Default for CliContext {
     /// The context of `ga4gh-cli`: configuration in `~/.ga4gh-cli/config.json`,
     /// profile variable `GA4GH_CLI_PROFILE`, no token variable.
     fn default() -> Self {
-        Self::new("ga4gh-cli", env!("CARGO_PKG_VERSION")).with_about("CLI for GA4GH services")
+        Self::new("ga4gh-cli", env!("CARGO_PKG_VERSION"))
+            .with_about("CLI for GA4GH services")
+            .with_profile_env("GA4GH_CLI_PROFILE")
     }
 }
 
@@ -195,10 +186,8 @@ impl CliContext {
     /// A context for the binary `name` at `version`, such as
     /// `env!("CARGO_PKG_VERSION")`.
     ///
-    /// The configuration file defaults to `~/.<name>/config.json`, the
-    /// profile variable to `<NAME>_PROFILE` (`name` in upper case, with `_`
-    /// for other characters than ASCII letters and digits), and no token
-    /// variable is read. The texts are `&'static str`, as Clap's
+    /// The configuration file defaults to `~/.<name>/config.json`, and
+    /// neither a profile variable nor a token variable is read. The texts are `&'static str`, as Clap's
     /// command names are without its `string` feature; they are usually
     /// literals or `env!` values.
     pub fn new(name: &'static str, version: &'static str) -> Self {
@@ -208,7 +197,7 @@ impl CliContext {
             about: None,
             config_path: None,
             profile: None,
-            profile_env: Some(default_profile_env(name)),
+            profile_env: None,
             token_env: None,
             token_sections: Vec::new(),
         }
@@ -247,7 +236,8 @@ impl CliContext {
         self
     }
 
-    /// Never reads a profile variable, not even the default one.
+    /// Never reads a profile variable, such as `GA4GH_CLI_PROFILE` of
+    /// [`CliContext::default`].
     pub fn without_profile_env(mut self) -> Self {
         self.profile_env = None;
         self
@@ -411,7 +401,7 @@ impl CliContext {
             .arg_required_else_help(true)
             .arg(
                 Arg::new(PROFILE_ARG)
-                    .long(PROFILE_ARG)
+                    .long("profile")
                     .value_name("NAME")
                     .global(true)
                     .help(profile_help),
@@ -424,17 +414,18 @@ impl CliContext {
             .subcommand(registry::command())
     }
 
-    /// This context with the profile of `--profile`, if `matches` has one;
-    /// otherwise an unchanged copy.
+    /// This context with the profile of `--profile`, if `matches` has a
+    /// non-empty one; otherwise an unchanged copy. An empty `--profile`
+    /// counts as not given, as an empty profile variable does.
     ///
     /// [`dispatch`](Self::dispatch) and [`dispatch_to`](Self::dispatch_to)
     /// call it themselves. A downstream binary calls it before
     /// [`load_config`](Self::load_config) for its own commands, so that
     /// `--profile` applies to them too.
     pub fn with_profile_from(&self, matches: &ArgMatches) -> Self {
-        // `try_get_one`, because a downstream command may lack the option.
+        // `try_get_one`, because a downstream command tree may lack the option.
         match matches.try_get_one::<String>(PROFILE_ARG) {
-            Ok(Some(profile)) => self.clone().with_profile(profile.clone()),
+            Ok(Some(profile)) if !profile.is_empty() => self.clone().with_profile(profile.clone()),
             _ => self.clone(),
         }
     }
@@ -477,9 +468,6 @@ impl CliContext {
         dispatch_with_config_to(matches, &config, stdout, stderr).await
     }
 }
-
-/// The id and long name of the global option that selects a profile.
-const PROFILE_ARG: &str = "profile";
 
 /// The service whose configuration section a built-in command reads, or
 /// `None` for `workflow` and commands that this crate doesn't own.

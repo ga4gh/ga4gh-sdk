@@ -70,10 +70,10 @@ fn profile_sections<'a>(
     let profiles = profiles
         .as_object()
         .ok_or_else(|| format!("'{PROFILES_KEY}' must be an object of profiles"))?;
-    if let Some(key) = root
-        .keys()
-        .find(|key| !matches!(key.as_str(), PROFILES_KEY | DEFAULT_PROFILE_KEY))
-    {
+    // Keys starting with `$`, such as `$schema`, are metadata, not sections.
+    if let Some(key) = root.keys().find(|key| {
+        !key.starts_with('$') && !matches!(key.as_str(), PROFILES_KEY | DEFAULT_PROFILE_KEY)
+    }) {
         return Err(format!(
             "Configuration file with '{PROFILES_KEY}' can't have the top-level section '{key}'; \
              move it into a profile"
@@ -795,7 +795,8 @@ mod tests {
             base_path(Some("default"), "TES"),
             "https://default.example.org/"
         );
-        // Sections in profiles read their keys as top-level sections do.
+        // Sections in profiles read their keys as top-level sections do. PATH,
+        // as in the tests above, because setting a variable would race.
         let remote = Configuration::from_path_with_profile(&path, Some("remote"), "TES").unwrap();
         assert_eq!(remote.oauth_access_token, std::env::var("PATH").ok());
         assert!(remote.extra.is_empty(), "{:?}", remote.extra);
@@ -816,6 +817,16 @@ mod tests {
         );
         let config = Configuration::from_path(&path, "TES").unwrap();
         assert_eq!(config.base_path.as_str(), "https://default.example.org/");
+    }
+
+    #[test]
+    fn test_from_path_with_profile_allows_dollar_keys_beside_profiles() {
+        let (_dir, path) = profile_file(
+            r#"{"$schema":"https://example.org/schema.json",
+                "profiles":{"default":{"TES":{"base_path":"https://tes.example.org/"}}}}"#,
+        );
+        let config = Configuration::from_path(&path, "TES").unwrap();
+        assert_eq!(config.base_path.as_str(), "https://tes.example.org/");
     }
 
     #[test]

@@ -124,15 +124,20 @@ Each profile holds sections with the keys described above, and
 
 - The CLI uses the profile given with `--profile NAME`, else the one in the
   environment variable `GA4GH_CLI_PROFILE`, else `default_profile`, else the
-  profile `default`. An empty variable counts as unset.
+  profile `default`. An empty variable or `--profile ""` counts as unset.
+  `--profile` and the
+  variable apply to the CLI and `ga4gh_cli::CliContext` only, not to the
+  Rust and Python library functions below.
 - Rust `Configuration::from_path_with_profile(path, Some("remote"), "TES")`
   reads a section of a given profile; with `None`, and in
   `Configuration::from_path` and `from_file`, it reads the default profile
   (`default_profile`, else `default`). Python `Configuration.from_file()`
   reads the default profile as well.
-- A file without `profiles`, such as the one above, counts as one profile
-  named `default`, so existing files keep working. A file with `profiles`
-  can't also have top-level sections, and naming a profile the file doesn't
+- A file without `profiles`, with its sections at the top level as in
+  [Configuration file](#configuration-file), counts as one profile named
+  `default`, so existing files keep working. A file with `profiles`
+  can't also have top-level sections (keys starting with `$`, such as
+  `$schema`, are allowed), and naming a profile the file doesn't
   have is an error that lists the profiles it has.
 - Profiles change only which sections are read. To keep a profile's tokens
   out of the file, name an environment variable per section with
