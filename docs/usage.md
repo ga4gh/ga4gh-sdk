@@ -91,7 +91,9 @@ reads a section from another file. One section may use one credential source:
 Basic, OAuth bearer, or generic bearer. Sources cannot be combined.
 The [authentication guide](authentication.md) describes how credentials reach
 Rust, Python, and CLI requests, and the behavior of redirects and injected
-clients. Previously stored credentials now take effect on requests.
+clients. Previously stored credentials now take effect on requests. Rust and
+Python callers can instead set a [token provider](#token-providers); the
+configuration file and CLI cannot set one.
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
@@ -227,6 +229,92 @@ let queue = config.extra.get("queue").and_then(|value| value.as_str());
 ```
 
 `ServiceType` is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm.
+
+### Token providers
+
+A token provider gives the SDK a bearer token for each request, so that a
+client can live longer than one token, and can use a different token for each
+service, for example from OAuth 2.0 token exchange. Implement
+`ga4gh_sdk::utils::auth::TokenProvider` and set it with
+`Configuration::with_token_provider` (or `with_shared_token_provider` for one
+`Arc` that several configurations use). How the provider gets its tokens
+(a device flow, token exchange, refresh) is up to the application; the SDK
+only asks it.
+
+```rust
+use ga4gh_sdk::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest};
+use ga4gh_sdk::utils::configuration::Configuration;
+use std::time::{Duration, Instant};
+use url::Url;
+
+struct MyProvider;
+
+#[async_trait::async_trait]
+impl TokenProvider for MyProvider {
+    async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+        let token = get_token_for(request.audience).await?; // your code
+        // Let the SDK reuse it until 30 seconds before it expires (here in 5 minutes).
+        let until = Instant::now() + Duration::from_secs(300 - 30);
+        Ok(AccessToken::new(token).reusable_until(until))
+    }
+}
+
+// In a function that returns a `Result`:
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_token_provider(MyProvider)
+    // Optional: the audience to ask for; without it, it is the API root.
+    .with_token_audience("https://example.org/ga4gh/tes".to_owned());
+```
+
+The trait uses the [`async-trait`](https://docs.rs/async-trait) crate. The
+contract:
+
+- **When the provider is asked.** Before each request, including the
+  `service-info` check when a client is created, with the configured
+  `token_audience` or, without one, the API root without user, password, query
+  and fragment (`Configuration::token_audience()` gives it). The token is sent
+  as `Authorization: Bearer <token>`.
+- **Reuse.** A token returned with `reusable_until(instant)` is reused for its
+  audience until that instant, by every transport and client built from clones
+  of the configuration. Without it, the provider is asked for every request.
+- **`401 Unauthorized`.** The SDK stops reusing the rejected token and asks the
+  provider with `TokenRequest::after_rejection` set the next time. A
+  replayable request is sent once more right away with a current token: a `GET`
+  or `HEAD` of `Transport`'s helpers, discovery and pages, or a request of
+  `Transport::request_with_policy` with `ReplaySafety::ReadOnly`. Other
+  requests, such as task and run submissions, are never sent twice; their
+  `401` comes back as an `HttpError`.
+- **Time limits.** Asking the provider counts towards the time limit of
+  discovery, of a page and of a submission (see [Timeouts](#timeouts)).
+  Running out of time there is an `OperationError`, not an
+  `AmbiguousSubmissionError`, as nothing was sent.
+- **One credential source.** A token provider can't be combined with
+  `basic_auth`, `oauth_access_token`, `bearer_access_token`, `api_key` or a
+  user or password in `base_path`; requests then fail with an
+  `AuthConflictError` before anything is sent. Without a token provider,
+  nothing changes.
+- **Injected clients.** A token provider in the configuration of
+  `Transport::with_client` requires explicit opt-in through
+  `Transport::with_client_and_configured_auth`. The provider's
+  `Authorization` header then takes the place of a client's default header.
+  The caller remains responsible for that client's redirect policy.
+- **Errors.** If the provider fails, or gives an empty token or one that
+  can't be an HTTP header value, the request fails with a
+  `TokenProviderError` and the pending request is not sent. If this happens
+  after a read-only request received `401`, that first attempt was sent. Its
+  default `Display` and `Debug` output omits the provider's error text and
+  audience, which may be sensitive.
+  Rust callers may inspect its underlying source error explicitly.
+- **Your own requests.** `Transport::request_builder` returns an error when a
+  provider is configured. Use `Transport::authorized_request_builder` (`async`)
+  for requests that you build yourself. They are sent once, as you send them.
+  Fetches of
+  workflow descriptors and result artifacts from other URLs never carry the
+  token.
+
+Python sets a callable with `Configuration.set_token_provider()`; see the
+[Python README](../python/README.md#token-providers). The CLI doesn't use
+token providers.
 
 ### ServiceInfo
 
@@ -429,7 +517,11 @@ request already has are an error.
 Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
 as `ga4gh_sdk::utils::transport::HttpError` (formerly `HttpStatusError`, still
 available under that name), which carries the status code and body. Downcast to
-it to distinguish, for example, a `404` from a network error.
-Its `Display` and `Debug` output omits the server body, because the server may
-echo a credential. The public `body` field retains the bounded raw response for
+it to distinguish, for example, a `404` from a network error. Its `Display` and
+`Debug` output omits the server body, because the server may echo a credential.
+The public `body` field retains the bounded raw response for
 explicit inspection; treat it as sensitive and do not log it by default.
+With a token provider, `ga4gh_sdk::utils::auth::TokenProviderError` means that
+the pending request was not sent; a prior read-only attempt may have received
+`401`. `AuthConflictError` means the configured sources conflict before any
+request. See [Token providers](#token-providers).
