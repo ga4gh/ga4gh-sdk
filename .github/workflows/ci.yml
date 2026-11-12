@@ -219,6 +219,8 @@ jobs:
           python -m pip install --group python/pyproject.toml:docs
       - name: Install toolchain
         run: rustup toolchain install
+      - name: Test hooks
+        run: python -m pytest docs/test_hooks.py
       - name: Build documentation
         run: make site
 

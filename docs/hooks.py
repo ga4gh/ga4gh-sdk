@@ -30,6 +30,7 @@ from urllib.parse import urlsplit
 
 from mkdocs.config.defaults import MkDocsConfig
 from mkdocs.structure.files import File, Files
+from mkdocs.structure.nav import Link, Navigation
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO_URL = "https://github.com/ga4gh/ga4gh-sdk"
@@ -84,6 +85,7 @@ def _tracked_paths() -> set[str] | None:
             check=True,
         )
     except (OSError, subprocess.CalledProcessError):
+        log.info("Git is not available; links to untracked files are rewritten too")
         return None
     paths = set()
     for path in result.stdout.decode().split("\0"):
@@ -172,12 +174,42 @@ def on_files(files: Files, config: MkDocsConfig) -> Files:
         )
         return site
     # The crates' pages and the files they share (search index, styles,
-    # source pages, ...); `.lock` is Cargo's
+    # source pages, ...; about 20 MB); `.lock` is Cargo's
     for item in sorted(rustdoc.rglob("*")):
         relative = item.relative_to(rustdoc).as_posix()
         if item.is_file() and relative != ".lock":
             _add(site, f"{RUSTDOC_PREFIX}/{relative}", config, item)
     return site
+
+
+def _ref() -> str:
+    """Get the Git ref that links to files on GitHub use.
+
+    Returns:
+        The commit that Read the Docs builds, or `main` elsewhere.
+    """
+    return os.environ.get("READTHEDOCS_GIT_COMMIT_HASH", "main")
+
+
+def on_nav(nav: Navigation, config: MkDocsConfig, files: Files) -> Navigation:
+    """Point links of `nav` to files on GitHub at the commit that is built.
+
+    Args:
+        nav: Navigation of the site.
+        config: MkDocs configuration (unused).
+        files: Files of the site (unused).
+
+    Returns:
+        The navigation, with `blob/main/` links at the built commit.
+    """
+    prefix = f"{REPO_URL}/blob/main/"
+    stack = list(nav.items)
+    while stack:
+        item = stack.pop()
+        if isinstance(item, Link) and item.url.startswith(prefix):
+            item.url = f"{REPO_URL}/blob/{_ref()}/{item.url.removeprefix(prefix)}"
+        stack.extend(getattr(item, "children", None) or [])
+    return nav
 
 
 def _github_url(path: str, ref: str) -> str:
@@ -232,8 +264,7 @@ def on_page_markdown(markdown: str, page: Any, config: MkDocsConfig, files: File
     Returns:
         Markdown with the links rewritten.
     """
-    # Read the Docs builds a commit; link to the files of that commit
-    ref = os.environ.get("READTHEDOCS_GIT_COMMIT_HASH", "main")
+    ref = _ref()
     site_paths = {file.src_uri for file in files}
     page_path = page.file.src_uri
 

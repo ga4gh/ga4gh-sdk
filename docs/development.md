@@ -148,8 +148,24 @@ make site
 
 `make site` runs `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` and
 `mkdocs build --strict`, which fails on warnings such as links to missing
-files or anchors. After the first `make site`, `mkdocs serve` shows the site
+files or anchors. `python3 -m pytest docs/test_hooks.py` tests the hooks; CI
+runs both. After the first `make site`, `mkdocs serve` shows the site
 at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
+
+### Read the Docs project
+
+The project on Read the Docs is set up once, by a maintainer:
+
+1. Import `ga4gh/ga4gh-sdk` on [readthedocs.org](https://readthedocs.org/)
+   (project slug `ga4gh-sdk`) and keep `main` as the default branch, so that
+   `latest` follows it.
+2. Under **Settings > Pull request builds**, turn on builds of pull
+   requests, for the previews.
+3. Under **Automation rules**, add a rule that activates new versions of
+   tags (for example, matching SemVer versions), so that every release gets
+   its version.
+
+After a release, check that its version was built.
 
 ## CI
 

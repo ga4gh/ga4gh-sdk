@@ -18,8 +18,9 @@ build:
       - python -m pip install --upgrade "pip>=25.1"
       - python -m pip install --group "python/pyproject.toml:docs"
     # The Rust API reference (`target/doc/`), which `docs/hooks.py` adds to
-    # the site. rustup is pinned by its checksum; it installs the toolchain
-    # of `rust-toolchain.toml` when Cargo first runs
+    # the site, as `make site` does. rustup is pinned by its checksum (by
+    # hand: Dependabot doesn't bump it); it installs the toolchain of
+    # `rust-toolchain.toml` when Cargo first runs
     pre_build:
       - >-
         curl --fail --location --silent --show-error --proto "=https"
