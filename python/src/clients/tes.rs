@@ -988,6 +988,21 @@ mod tests {
     }
 
     #[test]
+    fn other_views_give_the_task_from_the_view_request() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Full),
+            |view| async move {
+                assert_eq!(view, TesView::Full);
+                Ok(r#"{"id": "task-1", "state": "COMPLETE", "logs": []}"#.to_owned())
+            },
+        ));
+        assert!(matches!(end, WaitEnd::Task(task) if task.raw.get("logs").is_some()));
+    }
+
+    #[test]
     fn a_failed_view_request_fails_the_wait() {
         let options = WaitOptions::new(Duration::from_secs(5));
         let end = block_on(wait_end(
