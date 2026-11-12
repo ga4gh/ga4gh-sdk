@@ -11,8 +11,7 @@ client closes the connection before,
 ``service-info`` answers at once and every other request gets no answer until
 the client leaves (at most 30 seconds), for tests of timed-out submissions.
 Below ``/auth``, the TES of ``/api`` answers requests with the bearer token
-``good`` and rejects all others with ``401 Unauthorized``. Below ``/basic``, it
-does the same for the Basic credentials ``alice:secret``.
+``good`` and rejects all others with ``401 Unauthorized``.
 """
 
 import base64
@@ -24,7 +23,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-BASIC_GOOD = "Basic " + base64.b64encode(b"alice:secret").decode()
 SERVICE_INFO = {
     "id": "org.example.tes",
     "name": "Example TES",
@@ -110,6 +108,7 @@ PENDING = (202, {}, {"Retry-After": "1"})
 
 ROUTES.update(
     {
+        ("GET", "/api/auth-failure"): (401, {"msg": "authentication required"}),
         ("GET", "/drs/service-info"): (200, DRS_SERVICE_INFO),
         ("GET", "/drs/objects/obj-1"): (200, DRS_OBJECT),
         ("GET", "/drs/objects/obj-1/access/https-1"): (200, ACCESS_URL),
@@ -198,6 +197,9 @@ class Handler(BaseHTTPRequestHandler):
                 "body": base64.b64encode(body).decode(),
             }
         )
+        if self.command == "GET" and url.path == "/api/auth-echo":
+            self._reply(401, {"echo": self.headers.get("Authorization")})
+            return
         if self.command == "GET" and url.path.startswith("/api/tasks/slow-"):
             task_id = url.path.rsplit("/", 1)[1]
             if self._client_left_within(float(task_id.removeprefix("slow-"))):
@@ -215,14 +217,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._reply(401, {"msg": "unauthorized"})
                 return
             path = "/api/" + url.path.removeprefix("/auth/")
-            self._reply(*ROUTES.get((self.command, path), (404, {"msg": "not found"})))
-            return
-        if url.path.startswith("/basic/"):
-            # The TES below `/api`, for Basic credentials `alice:secret` only.
-            if self.headers.get("Authorization") != BASIC_GOOD:
-                self._reply(401, {"msg": "unauthorized"})
-                return
-            path = "/api/" + url.path.removeprefix("/basic/")
             self._reply(*ROUTES.get((self.command, path), (404, {"msg": "not found"})))
             return
         if url.path == "/hang/service-info":

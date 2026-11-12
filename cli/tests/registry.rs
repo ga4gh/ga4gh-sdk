@@ -51,13 +51,12 @@ fn run_with_section(section: Value, args: &[&str]) -> Output {
     output
 }
 
-/// Runs the CLI against `base_path`, with marker values in the credentials,
-/// which the CLI sends.
+/// Runs the CLI against `base_path`, with a marker value in the credential.
 fn run(base_path: &str, args: &[&str]) -> Output {
     run_with_section(
         json!({"REGISTRY": {
             "base_path": base_path,
-            "basic_auth": {"username": "SENTINEL_USER", "password": "SENTINEL_PASSWORD"},
+            "oauth_access_token": "SENTINEL_OAUTH",
         }}),
         args,
     )
@@ -145,7 +144,7 @@ fn types_prints_one_type_per_line() {
 }
 
 #[test]
-fn error_responses_exit_with_status_and_body() {
+fn error_responses_exit_with_status_but_not_untrusted_body() {
     for status in [401, 404, 500] {
         let prefix = format!("/error{status}");
         let body = format!("mock failure {status}");
@@ -167,7 +166,7 @@ fn error_responses_exit_with_status_and_body() {
             assert!(output.stdout.is_empty(), "{args:?}");
             let message = stderr(&output);
             assert!(message.contains(&status.to_string()), "{message}");
-            assert!(message.contains(&body), "{message}");
+            assert!(!message.contains(&body), "{message}");
             let hint = message.contains("base_path is the Service Registry API root");
             // An unknown service ID is a 404 too, but not a wrong base_path.
             assert_eq!(
@@ -208,7 +207,7 @@ fn invalid_responses_and_unreachable_registries_fail() {
 }
 
 #[test]
-fn server_text_is_escaped_in_get_and_errors() {
+fn server_text_is_escaped_in_get_and_omitted_from_errors() {
     let mut body = service("org.example.tes", "tes");
     body["name"] = json!("a\u{9b}2K\u{1b}b");
     body["description"] = json!("right\u{202e}left\u{2028}next");
@@ -244,10 +243,8 @@ fn server_text_is_escaped_in_get_and_errors() {
         !message.contains('\u{1b}') && !message.contains('\r'),
         "{message}"
     );
-    assert!(
-        message.contains(r"\u{1b}[2K\rOK: 3 services\nfake line"),
-        "{message}"
-    );
+    assert!(message.contains("500"), "{message}");
+    assert!(!message.contains("fake line"), "{message}");
 }
 
 #[test]

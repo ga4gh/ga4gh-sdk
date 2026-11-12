@@ -138,17 +138,7 @@ pub async fn run(
                         Some(config) => config.clone(),
                         None => Configuration::from_file(ServiceType::WES)?,
                     };
-                    // The transport sends the configured credential; this
-                    // client only adds the redirect policy and time limits.
-                    let client = ga4gh_sdk::reqwest::Client::builder()
-                        .redirect(ga4gh_sdk::reqwest::redirect::Policy::none())
-                        .connect_timeout(std::time::Duration::from_secs(10))
-                        .timeout(std::time::Duration::from_secs(60))
-                        .build()?;
-                    let wes = WES::from_transport(
-                        ga4gh_sdk::utils::transport::Transport::with_client(&config, client),
-                    )
-                    .await?;
+                    let wes = WES::new(&config).await?;
                     let attachments = m
                         .get_many::<String>("attachment")
                         .into_iter()

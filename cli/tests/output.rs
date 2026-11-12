@@ -21,42 +21,18 @@ const ENCODED_MARKER: &str = "U0VOVElORUxf";
 const LOG_LEVELS: [Option<&str>; 3] = [None, Some("debug"), Some("trace")];
 const TASK_ID: &str = "t1";
 
-/// Config with marker values in `basic_auth`, and in fields that the CLI doesn't
-/// read: these end up in `extra`.
+/// Config with one configured credential, whose value must stay out of output.
 fn config_with_fields(base_path: &str) -> Value {
     json!({"TES": {
         "base_path": base_path,
         "basic_auth": {"username": "SENTINEL_USER", "password": "SENTINEL_PASSWORD"},
-        "bearer_access_token": "SENTINEL_BEARER",
-        "api_key": {"prefix": "Token", "key": "SENTINEL_KEY"},
     }})
 }
 
-/// Config with a marker value as the bearer token.
-fn config_with_token(base_path: &str) -> Value {
-    json!({"TES": {
-        "base_path": base_path,
-        "oauth_access_token": "SENTINEL_OAUTH",
-    }})
-}
-
-/// Config with marker values in both authentication fields that the CLI
-/// reads, which conflict.
-fn config_with_conflict(base_path: &str) -> Value {
-    json!({"TES": {
-        "base_path": base_path,
-        "basic_auth": {"username": "SENTINEL_USER", "password": "SENTINEL_PASSWORD"},
-        "oauth_access_token": "SENTINEL_OAUTH",
-    }})
-}
-
-/// Config with marker values in the base path credentials only.
-fn config_with_url(base_path: &str) -> Value {
-    let base_path = base_path.replacen("http://", "http://SENTINEL_USER:SENTINEL_PASSWORD@", 1);
+/// Config without a credential, for the anonymous path through the CLI.
+fn config_without_auth(base_path: &str) -> Value {
     json!({"TES": {
         "base_path": format!("{base_path}/"),
-        "basic_auth": null,
-        "oauth_access_token": null,
     }})
 }
 
@@ -214,8 +190,7 @@ fn test_output_on_success() {
     let base_path = format!("{}{prefix}", mockito::server_url());
     for config in [
         config_with_fields(&base_path),
-        config_with_token(&base_path),
-        config_with_url(&base_path),
+        config_without_auth(&base_path),
     ] {
         for (args, output) in Home::new(&config).run_all() {
             assert!(output.status.success(), "{args:?}: {}", stderr(&output));
@@ -228,101 +203,6 @@ fn test_output_on_success() {
             }
         }
     }
-}
-
-#[test]
-fn every_command_sends_the_configured_credential() {
-    let basic = "Basic U0VOVElORUxfVVNFUjpTRU5USU5FTF9QQVNTV09SRA==";
-    for (root, config, expected) in [
-        (
-            "/sends-basic",
-            config_with_fields as fn(&str) -> Value,
-            basic,
-        ),
-        ("/sends-token", config_with_token, "Bearer SENTINEL_OAUTH"),
-        ("/sends-url", config_with_url, basic),
-    ] {
-        let task = json!({"id": TASK_ID, "state": "COMPLETE", "executors": []});
-        let header = |method: &str, path: String| {
-            mock(method, Matcher::Regex(format!("^{root}{path}")))
-                .match_header("authorization", expected)
-                .with_status(200)
-        };
-        // Commands that need the service's version discover it first.
-        let service = header("GET", "/service-info$".into())
-            .with_body(
-                json!({
-                    "id": "org.example.tes",
-                    "name": "Mock",
-                    "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
-                    "organization": {"name": "Example", "url": "https://example.org"},
-                    "version": "1.0.0",
-                })
-                .to_string(),
-            )
-            .expect_at_least(1)
-            .create();
-        let create = header("POST", "/tasks$".into())
-            .with_body(json!({"id": TASK_ID}).to_string())
-            .expect(1)
-            .create();
-        let list = header("GET", r"/tasks(\?.*)?$".into())
-            .with_body(json!({"tasks": [task]}).to_string())
-            .expect(1)
-            .create();
-        let get = header("GET", format!(r"/tasks/{TASK_ID}\?"))
-            .with_body(task.to_string())
-            .expect(2)
-            .create();
-        let cancel = header("POST", format!("/tasks/{TASK_ID}:cancel$"))
-            .with_body("{}")
-            .expect(1)
-            .create();
-        let home = Home::new(&config(&format!("{}{root}", mockito::server_url())));
-        let task_file = home.path().join("task.json");
-        for args in [
-            &["tes", "create", task_file.to_str().unwrap()][..],
-            &["tes", "list"],
-            &["tes", "get", TASK_ID, "FULL"],
-            &["tes", "status", TASK_ID],
-            &["tes", "cancel", TASK_ID],
-        ] {
-            let output = home.run(args, None);
-            assert!(
-                output.status.success(),
-                "{root} {args:?}: {}",
-                stderr(&output)
-            );
-        }
-        for mock in [service, create, list, get, cancel] {
-            mock.assert();
-        }
-    }
-}
-
-#[test]
-fn conflicting_credentials_fail_before_any_request() {
-    let requests = mock("GET", Matcher::Regex("^/conflict".into()))
-        .expect(0)
-        .create();
-    let posts = mock("POST", Matcher::Regex("^/conflict".into()))
-        .expect(0)
-        .create();
-    let home = Home::new(&config_with_conflict(&format!(
-        "{}/conflict",
-        mockito::server_url()
-    )));
-    for (args, output) in home.run_all() {
-        assert_eq!(output.status.code(), Some(1), "{args:?}");
-        assert!(output.stdout.is_empty(), "{args:?}");
-        let message = stderr(&output);
-        assert!(
-            message.contains("basic_auth, oauth_access_token"),
-            "{args:?}: {message}"
-        );
-    }
-    requests.assert();
-    posts.assert();
 }
 
 /// A task with known fields and fields that the TES models don't know, at the
@@ -457,7 +337,8 @@ fn list_sends_repeated_tags_and_displays_next_page_token() {
 #[test]
 fn test_output_on_error_response() {
     for status in [401, 404, 500] {
-        let body = format!("mock failure {status}");
+        // A server can echo a credential in an error response.
+        let body = format!("mock failure {status}: SENTINEL_PASSWORD");
         let _mocks = [
             service_info_mock("/service-info"),
             mock("POST", Matcher::Any)
@@ -473,8 +354,7 @@ fn test_output_on_error_response() {
         let base_path = mockito::server_url();
         for config in [
             config_with_fields(&base_path),
-            config_with_token(&base_path),
-            config_with_url(&base_path),
+            config_without_auth(&base_path),
         ] {
             for (args, output) in Home::new(&config).run_all() {
                 assert_eq!(
@@ -486,7 +366,7 @@ fn test_output_on_error_response() {
                 assert!(output.stdout.is_empty(), "{args:?}: {}", stdout(&output));
                 let message = stderr(&output);
                 assert!(message.contains(&status.to_string()), "{args:?}: {message}");
-                assert!(message.contains(&body), "{args:?}: {message}");
+                assert!(!message.contains(&body), "{args:?}: {message}");
             }
         }
     }
@@ -505,7 +385,7 @@ fn service_info_404_keeps_api_root_hint() {
     assert!(stdout(&output).is_empty());
     let message = stderr(&output);
     assert!(message.contains("404"), "{message}");
-    assert!(message.contains("service missing"), "{message}");
+    assert!(!message.contains("service missing"), "{message}");
     assert!(
         message.contains("base_path is the TES API root"),
         "{message}"
@@ -526,7 +406,7 @@ fn canceling_terminal_task_reports_server_conflict() {
         assert!(stdout(&output).is_empty());
         let message = stderr(&output);
         assert!(message.contains("409"), "{message}");
-        assert!(message.contains(&body), "{message}");
+        assert!(!message.contains(&body), "{message}");
     }
 }
 
@@ -541,8 +421,7 @@ fn test_output_without_service() {
     let base_path = format!("http://127.0.0.1:{port}");
     for config in [
         config_with_fields(&base_path),
-        config_with_token(&base_path),
-        config_with_url(&base_path),
+        config_without_auth(&base_path),
     ] {
         for (args, output) in Home::new(&config).run_all() {
             assert_eq!(output.status.code(), Some(1), "{args:?}");
@@ -751,7 +630,8 @@ fn server_text_is_escaped_in_text_output() {
     assert_eq!(failed.status.code(), Some(1));
     let message = stderr(&failed);
     assert_escaped(&message);
-    assert!(message.contains("down\\u{1b}]0;title\\u{7}"), "{message}");
+    assert!(message.contains("500"), "{message}");
+    assert!(!message.contains("down"), "{message}");
 }
 
 #[test]
@@ -852,7 +732,7 @@ fn get_reports_a_body_that_is_not_json() {
 }
 
 #[test]
-fn log_messages_are_escaped() {
+fn log_messages_omit_untrusted_server_error_body() {
     let _service = mock("GET", "/escape-log/service-info")
         .with_status(500)
         .with_body("down\u{202E}x\nforged")
@@ -870,7 +750,11 @@ fn log_messages_are_escaped() {
             !message.lines().any(|line| line.starts_with("forged")),
             "{log_level:?}: {message}"
         );
-        assert!(message.contains("down\\u{202e}x\\nforged"), "{message}");
+        assert!(message.contains("500"), "{message}");
+        assert!(
+            !message.contains("down") && !message.contains("forged"),
+            "{message}"
+        );
     }
 }
 

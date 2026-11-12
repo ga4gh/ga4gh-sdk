@@ -47,11 +47,11 @@ prove which bytes an engine fetches later from a mutable remote URL.
 Explicit CLI submission uses the `WES` section of `~/.ga4gh-cli/config.json`.
 Downstream CLI callers can instead supply a `Configuration` through
 `ga4gh_cli::dispatch_with_config()`.
-The shared transport sends the section's credential, `basic_auth` or
-`oauth_access_token` (see [Authentication](usage.md#authentication)); the CLI
-does not implement login or token refresh, so set the current token. Rust
-callers can also use `WES::from_transport` with a caller-owned client
-(cross-surface integration is tracked in #203):
+For OAuth, set `oauth_access_token` to the current token. `workflow submit`
+uses the same WES client and authentication path as `wes run`, including Basic
+and generic bearer sources. The CLI does not implement login or token refresh.
+For custom HTTP policy, use `WES::from_transport` with a caller-owned client;
+see the [authentication guide](authentication.md):
 
 ```sh
 cargo run -p ga4gh-cli -- workflow submit \

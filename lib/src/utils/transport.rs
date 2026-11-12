@@ -33,10 +33,8 @@
 /// let response = transport.delete("users/1").await;
 /// };
 /// ```
-use crate::utils::auth::{
-    AuthConflictError, CredentialError, CredentialErrorReason, TokenProviderError,
-};
-use crate::utils::configuration::Configuration;
+use crate::utils::auth::{AuthConflictError, TokenProviderError};
+use crate::utils::configuration::{AuthError, Configuration, ConfiguredAuth};
 use crate::utils::query::query_pairs;
 use reqwest::multipart::Form;
 use reqwest::Client;
@@ -141,19 +139,39 @@ pub async fn response_text(
     response: reqwest::Response,
     limits: BodyLimits,
 ) -> Result<String, Box<dyn Error>> {
+    let response = checked_response(response, limits).await?;
+    Ok(String::from_utf8_lossy(&response.body).into_owned())
+}
+
+/// Decode bounded JSON from the original bytes. Invalid UTF-8 and malformed JSON
+/// return a decoding error. Non-success responses retain the existing HttpError.
+pub async fn response_json<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+    limits: BodyLimits,
+) -> Result<T, Box<dyn Error>> {
+    let response = checked_response(response, limits).await?;
+    // Validate the whole document even when T ignores unknown properties.
+    // A byte deserializer may skip UTF-8 checks for discarded string values.
+    let text = std::str::from_utf8(&response.body)?;
+    Ok(serde_json::from_str(text)?)
+}
+
+async fn checked_response(
+    response: reqwest::Response,
+    limits: BodyLimits,
+) -> Result<BufferedResponse, Box<dyn Error>> {
     let limit = if response.status().is_success() {
         limits.success
     } else {
         limits.error
     };
     let response = read_bounded(response, limit).await?;
-    let body = String::from_utf8_lossy(&response.body).into_owned();
     if response.status.is_success() {
-        Ok(body)
+        Ok(response)
     } else {
         Err(Box::new(HttpError {
             status: response.status,
-            body,
+            body: String::from_utf8_lossy(&response.body).into_owned(),
         }))
     }
 }
@@ -175,30 +193,27 @@ pub fn urlencode<T: AsRef<str>>(value: T) -> String {
 }
 
 /// An HTTP response whose status is not successful.
-#[derive(Debug)]
+///
+/// `body` is the untrusted server response and may contain credentials echoed
+/// by the server. Access it explicitly when needed, but do not log or display
+/// it without reviewing its contents. `Display` and `Debug` omit the body.
 pub struct HttpError {
     pub status: reqwest::StatusCode,
     pub body: String,
 }
 
+impl fmt::Debug for HttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpError")
+            .field("status", &self.status)
+            .field("body", &"<untrusted response omitted>")
+            .finish()
+    }
+}
+
 impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const MAX_BODY_CHARS: usize = 300;
-        let end = self
-            .body
-            .char_indices()
-            .nth(MAX_BODY_CHARS)
-            .map_or(self.body.len(), |(index, _)| index);
-        write!(
-            f,
-            "Request failed with status: {}. Response: {}",
-            self.status,
-            &self.body[..end]
-        )?;
-        if end < self.body.len() {
-            write!(f, "... [truncated]")?;
-        }
-        Ok(())
+        write!(f, "Request failed with status: {}", self.status)
     }
 }
 
@@ -272,35 +287,12 @@ fn is_dot_segment(segment: &str) -> bool {
     dots == 1 || dots == 2
 }
 
-/// Whether `url` uses plain `http` to a host other than `localhost` or a
-/// loopback address, so that a credential would travel unencrypted.
-pub(crate) fn is_plain_http_to_remote(url: &Url) -> bool {
-    if url.scheme() != "http" {
-        return false;
-    }
-    match url.host() {
-        Some(url::Host::Domain(domain)) => !domain.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(address)) => !address.is_loopback(),
-        Some(url::Host::Ipv6(address)) => !address.is_loopback(),
-        None => true,
-    }
-}
-
-/// Logs, once per process, that a credential is sent over plain `http`.
-fn warn_plain_http_once() {
-    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        log::warn!(
-            "Sending credentials over plain http to a host that isn't a loopback address; use https"
-        );
-    }
-}
-
 // note: could implement custom certs handling, such as in-TEE generated ephemeral certs
 #[derive(Clone)]
 pub struct Transport {
     pub config: Configuration,
-    pub client: reqwest::Client,
+    client: reqwest::Client,
+    apply_configured_auth: bool,
 }
 
 impl fmt::Debug for Transport {
@@ -328,31 +320,54 @@ impl Transport {
         Self::build(config).expect("default HTTP client initialization failed")
     }
 
-    // A client with the connect and request timeouts of `config.timeouts`.
+    // SDK-owned clients never follow redirects implicitly: a redirect can
+    // leave the configured API root or replay a submission.
     fn build(config: &Configuration) -> reqwest::Result<Self> {
         Client::builder()
             .connect_timeout(config.timeouts.connect)
             .timeout(config.timeouts.request)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map(|client| Self::with_client(config, client))
+            .map(|client| Self {
+                config: config.clone(),
+                client,
+                apply_configured_auth: true,
+            })
     }
 
     /// Inject a configured client, for connection budgets, TLS and downstream use.
     ///
     /// The client's own connect and request timeouts apply, and
     /// `config.timeouts.connect` and `request` are not used; the `discovery` and
-    /// `submission` limits still come from `config.timeouts`.
-    ///
-    /// The client's own headers and redirect policy apply. The credential of
-    /// `config`, a token provider or a static credential (see
-    /// [`crate::utils::auth`]), applies as well; its `Authorization` header
-    /// takes the place of one among the client's default headers. Without a
-    /// credential in `config`, the client's own `Authorization` header stays.
+    /// `submission` limits still come from `config.timeouts`. The configured
+    /// credentials, including a token provider, are not applied. If both are
+    /// present, requests fail with
+    /// [`AuthError::CallerOwnedClient`]; use
+    /// [`with_client_and_configured_auth`](Self::with_client_and_configured_auth)
+    /// to opt in. The caller retains responsibility for redirect policy.
     pub fn with_client(config: &Configuration, client: Client) -> Self {
         Self {
             config: config.clone(),
             client,
+            apply_configured_auth: false,
         }
+    }
+
+    /// Explicitly apply configured credentials to a caller-owned HTTP client.
+    /// The caller owns that client's redirect policy and must prevent credential
+    /// forwarding outside the configured API root and replay of submissions.
+    pub fn with_client_and_configured_auth(config: &Configuration, client: Client) -> Self {
+        Self {
+            config: config.clone(),
+            client,
+            apply_configured_auth: true,
+        }
+    }
+
+    /// Read-only access to the underlying HTTP client. Requests made through a
+    /// clone of it do not acquire SDK-configured authentication automatically.
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     /// Creates a transport with these connect and request timeouts in place of
@@ -392,6 +407,32 @@ impl Transport {
             .await?
     }
 
+    /// Strict JSON discovery under the configured absolute discovery budget.
+    pub(crate) async fn get_json_within<T: serde::de::DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        timeout: std::time::Duration,
+    ) -> Result<T, Box<dyn Error>> {
+        crate::utils::operation::Operation::new(timeout)
+            .run(async {
+                let response = self
+                    .send_authorized(
+                        reqwest::Method::GET,
+                        endpoint,
+                        true,
+                        |request| {
+                            Ok(request
+                                .header(reqwest::header::ACCEPT, "application/json")
+                                .timeout(timeout))
+                        },
+                        None,
+                    )
+                    .await?;
+                response_json(response, BodyLimits::default()).await
+            })
+            .await?
+    }
+
     /// Sends exactly once under an absolute operation budget, including body I/O.
     /// Intended for streamed/non-replayable submissions with a deliberate budget.
     pub async fn send_once(
@@ -409,15 +450,16 @@ impl Transport {
         // The async body runs only when Operation::run polls the send future.
         // A token/deadline check outside that future would leave a race where
         // run rejects the operation before any attempt has begun.
-        let mut attempted = false;
+        let attempted = std::sync::atomic::AtomicBool::new(false);
         let result = operation
             .run(async {
-                attempted = true;
-                response_text(self.send_checked(request).await?, limits).await
+                response_text(self.send_checked(request, Some(&attempted)).await?, limits).await
             })
             .await;
+        let attempted = attempted.load(std::sync::atomic::Ordering::SeqCst);
         match result {
             Ok(Ok(body)) => Ok(body),
+            Ok(Err(error)) if !attempted => Err(error),
             Ok(Err(error)) if error.downcast_ref::<HttpError>().is_some() => Err(error),
             Ok(Err(error)) => Err(Box::new(AmbiguousSubmissionError {
                 reason: error.to_string(),
@@ -471,7 +513,9 @@ impl Transport {
                 }
                 Err(error) => return Err(Box::new(error)),
                 Ok(Err(error))
-                    if attempt < attempts && error.downcast_ref::<reqwest::Error>().is_some() =>
+                    if attempted
+                        && attempt < attempts
+                        && error.downcast_ref::<reqwest::Error>().is_some() =>
                 {
                     options
                         .operation
@@ -480,7 +524,8 @@ impl Transport {
                     continue;
                 }
                 Ok(Err(error))
-                    if options.safety == ReplaySafety::NonReplayable
+                    if attempted
+                        && options.safety == ReplaySafety::NonReplayable
                         && error.downcast_ref::<reqwest::Error>().is_some() =>
                 {
                     return Err(Box::new(AmbiguousSubmissionError {
@@ -529,27 +574,58 @@ impl Transport {
 
     /// Shared API-relative request construction. Service-specific callers can
     /// add headers, streaming bodies or custom methods without losing policies.
-    ///
-    /// The request carries neither a token from a token provider nor the static
-    /// credential of the configuration, except a user and password in
-    /// `base_path`; use
-    /// [`authorized_request_builder`](Self::authorized_request_builder) for
-    /// those. The default headers of an injected client are sent.
+    /// SDK-owned clients apply one configured Basic or bearer credential.
+    /// Caller-owned clients retain their policy; configured credentials require
+    /// [`with_client_and_configured_auth`](Self::with_client_and_configured_auth).
+    /// With a token provider, use
+    /// [`authorized_request_builder`](Self::authorized_request_builder) instead;
+    /// this synchronous builder returns an error rather than sending anonymously.
     pub fn request_builder(
         &self,
         method: reqwest::Method,
         endpoint: &str,
-    ) -> Result<reqwest::RequestBuilder, EndpointError> {
+    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+        self.request_builder_inner(method, endpoint, false)
+    }
+
+    fn request_builder_inner(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+        allow_provider: bool,
+    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+        if self.config.token_provider.is_some() {
+            let sources = self.config.static_credentials();
+            if !sources.is_empty() {
+                return Err(Box::new(AuthConflictError { sources }));
+            }
+        }
+        let auth = self.config.configured_auth()?;
+        let has_provider = self.config.token_provider.is_some();
+        if !self.apply_configured_auth && (has_provider || !matches!(auth, ConfiguredAuth::None)) {
+            return Err(Box::new(AuthError::CallerOwnedClient));
+        }
+        if has_provider && !allow_provider {
+            return Err(Box::new(AuthError::ProviderRequiresAsyncBuilder));
+        }
         let mut request = self.client.request(method, self.endpoint(endpoint)?);
         if let Some(agent) = &self.config.user_agent {
             request = request.header(reqwest::header::USER_AGENT, agent);
+        }
+        if self.apply_configured_auth {
+            request = match auth {
+                ConfiguredAuth::None => request,
+                ConfiguredAuth::Basic(basic) => {
+                    request.basic_auth(&basic.username, basic.password.as_deref())
+                }
+                ConfiguredAuth::Bearer(token) => request.bearer_auth(token),
+            };
         }
         Ok(request)
     }
 
     /// Like [`request_builder`](Self::request_builder), with the token of the
-    /// configured token provider or, without one, the static credential of the
-    /// configuration, if there is one (see [`crate::utils::auth`]).
+    /// configured token provider, if there is one (see [`crate::utils::auth`]).
     ///
     /// The request is sent once, as the caller sends it; there is no further
     /// attempt after `401 Unauthorized`.
@@ -557,109 +633,35 @@ impl Transport {
     /// # Errors
     ///
     /// An [`EndpointError`], an [`AuthConflictError`] if the configuration has
-    /// more than one credential, a [`CredentialError`] for an unsupported or
-    /// unusable static credential, or a [`TokenProviderError`]. Nothing has
-    /// been sent then.
+    /// other credentials as well, or a [`TokenProviderError`]. Nothing has been
+    /// sent then. An injected client also requires explicit opt-in.
     pub async fn authorized_request_builder(
         &self,
         method: reqwest::Method,
         endpoint: &str,
     ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
-        let request = self.request_builder(method, endpoint)?;
+        let request = self.request_builder_inner(method, endpoint, true)?;
         self.authorize(request, false).await
     }
 
     /// Adds the provider's token to `request`, a new one if `after_rejection`.
-    /// Without a provider, adds the static credential of the configuration, if
-    /// there is one (see [`crate::utils::auth`]).
+    /// Without a provider, `request` stays as it is.
     async fn authorize(
         &self,
         request: reqwest::RequestBuilder,
         after_rejection: bool,
     ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
         let Some(source) = &self.config.token_provider else {
-            return self.add_static_credential(request);
+            return Ok(request);
         };
-        let sources = self.config.static_credentials();
-        if !sources.is_empty() {
-            return Err(Box::new(AuthConflictError {
-                sources,
-                token_provider: true,
-            }));
-        }
         let audience = self.config.token_audience();
         let token = source.token(&audience, after_rejection).await?;
         let invalid = || TokenProviderError::InvalidToken {
             audience: audience.clone(),
         };
-        if token.secret().is_empty() {
-            return Err(Box::new(invalid()));
-        }
         let mut value =
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token.secret()))
                 .map_err(|_| invalid())?;
-        value.set_sensitive(true);
-        Ok(request.header(reqwest::header::AUTHORIZATION, value))
-    }
-
-    /// Adds the one static credential of the configuration to `request`.
-    ///
-    /// A user and password in `base_path` are left to `reqwest`, which sends
-    /// them as Basic credentials. More than one credential, an `api_key` or an
-    /// unusable token is an error, and nothing is sent.
-    fn add_static_credential(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
-        let config = &self.config;
-        if config.api_key.is_some() {
-            return Err(Box::new(CredentialError {
-                source: "api_key",
-                reason: CredentialErrorReason::Unsupported,
-            }));
-        }
-        // The same list as for a token provider's conflict, except that both
-        // bearer fields with the same token count as one credential.
-        let mut sources = config.static_credentials();
-        let bearer = match (&config.oauth_access_token, &config.bearer_access_token) {
-            (Some(oauth), Some(bearer)) if oauth == bearer => {
-                sources.retain(|source| *source != "bearer_access_token");
-                Some(("oauth_access_token", oauth))
-            }
-            (Some(token), _) => Some(("oauth_access_token", token)),
-            (None, Some(token)) => Some(("bearer_access_token", token)),
-            (None, None) => None,
-        };
-        if sources.len() > 1 {
-            return Err(Box::new(AuthConflictError {
-                sources,
-                token_provider: false,
-            }));
-        }
-        if !sources.is_empty() && is_plain_http_to_remote(&config.base_path) {
-            warn_plain_http_once();
-        }
-        if let Some(basic) = &config.basic_auth {
-            if basic.username.is_empty() {
-                return Err(Box::new(CredentialError {
-                    source: "basic_auth",
-                    reason: CredentialErrorReason::EmptyUsername,
-                }));
-            }
-            return Ok(request.basic_auth(&basic.username, basic.password.as_ref()));
-        }
-        let Some((field, token)) = bearer else {
-            return Ok(request);
-        };
-        let invalid = || CredentialError {
-            source: field,
-            reason: CredentialErrorReason::InvalidToken,
-        };
-        if token.is_empty() {
-            return Err(Box::new(invalid()));
-        }
-        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|_| invalid())?;
         value.set_sensitive(true);
         Ok(request.header(reqwest::header::AUTHORIZATION, value))
     }
@@ -684,10 +686,14 @@ impl Transport {
     async fn send_checked(
         &self,
         request: reqwest::RequestBuilder,
+        sent: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<reqwest::Response, Box<dyn Error>> {
         let (client, request) = request.build_split();
         let request = request?;
         let headers = request.headers().clone();
+        if let Some(sent) = sent {
+            sent.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         let response = client.execute(request).await?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             self.reject_token(&headers);
@@ -698,7 +704,8 @@ impl Transport {
     /// Builds a request with [`authorized_request_builder`](Self::authorized_request_builder)
     /// and `build`, and sends it. If it is `replayable`, a token provider is
     /// configured and the service answers `401 Unauthorized`, builds and sends it
-    /// once more with a new token. `sent`, if given, is set just before the first
+    /// once more with a current token. Another concurrent request may already
+    /// have refreshed the token. `sent`, if given, is set just before the first
     /// request is sent.
     pub(crate) async fn send_authorized(
         &self,
@@ -712,10 +719,7 @@ impl Transport {
             self.authorized_request_builder(method.clone(), endpoint)
                 .await?,
         )?;
-        if let Some(sent) = sent {
-            sent.store(true, std::sync::atomic::Ordering::SeqCst);
-        }
-        let response = self.send_checked(request).await?;
+        let response = self.send_checked(request, sent).await?;
         if !replayable
             || response.status() != reqwest::StatusCode::UNAUTHORIZED
             || self.config.token_provider.is_none()
@@ -723,10 +727,13 @@ impl Transport {
             return Ok(response);
         }
         drop(response);
-        log::debug!("Asking the token provider again after 401 Unauthorized");
-        let request = self.request_builder(method, endpoint)?;
-        let request = build(self.authorize(request, true).await?)?;
-        self.send_checked(request).await
+        log::debug!("Retrying a read after 401 Unauthorized with the current token");
+        let request = self.request_builder_inner(method, endpoint, true)?;
+        // send_checked already rejected the token used by the first request.
+        // Do not force another rejection here: a concurrent request may have
+        // installed a newer reusable token before this retry.
+        let request = build(self.authorize(request, false).await?)?;
+        self.send_checked(request, None).await
     }
 
     /// Resolves a relative path beneath the configured API root, with or without a trailing slash.
@@ -821,7 +828,8 @@ impl Transport {
         .await
     }
 
-    /// Text helper with caller-selected success/error bounds. No implicit retry.
+    /// Text helper with caller-selected success/error bounds. With a token
+    /// provider, a `GET` or `HEAD` may retry once after `401 Unauthorized`.
     pub async fn request_text(
         &self,
         method: reqwest::Method,
@@ -898,7 +906,7 @@ impl Transport {
             .authorized_request_builder(reqwest::Method::POST, endpoint)
             .await?
             .multipart(form);
-        let response = self.send_checked(request).await?;
+        let response = self.send_checked(request, None).await?;
         response_text(response, BodyLimits::default()).await
     }
 
@@ -953,22 +961,20 @@ mod tests {
     }
 
     #[test]
-    fn test_http_status_error_truncates_display_but_keeps_body() {
-        let body = "é".repeat(301);
+    fn test_http_status_error_keeps_body_but_omits_it_from_diagnostics() {
+        let body = "Bearer SENTINEL_TOKEN\n".repeat(301);
         let error = HttpStatusError {
             status: reqwest::StatusCode::BAD_GATEWAY,
             body: body.clone(),
         };
         assert_eq!(error.body, body);
-        assert!(error
-            .to_string()
-            .ends_with(&format!("{}... [truncated]", "é".repeat(300))));
-
-        let short = HttpStatusError {
-            status: reqwest::StatusCode::NOT_FOUND,
-            body: "service failure".to_string(),
-        };
-        assert!(short.to_string().ends_with("Response: service failure"));
+        assert_eq!(
+            error.to_string(),
+            "Request failed with status: 502 Bad Gateway"
+        );
+        let debug = format!("{error:?}");
+        assert!(debug.contains("502"), "{debug}");
+        assert!(!debug.contains("SENTINEL_TOKEN"), "{debug}");
     }
 
     #[test]
@@ -1084,10 +1090,11 @@ mod tests {
             AccessToken, AuthConflictError, BoxError, TokenProvider, TokenProviderError,
             TokenRequest,
         };
-        use crate::utils::configuration::Configuration;
+        use crate::utils::configuration::{AuthError, Configuration};
         use crate::utils::operation::ReplaySafety;
         use crate::utils::transport::{HttpError, RequestOptions, Transport};
         use mockito::{mock, Matcher};
+        use std::error::Error;
         use std::sync::{Arc, Mutex};
         use std::time::{Duration, Instant};
         use url::Url;
@@ -1232,6 +1239,100 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn late_401_does_not_evict_a_newer_reusable_token() {
+            use tokio::{
+                io::{AsyncReadExt, AsyncWriteExt},
+                net::TcpListener,
+                sync::Notify,
+            };
+
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let late_started = Arc::new(Notify::new());
+            let release_late = Arc::new(Notify::new());
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let server = tokio::spawn({
+                let late_started = late_started.clone();
+                let release_late = release_late.clone();
+                let seen = seen.clone();
+                async move {
+                    loop {
+                        let (mut socket, _) = listener.accept().await.unwrap();
+                        let late_started = late_started.clone();
+                        let release_late = release_late.clone();
+                        let seen = seen.clone();
+                        tokio::spawn(async move {
+                            let mut bytes = Vec::new();
+                            let mut chunk = [0; 1024];
+                            loop {
+                                let count = socket.read(&mut chunk).await.unwrap();
+                                if count == 0 {
+                                    return;
+                                }
+                                bytes.extend_from_slice(&chunk[..count]);
+                                if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                            let request = String::from_utf8(bytes).unwrap();
+                            let path = request.split_whitespace().nth(1).unwrap();
+                            let authorization = request
+                                .lines()
+                                .filter_map(|line| line.split_once(':'))
+                                .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                                .map(|(_, value)| value.trim())
+                                .unwrap_or("");
+                            seen.lock().unwrap().push(format!("{path} {authorization}"));
+                            if path == "/auth-race/late" && authorization == "Bearer token-1" {
+                                late_started.notify_one();
+                                release_late.notified().await;
+                            }
+                            let response = match (path, authorization) {
+                                ("/auth-race/late", "Bearer token-1")
+                                | ("/auth-race/fast", "Bearer token-1") => {
+                                    "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                }
+                                ("/auth-race/late", "Bearer token-2")
+                                | ("/auth-race/fast", "Bearer token-2") => {
+                                    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                                }
+                                _ => "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            };
+                            socket.write_all(response.as_bytes()).await.unwrap();
+                        });
+                    }
+                }
+            });
+
+            let provider = Arc::new(Recording {
+                lifetime: Some(Duration::from_secs(60)),
+                ..Default::default()
+            });
+            let config =
+                Configuration::new(Url::parse(&format!("http://{address}/auth-race")).unwrap())
+                    .with_shared_token_provider(provider.clone());
+            let transport = Arc::new(Transport::new(&config));
+            // Cache token-1 before both reads start.
+            let _ = transport
+                .authorized_request_builder(reqwest::Method::GET, "late")
+                .await
+                .unwrap();
+            let (late, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::join!(transport.get("late", None), async {
+                    late_started.notified().await;
+                    assert_eq!(transport.get("fast", None).await.unwrap(), "ok");
+                    release_late.notify_one();
+                })
+            })
+            .await
+            .unwrap();
+            assert_eq!(late.unwrap(), "ok");
+            assert_eq!(provider.calls().len(), 2, "the newer token must be reused");
+            assert_eq!(seen.lock().unwrap().len(), 4);
+            server.abort();
+        }
+
+        #[tokio::test]
         async fn test_replays_only_once() {
             let provider = Arc::new(Recording::default());
             let transport = transport("auth-twice", &provider);
@@ -1347,7 +1448,7 @@ mod tests {
                 .unwrap_err();
             assert!(error.downcast_ref::<HttpError>().is_some(), "{error}");
             rejected.assert();
-            transport
+            let _ = transport
                 .authorized_request_builder(reqwest::Method::POST, "once")
                 .await
                 .unwrap();
@@ -1363,7 +1464,7 @@ mod tests {
             let form = reqwest::multipart::Form::new().text("x", "y");
             assert!(transport.post_multipart("form", form).await.is_err());
             rejected.assert();
-            transport
+            let _ = transport
                 .authorized_request_builder(reqwest::Method::POST, "form")
                 .await
                 .unwrap();
@@ -1407,19 +1508,23 @@ mod tests {
             assert!(matches!(error, TokenProviderError::Failed { .. }));
             assert_eq!(
                 message,
-                format!(
-                    "The token provider failed for {}: no session for SENTINEL_USER",
-                    base("auth-fail")
-                )
+                "The token provider failed before the request was sent"
             );
+            assert!(!format!("{error:?}").contains("SENTINEL_USER"));
+            assert!(error
+                .source()
+                .unwrap()
+                .to_string()
+                .contains("SENTINEL_USER"));
             request.assert();
         }
 
         #[tokio::test]
         async fn test_invalid_tokens_are_not_sent_or_shown() {
-            for token in ["", "SENTINEL\nTOKEN"] {
+            for token in ["", "SENTINEL\nTOKEN", "SENTINEL TOKEN"] {
                 let provider = Arc::new(Recording {
                     token: Some(token),
+                    lifetime: Some(Duration::from_secs(60)),
                     ..Default::default()
                 });
                 let transport = transport("auth-invalid", &provider);
@@ -1433,6 +1538,12 @@ mod tests {
                     error.downcast_ref::<TokenProviderError>().unwrap(),
                     TokenProviderError::InvalidToken { .. }
                 ));
+                assert!(transport.get("a", None).await.is_err());
+                assert_eq!(
+                    provider.calls().len(),
+                    2,
+                    "invalid tokens must not be cached"
+                );
                 request.assert();
             }
         }
@@ -1446,9 +1557,10 @@ mod tests {
                 .with_oauth_access_token("SENTINEL_OAUTH".to_owned());
             let error = Transport::new(&config).get("a", None).await.unwrap_err();
             assert!(!format!("{error} {error:?}").contains("SENTINEL"));
-            let conflict = error.downcast_ref::<AuthConflictError>().unwrap();
-            assert_eq!(conflict.sources, ["oauth_access_token"]);
-            assert!(conflict.token_provider);
+            assert_eq!(
+                error.downcast_ref::<AuthConflictError>().unwrap().sources,
+                ["oauth_access_token"]
+            );
             let mut url = base("auth-conflict");
             url.set_username("alice").unwrap();
             let config = Configuration::new(url).with_shared_token_provider(provider.clone());
@@ -1476,7 +1588,12 @@ mod tests {
                 .unwrap();
             let config =
                 Configuration::new(base("auth-client")).with_shared_token_provider(provider);
-            Transport::with_client(&config, client)
+            let error = Transport::with_client(&config, client.clone())
+                .get("a", None)
+                .await
+                .unwrap_err();
+            assert!(error.downcast_ref::<AuthError>().is_some());
+            Transport::with_client_and_configured_auth(&config, client)
                 .get("a", None)
                 .await
                 .unwrap();
@@ -1503,355 +1620,52 @@ mod tests {
             request.assert();
             assert_eq!(provider.calls().len(), 1);
         }
-    }
-
-    mod static_credentials {
-        use crate::utils::auth::{AuthConflictError, CredentialError, CredentialErrorReason};
-        use crate::utils::configuration::{ApiKey, BasicAuth, Configuration};
-        use crate::utils::transport::{is_plain_http_to_remote, HttpError, Transport};
-        use mockito::{mock, Matcher};
-        use url::Url;
-
-        // Base64 of `alice:secret` and of `alice:`.
-        const BASIC: &str = "Basic YWxpY2U6c2VjcmV0";
-        const BASIC_NO_PASSWORD: &str = "Basic YWxpY2U6";
-
-        fn base(root: &str) -> Url {
-            Url::parse(&format!("{}/{root}", mockito::server_url())).unwrap()
-        }
-
-        fn basic(password: Option<&str>) -> BasicAuth {
-            BasicAuth {
-                username: "alice".to_owned(),
-                password: password.map(str::to_owned),
-            }
-        }
-
-        /// Sends GET, POST, PUT, DELETE and multipart requests below `/<root>`
-        /// with `config`, and checks that each carries `expected`.
-        async fn assert_every_method_sends(root: &str, config: Configuration, expected: &str) {
-            let mocks = [
-                ("GET", "a"),
-                ("POST", "b"),
-                ("PUT", "c"),
-                ("DELETE", "d"),
-                ("POST", "e"),
-            ]
-            .map(|(method, path)| {
-                mock(method, format!("/{root}/{path}").as_str())
-                    .match_header("authorization", expected)
-                    .with_status(200)
-                    .with_body("ok")
-                    .expect(1)
-                    .create()
-            });
-            let transport = Transport::new(&config);
-            transport.get("a", None).await.unwrap();
-            transport.post("b", None).await.unwrap();
-            transport.put("c", serde_json::json!({})).await.unwrap();
-            transport.delete("d").await.unwrap();
-            let form = reqwest::multipart::Form::new().text("x", "y");
-            transport.post_multipart("e", form).await.unwrap();
-            for mock in mocks {
-                mock.assert();
-            }
-        }
 
         #[tokio::test]
-        async fn test_sends_basic_auth_for_every_method() {
-            let config =
-                Configuration::new(base("static-basic")).with_basic_auth(basic(Some("secret")));
-            assert_every_method_sends("static-basic", config, BASIC).await;
-        }
-
-        #[tokio::test]
-        async fn test_sends_basic_auth_without_a_password() {
-            let config = Configuration::new(base("static-basic-user")).with_basic_auth(basic(None));
-            assert_every_method_sends("static-basic-user", config, BASIC_NO_PASSWORD).await;
-        }
-
-        #[tokio::test]
-        async fn test_sends_the_oauth_access_token_for_every_method() {
-            let config = Configuration::new(base("static-oauth"))
-                .with_oauth_access_token("my-token".to_owned());
-            assert_every_method_sends("static-oauth", config, "Bearer my-token").await;
-        }
-
-        #[tokio::test]
-        async fn test_sends_the_bearer_access_token_for_every_method() {
-            let mut config = Configuration::new(base("static-bearer"));
-            config.bearer_access_token = Some("my-token".to_owned());
-            assert_every_method_sends("static-bearer", config, "Bearer my-token").await;
-        }
-
-        #[tokio::test]
-        async fn test_both_bearer_fields_with_the_same_token() {
-            let mut config = Configuration::new(base("static-both"))
-                .with_oauth_access_token("my-token".to_owned());
-            config.bearer_access_token = Some("my-token".to_owned());
-            assert_every_method_sends("static-both", config, "Bearer my-token").await;
-        }
-
-        #[tokio::test]
-        async fn test_user_and_password_in_base_path_are_sent_as_before() {
-            let mut url = base("static-url");
-            url.set_username("alice").unwrap();
-            url.set_password(Some("secret")).unwrap();
-            assert_every_method_sends("static-url", Configuration::new(url), BASIC).await;
-        }
-
-        #[tokio::test]
-        async fn test_conflicting_credentials_send_nothing() {
-            let request = mock("GET", Matcher::Regex("^/static-conflict".into()))
-                .expect(0)
-                .create();
-            let mut url = base("static-conflict");
-            url.set_username("SENTINEL_USER").unwrap();
-            let mut different = Configuration::new(base("static-conflict"))
-                .with_oauth_access_token("SENTINEL_OAUTH".to_owned());
-            different.bearer_access_token = Some("SENTINEL_BEARER".to_owned());
-            let cases = [
-                (
-                    Configuration::new(base("static-conflict"))
-                        .with_basic_auth(basic(Some("SENTINEL_PASSWORD")))
-                        .with_oauth_access_token("SENTINEL_OAUTH".to_owned()),
-                    vec!["basic_auth", "oauth_access_token"],
-                ),
-                (
-                    different.clone(),
-                    vec!["oauth_access_token", "bearer_access_token"],
-                ),
-                (
-                    different.with_basic_auth(basic(Some("SENTINEL_PASSWORD"))),
-                    vec!["basic_auth", "oauth_access_token", "bearer_access_token"],
-                ),
-                (
-                    Configuration::new(url.clone())
-                        .with_oauth_access_token("SENTINEL_OAUTH".to_owned()),
-                    vec!["oauth_access_token", "the user or password in base_path"],
-                ),
-                (
-                    Configuration::new(url).with_basic_auth(basic(Some("SENTINEL_PASSWORD"))),
-                    vec!["basic_auth", "the user or password in base_path"],
-                ),
-            ];
-            for (config, sources) in cases {
-                let error = Transport::new(&config).get("a", None).await.unwrap_err();
-                let text = format!("{error} {error:?}");
-                assert!(!text.contains("SENTINEL"), "{text}");
-                let conflict = error.downcast_ref::<AuthConflictError>().unwrap();
-                assert_eq!(conflict.sources, sources);
-                assert!(!conflict.token_provider);
-                assert!(error.to_string().contains("Only one credential"), "{error}");
-            }
-            request.assert();
-        }
-
-        #[tokio::test]
-        async fn test_unsupported_and_invalid_credentials_send_nothing() {
-            let request = mock("GET", Matcher::Regex("^/static-invalid".into()))
-                .expect(0)
-                .create();
-            let mut api_key = Configuration::new(base("static-invalid"));
-            api_key.api_key = Some(ApiKey {
-                prefix: Some("Token".to_owned()),
-                key: "SENTINEL_KEY".to_owned(),
-            });
-            let mut bearer = Configuration::new(base("static-invalid"));
-            bearer.bearer_access_token = Some("SENTINEL\nTOKEN".to_owned());
-            let cases = [
-                (api_key, "api_key", CredentialErrorReason::Unsupported),
-                (
-                    Configuration::new(base("static-invalid"))
-                        .with_oauth_access_token(String::new()),
-                    "oauth_access_token",
-                    CredentialErrorReason::InvalidToken,
-                ),
-                (
-                    Configuration::new(base("static-invalid"))
-                        .with_oauth_access_token("SENTINEL\u{7f}".to_owned()),
-                    "oauth_access_token",
-                    CredentialErrorReason::InvalidToken,
-                ),
-                (
-                    bearer,
-                    "bearer_access_token",
-                    CredentialErrorReason::InvalidToken,
-                ),
-                (
-                    Configuration::new(base("static-invalid")).with_basic_auth(BasicAuth {
-                        username: String::new(),
-                        password: Some("SENTINEL_PASSWORD".to_owned()),
-                    }),
-                    "basic_auth",
-                    CredentialErrorReason::EmptyUsername,
-                ),
-            ];
-            for (config, source, reason) in cases {
-                let error = Transport::new(&config).get("a", None).await.unwrap_err();
-                let text = format!("{error} {error:?}");
-                assert!(!text.contains("SENTINEL"), "{text}");
-                let error = error.downcast_ref::<CredentialError>().unwrap();
-                assert_eq!((error.source, error.reason), (source, reason));
-            }
-            request.assert();
-        }
-
-        #[tokio::test]
-        async fn test_a_401_is_returned_without_another_attempt() {
-            let request = mock("GET", "/static-401/a")
-                .match_header("authorization", "Bearer wrong")
-                .with_status(401)
-                .with_body("denied")
-                .expect(1)
-                .create();
-            let config =
-                Configuration::new(base("static-401")).with_oauth_access_token("wrong".to_owned());
-            let error = Transport::new(&config).get("a", None).await.unwrap_err();
-            assert_eq!(
-                error.downcast_ref::<HttpError>().unwrap().status,
-                reqwest::StatusCode::UNAUTHORIZED
-            );
-            request.assert();
-        }
-
-        #[tokio::test]
-        async fn test_configured_credential_replaces_a_client_default() {
-            let request = mock("GET", "/static-client/a")
-                .match_header("authorization", "Bearer configured")
-                .match_header("x-client", "kept")
-                .with_status(200)
-                .expect(1)
-                .create();
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert("authorization", "Bearer client".parse().unwrap());
-            headers.insert("x-client", "kept".parse().unwrap());
-            let client = reqwest::Client::builder()
-                .default_headers(headers)
-                .build()
-                .unwrap();
-            let config = Configuration::new(base("static-client"))
-                .with_oauth_access_token("configured".to_owned());
-            Transport::with_client(&config, client)
-                .get("a", None)
-                .await
-                .unwrap();
-            request.assert();
-        }
-
-        #[tokio::test]
-        async fn test_a_client_default_stays_without_a_configured_credential() {
-            let request = mock("GET", "/static-client-only/a")
-                .match_header("authorization", "Bearer client")
-                .with_status(200)
-                .expect(1)
-                .create();
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert("authorization", "Bearer client".parse().unwrap());
-            let client = reqwest::Client::builder()
-                .default_headers(headers)
-                .build()
-                .unwrap();
-            Transport::with_client(&Configuration::new(base("static-client-only")), client)
-                .get("a", None)
-                .await
-                .unwrap();
-            request.assert();
-        }
-
-        #[tokio::test]
-        async fn test_credential_is_dropped_on_a_redirect_to_another_host() {
-            // mockito listens on 127.0.0.1; `localhost` is another host to reqwest.
-            let port = Url::parse(&mockito::server_url()).unwrap().port().unwrap();
-            let redirect = mock("GET", "/static-redirect/a")
-                .match_header("authorization", "Bearer my-token")
-                .with_status(302)
-                .with_header(
-                    "location",
-                    &format!("http://localhost:{port}/static-elsewhere"),
-                )
-                .expect(1)
-                .create();
-            let elsewhere = mock("GET", "/static-elsewhere")
-                .match_header("authorization", Matcher::Missing)
-                .with_status(200)
-                .with_body("ok")
-                .expect(1)
-                .create();
-            let config = Configuration::new(base("static-redirect"))
-                .with_oauth_access_token("my-token".to_owned());
-            Transport::new(&config).get("a", None).await.unwrap();
-            redirect.assert();
-            elsewhere.assert();
-        }
-
-        #[tokio::test]
-        async fn test_authorized_request_builder_and_discovery_send_it() {
-            let request = mock("PATCH", "/static-builder/a")
-                .match_header("authorization", BASIC)
-                .with_status(204)
-                .expect(1)
-                .create();
-            let config =
-                Configuration::new(base("static-builder")).with_basic_auth(basic(Some("secret")));
-            let transport = Transport::new(&config);
-            let response = transport
-                .authorized_request_builder(reqwest::Method::PATCH, "a")
-                .await
-                .unwrap()
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
-            request.assert();
-            let discovery = mock("GET", "/static-builder/service-info")
-                .match_header("authorization", BASIC)
-                .with_status(200)
-                .with_body("{}")
-                .expect(1)
-                .create();
-            transport
-                .get_within("service-info", std::time::Duration::from_secs(5))
-                .await
-                .unwrap();
-            discovery.assert();
-        }
-
-        #[tokio::test]
-        async fn test_request_builder_adds_no_static_credential() {
-            let request = mock("GET", "/static-plain-builder/a")
-                .match_header("authorization", Matcher::Missing)
-                .with_status(204)
-                .expect(1)
-                .create();
-            let config = Configuration::new(base("static-plain-builder"))
-                .with_oauth_access_token("my-token".to_owned());
-            Transport::new(&config)
+        async fn synchronous_builder_rejects_a_token_provider() {
+            let provider = Arc::new(Recording::default());
+            let transport = transport("auth-sync-builder", &provider);
+            let error = transport
                 .request_builder(reqwest::Method::GET, "a")
-                .unwrap()
-                .send()
-                .await
-                .unwrap();
-            request.assert();
+                .unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<AuthError>(),
+                Some(AuthError::ProviderRequiresAsyncBuilder)
+            ));
+            assert!(provider.calls().is_empty());
         }
 
-        #[test]
-        fn test_plain_http_to_remote() {
-            for (url, expected) in [
-                ("http://example.org/tes", true),
-                ("http://10.0.0.1/tes", true),
-                ("https://example.org/tes", false),
-                ("http://localhost:8000/tes", false),
-                ("http://127.0.0.1:8000/tes", false),
-                ("http://127.1.2.3/tes", false),
-                ("http://[::1]:8000/tes", false),
-            ] {
-                assert_eq!(
-                    is_plain_http_to_remote(&Url::parse(url).unwrap()),
-                    expected,
-                    "{url}"
-                );
-            }
+        #[tokio::test]
+        async fn request_build_failure_is_not_an_ambiguous_submission() {
+            use crate::utils::operation::AmbiguousSubmissionError;
+
+            let provider = Arc::new(Recording::default());
+            let config = Configuration::new(base("auth-build-error"))
+                .with_shared_token_provider(provider.clone())
+                .with_user_agent("invalid\nagent".into());
+            let transport = Transport::new(&config);
+            let request = mock("POST", "/auth-build-error/tasks").expect(0).create();
+            let options = RequestOptions::new(Duration::from_secs(2));
+            let error = transport
+                .request_with_policy(reqwest::Method::POST, "tasks", None, None, &options)
+                .await
+                .unwrap_err();
+            assert!(error.downcast_ref::<reqwest::Error>().is_some(), "{error}");
+            assert!(error.downcast_ref::<AmbiguousSubmissionError>().is_none());
+
+            let request_builder = transport
+                .authorized_request_builder(reqwest::Method::POST, "tasks")
+                .await
+                .unwrap();
+            let operation = crate::utils::operation::Operation::new(Duration::from_secs(2));
+            let error = transport
+                .send_once(request_builder, &operation, Default::default())
+                .await
+                .unwrap_err();
+            assert!(error.downcast_ref::<reqwest::Error>().is_some(), "{error}");
+            assert!(error.downcast_ref::<AmbiguousSubmissionError>().is_none());
+            assert_eq!(provider.calls().len(), 2);
+            request.assert();
         }
     }
 }

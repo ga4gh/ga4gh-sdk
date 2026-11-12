@@ -64,13 +64,14 @@ built-in services, or any other name for a custom service:
 
 - `base_path` (string, required): the API root described above.
 - `basic_auth` (object, optional): `username` (string) and an optional
-  `password` (string), sent as `Authorization: Basic`.
-- `oauth_access_token` (string, optional): an access token, sent as
-  `Authorization: Bearer`.
+  `password` (string).
+- `oauth_access_token` (string, optional): an access token.
 - `oauth_access_token_env` (string, optional): the name of an environment
   variable that holds the access token, so that the token needn't be in the
   file. Use it in place of `oauth_access_token`, not together with it. If the
   variable isn't set, reading the section is an error.
+- `bearer_access_token` or `bearer_access_token_env` (string, optional): a
+  generic bearer token, or the name of the variable that holds it.
 - `timeouts` (object, optional): time limits in seconds, as positive numbers:
   `connect`, `request`, `discovery` and `submission`. Limits that the object
   doesn't name keep their defaults; see [Timeouts](#timeouts).
@@ -79,66 +80,20 @@ built-in services, or any other name for a custom service:
   such as those of a downstream crate. In the example, `extra` holds
   `queue`. Rust's `Debug` output shows only the keys, but `extra`
   and `get_extra()` themselves return the values as they are, so don't log
-  them if they can hold credentials. The file doesn't set the other
-  `Configuration` fields: `user_agent`, `bearer_access_token` and `api_key`
-  in a section end up in `extra` as well.
+  them if they can hold credentials. The file doesn't set `user_agent`.
+  `api_key` is recognized but rejected because its header contract is not
+  defined.
 
 A missing file or section, or a field of the wrong type, is an error. Rust
 reads a custom section with `ServiceType::Custom("MY_SERVICE".into())`, Python
 with `config.from_file("MY_SERVICE")`. `Configuration::from_path(path, "TES")`
-reads a section from another file. Files written for earlier versions read as
-before; their `extra` is empty.
-
-### Authentication
-
-The SDK clients, the Python bindings and the CLI commands send the
-configured credential with every request to the service, including service
-discovery and submissions. A configuration holds at most one credential:
-
-| Credential | Rust | Python | File | Sent as |
-| --- | --- | --- | --- | --- |
-| Basic | `with_basic_auth` | `set_basic_auth(username, password=None)` | `basic_auth` | `Authorization: Basic` |
-| Bearer token | `with_oauth_access_token`, `with_oauth_access_token_from_env`, or the `bearer_access_token` field | `set_access_token(token)` | `oauth_access_token` or `oauth_access_token_env` | `Authorization: Bearer` |
-| User and password in the API root | `base_path` | `Configuration(base_path)` | `base_path` | `Authorization: Basic` |
-| Token provider | `with_token_provider` | `set_token_provider(provider)` | - | `Authorization: Bearer`; see [Token providers](#token-providers) |
-
-- **One credential:** if more than one is set (for example `basic_auth`
-  together with `oauth_access_token`), every request fails before anything is
-  sent, with an error that names the fields (Rust: `AuthConflictError`). No
-  credential takes precedence. `oauth_access_token` and `bearer_access_token`
-  may both be set only to the same token.
-- **API keys:** the `api_key` field of a Rust `Configuration` isn't
-  supported, as it doesn't say which header the key belongs in; the file and
-  Python can't set it. A set `api_key` fails every request (Rust:
-  `CredentialError`), as does an empty token or one that an HTTP header can't
-  hold, or a `basic_auth` with an empty username.
-- **Upgrading:** earlier versions read `basic_auth` and `oauth_access_token`
-  but didn't send them (only `workflow submit` sent the bearer token). Now they
-  are sent, so remove credentials that a service doesn't need, and keep one per
-  section: a section with both `basic_auth` and `oauth_access_token`, which
-  used to work, now fails every request.
-- **401:** a `401 Unauthorized` answer is returned as an HTTP error with its
-  status. With a static credential, the SDK doesn't send the request again.
-- **Destinations:** the credential goes only to the API root, as endpoints
-  outside it are rejected. On a redirect to another host or port, the
-  `Authorization` header is dropped; a redirect to the same host and port
-  keeps it, also from `https` to `http` on the same explicit port (see
-  #203). Over plain `http` to a host other than `localhost` or a loopback
-  address, the SDK logs a warning once per process, as the credential travels
-  unencrypted then; use `https`.
-- **Caller-owned clients:** a Rust client given to `Transport::with_client()` or
-  `WES::from_transport()` also gets the configured credential, which takes
-  the place of an `Authorization` default header of that client. Without a
-  configured credential, its own headers stay as they are.
-- **Errors and logs:** credential values don't appear in errors, logs, `Debug`
-  output or CLI output.
-
-`Transport::request_builder()` adds no credential (except a user and password
-in `base_path`); use `Transport::authorized_request_builder()` for your own
-requests. Fetches of workflow descriptors and result artifacts from other URLs,
-and DRS access URLs, don't carry the service's credential. Remaining
-cross-surface work, such as the redirect contract, is tracked in
-[#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
+reads a section from another file. One section may use one credential source:
+Basic, OAuth bearer, or generic bearer. Sources cannot be combined.
+The [authentication guide](authentication.md) describes how credentials reach
+Rust, Python, and CLI requests, and the behavior of redirects and injected
+clients. Previously stored credentials now take effect on requests. Rust and
+Python callers can instead set a [token provider](#token-providers); the
+configuration file and CLI cannot set one.
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
@@ -214,6 +169,10 @@ roots, a proxy or default headers, build a `reqwest::Client`, wrap it with
 `WES::discover_with_transport`). The client's own connect and request timeouts
 then replace `connect` and `request`; `discovery` and `submission` still come
 from the transport's configuration.
+If the configuration also has credentials, use
+`Transport::with_client_and_configured_auth(&config, client)` to opt into
+applying them. The injected client's redirect policy remains yours; see the
+[authentication guide](authentication.md#request-boundary-and-failures).
 
 ## Rust library
 
@@ -242,13 +201,17 @@ use url::Url;
 // No authentication
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?);
 
-// A bearer token, sent with every request (see Authentication above)
+// The selected bearer token is sent to this service's API root.
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_oauth_access_token("my-token".to_owned());
 
 // The token from an environment variable of your choice
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_oauth_access_token_from_env("MY_SERVICE_TOKEN")?;
+
+// A generic bearer token is another exclusive source.
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_bearer_access_token_from_env("MY_SERVICE_TOKEN")?;
 
 let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
     .with_basic_auth(BasicAuth {
@@ -316,7 +279,7 @@ contract:
   of the configuration. Without it, the provider is asked for every request.
 - **`401 Unauthorized`.** The SDK stops reusing the rejected token and asks the
   provider with `TokenRequest::after_rejection` set the next time. A
-  replayable request is sent once more right away with the new token: a `GET`
+  replayable request is sent once more right away with a current token: a `GET`
   or `HEAD` of `Transport`'s helpers, discovery and pages, or a request of
   `Transport::request_with_policy` with `ReplaySafety::ReadOnly`. Other
   requests, such as task and run submissions, are never sent twice; their
@@ -328,21 +291,24 @@ contract:
 - **One credential source.** A token provider can't be combined with
   `basic_auth`, `oauth_access_token`, `bearer_access_token`, `api_key` or a
   user or password in `base_path`; requests then fail with an
-  `AuthConflictError` before anything is sent. Without a token provider, the
-  static credential is sent; see [Authentication](#authentication).
+  `AuthConflictError` before anything is sent. Without a token provider,
+  nothing changes.
 - **Injected clients.** A token provider in the configuration of
-  `Transport::with_client` applies to that client's requests too; its
-  `Authorization` header takes the place of one among the client's default
-  headers. The client's redirect policy applies as it is.
+  `Transport::with_client` requires explicit opt-in through
+  `Transport::with_client_and_configured_auth`. The provider's
+  `Authorization` header then takes the place of a client's default header.
+  The caller remains responsible for that client's redirect policy.
 - **Errors.** If the provider fails, or gives an empty token or one that
   can't be an HTTP header value, the request fails with a
-  `TokenProviderError` and nothing is sent. The SDK never shows token values
-  in `Debug` output, errors or logs. The text of the provider's own error is
-  shown as it is, so keep secrets out of it.
-- **Your own requests.** `Transport::request_builder` doesn't add the token,
-  so a request built with it and sent with `Transport::send_once` carries
-  none; use `Transport::authorized_request_builder` (`async`) for requests
-  that you build yourself. They are sent once, as you send them. Fetches of
+  `TokenProviderError` and the pending request is not sent. If this happens
+  after a read-only request received `401`, that first attempt was sent. Its
+  default `Display` and `Debug` output omits the provider's error text and
+  audience, which may be sensitive.
+  Rust callers may inspect its underlying source error explicitly.
+- **Your own requests.** `Transport::request_builder` returns an error when a
+  provider is configured. Use `Transport::authorized_request_builder` (`async`)
+  for requests that you build yourself. They are sent once, as you send them.
+  Fetches of
   workflow descriptors and result artifacts from other URLs never carry the
   token.
 
@@ -463,6 +429,7 @@ server's JSON, including fields that the models don't know.
 ### TRS
 
 ```rust
+use ga4gh_sdk::clients::trs::models::DescriptorType;
 use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
 
 let config = Configuration::new(Url::parse("https://workflowhub.eu/ga4gh/trs/v2")?);
@@ -475,7 +442,37 @@ let tools = trs.list_tools(&ToolFilter {
 for tool in tools {
     println!("{}", tool.id);
 }
+
+// All files of one version as a ZIP archive, at most 10 MiB.
+let archive = trs
+    .get_files_zip("TOOL_ID", "VERSION_ID", DescriptorType::Cwl, 10 * 1024 * 1024)
+    .await?;
 ```
+
+The client selects a TRS 2.0.1 or 2.0.2 API profile from the API version
+in `service-info.type.version`. An unknown declaration uses the 2.0.1 read
+contract and records compatibility as unverified. Use `TrsOptions` to require
+a known declaration or select a profile explicitly. Selection belongs to each
+client; one process can connect to different versions at the same time. See
+[API compatibility](api_compatibility.md) for options, limitations, and migration.
+
+The `tags` filter requires the 2.0.2 contract or an explicit deployment override.
+Tags are registry-specific and sent as one comma-separated value, so a tag
+must not be empty or contain a comma. A declared version is evidence of intended
+support, not proof that the server implements filtering correctly.
+
+`ToolVersion::description()` returns a string description when present; the
+original value remains in `extra` and in serialized JSON. If a registry sends
+a non-string value, `description()` returns `None` while the raw value stays
+available in `extra` under either profile. This tolerance is limited to an
+optional field; malformed JSON and invalid required fields still return errors.
+The existing public model fields remain unchanged.
+
+`get_files_zip` reads the response into memory and returns bytes without
+extracting them. A body larger than the caller's limit, or one without a ZIP
+signature, is an error. The archive's contents are not fully validated. ZIP
+responses are defined in both supported TRS versions; actual provider support
+can differ.
 
 ### Models
 
@@ -520,8 +517,11 @@ request already has are an error.
 Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
 as `ga4gh_sdk::utils::transport::HttpError` (formerly `HttpStatusError`, still
 available under that name), which carries the status code and body. Downcast to
-it to distinguish, for example, a `404` from a network error.
-`ga4gh_sdk::utils::auth::AuthConflictError` (more than one credential),
-`CredentialError` (an unsupported or unusable static credential) and, with a
-token provider, `TokenProviderError` mean that nothing was sent; see
-[Authentication](#authentication) and [Token providers](#token-providers).
+it to distinguish, for example, a `404` from a network error. Its `Display` and
+`Debug` output omits the server body, because the server may echo a credential.
+The public `body` field retains the bounded raw response for
+explicit inspection; treat it as sensitive and do not log it by default.
+With a token provider, `ga4gh_sdk::utils::auth::TokenProviderError` means that
+the pending request was not sent; a prior read-only attempt may have received
+`401`. `AuthConflictError` means the configured sources conflict before any
+request. See [Token providers](#token-providers).

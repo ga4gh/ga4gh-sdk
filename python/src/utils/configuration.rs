@@ -94,6 +94,32 @@ impl PyConfiguration {
         self.inner.base_path.to_string()
     }
 
+    /// Set one Basic credential for clients built from this configuration.
+    #[pyo3(signature = (username, password=None))]
+    pub fn set_basic_auth(&mut self, username: String, password: Option<String>) {
+        self.inner.basic_auth = Some(BasicAuth { username, password });
+    }
+
+    /// Set one OAuth bearer token for clients built from this configuration.
+    pub fn set_oauth_access_token(&mut self, token: String) {
+        self.inner.oauth_access_token = Some(token);
+    }
+
+    /// Set one generic bearer token for clients built from this configuration.
+    pub fn set_bearer_access_token(&mut self, token: String) {
+        self.inner.bearer_access_token = Some(token);
+    }
+
+    /// Remove configured Basic and bearer credentials before selecting another.
+    pub fn clear_auth(&mut self) {
+        self.inner.basic_auth = None;
+        self.inner.oauth_access_token = None;
+        self.inner.bearer_access_token = None;
+        self.inner.api_key = None;
+        self.inner.token_provider = None;
+        self.inner.token_audience = None;
+    }
+
     /// Sets time limits of requests, in seconds; limits that aren't given stay as
     /// they are. See `get_timeouts()`.
     #[pyo3(signature = (*, connect=None, request=None, discovery=None, submission=None))]
@@ -131,35 +157,8 @@ impl PyConfiguration {
         to_python(py, &Value::Object(self.inner.extra.clone()))
     }
 
-    /// Sends `username` and `password` as Basic credentials with each request;
-    /// `None` as `username` removes them. Like `basic_auth` in the configuration
-    /// file; only one credential may be set.
-    #[pyo3(signature = (username, password=None))]
-    pub fn set_basic_auth(
-        &mut self,
-        username: Option<String>,
-        password: Option<String>,
-    ) -> PyResult<()> {
-        self.inner.basic_auth = match username {
-            Some(username) => Some(BasicAuth { username, password }),
-            None if password.is_some() => {
-                return Err(PyValueError::new_err("password needs a username"))
-            }
-            None => None,
-        };
-        Ok(())
-    }
-
-    /// Sends `token` as a bearer token with each request; `None` removes it. Like
-    /// `oauth_access_token` in the configuration file; only one credential may be
-    /// set.
-    #[pyo3(signature = (token))]
-    pub fn set_access_token(&mut self, token: Option<String>) {
-        self.inner.oauth_access_token = token;
-    }
-
-    /// Gets a bearer token from `provider` for each request; `None` removes the
-    /// provider. Together with a static credential, requests fail.
+    /// Gets a bearer token from `provider` for each request, in place of a static
+    /// credential; `None` removes the provider.
     ///
     /// `provider(audience)` is called with `audience`, or the API root if it is
     /// `None`, and returns the token as a `str`, or a `(str, float)` tuple with the

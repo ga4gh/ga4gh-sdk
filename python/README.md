@@ -74,7 +74,7 @@ pytest
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys; `set_timeouts()` and `get_timeouts()` set and give the time limits of requests; `set_basic_auth()` and `set_access_token()` set Basic credentials or a bearer token; `set_token_provider()` sets a callable that gives a bearer token for each request. See [Reading the configuration file](#reading-the-configuration-file), [Timeouts](#timeouts), [Credentials](#credentials) and [Token providers](#token-providers). |
+| `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. `set_token_provider()` supplies dynamic bearer tokens. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication), [Timeouts](#timeouts) and [Token providers](#token-providers). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
@@ -87,8 +87,7 @@ The Python API is maintained by hand; a new Rust SDK method or model does not
 appear in Python automatically. For each SDK change, decide whether to expose
 it here, then update the wrapper, this table, and the mock-backed tests and
 examples. CI checks the documented Python behavior, but it cannot infer that
-a new Rust API needs a Python counterpart. Clients send the configured
-credential with each request; see [Credentials](#credentials).
+a new Rust API needs a Python counterpart.
 
 ## Usage
 
@@ -145,8 +144,22 @@ queue = config.get_extra().get("queue")
 ```
 
 A section can name an environment variable for its token with
-`oauth_access_token_env`. A missing section or an unset variable raises
-`ValueError`, a missing file `FileNotFoundError`.
+`oauth_access_token_env` or `bearer_access_token_env`. A missing section or an
+unset variable raises `ValueError`, a missing file `FileNotFoundError`.
+
+## Authentication
+
+Set one source before constructing a client: `set_basic_auth(username,
+password=None)`, `set_oauth_access_token(token)`,
+`set_bearer_access_token(token)`, or a [token provider](#token-providers). Use
+`clear_auth()` before choosing a different source. `from_file()` can read
+static credentials from the selected service section.
+The client uses that credential for discovery and later operations; invalid or
+conflicting sources raise an exception before sending the request. The SDK does
+not follow redirects automatically. See the
+[authentication guide](../docs/authentication.md) for file keys, injected
+transport boundaries and errors. The [token-provider section](#token-providers)
+describes dynamic credentials.
 
 ## Timeouts
 
@@ -177,43 +190,6 @@ Clients and `Transport` read the limits when they are built, so set them first.
 Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
 timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
 
-## Credentials
-
-Clients and `Transport` send the credential of their `Configuration` with each
-request, including the service check of `TES(config)` and the other clients. It
-comes from the configuration file (`basic_auth`, `oauth_access_token` or
-`oauth_access_token_env`), from a user and password in the API root, or from
-these setters:
-
-```python
-import os
-
-from ga4gh_sdk import Configuration, TES
-
-config = Configuration("https://example.org/ga4gh/tes/v1")
-config.set_basic_auth("alice", os.environ["TES_PASSWORD"])  # Authorization: Basic
-tes = TES(config)
-
-config = Configuration("https://example.org/ga4gh/wes/v1")
-config.set_access_token(os.environ["WES_TOKEN"])  # Authorization: Bearer
-```
-
-- `set_basic_auth(None)` and `set_access_token(None)` remove the credential, and
-  `password` may be left out. Set credentials after `from_file()`, which replaces
-  all settings. Clients and `Transport` take them when they are built.
-- Only one credential may be set, including a [token provider](#token-providers).
-  With more than one, with an empty token or one that can't be an HTTP header
-  value, or with an empty Basic username, calls raise `RuntimeError` before
-  anything is sent; the message names the fields, not their values.
-- Earlier versions didn't send credentials from the configuration file, so
-  remove those that a service doesn't need; see the
-  [upgrade note](../docs/usage.md#authentication).
-- A `401 Unauthorized` answer raises `RuntimeError` with the status; the request
-  isn't sent again. Refresh an expired token yourself with `set_access_token()`
-  and build new clients, or use a [token provider](#token-providers).
-- The [usage guide](../docs/usage.md#authentication) has the full rules, for
-  example about redirects.
-
 ## Token providers
 
 `config.set_token_provider(provider)` makes the clients and `Transport` built from
@@ -243,16 +219,18 @@ tes = TES(config)
   `Transport` take it when they are built; `set_token_provider(None)` removes it
   for those built later.
 - After `401 Unauthorized`, the SDK drops a reused token and asks the provider
-  again; a `GET` request is sent once more right away with the new token, while
+  again; a `GET` request is sent once more right away with a current token, while
   submissions such as `TES.create()` and `WES.run()` are never sent twice. The
   provider isn't told about the rejection, so don't let it cache tokens itself:
   return a `(str, float)` tuple and let the SDK reuse the token instead.
 - If the provider raises, returns something else or a token that can't be an HTTP
-  header value, the call raises `RuntimeError` with the provider's exception text,
-  and nothing is sent. HTTP errors such as `401` raise `RuntimeError` as well; the
-  message tells them apart. Keep secrets out of the provider's exception messages; the
-  SDK doesn't show tokens.
-- A provider can't be combined with other [credentials](#credentials)
+  header value, the call raises `RuntimeError` and the pending request is not
+  sent. A read-only request may already have received `401` before a failed
+  refresh. The default message omits the provider's exception text, which
+  could contain a secret.
+  HTTP errors such as `401` also raise `RuntimeError`; the message distinguishes
+  them from provider failures.
+- A provider can't be combined with other credentials from the configuration file
   (`basic_auth`, `oauth_access_token`, or a user or password in `base_path`): calls
   then raise `RuntimeError` before anything is sent.
 - The provider runs on a thread of the SDK's runtime, with the GIL, also for the
@@ -327,7 +305,8 @@ for listed in page.tasks:
   `FileNotFoundError` (an `OSError`). Failed requests and responses that don't fit the TES
   models raise `RuntimeError`. If task creation fails after submission, the error may
   mean the server created the task but its acknowledgement was lost or malformed;
-  do not retry automatically.
+  do not retry automatically. HTTP failures include the status in the exception
+  message but omit the server's untrusted response body.
 
 ### Task objects
 

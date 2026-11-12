@@ -1,6 +1,4 @@
-//! Credentials of requests: bearer tokens from a caller-supplied provider, and
-//! the static credentials of the configuration (see
-//! [Static credentials](#static-credentials)).
+//! Bearer tokens from a caller-supplied provider.
 //!
 //! A [`TokenProvider`] gives the transport a token for each request, so that a
 //! client can live longer than one token and can use a different token per
@@ -27,6 +25,8 @@
 //!   request of
 //!   [`Transport::request_with_policy`](crate::utils::transport::Transport::request_with_policy)
 //!   with [`ReplaySafety::ReadOnly`](crate::utils::operation::ReplaySafety::ReadOnly).
+//!   The retry uses a current token; another concurrent request may already
+//!   have refreshed it.
 //!   Other requests, such as task and run submissions, are never sent twice;
 //!   their `401` comes back as an
 //!   [`HttpError`](crate::utils::transport::HttpError).
@@ -37,62 +37,20 @@
 //!   `basic_auth`, `oauth_access_token`, `bearer_access_token`, `api_key` or a
 //!   user or password in `base_path`. Such a combination fails with an
 //!   [`AuthConflictError`] before anything is sent. Without a provider, the
-//!   transport sends the static credential, as described below.
-//! - A provider set on the configuration of
-//!   [`Transport::with_client`](crate::utils::transport::Transport::with_client)
-//!   applies to that client's requests too, and its header takes the place of an
-//!   `Authorization` default header of the client.
+//!   transport behaves as before.
+//! - A provider on a caller-owned client requires explicit opt-in through
+//!   [`Transport::with_client_and_configured_auth`](crate::utils::transport::Transport::with_client_and_configured_auth).
+//!   Its header then takes the place of a client default `Authorization` header.
 //! - [`Transport::request_builder`](crate::utils::transport::Transport::request_builder)
-//!   adds no token, so a request built with it and sent with
-//!   [`Transport::send_once`](crate::utils::transport::Transport::send_once)
-//!   carries none; use
+//!   rejects a configuration with a provider; use
 //!   [`Transport::authorized_request_builder`](crate::utils::transport::Transport::authorized_request_builder).
 //!   Fetches of descriptors and result artifacts from other URLs never carry it.
-//! - A provider failure is a [`TokenProviderError`], not an HTTP error, and
-//!   nothing is sent. Token values never appear in `Debug` output, errors or logs
-//!   of the SDK. The text of a provider's own error is shown as the provider wrote
-//!   it, so keep secrets out of it.
-//!
-//! # Static credentials
-//!
-//! Without a token provider, the transport sends the static credential of the
-//! configuration on the same request paths as a provider's token (all requests
-//! except those of
-//! [`Transport::request_builder`](crate::utils::transport::Transport::request_builder)):
-//!
-//! - `basic_auth` as `Authorization: Basic`, with an empty password if it has
-//!   none;
-//! - `oauth_access_token` or `bearer_access_token` as `Authorization: Bearer`.
-//!   Both may be set only to the same token;
-//! - a user and password in `base_path`, as before: `reqwest` sends them as
-//!   `Authorization: Basic`.
-//!
-//! At most one of these may be set. Otherwise each request fails with an
-//! [`AuthConflictError`] that names them, and nothing is sent; no credential
-//! takes precedence over another. `api_key` isn't supported, as the
-//! configuration doesn't say which header or query parameter it belongs in: it
-//! fails each request with a [`CredentialError`], as does an empty token or one
-//! that an HTTP header can't hold. The transport answers a `401 Unauthorized`
-//! to a request with a static credential with an
-//! [`HttpError`](crate::utils::transport::HttpError) and doesn't send the
-//! request again.
-//!
-//! The credential goes only to the API root: endpoints that resolve elsewhere
-//! are rejected before anything is sent, and `reqwest` drops the
-//! `Authorization` header when a redirect leads to another host or port.
-//! Redirects to the same host and port keep it, also to paths outside the API
-//! root and from `https` to `http` on the same explicit port; the redirect
-//! contract is tracked in
-//! [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
-//! Over plain `http` to a host other than `localhost` or a loopback address,
-//! the transport logs a warning once per process, as the credential then
-//! travels unencrypted.
-//!
-//! The configuration's credential also applies to the requests of a client
-//! given to
-//! [`Transport::with_client`](crate::utils::transport::Transport::with_client),
-//! and takes the place of an `Authorization` default header of that client. A
-//! client's default header stays when the configuration has no credential.
+//! - A provider failure is a [`TokenProviderError`], not an HTTP error. The
+//!   pending request is not sent. A read-only request that got `401` before a
+//!   failed refresh has already made its first attempt. Default `Display` and
+//!   `Debug` output omits the provider's error text and audience because either
+//!   may contain a secret. Rust callers
+//!   can explicitly inspect the underlying source error; treat it as sensitive.
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -105,7 +63,6 @@ use std::time::Instant;
 pub type BoxError = Box<dyn Error + Send + Sync>;
 
 /// What the transport asks a [`TokenProvider`] for.
-#[derive(Debug)]
 #[non_exhaustive]
 pub struct TokenRequest<'a> {
     /// The service's audience; see the [module documentation](self).
@@ -114,6 +71,15 @@ pub struct TokenRequest<'a> {
     /// audience with `401 Unauthorized`; a provider with a cache of its own
     /// should then get a new token.
     pub after_rejection: bool,
+}
+
+impl fmt::Debug for TokenRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenRequest")
+            .field("audience", &"<redacted>")
+            .field("after_rejection", &self.after_rejection)
+            .finish()
+    }
 }
 
 /// A bearer token, and how long the transport may reuse it.
@@ -198,6 +164,12 @@ impl AccessToken {
     fn is_reusable(&self, now: Instant) -> bool {
         self.reusable_until.is_some_and(|until| now < until)
     }
+
+    fn is_valid_bearer(&self) -> bool {
+        !self.secret.is_empty()
+            && !self.secret.bytes().any(|byte| byte.is_ascii_whitespace())
+            && reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.secret)).is_ok()
+    }
 }
 
 /// The reused token of one audience.
@@ -281,7 +253,10 @@ impl TokenSource {
                 return Ok(token.clone());
             }
             slot.token = None;
-            let rejected = std::mem::take(&mut slot.rejected);
+            // Keep the rejection visible to concurrent calls until a fresh
+            // provider result succeeds. Otherwise one call can consume the
+            // signal while another asks a provider with its own stale cache.
+            let rejected = slot.rejected;
             (slot.generation, after_rejection || rejected)
         };
         let request = TokenRequest {
@@ -291,23 +266,24 @@ impl TokenSource {
         let token = match self.provider.token(&request).await {
             Ok(token) => token,
             Err(source) => {
-                // The next call asks after the rejection again.
-                if after_rejection {
-                    self.slots()
-                        .entry(audience.to_owned())
-                        .or_default()
-                        .rejected = true;
-                }
                 return Err(TokenProviderError::Failed {
                     audience: audience.to_owned(),
                     source,
-                });
+                })
             }
         };
-        if token.is_reusable(Instant::now()) {
-            let mut slots = self.slots();
-            let slot = slots.entry(audience.to_owned()).or_default();
-            if slot.generation == generation {
+        if !token.is_valid_bearer() {
+            return Err(TokenProviderError::InvalidToken {
+                audience: audience.to_owned(),
+            });
+        }
+        let mut slots = self.slots();
+        let slot = slots.entry(audience.to_owned()).or_default();
+        if slot.generation == generation {
+            if after_rejection {
+                slot.rejected = false;
+            }
+            if token.is_reusable(Instant::now()) {
                 slot.token = Some(token.clone());
             }
         }
@@ -315,8 +291,9 @@ impl TokenSource {
     }
 }
 
-/// The token provider failed or gave a token that can't be sent; nothing was sent.
-#[derive(Debug)]
+/// The token provider failed or gave a token that can't be sent; the pending
+/// request was not sent. A preceding read-only attempt may already have received
+/// `401 Unauthorized`.
 #[non_exhaustive]
 pub enum TokenProviderError {
     /// The provider returned an error.
@@ -333,16 +310,23 @@ pub enum TokenProviderError {
     },
 }
 
+impl fmt::Debug for TokenProviderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            Self::Failed { .. } => "Failed",
+            Self::InvalidToken { .. } => "InvalidToken",
+        };
+        f.debug_struct("TokenProviderError")
+            .field("kind", &kind)
+            .finish()
+    }
+}
+
 impl fmt::Display for TokenProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Failed { audience, source } => {
-                write!(f, "The token provider failed for {audience}: {source}")
-            }
-            Self::InvalidToken { audience } => write!(
-                f,
-                "The token provider gave an empty token or one that isn't a valid HTTP header value for {audience}"
-            ),
+            Self::Failed { .. } => f.write_str("The token provider failed before the request was sent"),
+            Self::InvalidToken { .. } => f.write_str("The token provider gave an empty token or one that isn't a valid HTTP header value"),
         }
     }
 }
@@ -356,85 +340,25 @@ impl Error for TokenProviderError {
     }
 }
 
-/// The configuration has more than one credential; nothing was sent.
-///
-/// Either a token provider together with static credentials, or more than one
-/// static credential, such as `basic_auth` together with `oauth_access_token`.
+/// A token provider is configured together with other credentials; nothing was sent.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct AuthConflictError {
-    /// The static credentials that are set, by field name, such as
-    /// `oauth_access_token`. With `token_provider`, one or more; without it,
-    /// two or more.
+    /// The other credentials, by field name, such as `oauth_access_token`.
     pub sources: Vec<&'static str>,
-    /// `true` if a token provider is set as well: it conflicts with each of
-    /// `sources`. `false` if the static credentials conflict with each other.
-    pub token_provider: bool,
 }
 
 impl fmt::Display for AuthConflictError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.token_provider {
-            write!(
-                f,
-                "A token provider can't be combined with other credentials; remove {} or the token provider",
-                self.sources.join(", ")
-            )
-        } else {
-            write!(
-                f,
-                "Only one credential can be configured, but there are several: {}; keep one of them",
-                self.sources.join(", ")
-            )
-        }
+        write!(
+            f,
+            "A token provider can't be combined with other credentials; remove {} or the token provider",
+            self.sources.join(", ")
+        )
     }
 }
 
 impl Error for AuthConflictError {}
-
-/// A static credential of the configuration can't be sent; nothing was sent.
-#[derive(Debug)]
-#[non_exhaustive]
-pub struct CredentialError {
-    /// The credential, by field name, such as `api_key`.
-    pub source: &'static str,
-    /// Why it can't be sent.
-    pub reason: CredentialErrorReason,
-}
-
-/// Why a static credential can't be sent; see [`CredentialError`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CredentialErrorReason {
-    /// The transport doesn't send this kind of credential.
-    Unsupported,
-    /// The token is empty or has characters that an HTTP header can't hold.
-    InvalidToken,
-    /// The Basic credentials have an empty username.
-    EmptyUsername,
-}
-
-impl fmt::Display for CredentialError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.reason {
-            CredentialErrorReason::Unsupported => write!(
-                f,
-                "{} isn't supported by the SDK transport; remove it, or use basic_auth, oauth_access_token or a token provider",
-                self.source
-            ),
-            CredentialErrorReason::InvalidToken => write!(
-                f,
-                "{} is empty or isn't a valid HTTP header value",
-                self.source
-            ),
-            CredentialErrorReason::EmptyUsername => {
-                write!(f, "{} has an empty username", self.source)
-            }
-        }
-    }
-}
-
-impl Error for CredentialError {}
 
 /// Gives the same token each time, without reuse.
 #[cfg(test)]
@@ -535,6 +459,34 @@ mod tests {
         assert_eq!(*provider.0.lock().unwrap(), [false, true]);
     }
 
+    #[tokio::test]
+    async fn concurrent_calls_both_see_unresolved_rejection() {
+        struct Concurrent {
+            barrier: tokio::sync::Barrier,
+            flags: Mutex<Vec<bool>>,
+        }
+
+        #[async_trait]
+        impl TokenProvider for Concurrent {
+            async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+                self.flags.lock().unwrap().push(request.after_rejection);
+                self.barrier.wait().await;
+                Ok(AccessToken::new("fresh"))
+            }
+        }
+
+        let provider = Arc::new(Concurrent {
+            barrier: tokio::sync::Barrier::new(2),
+            flags: Mutex::new(Vec::new()),
+        });
+        let source = TokenSource::new(provider.clone());
+        source.reject("a", "old");
+        let (first, second) = tokio::join!(source.token("a", false), source.token("a", false));
+        first.unwrap();
+        second.unwrap();
+        assert_eq!(*provider.flags.lock().unwrap(), [true, true]);
+    }
+
     #[test]
     fn test_debug_output_hides_the_token() {
         let token = AccessToken::new("SENTINEL_TOKEN");
@@ -545,6 +497,12 @@ mod tests {
         );
         let (source, _) = counting(None);
         assert_eq!(format!("{source:?}"), "TokenSource");
+        let request = TokenRequest {
+            audience: "SENTINEL_AUDIENCE",
+            after_rejection: true,
+        };
+        let output = format!("{request:?}");
+        assert!(!output.contains("SENTINEL"), "{output}");
     }
 
     #[test]
@@ -555,37 +513,16 @@ mod tests {
         };
         assert_eq!(
             error.to_string(),
-            "The token provider failed for https://example.org/: no session"
+            "The token provider failed before the request was sent"
         );
+        assert!(!format!("{error:?}").contains("no session"));
         assert_eq!(error.source().unwrap().to_string(), "no session");
         let error = AuthConflictError {
             sources: vec!["basic_auth", "oauth_access_token"],
-            token_provider: true,
         };
         assert_eq!(
             error.to_string(),
             "A token provider can't be combined with other credentials; remove basic_auth, oauth_access_token or the token provider"
-        );
-        let error = AuthConflictError {
-            sources: vec!["basic_auth", "oauth_access_token"],
-            token_provider: false,
-        };
-        assert_eq!(
-            error.to_string(),
-            "Only one credential can be configured, but there are several: basic_auth, oauth_access_token; keep one of them"
-        );
-        let error = CredentialError {
-            source: "api_key",
-            reason: CredentialErrorReason::Unsupported,
-        };
-        assert!(error.to_string().starts_with("api_key isn't supported"));
-        let error = CredentialError {
-            source: "oauth_access_token",
-            reason: CredentialErrorReason::InvalidToken,
-        };
-        assert_eq!(
-            error.to_string(),
-            "oauth_access_token is empty or isn't a valid HTTP header value"
         );
     }
 }
