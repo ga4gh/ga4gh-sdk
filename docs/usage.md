@@ -97,6 +97,48 @@ is tracked in [#203](https://github.com/ga4gh/ga4gh-sdk/issues/203).
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
 
+### Profiles
+
+To switch between sets of services, such as local and remote deployments,
+put the sections into named profiles under a top-level `profiles` object.
+Each profile holds sections with the keys described above, and
+`default_profile` names the profile to use when none is selected:
+
+```json
+{
+  "default_profile": "local",
+  "profiles": {
+    "local": {
+      "TES": {"base_path": "http://localhost:8000/ga4gh/tes/v1"}
+    },
+    "remote": {
+      "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oauth_access_token_env": "REMOTE_TES_TOKEN"
+      },
+      "WES": {"base_path": "https://wes.example.org/ga4gh/wes/v1"}
+    }
+  }
+}
+```
+
+- The CLI uses the profile given with `--profile NAME`, else the one in the
+  environment variable `GA4GH_CLI_PROFILE`, else `default_profile`, else the
+  profile `default`. An empty variable counts as unset.
+- Rust `Configuration::from_path_with_profile(path, Some("remote"), "TES")`
+  reads a section of a given profile; with `None`, and in
+  `Configuration::from_path` and `from_file`, it reads the default profile
+  (`default_profile`, else `default`). Python `Configuration.from_file()`
+  reads the default profile as well.
+- A file without `profiles`, such as the one above, counts as one profile
+  named `default`, so existing files keep working. A file with `profiles`
+  can't also have top-level sections, and naming a profile the file doesn't
+  have is an error that lists the profiles it has.
+- Profiles change only which sections are read. To keep a profile's tokens
+  out of the file, name an environment variable per section with
+  `oauth_access_token_env`, as `remote` does above; credentials are sent only
+  where described in the previous section.
+
 ## Command-line tool
 
 The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`), WES
