@@ -1,4 +1,51 @@
-.env*
+# Keeps everything but the sources that the image build needs out of the
+# build context (see docs/container-image.md); tests/run-image-tests.sh
+# checks these rules with probe files.
+
+# Only the workspace manifests and its member crates
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!README.md
+!LICENSE
+!lib/
+!cli/
+!python/
+!.env.example
+
+# Within those, no environment files (they may hold credentials), except
+# the examples
 **/.env*
 !.env.example
 !**/.env.example
+
+# Keys, certificates and credential stores
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.jks
+**/id_rsa*
+**/id_dsa*
+**/id_ecdsa*
+**/id_ed25519*
+**/.ssh/
+**/.gnupg/
+**/.kube/
+**/kubeconfig*
+**/.aws/
+**/.cargo/
+**/.docker/
+**/.git-credentials
+**/.netrc
+**/.npmrc
+**/.pypirc
+**/credentials*
+**/.ga4gh-cli/
+
+# Build output and local state
+**/target/
+**/.venv/
+**/__pycache__/
+**/*.log

@@ -14,6 +14,9 @@ cargo install --path cli --locked
 ga4gh-cli --help
 ```
 
+The CLI can also run as an OCI image for `linux/amd64` and `linux/arm64`;
+see the [container image guide](../docs/container-image.md).
+
 ## Configuration
 
 The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file.

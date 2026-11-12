@@ -1,9 +1,10 @@
 name: Release
 
-# Publishes the release artefacts of a version tag (v<workspace version>);
-# for now the Python distributions. The ga4gh/ga4gh-sdk repository publishes
-# to PyPI, forks to TestPyPI; the repository variable PYPI_INDEX (pypi or
-# testpypi) overrides that default. See docs/releasing.md.
+# Publishes the release artefacts of a version tag (v<workspace version>):
+# the Python distributions, then the CLI image. The ga4gh/ga4gh-sdk
+# repository publishes to PyPI, forks to TestPyPI; the repository variable
+# PYPI_INDEX (pypi or testpypi) overrides that default. The image goes to
+# ghcr.io/<repository owner>/ga4gh-cli. See docs/releasing.md.
 on:
   push:
     tags: ['v*']
@@ -92,9 +93,22 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/wheels.yml
 
+  # Builds, checks and pushes the platform images by digest, without a tag
+  image:
+    name: Release image
+    needs: prepare
+    permissions:
+      contents: read
+      packages: write # push the platform images to ghcr.io
+    uses: ./.github/workflows/image.yml
+    with:
+      push: true
+
+  # Waits for the image too, so that nothing irreversible happens before
+  # every artefact of the release is built.
   publish:
     name: Publish package
-    needs: [prepare, wheels]
+    needs: [prepare, wheels, image]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -111,3 +125,55 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           repository-url: ${{ needs.prepare.outputs.index == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
+
+  # Runs after the package is on the index: tags the multi-platform image with
+  # the version and records its build provenance. A re-run moves the tag to
+  # the images of that run. An upstream TestPyPI rehearsal tags no image.
+  image-publish:
+    name: Publish image
+    needs: [prepare, image, publish]
+    if: needs.prepare.outputs.index == 'pypi' || github.repository != 'ga4gh/ga4gh-sdk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      attestations: write # record the build provenance of the image
+      id-token: write # sign the provenance attestation
+      packages: write # push the image index, its tag and the attestation
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-digest-*
+          path: digests
+          merge-multiple: true
+      - name: Log in to the GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s\n' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Tag the image
+        id: index
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          repository="ghcr.io/${OWNER,,}/ga4gh-cli"
+          # OCI tags can't hold "+", so build metadata becomes "_"
+          tag="$repository:${VERSION//+/_}"
+          sources=()
+          for file in digests/*; do
+            sources+=("$repository@$(cat "$file")")
+          done
+          # A missing platform fails the Release image job, so this job doesn't run
+          if [[ "${#sources[@]}" -eq 0 ]]; then
+            echo "::error::No platform images found"
+            exit 1
+          fi
+          docker buildx imagetools create --tag "$tag" "${sources[@]}"
+          digest="$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}' | python3 -c 'import json, sys; print(json.load(sys.stdin)["digest"])')"
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Image: $tag ($repository@$digest)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.index.outputs.repository }}
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
