@@ -34,7 +34,7 @@ fmt-check: ## Check the formatting without changing files
 	$(CARGO) fmt --all --check
 
 clippy: ## Run Clippy on all targets
-	$(CARGO) clippy --workspace --all-targets --locked
+	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings
 
 lint: fmt-check clippy ## Check formatting and run Clippy
 
