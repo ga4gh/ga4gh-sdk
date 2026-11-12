@@ -318,6 +318,29 @@ The `trs` commands browse a GA4GH Tool Registry Service (TRS), such as
 WorkflowHub or Dockstore, and download workflow files from it. They only read
 from the registry; nothing is changed there.
 
+The CLI uses the SDK's [TRS compatibility policy](../docs/api_compatibility.md).
+`--api-version auto` (default) recognizes 2.0.1 and 2.0.2. An unknown declaration
+uses the 2.0.1 read contract without assuming tag-filter support.
+`--api-version strict` requires a recognized declaration;
+`--api-version 2.0.1` or `2.0.2` selects a response contract explicitly.
+These flags can appear before or after a TRS subcommand.
+
+`--tag-filter enabled` allows a known deployment's backported tag filter;
+`--tag-filter disabled` blocks filtering on a deployment that does not implement
+it. Neither option changes the response contract. Use overrides only with
+independent knowledge of the server, not just because it returned HTTP 200.
+For a known endpoint without usable service-info, combine `--no-discovery`
+with an explicit version. Discovery failures never trigger this automatically.
+
+```sh
+# Require a recognized server declaration.
+ga4gh-cli trs --api-version strict tools --limit 1
+# Use a known 2.0.1 deployment's backported tag filter.
+ga4gh-cli trs --api-version 2.0.1 --tag-filter enabled tools --tag genomics
+# Read a known endpoint that does not expose service-info.
+ga4gh-cli trs --no-discovery --api-version 2.0.1 tools --limit 1
+```
+
 #### 1. Configure the registry
 
 The `trs` commands need to know which registry to talk to. They read it from
@@ -357,7 +380,7 @@ registry:
 
 ```sh
 # Find tools. All filters are optional; repeat --tag for several tags.
-ga4gh-cli trs tools --tool-class Workflow --descriptor-type CWL --tag genomics --limit 5
+ga4gh-cli trs tools --tool-class Workflow --descriptor-type CWL --limit 5
 
 # Look at one tool and its versions.
 ga4gh-cli trs tool 'TOOL_ID'

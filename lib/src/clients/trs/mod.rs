@@ -1,4 +1,4 @@
-//! Client for the GA4GH Tool Registry Service (TRS) API, version 2.0.2.
+//! Client for GA4GH TRS 2.0.1 and 2.0.2, with per-connection compatibility.
 //!
 //! `Configuration.base_path` is the TRS API root, including the service's
 //! path prefix, with or without a trailing slash, for example
@@ -44,8 +44,13 @@
 //! # }
 //! ```
 
+mod compatibility;
 pub mod models;
+mod protocol;
 pub mod responses;
+mod wire;
+use crate::compatibility::CapabilityOverride;
+pub use compatibility::{TrsCompatibility, TrsOptions, TrsVersion};
 
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::trs::models::{
@@ -202,48 +207,89 @@ impl ToolFilter {
     }
 }
 
-/// The main struct for interacting with a TRS service.
+/// A TRS connection with an immutable transport, discovery snapshot, and profile.
+/// Use accessors to inspect them; create a new client to change the API root.
 #[derive(Debug)]
 pub struct TRS {
-    /// The configuration of this client; `base_path` is the TRS API root.
-    pub config: Configuration,
-    /// The service info fetched when the client was created.
-    pub service: Result<Service, Box<dyn Error>>,
-    /// The transport layer for sending HTTP requests.
-    pub transport: Transport,
+    transport: Transport,
+    service: Option<Service>,
+    compatibility: TrsCompatibility,
 }
 
 impl TRS {
-    /// Creates a new `TRS` instance and checks that the endpoint is a TRS.
-    ///
-    /// # Arguments
-    /// - `config`: The client configuration; `base_path` is the TRS API root,
-    ///   and `timeouts` set the time limits (see
-    ///   [`Timeouts`](crate::utils::timeouts::Timeouts)).
-    ///
-    /// # Returns
-    /// - A new `TRS` instance, or an error if the service info can't be
-    ///   fetched or doesn't describe a TRS (`org.ga4gh`, artifact `trs`).
+    /// Discover a TRS and select its profile. Unknown declarations use the
+    /// 2.0.1 read contract with unverified compatibility; tags need an override.
+    /// Use [`TrsOptions`] for strict or explicit version selection.
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn Error>> {
-        Self::with_transport(Transport::new(config)).await
+        Self::with_options(config, TrsOptions::default()).await
     }
 
-    /// Creates a new `TRS` instance that sends its requests with `transport`,
-    /// for example one from [`Transport::with_client`], and checks that the
-    /// endpoint is a TRS. The client's configuration is the transport's.
+    /// Discover a TRS with explicit version/capability policy.
+    pub async fn with_options(
+        config: &Configuration,
+        options: TrsOptions,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::with_transport_and_options(Transport::new(config), options).await
+    }
+
+    /// Discover a TRS using the supplied transport, retaining its configuration
+    /// and authentication policy for discovery and subsequent operations.
     pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn Error>> {
-        let mut instance = TRS {
-            config: transport.config.clone(),
-            transport,
-            // Replaced below; `new` never returns an instance without it.
-            service: Ok(Service::default()),
-        };
-        let service = instance.service_info().await?;
+        Self::with_transport_and_options(transport, TrsOptions::default()).await
+    }
+
+    /// Discover a TRS with a supplied transport and compatibility options.
+    pub async fn with_transport_and_options(
+        transport: Transport,
+        options: TrsOptions,
+    ) -> Result<Self, Box<dyn Error>> {
+        let service = Self::fetch_service_info(&transport).await?;
         if !is_trs(&service) {
             return Err("The endpoint is not an instance of TRS".into());
         }
-        instance.service = Ok(service);
-        Ok(instance)
+        let compatibility = TrsCompatibility::select(Some(&service.r#type.version), options)?;
+        Ok(Self {
+            transport,
+            service: Some(service),
+            compatibility,
+        })
+    }
+
+    /// Connect under a caller-selected contract without a discovery request.
+    /// This does not verify service identity. Use it for a known deployment with
+    /// absent or incompatible service-info; discovery errors never select it
+    /// automatically. Configure credentials and the API root on `transport`.
+    pub fn without_discovery(transport: Transport, version: TrsVersion) -> Self {
+        Self {
+            transport,
+            service: None,
+            compatibility: TrsCompatibility::without_discovery(version),
+        }
+    }
+
+    /// Apply independently established knowledge of this server's tag filter.
+    /// This consumes the client and does not change its selected wire profile.
+    pub fn with_tag_filter_override(mut self, value: CapabilityOverride) -> Self {
+        self.compatibility.override_tags(value);
+        self
+    }
+
+    /// The transport configuration that determines this connection's identity.
+    pub fn configuration(&self) -> &Configuration {
+        &self.transport.config
+    }
+    /// Shared transport for lower-level operations. Passing `self` to the typed
+    /// pagination helpers also preserves this client's compatibility policy.
+    pub fn transport(&self) -> &Transport {
+        &self.transport
+    }
+    /// Initial discovery snapshot; absent for [`TRS::without_discovery`].
+    pub fn discovered_service_info(&self) -> Option<&Service> {
+        self.service.as_ref()
+    }
+    /// Selected profile, its provenance, and deployment capabilities.
+    pub fn compatibility(&self) -> &TrsCompatibility {
+        &self.compatibility
     }
 
     // `path` is relative to the API root; `Transport` resolves it below
@@ -257,8 +303,8 @@ impl TRS {
         path: &str,
         params: Option<Value>,
     ) -> Result<T, Box<dyn Error>> {
-        let body = self.get_text(path, params).await?;
-        Ok(serde_json::from_str(&body)?)
+        let (_, value) = responses::json(&self.transport, path, params, Default::default()).await?;
+        Ok(value)
     }
 
     /// Fetches the service info of the registry (`GET /service-info`), within
@@ -268,8 +314,13 @@ impl TRS {
     /// service-info defines them as strings; such non-string values are
     /// dropped instead of failing the whole response.
     pub async fn service_info(&self) -> Result<Service, Box<dyn Error>> {
-        let body = crate::clients::serviceinfo::fetch_raw(&self.transport, "service-info").await?;
-        let mut value: Value = serde_json::from_str(&body)?;
+        Self::fetch_service_info(&self.transport).await
+    }
+
+    async fn fetch_service_info(transport: &Transport) -> Result<Service, Box<dyn Error>> {
+        let mut value: Value = transport
+            .get_json_within("service-info", transport.config.timeouts.discovery)
+            .await?;
         if let Some(object) = value.as_object_mut() {
             for key in ["createdAt", "updatedAt"] {
                 if object.get(key).is_some_and(|v| !v.is_string()) {
@@ -292,19 +343,38 @@ impl TRS {
     /// Fails before sending a request if a tag can't be sent (see
     /// [`ToolFilter::query`]).
     pub async fn list_tools(&self, filter: &ToolFilter) -> Result<Vec<Tool>, Box<dyn Error>> {
-        self.get_json("tools", filter.query()?).await
+        let params = filter.query()?;
+        if !filter.tags.is_empty() {
+            self.compatibility.tag_filter().require("TRS", "tags")?;
+        }
+        let value = self.get_json("tools", params).await?;
+        Ok(self
+            .compatibility
+            .selection()
+            .profile()
+            .decode_tools(value)?)
     }
 
     /// Fetches one tool, including its versions (`GET /tools/{id}`).
     pub async fn get_tool(&self, id: &str) -> Result<Tool, Box<dyn Error>> {
         let path = format!("tools/{}", segment("tool ID", id)?);
-        self.get_json(&path, None).await
+        let value = self.get_json(&path, None).await?;
+        Ok(self
+            .compatibility
+            .selection()
+            .profile()
+            .decode_tool(value)?)
     }
 
     /// Lists the versions of a tool (`GET /tools/{id}/versions`).
     pub async fn list_versions(&self, id: &str) -> Result<Vec<ToolVersion>, Box<dyn Error>> {
         let path = format!("tools/{}/versions", segment("tool ID", id)?);
-        self.get_json(&path, None).await
+        let value = self.get_json(&path, None).await?;
+        Ok(self
+            .compatibility
+            .selection()
+            .profile()
+            .decode_versions(value)?)
     }
 
     /// Fetches one version of a tool (`GET /tools/{id}/versions/{version_id}`).
@@ -314,7 +384,12 @@ impl TRS {
         version_id: &str,
     ) -> Result<ToolVersion, Box<dyn Error>> {
         let path = version_path(id, version_id)?;
-        self.get_json(&path, None).await
+        let value = self.get_json(&path, None).await?;
+        Ok(self
+            .compatibility
+            .selection()
+            .profile()
+            .decode_version(value)?)
     }
 
     /// Fetches the primary descriptor of a tool version
@@ -508,11 +583,7 @@ mod tests {
             .map(|slash| {
                 let base = format!("{}/{prefix}/ga4gh/trs/v2{slash}", server_url());
                 let config = Configuration::new(Url::parse(&base).unwrap());
-                TRS {
-                    transport: Transport::new(&config),
-                    config,
-                    service: Ok(Service::default()),
-                }
+                TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2)
             })
             .collect()
     }
@@ -543,16 +614,9 @@ mod tests {
     #[test]
     fn test_debug_output() {
         let config = crate::utils::configuration::config_with_markers();
-        let trs = TRS {
-            transport: Transport::new(&config),
-            config,
-            service: Ok(Service::default()),
-        };
+        let trs = TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2);
         let output = format!("{:?}", trs);
-        assert!(
-            output.starts_with("TRS { config: Configuration {"),
-            "{output}"
-        );
+        assert!(output.starts_with("TRS { transport:"), "{output}");
         assert!(!output.contains("SENTINEL"), "{output}");
     }
 
@@ -561,11 +625,7 @@ mod tests {
         for slash in ["", "/"] {
             let base = Url::parse(&format!("https://example.org/a%20b/trs/v2{slash}")).unwrap();
             let config = Configuration::new(base);
-            let trs = TRS {
-                transport: Transport::new(&config),
-                config,
-                service: Ok(Service::default()),
-            };
+            let trs = TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2);
             assert_eq!(
                 trs.transport.endpoint("tools/a%2Fb").unwrap().as_str(),
                 "https://example.org/a%20b/trs/v2/tools/a%2Fb"
@@ -584,7 +644,7 @@ mod tests {
     async fn test_new_checks_service_info_below_api_root() {
         let m = get_mock("new", "service-info", &service_info_json("trs").to_string());
         for client in clients("new") {
-            let trs = TRS::new(&client.config).await.unwrap();
+            let trs = TRS::new(client.configuration()).await.unwrap();
             assert_eq!(trs.service.unwrap().r#type.artifact, "trs");
         }
         m.assert();
@@ -599,13 +659,13 @@ mod tests {
         version.as_object_mut().unwrap().remove("description");
         let response = get_mock("trs-201", &tool_version(""), &version.to_string());
         for client in clients("trs-201") {
-            let trs = TRS::new(&client.config).await.unwrap();
+            let trs = TRS::new(client.configuration()).await.unwrap();
             assert_eq!(trs.service.as_ref().unwrap().r#type.version, "2.0.1");
             assert_eq!(
                 trs.get_version(TOOL_ID, VERSION_ID)
                     .await
                     .unwrap()
-                    .description,
+                    .description(),
                 None
             );
         }
@@ -622,14 +682,22 @@ mod tests {
         numeric_update["updatedAt"] = serde_json::json!(1794200849592u64);
         let m = get_mock("dockstore", "service-info", &info.to_string());
         for client in clients("dockstore") {
-            let service = TRS::new(&client.config).await.unwrap().service.unwrap();
+            let service = TRS::new(client.configuration())
+                .await
+                .unwrap()
+                .service
+                .unwrap();
             assert_eq!(service.created_at, None);
             assert_eq!(service.updated_at.as_deref(), Some("2026-11-09T00:00:00Z"));
         }
         m.assert();
         let m = get_mock("dockstore-2", "service-info", &numeric_update.to_string());
         for client in clients("dockstore-2") {
-            let service = TRS::new(&client.config).await.unwrap().service.unwrap();
+            let service = TRS::new(client.configuration())
+                .await
+                .unwrap()
+                .service
+                .unwrap();
             assert_eq!((service.created_at, service.updated_at), (None, None));
         }
         m.assert();
@@ -643,7 +711,7 @@ mod tests {
             &service_info_json("wes").to_string(),
         );
         for client in clients("not-trs") {
-            let error = TRS::new(&client.config).await.unwrap_err();
+            let error = TRS::new(client.configuration()).await.unwrap_err();
             assert!(
                 error.to_string().contains("not an instance of TRS"),
                 "{error}"
@@ -658,7 +726,7 @@ mod tests {
             .with_status(404)
             .create();
         for client in clients("no-info") {
-            assert!(TRS::new(&client.config).await.is_err());
+            assert!(TRS::new(client.configuration()).await.is_err());
         }
     }
 
@@ -794,7 +862,7 @@ mod tests {
             assert!(client.list_tool_classes().await.is_err());
             let error = client.list_tools(&ToolFilter::default()).await.unwrap_err();
             assert!(error.to_string().contains("500"), "{error}");
-            assert!(TRS::new(&client.config).await.is_err());
+            assert!(TRS::new(client.configuration()).await.is_err());
         }
     }
 
@@ -880,7 +948,7 @@ mod tests {
         for client in clients("version") {
             let version = client.get_version(TOOL_ID, VERSION_ID).await.unwrap();
             assert_eq!(version.id, VERSION_ID);
-            assert_eq!(version.description.as_deref(), Some("First release"));
+            assert_eq!(version.description(), Some("First release"));
         }
         m.assert();
     }

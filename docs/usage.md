@@ -358,18 +358,28 @@ let archive = trs
     .await?;
 ```
 
-The client uses one set of models generated from TRS 2.0.2; it does not select
-models at runtime based on the server's `service-info` version. It accepts a
-TRS 2.0.1 service-info response and a tool version without the new optional
-`description` field. The `tags` filter and ZIP download depend on the server
-implementing those capabilities; they are not guaranteed on 2.0.1 servers.
-`tags` are registry-specific and sent as one
-comma-separated value (the comma is percent-encoded, as `%2C`), so a tag
-must not be empty or contain a comma.
-`ToolVersion.description` holds the description of a version, if the registry
-sends one. `get_files_zip` reads the whole response into memory and returns it
-as bytes without extracting it; a body larger than the limit, or one without a
-ZIP file signature, is an error. The archive's contents are not fully validated.
+The client selects a TRS 2.0.1 or 2.0.2 response profile from the API version
+in `service-info.type.version`. An unknown declaration uses the 2.0.1 read
+contract and records compatibility as unverified. Use `TrsOptions` to require
+a known declaration or select a profile explicitly. Selection belongs to each
+client; one process can connect to different versions at the same time. See
+[API compatibility](api_compatibility.md) for options, limitations, and migration.
+
+The `tags` filter requires the 2.0.2 contract or an explicit deployment override.
+Tags are registry-specific and sent as one comma-separated value, so a tag
+must not be empty or contain a comma. A declared version is evidence of intended
+support, not proof that the server implements filtering correctly.
+
+`ToolVersion::description()` returns a string description when present; the
+original value remains in `extra` and in serialized JSON. The 2.0.2 decoder
+rejects a non-string description. The 2.0.1 decoder keeps it as extension data.
+The existing public model fields remain unchanged.
+
+`get_files_zip` reads the response into memory and returns bytes without
+extracting them. A body larger than the caller's limit, or one without a ZIP
+signature, is an error. The archive's contents are not fully validated. ZIP
+responses are defined in both supported TRS versions; actual provider support
+can differ.
 
 ### Models
 

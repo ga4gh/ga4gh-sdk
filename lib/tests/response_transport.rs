@@ -248,3 +248,24 @@ async fn trs_relative_page_link_keeps_configured_url_auth_scoped_to_the_api() {
     );
     request.assert();
 }
+
+#[tokio::test]
+async fn strict_json_validates_utf8_even_in_ignored_properties() {
+    let request = mock("GET", "/strict-json-ignored-utf8")
+        .with_status(200)
+        .with_body(b"{\"ignored\":\"\xff\"}")
+        .create();
+    let response = transport()
+        .request_response(Method::GET, "strict-json-ignored-utf8", None, None)
+        .await
+        .unwrap();
+    let error = ga4gh_sdk::utils::transport::response_json::<serde::de::IgnoredAny>(
+        response,
+        BodyLimits::default(),
+    )
+    .await
+    .err()
+    .expect("invalid UTF-8 must not be skipped with an unknown field");
+    assert!(error.downcast_ref::<std::str::Utf8Error>().is_some());
+    request.assert();
+}

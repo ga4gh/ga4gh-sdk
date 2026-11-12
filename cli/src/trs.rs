@@ -2,9 +2,10 @@ use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain, FileWrapper};
-use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
+use ga4gh_sdk::clients::trs::{ToolFilter, TrsOptions, TrsVersion, TRS};
+use ga4gh_sdk::compatibility::{CapabilityOverride, VersionPolicy};
 use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::transport::HttpError;
+use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use std::error::Error;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,12 @@ const ZIP_LIMIT: usize = 64 * 1024 * 1024;
 pub fn command() -> Command {
     Command::new("trs")
         .about("Tool Registry Service commands")
+        .arg(arg!(--"api-version" <VERSION> "Response contract: auto, strict, 2.0.1 or 2.0.2")
+            .value_parser(["auto", "strict", "2.0.1", "2.0.2"]).default_value("auto").global(true))
+        .arg(arg!(--"tag-filter" <SUPPORT> "Override tag-filter support only for a known deployment")
+            .value_parser(["auto", "enabled", "disabled"]).default_value("auto").global(true))
+        .arg(arg!(--"no-discovery" "Skip service-info; requires an explicit --api-version")
+            .global(true))
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
@@ -116,13 +123,43 @@ enum Request {
 /// Run a parsed TRS command using the supplied service configuration.
 pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<CommandOutput> {
     let request = parse(sub)?;
-    let trs = match TRS::new(config).await {
+    let options = connection_options(sub)?;
+    let connection = if sub.get_flag("no-discovery") {
+        let VersionPolicy::Explicit(version) = options.version else {
+            anyhow::bail!("--no-discovery requires --api-version 2.0.1 or 2.0.2");
+        };
+        Ok(TRS::without_discovery(Transport::new(config), version)
+            .with_tag_filter_override(options.tag_filter))
+    } else {
+        TRS::with_options(config, options).await
+    };
+    let trs = match connection {
         Ok(trs) => trs,
         Err(error) => return Ok(service_failure(error.as_ref())),
     };
     Ok(match execute(&trs, request).await {
         Ok(stdout) => CommandOutput::success(stdout),
         Err(error) => CommandOutput::failure(printable(&error.to_string())),
+    })
+}
+
+fn connection_options(sub: &ArgMatches) -> anyhow::Result<TrsOptions> {
+    let version = match sub.get_one::<String>("api-version").map(String::as_str) {
+        Some("auto") | None => VersionPolicy::Auto,
+        Some("strict") => VersionPolicy::RequireKnown,
+        Some("2.0.1") => VersionPolicy::Explicit(TrsVersion::V2_0_1),
+        Some("2.0.2") => VersionPolicy::Explicit(TrsVersion::V2_0_2),
+        _ => anyhow::bail!("Invalid TRS API version"),
+    };
+    let tag_filter = match sub.get_one::<String>("tag-filter").map(String::as_str) {
+        Some("auto") | None => CapabilityOverride::Auto,
+        Some("enabled") => CapabilityOverride::Enabled,
+        Some("disabled") => CapabilityOverride::Disabled,
+        _ => anyhow::bail!("Invalid TRS tag-filter policy"),
+    };
+    Ok(TrsOptions {
+        version,
+        tag_filter,
     })
 }
 

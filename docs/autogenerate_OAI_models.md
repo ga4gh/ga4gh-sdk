@@ -21,11 +21,21 @@ hand-written types go next to `models/`, for example
 | `registry` | [Service Registry 1.0.0](https://github.com/ga4gh-discovery/ga4gh-service-registry/tree/1.0.0) | – |
 | `tes` | [TES 1.1](https://github.com/ga4gh/task-execution-schemas/tree/v1.1) | `utils/patches/tes.patch` |
 | `drs` | [DRS 1.4.0](https://github.com/ga4gh/data-repository-service-schemas/tree/drs-1.4.0) | `utils/patches/drs.patch` |
-| `trs` | [TRS 2.0.2](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.2) | `utils/patches/trs.patch` |
+| `trs` public models | [TRS 2.0.1](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.1) | `utils/patches/trs.patch` |
+| `trs` private wire models | [TRS 2.0.2](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.2) | `utils/patches/trs.patch` |
 | `wes` | [WES 1.1.0](https://github.com/ga4gh/workflow-execution-service-schemas/tree/1.1.0) | `utils/patches/wes.patch` |
 
 The TRS 2.0.2 spec still declares `info.version: 2.1.0`, so the headers of
-the generated TRS models say 2.1.0.
+the generated private wire models say 2.1.0. Their pinned source is still the
+2.0.2 tag; the client does not interpret a server declaration of `2.1.0` as 2.0.2.
+
+`utils/build_models_wrapper.sh trs` regenerates both retained versions. Public
+2.0.1 models stay in `lib/src/clients/trs/models/`; private 2.0.2 models are in
+`lib/src/clients/trs/wire/v2_0_2/models/`. The wrapper supplies their module path
+with `-m`; both use the same maintained TRS patch. The hand-written adapters
+in `trs/protocol/` validate the selected response contract and return the public
+models. See [API compatibility](api_compatibility.md#implementation-and-extension)
+before adding a version. Treat every `models/` directory as generated code.
 
 The models are generated with OpenAPI Generator 7.9.0 and formatted with
 `rustfmt`. Running the wrapper on a clean checkout must not change any file in

@@ -345,7 +345,7 @@ cargo build --workspace --locked
 ## TRS client
 
 The library includes a client for the
-[GA4GH Tool Registry Service (TRS) API 2.0.2][trs], for registries such as
+[GA4GH Tool Registry Service (TRS) API][trs], versions 2.0.1 and 2.0.2, for registries such as
 [WorkflowHub][workflowhub] or [Dockstore][dockstore]. Set
 `Configuration.base_path` to the TRS API root, including its path prefix,
 with or without a trailing slash, e.g. `https://workflowhub.eu/ga4gh/trs/v2`
@@ -382,9 +382,11 @@ the registry sends a JSON array of them). Dockstore sends the
 service-info timestamps `createdAt` and `updatedAt` as numbers; the client
 drops such non-string values instead of failing.
 The basic `list_tools` method returns a page without headers. Use
-`clients::trs::responses` with the client's transport for server-provided paging
-URLs (pass `ToolFilter::query()` as parameters) and for streaming large
-`format=zip` downloads (see the advanced transport API above).
+`clients::trs::responses` with `&trs` for server-provided paging URLs, retaining
+the selected version profile (pass `ToolFilter::query()` as parameters).
+Use `responses::files_zip(trs.transport(), ...)` to stream large archives.
+The [compatibility guide](docs/api_compatibility.md) explains version selection,
+tag-filter capabilities, and connecting to deployments without usable discovery.
 Authentication isn't supported yet: the SDK's transport doesn't send
 the configured tokens, so only public registries and tools work. The CLI's
 `trs` commands use this client; see the [CLI README](cli/README.md#trs-examples).
