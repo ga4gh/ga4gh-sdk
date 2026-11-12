@@ -9,7 +9,7 @@ use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::Task;
 use ga4gh_sdk::clients::tes::TesView;
 use ga4gh_sdk::clients::tes::TES;
-use ga4gh_sdk::clients::wait::{WaitOptions, WaitOutcome};
+use ga4gh_sdk::clients::wait::{WaitOptions, WaitOutcome, WaitResult};
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::operation::OperationError;
 use ga4gh_sdk::utils::transport::{urlencode, Transport};
@@ -18,6 +18,7 @@ use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
 use pyo3::types::{PyDict, PyMapping, PyString, PyTuple, PyType};
 use serde_json::Value;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -307,11 +308,43 @@ fn read_state(state: &str) -> TesState {
     serde_json::from_value(Value::String(state.to_owned())).unwrap_or_default()
 }
 
+/// The path of a task's lookup.
+pub fn task_path(task: &Task) -> String {
+    format!("tasks/{}", urlencode(&task.id))
+}
+
 /// Waits for the task with the library's waiter until it ends, the time runs out or the
 /// settings' operation is cancelled. Never cancels the task.
+///
+/// The future is not `Send`; `AsyncTask.wait()` uses [`wait_end`] with a `Send` waiter
+/// instead (see `tes_async`).
 pub async fn wait_task(task: &Task, settings: WaitSettings) -> WaitEnd {
     let WaitSettings { options, view } = settings;
     let result = task.wait(&options).await;
+    wait_end(result, &options, view, |view| async move {
+        let params = serde_json::json!({ "view": view });
+        task.transport
+            .get(&task_path(task), Some(params))
+            .await
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+/// Converts the library waiter's result into the end of the wait.
+///
+/// With a `view` other than the minimal one, `get_view` gets the ended task's JSON in that
+/// view, within the deadline of `options`. The future is `Send` if `get_view`'s is.
+pub async fn wait_end<G, Fut>(
+    result: WaitResult,
+    options: &WaitOptions,
+    view: Option<TesView>,
+    get_view: G,
+) -> WaitEnd
+where
+    G: FnOnce(TesView) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+{
     let last_state = result.last_state.as_deref().map(read_state);
     match result.outcome {
         WaitOutcome::Complete
@@ -332,20 +365,12 @@ pub async fn wait_task(task: &Task, settings: WaitSettings) -> WaitEnd {
         (None, _) => return WaitEnd::State(state),
         // The waiter polls the minimal view; no need to ask again.
         (Some(TesView::Minimal), Some(raw)) => Ok(raw),
-        (Some(view), _) => {
-            let path = format!("tasks/{}", urlencode(&task.id));
-            let params = serde_json::json!({ "view": view });
-            match options
-                .operation
-                .run(task.transport.get(&path, Some(params)))
-                .await
-            {
-                Ok(Ok(body)) => serde_json::from_str(&body).map_err(invalid_response_text),
-                Ok(Err(error)) => Err(format!("Failed to get task: {error}")),
-                Err(OperationError::Deadline) => return WaitEnd::Timeout(Some(state)),
-                Err(OperationError::Cancelled) => return WaitEnd::Interrupted,
-            }
-        }
+        (Some(view), _) => match options.operation.run(get_view(view)).await {
+            Ok(Ok(body)) => serde_json::from_str(&body).map_err(invalid_response_text),
+            Ok(Err(error)) => Err(format!("Failed to get task: {error}")),
+            Err(OperationError::Deadline) => return WaitEnd::Timeout(Some(state)),
+            Err(OperationError::Cancelled) => return WaitEnd::Interrupted,
+        },
     };
     match raw.and_then(|raw| PyTesTask::parse(raw).map_err(invalid_response_text)) {
         Ok(task) => WaitEnd::Task(Box::new(task)),
