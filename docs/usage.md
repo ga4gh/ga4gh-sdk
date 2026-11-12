@@ -123,9 +123,9 @@ discovery and submissions. A configuration holds at most one credential:
   outside it are rejected. On a redirect to another host or port, the
   `Authorization` header is dropped; a redirect to the same host and port
   keeps it, also from `https` to `http` on the same explicit port (see
-  #203). Over plain `http` to a host other than
-  `localhost` or a loopback address, the SDK logs a warning once per process,
-  as the credential travels unencrypted then; use `https`.
+  #203). Over plain `http` to a host other than `localhost` or a loopback
+  address, the SDK logs a warning once per process, as the credential travels
+  unencrypted then; use `https`.
 - **Caller-owned clients:** a Rust client given to `Transport::with_client()` or
   `WES::from_transport()` also gets the configured credential, which takes
   the place of an `Authorization` default header of that client. Without a

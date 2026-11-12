@@ -1617,7 +1617,14 @@ mod tests {
                         .with_oauth_access_token("SENTINEL_OAUTH".to_owned()),
                     vec!["basic_auth", "oauth_access_token"],
                 ),
-                (different, vec!["oauth_access_token", "bearer_access_token"]),
+                (
+                    different.clone(),
+                    vec!["oauth_access_token", "bearer_access_token"],
+                ),
+                (
+                    different.with_basic_auth(basic(Some("SENTINEL_PASSWORD"))),
+                    vec!["basic_auth", "oauth_access_token", "bearer_access_token"],
+                ),
                 (
                     Configuration::new(url.clone())
                         .with_oauth_access_token("SENTINEL_OAUTH".to_owned()),

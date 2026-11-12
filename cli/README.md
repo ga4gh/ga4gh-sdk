@@ -75,8 +75,9 @@ section's credential with every request: `basic_auth` as Basic credentials
 token. A user and password in `base_path` are sent as Basic credentials, too.
 Set only one of them: with more than one, every command that contacts the
 service fails before sending anything. Earlier versions didn't send these
-credentials, so remove those that a service doesn't need. A `401 Unauthorized` answer is reported with its status, and the
-command exits with status 1. For example:
+credentials, so remove those that a service doesn't need. A
+`401 Unauthorized` answer is reported with its status, and the command exits
+with status 1. For example:
 
 ```json
 {
