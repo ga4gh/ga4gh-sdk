@@ -25,7 +25,7 @@ SPECS=(
     "registry|$RAW/ga4gh-discovery/ga4gh-service-registry/1.0.0/service-registry.yaml|lib/src/clients/registry/|"
     "tes|$RAW/ga4gh/task-execution-schemas/v1.1/openapi/task_execution_service.openapi.yaml|lib/src/clients/tes/|"
     "drs|$RAW/ga4gh/data-repository-service-schemas/drs-1.4.0/openapi/data_repository_service.openapi.yaml|lib/src/clients/drs/|--skip-validate-spec"
-    "trs|$RAW/ga4gh/tool-registry-service-schemas/2.0.1/openapi/openapi.yaml|lib/src/clients/trs/|"
+    "trs|$RAW/ga4gh/tool-registry-service-schemas/2.0.2/openapi/openapi.yaml|lib/src/clients/trs/|"
     "wes|$RAW/ga4gh/workflow-execution-service-schemas/1.1.0/openapi/workflow_execution_service.openapi.yaml|lib/src/clients/wes/|"
 )
 
