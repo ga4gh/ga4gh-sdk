@@ -70,7 +70,7 @@ pub(super) fn count(value: i64, what: &str) -> PyResult<usize> {
 
 /// Parses a server's JSON text. Errors are `RuntimeError`s.
 pub(super) fn parse_body(body: &str) -> PyResult<Value> {
-    serde_json::from_str(body).map_err(invalid_response)
+    json::parse_body("DRS", body)
 }
 
 pub(super) fn response_object(py: Python<'_>, raw: &Value) -> PyResult<PyObject> {

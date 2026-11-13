@@ -1,4 +1,5 @@
-//! Reading the JSON that result classes keep, and errors for responses that don't fit.
+//! Reading the JSON that result classes keep, parsing response bodies, and errors for
+//! responses that don't fit.
 
 use crate::utils::convert::to_python;
 use pyo3::exceptions::PyRuntimeError;
@@ -21,4 +22,9 @@ pub fn invalid_response_text(api: &str, error: impl std::fmt::Display) -> String
 /// A `RuntimeError` for a response of `api` that doesn't fit its models.
 pub fn invalid_response(api: &str, error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(invalid_response_text(api, error))
+}
+
+/// Parses the JSON text of a response of `api`. Errors are `RuntimeError`s.
+pub fn parse_body(api: &str, body: &str) -> PyResult<Value> {
+    serde_json::from_str(body).map_err(|error| invalid_response(api, error))
 }
