@@ -5,10 +5,6 @@
 //! turns hostname-based `drs://` URIs into access plans. `DrsObject`, `AccessURL` and
 //! `BulkAccessURL` are results that keep the JSON they were built from.
 
-// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
-// clippy reports at every method that returns one, as in `tes.rs`.
-#![allow(clippy::useless_conversion)]
-
 use crate::utils::convert::{check_extra_args, to_json, to_python};
 use crate::utils::runtime::io;
 use crate::PyConfiguration;
@@ -28,6 +24,7 @@ use ga4gh_sdk::utils::transport::urlencode;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyMapping, PyString, PyTuple, PyType};
+use pyo3::IntoPyObjectExt;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::time::Duration;
@@ -190,7 +187,7 @@ fn strings(values: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<String>> {
         return Err(error());
     }
     values
-        .iter()
+        .try_iter()
         .map_err(|_| error())?
         .map(|item| item?.extract::<String>().map_err(|_| error()))
         .collect()
@@ -458,7 +455,7 @@ impl PyPendingResolution {
 
     /// The pending state as a new `dict` with `api_root`, `endpoint` and `retry_after`.
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         dict.set_item("api_root", self.api_root())?;
         dict.set_item("endpoint", self.endpoint())?;
         dict.set_item("retry_after", self.retry_after())?;
@@ -476,14 +473,17 @@ impl PyPendingResolution {
 }
 
 /// Converts the answer of one request to a result or the pending state.
-fn ready_or_pending<T: IntoPy<PyObject>>(
-    py: Python<'_>,
+fn ready_or_pending<'py, T>(
+    py: Python<'py>,
     answer: Resolution<String>,
     convert: impl FnOnce(Value) -> PyResult<T>,
-) -> PyResult<PyObject> {
+) -> PyResult<PyObject>
+where
+    T: IntoPyObject<'py>,
+{
     match answer {
-        Resolution::Ready(body) => Ok(convert(parse_body(&body)?)?.into_py(py)),
-        Resolution::Pending(inner) => Ok(PyPendingResolution { inner }.into_py(py)),
+        Resolution::Ready(body) => convert(parse_body(&body)?)?.into_py_any(py),
+        Resolution::Pending(inner) => PyPendingResolution { inner }.into_py_any(py),
     }
 }
 
@@ -614,12 +614,15 @@ pub struct PyBulkOutcome {
 impl PyBulkOutcome {
     /// Converts a lib outcome, checking each resolved entry against its model as
     /// `get_bulk_objects` and `get_bulk_access_urls` do.
-    fn convert<T: IntoPy<PyObject>>(
-        py: Python<'_>,
+    fn convert<'py, T>(
+        py: Python<'py>,
         key: BulkKey,
         outcome: ObjectOutcome<Value>,
         parse: impl Fn(Value) -> Result<T, String>,
-    ) -> Self {
+    ) -> PyResult<Self>
+    where
+        T: IntoPyObject<'py>,
+    {
         // Rebuilt with the entries that fit the model (as placeholders), so that
         // `is_success` is the lib's own `ObjectOutcome::is_success`.
         let mut checked = ObjectOutcome {
@@ -632,7 +635,7 @@ impl PyBulkOutcome {
         for value in outcome.resolved {
             match parse(value) {
                 Ok(item) => {
-                    resolved.push(item.into_py(py));
+                    resolved.push(item.into_py_any(py)?);
                     checked.resolved.push(Value::Null);
                 }
                 Err(error) => checked
@@ -640,7 +643,7 @@ impl PyBulkOutcome {
                     .push(format!("invalid resolved entry: {error}")),
             }
         }
-        PyBulkOutcome {
+        Ok(PyBulkOutcome {
             object_id: key.object_id,
             access_id: key.access_id,
             resolved,
@@ -656,7 +659,7 @@ impl PyBulkOutcome {
                 },
             }),
             errors: checked.errors,
-        }
+        })
     }
 }
 
@@ -735,15 +738,18 @@ pub struct PyBulkReport {
 }
 
 impl PyBulkReport {
-    fn convert<T: IntoPy<PyObject>>(
-        py: Python<'_>,
+    fn convert<'py, T>(
+        py: Python<'py>,
         report: BulkReport<Value>,
         parse: impl Fn(Value) -> Result<T, String> + Copy,
-    ) -> PyResult<Self> {
+    ) -> PyResult<Self>
+    where
+        T: IntoPyObject<'py>,
+    {
         let outcomes = report
             .outcomes
             .into_iter()
-            .map(|(key, outcome)| Py::new(py, PyBulkOutcome::convert(py, key, outcome, parse)))
+            .map(|(key, outcome)| Py::new(py, PyBulkOutcome::convert(py, key, outcome, parse)?))
             .collect::<PyResult<_>>()?;
         Ok(PyBulkReport {
             outcomes,
@@ -804,7 +810,7 @@ fn access_pairs(pairs: &Bound<'_, PyAny>) -> PyResult<Vec<BulkKey>> {
         Err(_) => pairs.clone(),
     };
     items
-        .iter()
+        .try_iter()
         .map_err(|_| PyValueError::new_err(PAIRS))?
         .map(|pair| {
             let (object_id, access_id): (String, String) =
@@ -1368,10 +1374,10 @@ impl PyDrsResolver {
                     format!("Failed to plan DRS access: {}", plan_error(error.as_ref()))
                 })
         })?;
-        Ok(match answer {
-            AccessResolution::Ready(inner) => PyAccessPlan { inner }.into_py(py),
-            AccessResolution::Pending(inner) => PyPendingResolution { inner }.into_py(py),
-        })
+        match answer {
+            AccessResolution::Ready(inner) => PyAccessPlan { inner }.into_py_any(py),
+            AccessResolution::Pending(inner) => PyPendingResolution { inner }.into_py_any(py),
+        }
     }
 
     /// Like `access_plan_once()`, but waits as the server asks while it prepares an

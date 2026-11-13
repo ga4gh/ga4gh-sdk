@@ -192,7 +192,7 @@ impl PyRunRequest {
         if let Ok(mapping) = request.downcast::<PyMapping>() {
             if !request.is_instance_of::<PyDict>() {
                 // `json.dumps` takes only `dict`s, so copy other mappings into one.
-                let dict = PyDict::new_bound(request.py());
+                let dict = PyDict::new(request.py());
                 dict.update(mapping)?;
                 return Self::from_value(to_json(&dict, "run request")?);
             }
@@ -279,7 +279,7 @@ impl PyRunRequest {
         cls: &Bound<'py, PyType>,
         request: &Bound<'py, PyMapping>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let dict = PyDict::new_bound(cls.py());
+        let dict = PyDict::new(cls.py());
         dict.update(request)?;
         cls.call1((dict,))
     }
@@ -875,7 +875,7 @@ fn attachment_list(
     };
     let mut names = HashSet::new();
     let mut result = Vec::new();
-    for pair in pairs.iter()? {
+    for pair in pairs.try_iter()? {
         let (filename, content): (String, Bound<'_, PyAny>) = pair?
             .extract()
             .map_err(|_| PyValueError::new_err(ATTACHMENTS))?;

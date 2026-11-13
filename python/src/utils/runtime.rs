@@ -141,7 +141,7 @@ where
 pub fn future_into_py<F, T>(py: Python<'_>, future: F) -> PyResult<Bound<'_, PyAny>>
 where
     F: Future<Output = PyResult<T>> + Send + 'static,
-    T: IntoPy<PyObject> + Send + 'static,
+    T: for<'p> IntoPyObject<'p> + Send + 'static,
 {
     shared_runtime().map_err(PyRuntimeError::new_err)?;
     pyo3_async_runtimes::tokio::future_into_py(py, future)

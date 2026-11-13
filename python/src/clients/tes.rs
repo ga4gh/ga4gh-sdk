@@ -33,7 +33,8 @@ pub fn parse_view(view: &str) -> PyResult<TesView> {
 }
 
 /// Python source of the `TesState` enum. Its members must match the variants of `TesState`.
-const TES_STATE_SOURCE: &str = r#"
+const TES_STATE_SOURCE: &std::ffi::CStr = pyo3::ffi::c_str!(
+    r#"
 import enum
 
 
@@ -63,7 +64,8 @@ class TesState(str, enum.Enum):
 
     def __format__(self, format_spec):
         return format(self.value, format_spec)
-"#;
+"#
+);
 
 static TES_STATE: GILOnceCell<Py<PyType>> = GILOnceCell::new();
 
@@ -74,9 +76,9 @@ pub fn tes_state_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
             // Runs in a namespace of its own. `PyModule::from_code_bound` would register a
             // module in `sys.modules` and, under the name `ga4gh_sdk`, overwrite the package's
             // attributes; the class itself names `ga4gh_sdk` as its module.
-            let namespace = PyDict::new_bound(py);
+            let namespace = PyDict::new(py);
             namespace.set_item("__name__", "ga4gh_sdk")?;
-            py.run_bound(TES_STATE_SOURCE, Some(&namespace), None)?;
+            py.run(TES_STATE_SOURCE, Some(&namespace), None)?;
             Ok(namespace
                 .get_item("TesState")?
                 .ok_or_else(|| PyRuntimeError::new_err("TesState is not defined"))?
@@ -293,7 +295,7 @@ impl PyTesTask {
         if let Ok(mapping) = task.downcast::<PyMapping>() {
             if !task.is_instance_of::<PyDict>() {
                 // `json.dumps` takes only `dict`s, so copy other mappings into one.
-                let dict = PyDict::new_bound(task.py());
+                let dict = PyDict::new(task.py());
                 dict.update(mapping)?;
                 return Self::from_value(to_json(&dict, "task")?);
             }
@@ -343,7 +345,7 @@ impl PyTesTask {
         cls: &Bound<'py, PyType>,
         task: &Bound<'py, PyMapping>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let dict = PyDict::new_bound(cls.py());
+        let dict = PyDict::new(cls.py());
         dict.update(task)?;
         cls.call1((dict,))
     }
