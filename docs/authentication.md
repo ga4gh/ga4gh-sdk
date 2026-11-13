@@ -117,7 +117,9 @@ describes the settings and commands.
   Processes lock `tokens.json.lock` while they change the store, and a
   refresh starts from the stored tokens, so that processes don't reuse a
   refresh token that another one has replaced. A refresh doesn't store a
-  login again that `logout` has deleted.
+  login again that `logout` has deleted. If writing refreshed tokens fails,
+  the command still uses them and prints a warning; the next command may then
+  need a new login.
 - The CLI sends the access token as an OAuth bearer token through a
   [token provider](usage.md#token-providers), so it reaches only the
   section's API root, as other credentials do. It refreshes an expired token

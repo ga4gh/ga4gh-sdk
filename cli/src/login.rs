@@ -306,7 +306,8 @@ impl TokenStore {
 
 /// An exclusive lock on the token store, held until it is dropped, so that
 /// processes don't overwrite each other's changes. It locks a separate file,
-/// `<store>.lock`, as the store itself is replaced on each write.
+/// `<store>.lock`, as the store itself is replaced on each write. Acquiring
+/// it waits while another process holds it.
 struct StoreLock {
     _file: std::fs::File,
 }
@@ -618,15 +619,13 @@ pub(crate) async fn run_login(
     store.put(login);
     store.write(&path)?;
     let mut message = format!(
-        "Logged in to {} and stored the tokens in {}
-",
+        "Logged in to {} and stored the tokens in {}\n",
         crate::printable(&settings.issuer),
         crate::printable(&path.display().to_string())
     );
     if !refreshable {
         message.push_str(
-            "The provider issued no refresh token, so you need to log in again when the token expires
-",
+            "The provider issued no refresh token, so you need to log in again when the token expires\n",
         );
     }
     Ok(stderr_output(message))
@@ -735,7 +734,9 @@ impl StoredLoginProvider {
         // Other processes refresh the same login: hold the store's lock, and
         // start from the stored tokens, as the provider may have rotated the
         // refresh token that this process read.
-        let _lock = StoreLock::acquire(&self.path)?;
+        let path = self.path.clone();
+        // Waiting for the lock blocks, so it doesn't run on a runtime thread.
+        let _lock = tokio::task::spawn_blocking(move || StoreLock::acquire(&path)).await??;
         let mut store = TokenStore::read(&self.path)?;
         let stored = store
             .logins
@@ -781,7 +782,10 @@ impl StoredLoginProvider {
         // The provider may have replaced the refresh token already, so the
         // new tokens are used even if they can't be stored.
         if let Err(error) = store.write(&self.path) {
-            log::warn!("{error}; the next command may need a new login");
+            eprintln!(
+                "Warning: {}; the next command may need a new login",
+                crate::printable(&error.to_string())
+            );
         }
         Ok(())
     }

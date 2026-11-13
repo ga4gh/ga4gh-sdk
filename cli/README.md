@@ -166,8 +166,8 @@ ga4gh-cli login tes
 
 The CLI shows a URL and a code on standard error. Open the URL in a browser,
 enter the code and approve the login. The CLI asks the provider at the
-interval the provider sets (at least once a second, by default every 5
-seconds) until you have approved, denied, or the code has expired. It then
+interval the provider sets (by default every 5 seconds, and never more
+often than once a second) until you have approved, denied, or the code has expired. It then
 stores the tokens in `tokens.json` next to the configuration file
 (`~/.ga4gh-cli/tokens.json`). It creates the file with mode `0600` and its
 directory, if missing, with mode `0700`; it refuses to read a file that other
@@ -186,9 +186,10 @@ not resent. If another process has refreshed the tokens in the meantime, the
 CLI uses its tokens instead. If the provider issued no refresh token, or
 rejects the refresh token (`invalid_grant`), the command fails and asks you
 to log in again; other refresh errors are reported by their OAuth error code.
-Tokens are stored per issuer and
-client ID, so all sections with the same `oidc` settings share one login, in
-every profile.
+If the CLI can't store refreshed tokens, it still uses them and prints a
+warning. Tokens are stored per issuer and client ID, so all sections with the
+same `oidc` settings share one login, in every profile. The token store's
+directory must be writable.
 
 ```sh
 ga4gh-cli logout tes
