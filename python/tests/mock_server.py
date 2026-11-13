@@ -12,6 +12,11 @@ client closes the connection before,
 the client leaves (at most 30 seconds), for tests of timed-out submissions.
 Below ``/auth``, the TES of ``/api`` answers requests with the bearer token
 ``good`` and rejects all others with ``401 Unauthorized``.
+``GET /api/tasks/state-<STATE>`` answers at once with a task of that ID in that
+state, and ``GET /api/tasks/progress-<n>`` with one that is queued, running, then
+complete on later requests, for tests of waiting; ``GET /api/tasks/ended`` answers with a complete task
+in the minimal view, after 2 seconds in the basic view, and with a 500 in the full
+view.
 """
 
 import base64
@@ -161,6 +166,8 @@ ROUTES.update(
 )
 
 REQUESTS = []
+# How often each `/api/tasks/progress-<n>` path was asked for.
+PROGRESS = {}
 DISCONNECTS = []
 
 
@@ -206,6 +213,27 @@ class Handler(BaseHTTPRequestHandler):
                 DISCONNECTS.append(url.path)
                 return
             self._reply(200, {**TASK, "id": task_id, "state": "RUNNING"})
+            return
+        if self.command == "GET" and url.path.startswith("/api/tasks/progress-"):
+            # Queued, then running, then complete, counted per task ID.
+            polls = PROGRESS.get(url.path, 0)
+            PROGRESS[url.path] = polls + 1
+            state = ["QUEUED", "RUNNING", "COMPLETE"][min(polls, 2)]
+            self._reply(200, {**TASK, "id": url.path.rsplit("/", 1)[1], "state": state})
+            return
+        if self.command == "GET" and url.path == "/api/tasks/ended":
+            view = parse_qs(url.query).get("view", ["MINIMAL"])[0]
+            if view == "FULL":
+                self._reply(500, {"msg": "failed"})
+                return
+            if view == "BASIC" and self._client_left_within(2):
+                DISCONNECTS.append(url.path)
+                return
+            self._reply(200, {**TASK, "id": "ended", "state": "COMPLETE"})
+            return
+        if self.command == "GET" and url.path.startswith("/api/tasks/state-"):
+            task_id = url.path.rsplit("/", 1)[1]
+            self._reply(200, {**TASK, "id": task_id, "state": task_id.removeprefix("state-")})
             return
         if url.path.startswith("/failing-") and url.path.endswith("/service-info"):
             time.sleep(float(url.path.split("/")[1].removeprefix("failing-")))
