@@ -24,6 +24,33 @@ different directory is shown.
   The example crate in `examples/downstream-sdk/` uses these APIs and has
   its own workspace, so `make check` doesn't build it: run `make downstream`,
   and update the example and [its guide](docs/downstream.md) with the API.
+- For implementation work, use the routing table in the
+  [engineering principles](docs/engineering_principles.md). Read only the
+  sections that apply to the affected contract. Keep unrelated refactoring
+  outside the task.
+- Before reviewing or updating an existing PR, read the
+  [reviewer framework](docs/reviewer_framework.md). For updates, follow its
+  procedure for maintaining an existing PR.
+- When you add or update documentation or repository instructions, you may use
+  the [technical writing guide](docs/technical_writing.md) for the affected
+  text. Preserve technical meaning, conditions, exceptions, and API
+  identifiers. Keep unrelated documentation rewrites outside the task. The
+  guide remains advisory until [#185](https://github.com/ga4gh/ga4gh-sdk/issues/185)
+  evaluates the pilot.
+
+## Core engineering checks
+
+For a code change, use these reminders and read the applicable sections of the
+[engineering principles](docs/engineering_principles.md) for the full rules:
+
+- Identify the affected contract; trace a normal path and a failure path.
+- Keep credentials and authenticated requests within the intended service boundary.
+- Preserve HTTP status and cause for callers; keep secrets out of default diagnostics.
+- Preserve data across parsing, models, and language conversions.
+- Reject invalid configuration instead of silently choosing another value.
+- Do not replay a non-idempotent request without proof that replay is safe.
+- Test at the observable boundary, including downstream and Python paths when affected.
+- Update affected documentation and examples with the behavior change.
 
 ## Before opening a pull request
 

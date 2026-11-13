@@ -5,6 +5,14 @@ pre-commit hooks, coverage, lints, the CI checks, and the issue and pull
 request templates. The rules for changes and the standard checks are in
 [AGENTS.md](../AGENTS.md); run all commands from the repository root.
 
+## Engineering and review guidance
+
+[AGENTS.md](../AGENTS.md) routes contributors and coding agents to the
+engineering principles, reviewer framework, and technical writing guide.
+Read the sections relevant to the current task. The
+[dated assessment](assessments/2026-11-10-engineering.md) is archived evidence;
+linked issues own current remediation status.
+
 ## Prerequisites
 
 - [rustup](https://rustup.rs/), for the toolchain pinned in
