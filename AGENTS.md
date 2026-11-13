@@ -31,11 +31,12 @@ different directory is shown.
 - Before reviewing or updating an existing PR, read the
   [reviewer framework](docs/reviewer_framework.md). For updates, follow its
   procedure for maintaining an existing PR.
-- For documentation or instruction changes, review the affected prose using
-  the [technical writing guide](docs/technical_writing.md#review-and-verification).
-  Preserve technical meaning, conditions, exceptions, and API identifiers.
-  This is a scoped editorial review, not a new CI gate. Leave unrelated prose
-  alone; [#185](https://github.com/ga4gh/ga4gh-sdk/issues/185) evaluates the pilot.
+- When you add or update documentation or repository instructions, you may use
+  the [technical writing guide](docs/technical_writing.md) for the affected
+  text. Preserve technical meaning, conditions, exceptions, and API
+  identifiers. Keep unrelated documentation rewrites outside the task. The
+  guide remains advisory until [#185](https://github.com/ga4gh/ga4gh-sdk/issues/185)
+  evaluates the pilot.
 
 ## Core engineering checks
 

@@ -1,9 +1,10 @@
 # Technical writing
 
-Use this guide when you write or review English documentation and repository
-instructions. It applies to maintainers and coding agents, including Claude
-and Codex. Apply it to the text affected by the task. Keep unrelated rewrites
-separate.
+This guide offers advisory help when you write or review English documentation
+and repository instructions. It applies to maintainers and coding agents,
+including Claude and Codex. Apply it to the text affected by the task. Keep
+unrelated rewrites separate. [#185](https://github.com/ga4gh/ga4gh-sdk/issues/185)
+will evaluate whether to adopt a stronger requirement.
 
 This guide adapts selected rules from
 [ASD-STE100 Issue 9](https://www.asd-ste100.org/about_STE.html).
@@ -189,12 +190,12 @@ does not block unrelated work. Use the reviewer framework to classify findings.
 
 ## Adoption and automation
 
-For every documentation or instruction update, review the affected paragraph,
-list, or procedure as a coherent unit. Include existing prose needed to
-understand the change. Revise that text where needed using the adapted STE
-rules in this guide. Check technical meaning, conditions, exceptions, and
-requirement strength. This is a manual review of changed prose, not a CI gate.
-An edit does not require rewriting the whole file or unrelated pages.
+For a documentation or instruction update, check the affected paragraph, list,
+or procedure as a coherent unit. Include existing prose needed to understand
+the change. Preserve technical meaning, conditions, exceptions, and requirement
+strength. You may use the adapted STE rules in this guide to improve the
+affected text. Their use is advisory during the #185 pilot. Do not rewrite the
+whole file or unrelated pages for this purpose.
 
 Existing documentation is not presumed to satisfy this guide. Plan broader
 rewrites as separate work, and check technical behavior as well as wording.

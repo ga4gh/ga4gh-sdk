@@ -3,8 +3,9 @@
 This guide covers review, PR publication, and the change record for the GA4GH
 SDK. The [engineering principles](engineering_principles.md) define properties
 to preserve in implementation. The [technical writing guide](technical_writing.md)
-covers documentation and instructions. Apply each guide in proportion to the
-change; repository guidance does not certify the existing implementation.
+offers advisory help for documentation and instructions until #185 evaluates
+the pilot. Apply relevant guidance in proportion to the change; repository
+guidance does not certify the existing implementation.
 The [dated assessment](assessments/2026-11-10-engineering.md) retains examples
 behind several rules; linked issues own their current status.
 
@@ -183,9 +184,10 @@ resolve them.
   If they remain in the PR, describe and test them explicitly.
 - Check that docs, scripts, generated output, and CI tell the same story.
   Delete stale commands instead of copying them into new guidance.
-- For documentation and instruction changes, follow the
-  [technical writing review](technical_writing.md#review-and-verification)
-  for the affected prose. Check technical behavior separately.
+- For documentation and instruction changes, check the affected text against
+  actual behavior, commands, conditions, exceptions, and API identifiers. The
+  [technical writing guide](technical_writing.md#review-and-verification) can
+  help with wording; its use is advisory until #185 evaluates the pilot.
 - Use `Closes #N` only when merging the PR will fully satisfy that issue.
   Otherwise use `Refs #N`, track the follow-up, and leave incomplete issue
   checklist items unchecked until their outcome lands.
@@ -283,8 +285,9 @@ consequence make the finding actionable.
   CI covers the affected crates and the locked graph.
 - [ ] Public API changes have a downstream example or test; docs commands match
   actual paths and prerequisites.
-- [ ] Affected documentation and instructions received the
-  [technical writing review](technical_writing.md#review-and-verification).
+- [ ] Affected documentation and instructions preserve technical meaning,
+  conditions, exceptions, and API identifiers. The
+  [technical writing guide](technical_writing.md) is advisory until #185.
 - [ ] Review threads and issue checkboxes reflect delivered work. Closing
   keywords describe what this merge will complete; follow-up links identify
   work that remains.

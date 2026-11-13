@@ -12,7 +12,7 @@ publication workflow. This guide covers properties to preserve while designing
 and changing the code. It does not authorize unrelated refactoring or make
 every architectural improvement a prerequisite for an unrelated change.
 
-When you edit these principles, follow the
+When you edit these principles, you may use the advisory
 [technical writing guide](technical_writing.md#instructions-for-agents-and-contributors).
 For each requirement, state its scope, action, and completion evidence. Mark
 decision prompts as guidance rather than implying they are required checks.
@@ -34,7 +34,7 @@ to starting points, not a requirement to read this whole file:
 | Submission, concurrency, cancellation, or retry | [Remote effects and lifetimes](#keep-verification-tied-to-the-actual-effect) |
 | Generation, dependencies, or build pipelines | [Reproducibility and build evidence](#evaluate-generation-dependencies-and-build-evidence) |
 | Tests, examples, or CI coverage | [Boundary evidence](#prove-behavior-at-the-relevant-boundary) |
-| User documentation or instructions | [Public contracts](#design-public-apis-for-downstream-use); [technical writing](technical_writing.md) |
+| User documentation or instructions | [Public contracts](#design-public-apis-for-downstream-use); [advisory technical writing](technical_writing.md) |
 | Maintainer edits to an open PR | [Review-time changes](reviewer_framework.md#maintaining-an-existing-pr) |
 
 The external references have different roles. Protocol specifications define
@@ -518,7 +518,8 @@ and migration instructions in the same change. Identify the authoritative page
 for each procedure and link to it instead of maintaining competing copies.
 Check the documented behavior against the current implementation and intended
 contract; do not rewrite a promise solely to conceal an implementation defect.
-Apply the [technical writing guide](technical_writing.md) to the affected prose.
+The [technical writing guide](technical_writing.md) offers advisory help for
+the affected prose until #185 evaluates the pilot.
 Clear wording and verified technical instructions are separate requirements;
 [Google's documentation review guidance](https://google.github.io/eng-practices/review/reviewer/looking-for.html#documentation)
 also treats documentation updates as part of a behavior change.
