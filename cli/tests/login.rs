@@ -361,3 +361,96 @@ async fn login_needs_oidc_settings() {
         .unwrap();
     assert!(error.to_string().contains("no 'oidc' settings"), "{error}");
 }
+
+/// Runs `args` and returns the error that dispatch returns.
+async fn run_error(context: &CliContext, args: &[&str]) -> String {
+    let matches = context.command().try_get_matches_from(args).unwrap();
+    context
+        .dispatch_to(&matches, &mut Vec::new(), &mut Vec::new())
+        .await
+        .expect_err("an error")
+        .to_string()
+}
+
+#[tokio::test]
+async fn an_expired_login_without_refresh_token_asks_to_log_in_again() {
+    let prefix = "/login-no-refresh";
+    let dir = tempfile::TempDir::new().unwrap();
+    let context = write_config(dir.path(), prefix, json!({}));
+    let issuer = issuer(prefix);
+    let store = json!({"logins": [{
+        "issuer": issuer,
+        "client_id": "test-cli",
+        "token_endpoint": format!("{issuer}/token"),
+        "access_token": "old",
+        "expires_at": now() - 10,
+    }]});
+    std::fs::write(dir.path().join("tokens.json"), store.to_string()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            dir.path().join("tokens.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+    let error = run_error(&context, &["test-cli", "registry", "list"]).await;
+    assert!(
+        error.contains("run 'test-cli login REGISTRY' again"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_transient_refresh_error_is_reported_by_its_code() {
+    let prefix = "/login-refresh-unavailable";
+    let dir = tempfile::TempDir::new().unwrap();
+    let context = write_config(dir.path(), prefix, json!({}));
+    write_store(dir.path(), prefix, "old", "refresh", now() - 10);
+    let _refresh = mock("POST", format!("{prefix}/idp/token").as_str())
+        .with_status(503)
+        .with_body(json!({"error": "temporarily_unavailable"}).to_string())
+        .create();
+    let error = run_error(&context, &["test-cli", "registry", "list"]).await;
+    assert!(error.contains("temporarily_unavailable"), "{error}");
+    assert!(!error.contains("login"), "{error}");
+}
+
+#[tokio::test]
+async fn tokens_that_another_process_refreshed_are_used_without_refreshing() {
+    let prefix = "/login-rotated";
+    let dir = tempfile::TempDir::new().unwrap();
+    let context = write_config(dir.path(), prefix, json!({}));
+    write_store(dir.path(), prefix, "old", "rotated-away", now() - 10);
+    let config = context.load_config(ServiceType::REGISTRY).unwrap();
+    // Another process refreshes in the meantime.
+    write_store(dir.path(), prefix, "newer", "current", now() + 3600);
+    let refresh = mock("POST", format!("{prefix}/idp/token").as_str())
+        .expect(0)
+        .create();
+    let request = services(prefix, "newer");
+    let client = ga4gh_sdk::clients::registry::ServiceRegistry::new(&config);
+    client.list_services().await.unwrap();
+    request.assert();
+    refresh.assert();
+}
+
+#[tokio::test]
+async fn a_refresh_after_logout_does_not_store_the_tokens_again() {
+    let prefix = "/login-logged-out";
+    let dir = tempfile::TempDir::new().unwrap();
+    let context = write_config(dir.path(), prefix, json!({}));
+    write_store(dir.path(), prefix, "old", "refresh", now() - 10);
+    let config = context.load_config(ServiceType::REGISTRY).unwrap();
+    // `logout` runs while the command runs.
+    let (_, stderr, success) = run(&context, &["test-cli", "logout", "registry"]).await;
+    assert!(success, "{stderr}");
+    let refresh = mock("POST", format!("{prefix}/idp/token").as_str())
+        .expect(0)
+        .create();
+    let client = ga4gh_sdk::clients::registry::ServiceRegistry::new(&config);
+    assert!(client.list_services().await.is_err());
+    refresh.assert();
+    assert_eq!(read_store(dir.path())["logins"], json!([]));
+}

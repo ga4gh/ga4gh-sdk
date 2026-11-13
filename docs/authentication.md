@@ -114,6 +114,10 @@ describes the settings and commands.
 - The store, `tokens.json` next to the configuration file, is written with
   mode `0600` in a directory created with mode `0700`, and a store that other
   users can access is rejected. It is keyed by issuer and client ID.
+  Processes lock `tokens.json.lock` while they change the store, and a
+  refresh starts from the stored tokens, so that processes don't reuse a
+  refresh token that another one has replaced. A refresh doesn't store a
+  login again that `logout` has deleted.
 - The CLI sends the access token as an OAuth bearer token through a
   [token provider](usage.md#token-providers), so it reaches only the
   section's API root, as other credentials do. It refreshes an expired token
@@ -122,5 +126,7 @@ describes the settings and commands.
   reason; one that fails after a `401` is reported as a token-provider
   failure.
 - Tokens are never printed. Errors from the provider are reported by their
-  OAuth `error` code; other fields of the response are not shown.
+  OAuth `error` code; other fields of the response are not shown. A rejected
+  refresh token (`invalid_grant`) or a missing one asks the user to log in
+  again.
 - `logout` deletes the stored tokens but doesn't revoke them at the provider.

@@ -46,6 +46,14 @@ const SLOW_DOWN_STEP: Duration = Duration::from_secs(5);
 /// The polling interval when the provider sets none (RFC 8628, 3.2).
 const DEFAULT_INTERVAL: u64 = 5;
 
+/// The shortest polling interval, so that a provider can't make the CLI poll
+/// in a busy loop.
+const MIN_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Lifetimes from the provider (of tokens and device codes) are capped at a
+/// year, so that huge values can't overflow time arithmetic.
+const MAX_LIFETIME: u64 = 365 * 24 * 60 * 60;
+
 /// The grant type of the device access token request (RFC 8628, 3.4).
 const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -198,7 +206,7 @@ impl StoredLogin {
     /// Whether the access token is valid for at least [`EXPIRY_MARGIN`].
     fn is_fresh(&self, now: u64) -> bool {
         self.expires_at
-            .is_none_or(|expires_at| now + EXPIRY_MARGIN.as_secs() < expires_at)
+            .is_none_or(|expires_at| now.saturating_add(EXPIRY_MARGIN.as_secs()) < expires_at)
     }
 
     /// The access token, reusable until [`EXPIRY_MARGIN`] before it expires.
@@ -206,7 +214,10 @@ impl StoredLogin {
         let token = AccessToken::new(self.access_token.clone());
         match self.expires_at {
             Some(expires_at) => {
-                let left = expires_at.saturating_sub(now + EXPIRY_MARGIN.as_secs());
+                // Capped, so that a huge lifetime can't overflow `Instant`.
+                let left = expires_at
+                    .saturating_sub(now.saturating_add(EXPIRY_MARGIN.as_secs()))
+                    .min(MAX_LIFETIME);
                 token.reusable_until(Instant::now() + Duration::from_secs(left))
             }
             None => token,
@@ -220,7 +231,9 @@ impl StoredLogin {
         if response.refresh_token.is_some() {
             self.refresh_token = response.refresh_token;
         }
-        self.expires_at = response.expires_in.map(|seconds| now + seconds);
+        self.expires_at = response
+            .expires_in
+            .map(|seconds| now.saturating_add(seconds.min(MAX_LIFETIME)));
     }
 }
 
@@ -288,6 +301,34 @@ impl TokenStore {
             !(same_issuer(&stored.issuer, &login.issuer) && stored.client_id == login.client_id)
         });
         self.logins.push(login);
+    }
+}
+
+/// An exclusive lock on the token store, held until it is dropped, so that
+/// processes don't overwrite each other's changes. It locks a separate file,
+/// `<store>.lock`, as the store itself is replaced on each write.
+struct StoreLock {
+    _file: std::fs::File,
+}
+
+impl StoreLock {
+    fn acquire(store: &Path) -> anyhow::Result<Self> {
+        let mut name = store.as_os_str().to_owned();
+        name.push(".lock");
+        let path = PathBuf::from(name);
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            create_private_dir(dir)?;
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).truncate(false).write(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let file = options
+            .open(&path)
+            .map_err(|error| anyhow::anyhow!("Cannot open {}: {error}", path.display()))?;
+        file.lock()
+            .map_err(|error| anyhow::anyhow!("Cannot lock {}: {error}", path.display()))?;
+        Ok(Self { _file: file })
     }
 }
 
@@ -433,10 +474,27 @@ async fn token_request(
 }
 
 /// Whether `token` can be sent as `Authorization: Bearer <token>`.
-fn valid_bearer(token: &str) -> bool {
+pub(crate) fn valid_bearer(token: &str) -> bool {
     !token.is_empty()
         && !token.bytes().any(|byte| byte.is_ascii_whitespace())
         && reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).is_ok()
+}
+
+/// How the device flow polls the token endpoint.
+#[derive(Clone, Copy)]
+struct Polling {
+    /// The shortest interval, whatever the provider asks for.
+    min_interval: Duration,
+    /// How much longer to wait after `slow_down`.
+    slow_down_step: Duration,
+}
+
+impl Polling {
+    /// The polling of RFC 8628, with an interval of at least [`MIN_INTERVAL`].
+    const STANDARD: Self = Self {
+        min_interval: MIN_INTERVAL,
+        slow_down_step: SLOW_DOWN_STEP,
+    };
 }
 
 /// Runs the device flow: asks for a device code, writes the instructions to
@@ -445,7 +503,7 @@ async fn device_flow(
     client: &reqwest::Client,
     settings: &OidcSettings,
     prompt: &mut dyn std::io::Write,
-    slow_down_step: Duration,
+    polling: Polling,
 ) -> anyhow::Result<StoredLogin> {
     let endpoints = discover(client, settings).await?;
     let response = client
@@ -477,8 +535,14 @@ async fn device_flow(
     prompt.write_all(message.as_bytes())?;
     prompt.flush()?;
 
-    let deadline = Instant::now() + Duration::from_secs(device.expires_in);
-    let mut interval = Duration::from_secs(device.interval.unwrap_or(DEFAULT_INTERVAL));
+    let deadline = Instant::now() + Duration::from_secs(device.expires_in.min(MAX_LIFETIME));
+    let mut interval = Duration::from_secs(
+        device
+            .interval
+            .unwrap_or(DEFAULT_INTERVAL)
+            .min(MAX_LIFETIME),
+    )
+    .max(polling.min_interval);
     loop {
         tokio::time::sleep(interval).await;
         if Instant::now() >= deadline {
@@ -509,7 +573,7 @@ async fn device_flow(
             }
             TokenOutcome::Error(error) => match error.as_str() {
                 "authorization_pending" => {}
-                "slow_down" => interval += slow_down_step,
+                "slow_down" => interval += polling.slow_down_step,
                 "access_denied" => anyhow::bail!("The login was denied"),
                 "expired_token" => anyhow::bail!("The login code has expired; run login again"),
                 other => anyhow::bail!(
@@ -541,39 +605,41 @@ pub(crate) async fn run_login(
     context: &CliContext,
     prompt: &mut dyn std::io::Write,
 ) -> anyhow::Result<CommandOutput> {
-    login_with_step(matches, context, prompt, SLOW_DOWN_STEP).await
-}
-
-async fn login_with_step(
-    matches: &ArgMatches,
-    context: &CliContext,
-    prompt: &mut dyn std::io::Write,
-    slow_down_step: Duration,
-) -> anyhow::Result<CommandOutput> {
     let section = section_name(matches.get_one::<String>("section").expect("required"));
     let settings = section_settings(context, &section)?;
     let path = context.token_store_path()?;
     // Fail on an unreadable store before the user approves the login.
-    let mut store = TokenStore::read(&path)?;
-    let login = device_flow(&http_client()?, &settings, prompt, slow_down_step).await?;
+    TokenStore::read(&path)?;
+    let login = device_flow(&http_client()?, &settings, prompt, Polling::STANDARD).await?;
     let refreshable = login.refresh_token.is_some();
+    // Read the store again: another process may have changed it meanwhile.
+    let _lock = StoreLock::acquire(&path)?;
+    let mut store = TokenStore::read(&path)?;
     store.put(login);
     store.write(&path)?;
     let mut message = format!(
-        "Logged in to {} and stored the tokens in {}\n",
+        "Logged in to {} and stored the tokens in {}
+",
         crate::printable(&settings.issuer),
         crate::printable(&path.display().to_string())
     );
     if !refreshable {
         message.push_str(
-            "The provider issued no refresh token, so you need to log in again when the token expires\n",
+            "The provider issued no refresh token, so you need to log in again when the token expires
+",
         );
     }
-    Ok(CommandOutput {
+    Ok(stderr_output(message))
+}
+
+/// Successful output with `message` on standard error, as `login` and
+/// `logout` print nothing to standard output.
+fn stderr_output(message: String) -> CommandOutput {
+    CommandOutput {
         stdout: String::new(),
         stderr: message,
         exit_code: std::process::ExitCode::SUCCESS,
-    })
+    }
 }
 
 /// Runs `logout`.
@@ -584,6 +650,7 @@ pub(crate) fn run_logout(
     let section = section_name(matches.get_one::<String>("section").expect("required"));
     let settings = section_settings(context, &section)?;
     let path = context.token_store_path()?;
+    let _lock = StoreLock::acquire(&path)?;
     let mut store = TokenStore::read(&path)?;
     let before = store.logins.len();
     store.logins.retain(|login| !settings.matches(login));
@@ -596,11 +663,7 @@ pub(crate) fn run_logout(
             crate::printable(&settings.issuer)
         )
     };
-    Ok(CommandOutput {
-        stdout: String::new(),
-        stderr: message,
-        exit_code: std::process::ExitCode::SUCCESS,
-    })
+    Ok(stderr_output(message))
 }
 
 /// A token provider for a section with `oidc` settings: it gives the stored
@@ -669,6 +732,28 @@ impl StoredLoginProvider {
                 self.login_command
             )
         };
+        // Other processes refresh the same login: hold the store's lock, and
+        // start from the stored tokens, as the provider may have rotated the
+        // refresh token that this process read.
+        let _lock = StoreLock::acquire(&self.path)?;
+        let mut store = TokenStore::read(&self.path)?;
+        let stored = store
+            .logins
+            .iter()
+            .find(|stored| self.settings.matches(stored))
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Logged out of {}; run '{}' to log in again",
+                    crate::printable(&self.settings.issuer),
+                    self.login_command
+                )
+            })?;
+        if stored.access_token != login.access_token && stored.is_fresh(now()) {
+            *login = stored;
+            return Ok(());
+        }
+        *login = stored;
         let refresh_token = login.refresh_token.clone().ok_or_else(relogin)?;
         let endpoint = Url::parse(&login.token_endpoint)?;
         check_secure(&endpoint, "token_endpoint")?;
@@ -682,14 +767,23 @@ impl StoredLoginProvider {
             ],
         )
         .await?;
-        let TokenOutcome::Tokens(tokens) = outcome else {
-            return Err(relogin());
+        let tokens = match outcome {
+            TokenOutcome::Tokens(tokens) => tokens,
+            // The refresh token is no longer valid (RFC 6749, 5.2).
+            TokenOutcome::Error(error) if error == "invalid_grant" => return Err(relogin()),
+            TokenOutcome::Error(error) => anyhow::bail!(
+                "The provider refused to refresh the token: {}",
+                crate::printable(&error)
+            ),
         };
         login.update(tokens, now());
-        // Another process may have changed other logins in the meantime.
-        let mut store = TokenStore::read(&self.path)?;
         store.put(login.clone());
-        store.write(&self.path)
+        // The provider may have replaced the refresh token already, so the
+        // new tokens are used even if they can't be stored.
+        if let Err(error) = store.write(&self.path) {
+            log::warn!("{error}; the next command may need a new login");
+        }
+        Ok(())
     }
 }
 
@@ -835,14 +929,20 @@ mod tests {
             .expect(1)
             .create();
         let mut prompt = Vec::new();
+        let started = Instant::now();
         let login = device_flow(
             &http_client().unwrap(),
             &settings(&issuer),
             &mut prompt,
-            Duration::ZERO,
+            Polling {
+                min_interval: Duration::ZERO,
+                slow_down_step: Duration::from_millis(200),
+            },
         )
         .await
         .unwrap();
+        // `slow_down` made the last wait longer.
+        assert!(started.elapsed() >= Duration::from_millis(200));
         let prompt = String::from_utf8(prompt).unwrap();
         assert!(prompt.contains("https://example.org/device"), "{prompt}");
         assert!(prompt.contains("USER-CODE"), "{prompt}");
@@ -867,7 +967,7 @@ mod tests {
             &http_client().unwrap(),
             &settings(&issuer),
             &mut Vec::new(),
-            Duration::ZERO,
+            FAST,
         )
         .await
         .err()
@@ -887,7 +987,7 @@ mod tests {
             &http_client().unwrap(),
             &settings(&issuer),
             &mut Vec::new(),
-            Duration::ZERO,
+            FAST,
         )
         .await
         .err()
@@ -981,5 +1081,133 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let error = TokenStore::read(&path).err().unwrap().to_string();
         assert!(error.contains("chmod 600"), "{error}");
+    }
+
+    const FAST: Polling = Polling {
+        min_interval: Duration::ZERO,
+        slow_down_step: Duration::ZERO,
+    };
+
+    #[test]
+    fn standard_polling_waits_at_least_a_second() {
+        assert_eq!(Polling::STANDARD.min_interval, Duration::from_secs(1));
+        assert_eq!(Polling::STANDARD.slow_down_step, Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn device_flow_stops_at_the_codes_lifetime_without_polling() {
+        let prefix = "/oidc-lifetime";
+        let issuer = format!("{}{prefix}", mockito::server_url());
+        let _discovery = discovery(prefix);
+        let _device = mock("POST", format!("{prefix}/device").as_str())
+            .with_body(
+                json!({
+                    "device_code": "d",
+                    "user_code": "U",
+                    "verification_uri": "https://example.org/device",
+                    "expires_in": 0,
+                    "interval": 0,
+                })
+                .to_string(),
+            )
+            .create();
+        let token = mock("POST", format!("{prefix}/token").as_str())
+            .expect(0)
+            .create();
+        let error = device_flow(
+            &http_client().unwrap(),
+            &settings(&issuer),
+            &mut Vec::new(),
+            FAST,
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(error.contains("expired"), "{error}");
+        token.assert();
+    }
+
+    #[tokio::test]
+    async fn huge_lifetimes_from_the_provider_are_capped() {
+        let prefix = "/oidc-huge";
+        let issuer = format!("{}{prefix}", mockito::server_url());
+        let _discovery = discovery(prefix);
+        let _device = mock("POST", format!("{prefix}/device").as_str())
+            .with_body(
+                json!({
+                    "device_code": "d",
+                    "user_code": "U",
+                    "verification_uri": "https://example.org/device",
+                    "expires_in": u64::MAX,
+                    "interval": 0,
+                })
+                .to_string(),
+            )
+            .create();
+        let _token = mock("POST", format!("{prefix}/token").as_str())
+            .with_body(
+                json!({"access_token": "a", "token_type": "Bearer", "expires_in": u64::MAX})
+                    .to_string(),
+            )
+            .create();
+        let login = device_flow(
+            &http_client().unwrap(),
+            &settings(&issuer),
+            &mut Vec::new(),
+            FAST,
+        )
+        .await
+        .unwrap();
+        assert!(login.expires_at.unwrap() <= now() + MAX_LIFETIME);
+        assert!(login.access_token(now()).reuse_deadline().is_some());
+        assert!(login.refresh_token.is_none());
+    }
+
+    #[tokio::test]
+    async fn tokens_of_another_type_are_rejected() {
+        let prefix = "/oidc-dpop";
+        let issuer = format!("{}{prefix}", mockito::server_url());
+        let _discovery = discovery(prefix);
+        let _device = device(prefix);
+        let _token = mock("POST", format!("{prefix}/token").as_str())
+            .with_body(json!({"access_token": "a", "token_type": "DPoP"}).to_string())
+            .create();
+        let error = device_flow(
+            &http_client().unwrap(),
+            &settings(&issuer),
+            &mut Vec::new(),
+            FAST,
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(error.contains("other than Bearer"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn discovery_rejects_plain_http_endpoints() {
+        let prefix = "/oidc-plain-http";
+        let issuer = format!("{}{prefix}", mockito::server_url());
+        let _discovery = mock(
+            "GET",
+            format!("{prefix}/.well-known/openid-configuration").as_str(),
+        )
+        .with_body(
+            json!({
+                "issuer": issuer,
+                "device_authorization_endpoint": "http://idp.example.org/device",
+                "token_endpoint": format!("{issuer}/token"),
+            })
+            .to_string(),
+        )
+        .create();
+        let error = discover(&http_client().unwrap(), &settings(&issuer))
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("must use HTTPS"), "{error}");
     }
 }

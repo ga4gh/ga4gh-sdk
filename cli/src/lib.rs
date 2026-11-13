@@ -437,12 +437,7 @@ impl CliContext {
             if self.token_sections.iter().any(|listed| listed == section) && !has_credential {
                 match std::env::var(name) {
                     Ok(token) if !token.is_empty() => {
-                        let valid = !token.bytes().any(|byte| byte.is_ascii_whitespace())
-                            && ga4gh_sdk::reqwest::header::HeaderValue::from_str(&format!(
-                                "Bearer {token}"
-                            ))
-                            .is_ok();
-                        if !valid {
+                        if !login::valid_bearer(&token) {
                             anyhow::bail!("Invalid bearer token in environment variable '{name}'");
                         }
                         config.oauth_access_token = Some(token);
