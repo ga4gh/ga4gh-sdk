@@ -7,6 +7,7 @@ SHELL := bash
 
 CARGO ?= cargo
 PRE_COMMIT ?= pre-commit
+MKDOCS ?= mkdocs
 
 # Generated OpenAPI models are left out of the coverage report (see AGENTS.md)
 COVERAGE_IGNORE ?= lib/src/clients/[^/]+/(wire/[^/]+/)?models/
@@ -22,8 +23,8 @@ DOWNSTREAM_LISTS = $(DOWNSTREAM_DIR)/target/lockfile-check
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test fmt fmt-check clippy lint check coverage docs models \
-	pre-commit clean-coverage downstream
+.PHONY: help build test fmt fmt-check clippy lint check coverage docs site \
+	models pre-commit clean-coverage downstream
 
 help: ## Show this list of targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -83,6 +84,13 @@ downstream: ## Check, lint and test the downstream example crate
 
 docs: ## Build the API documentation (target/doc)
 	$(CARGO) doc --workspace --no-deps --locked
+
+# As Read the Docs (`.readthedocs.yaml`) and the CI `docs` job build it
+site: ## Build the documentation site in site/, strictly (needs MkDocs)
+	$(CARGO) doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli
+	$(MKDOCS) build --strict
+	@# The hook must keep the theme's files (styles and scripts)
+	@ls site/assets/javascripts/bundle.*.min.js > /dev/null
 
 models: ## Regenerate the OpenAPI models (see docs/autogenerate_OAI_models.md)
 	bash ./utils/build_models_wrapper.sh

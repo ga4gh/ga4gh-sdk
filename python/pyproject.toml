@@ -39,6 +39,23 @@ tests = [
     "pytest",
 ]
 
+# Not needed by the bindings: the tools that build the repository's
+# documentation site (`mkdocs.yml`) on Read the Docs (`.readthedocs.yaml`)
+# and in CI (`docs` job). Install them with
+# `python -m pip install --group python/pyproject.toml:docs` (pip 25.1 or
+# later). Exact versions of the packages that `mkdocs.yml` uses, as for the
+# other tools of CI, so that their upgrades, which may add warnings that
+# fail the strict build, are deliberate (their own dependencies are not
+# pinned). Dependabot doesn't bump them; update them by hand. pytest runs
+# the tests of the build's hooks (`docs/test_hooks.py`)
+[dependency-groups]
+docs = [
+    "mkdocs==1.6.1",
+    "mkdocs-material==9.8.1",
+    "pymdown-extensions==12.3",
+    "pytest==8.3.5",
+]
+
 [tool.maturin]
 bindings = "pyo3"
 module-name = "ga4gh_sdk"
