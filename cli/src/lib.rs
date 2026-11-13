@@ -26,11 +26,14 @@
 //! variable or token variable describes them in a [`CliContext`] and uses
 //! its methods in place of [`command`], [`dispatch`] and [`dispatch_to`].
 //! The command tree has the global option `--profile`, which selects a
-//! profile of the configuration file. [`CommandOutput`] and
+//! profile of the configuration file, and the commands `login` and `logout`
+//! for sections that get their tokens from an OpenID Connect provider (see
+//! [`CliContext::token_store_path`]). [`CommandOutput`] and
 //! [`printable`] give its own commands the output and exit codes of the
 //! built-in ones.
 
 pub mod drs;
+mod login;
 pub mod registry;
 mod render;
 pub mod tes;
@@ -45,6 +48,7 @@ use ga4gh_sdk::clients::ServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 /// The id of the global option `--profile`, which selects a profile. It
 /// differs from the long name, so that a downstream subcommand's own argument
@@ -170,6 +174,7 @@ pub struct CliContext {
     profile_env: Option<String>,
     token_env: Option<String>,
     token_sections: Vec<String>,
+    token_store_path: Option<PathBuf>,
 }
 
 impl Default for CliContext {
@@ -200,6 +205,7 @@ impl CliContext {
             profile_env: None,
             token_env: None,
             token_sections: Vec::new(),
+            token_store_path: None,
         }
     }
 
@@ -212,6 +218,13 @@ impl CliContext {
     /// Reads the configuration from `path` instead of `~/.<name>/config.json`.
     pub fn with_config_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.config_path = Some(path.into());
+        self
+    }
+
+    /// Stores the tokens of `login` in `path` instead of `tokens.json` next to
+    /// the configuration file.
+    pub fn with_token_store_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.token_store_path = Some(path.into());
         self
     }
 
@@ -352,31 +365,76 @@ impl CliContext {
         Ok(home.join(format!(".{}", self.name)).join("config.json"))
     }
 
+    /// The path of the token store, where `login` stores the tokens of
+    /// sections with `oidc` settings: the path set with
+    /// [`with_token_store_path`](Self::with_token_store_path), else
+    /// `tokens.json` in the directory of the configuration file.
+    ///
+    /// The file is written with mode `0600` on Unix, in a directory created
+    /// with mode `0700`, and reading it fails if other users may access it.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`config_path`](Self::config_path) does.
+    pub fn token_store_path(&self) -> anyhow::Result<PathBuf> {
+        if let Some(path) = &self.token_store_path {
+            return Ok(path.clone());
+        }
+        let config_path = self.config_path()?;
+        let dir = config_path.parent().unwrap_or(std::path::Path::new(""));
+        Ok(dir.join("tokens.json"))
+    }
+
     /// Reads the section for `service_type` from the selected profile of the
     /// configuration file, as [`Configuration::from_path_with_profile`] does,
-    /// and applies the token variable.
+    /// and applies the token variable and the stored login.
     ///
     /// The section name is `service_type.as_str()`, such as `TES`, or the name
     /// of a `ServiceType::Custom` section.
+    ///
+    /// A section with `oidc` settings gets a token provider with the tokens
+    /// that `login` stored for them (see
+    /// [`token_store_path`](Self::token_store_path)). If the token variable
+    /// applies to the section and is set, its token is used instead.
     ///
     /// # Errors
     ///
     /// Fails if the file, profile or section is missing or malformed, if the
     /// profile name is empty, the profile variable is not valid Unicode, or
     /// if the token variable is missing, empty, or invalid for a listed
-    /// section without a credential.
+    /// section without a credential. A missing variable is no error for a
+    /// section with `oidc` settings. Such a section fails if it also sets a
+    /// credential, its settings are malformed, or there is no stored login.
     pub fn load_config(&self, service_type: ServiceType) -> anyhow::Result<Configuration> {
+        self.load_config_with_login(service_type)
+            .map(|(config, _)| config)
+    }
+
+    /// Like [`load_config`](Self::load_config), also returning the token
+    /// provider of a stored login, if the section uses one.
+    fn load_config_with_login(
+        &self,
+        service_type: ServiceType,
+    ) -> anyhow::Result<(Configuration, Option<Arc<login::StoredLoginProvider>>)> {
         let path = self.config_path()?;
         let profile = self.selected_profile()?;
         let section = service_type.as_str();
         let mut config = Configuration::from_path_with_profile(&path, profile.as_deref(), section)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let oidc = login::OidcSettings::from_config(&config)
+            .map_err(|error| anyhow::anyhow!("Section '{}': {error}", printable(section)))?;
+        let has_credential = config.basic_auth.is_some()
+            || config.oauth_access_token.is_some()
+            || config.bearer_access_token.is_some();
+        if oidc.is_some() && has_credential {
+            anyhow::bail!(
+                "Section '{}' sets both '{}' and a credential; remove one of them",
+                printable(section),
+                login::OIDC_KEY
+            );
+        }
         if let Some(name) = &self.token_env {
-            if self.token_sections.iter().any(|listed| listed == section)
-                && config.basic_auth.is_none()
-                && config.oauth_access_token.is_none()
-                && config.bearer_access_token.is_none()
-            {
+            if self.token_sections.iter().any(|listed| listed == section) && !has_credential {
                 match std::env::var(name) {
                     Ok(token) if !token.is_empty() => {
                         let valid = !token.bytes().any(|byte| byte.is_ascii_whitespace())
@@ -388,8 +446,10 @@ impl CliContext {
                             anyhow::bail!("Invalid bearer token in environment variable '{name}'");
                         }
                         config.oauth_access_token = Some(token);
+                        return Ok((config, None));
                     }
                     Ok(_) => anyhow::bail!("Environment variable '{name}' is empty"),
+                    Err(std::env::VarError::NotPresent) if oidc.is_some() => {}
                     Err(std::env::VarError::NotPresent) => {
                         anyhow::bail!("Environment variable '{name}' is not set")
                     }
@@ -398,6 +458,22 @@ impl CliContext {
                     }
                 }
             }
+        }
+        let Some(settings) = oidc else {
+            return Ok((config, None));
+        };
+        let provider = login::StoredLoginProvider::load(self, section, settings)?;
+        config = config.with_shared_token_provider(provider.clone());
+        Ok((config, Some(provider)))
+    }
+
+    /// Like [`load_config`](Self::load_config), and refreshes an expired
+    /// stored login first, so that a failed refresh is reported with its
+    /// reason. The token provider itself reports only that it failed.
+    async fn load_config_fresh(&self, service_type: ServiceType) -> anyhow::Result<Configuration> {
+        let (config, provider) = self.load_config_with_login(service_type)?;
+        if let Some(provider) = provider {
+            provider.ensure_fresh().await?;
         }
         Ok(config)
     }
@@ -431,6 +507,8 @@ impl CliContext {
             .subcommand(wes::command())
             .subcommand(workflow::command())
             .subcommand(registry::command())
+            .subcommand(login::login_command())
+            .subcommand(login::logout_command())
     }
 
     /// This context with the profile of `--profile`, if `matches` has one;
@@ -453,15 +531,25 @@ impl CliContext {
     /// [`crate::dispatch`].
     pub async fn dispatch(&self, matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
         let context = self.with_profile_from(matches);
-        if let Some(("workflow", sub)) = matches.subcommand() {
-            return workflow::run_with_context(sub, None, &context)
-                .await
-                .map(Some);
+        match matches.subcommand() {
+            Some(("workflow", sub)) => {
+                return workflow::run_with_context(sub, None, &context)
+                    .await
+                    .map(Some);
+            }
+            // The instructions for the user can't wait for the output.
+            Some(("login", sub)) => {
+                return login::run_login(sub, &context, &mut std::io::stderr())
+                    .await
+                    .map(Some);
+            }
+            Some(("logout", sub)) => return login::run_logout(sub, &context).map(Some),
+            _ => {}
         }
         let Some(service_type) = built_in_service(matches) else {
             return Ok(None);
         };
-        let config = context.load_config(service_type)?;
+        let config = context.load_config_fresh(service_type).await?;
         dispatch_with_config(matches, &config).await
     }
 
@@ -475,14 +563,19 @@ impl CliContext {
         stderr: &mut dyn std::io::Write,
     ) -> anyhow::Result<Option<ExitCode>> {
         let context = self.with_profile_from(matches);
-        if let Some(("workflow", sub)) = matches.subcommand() {
-            let output = workflow::run_with_context(sub, None, &context).await?;
+        let output = match matches.subcommand() {
+            Some(("workflow", sub)) => Some(workflow::run_with_context(sub, None, &context).await?),
+            Some(("login", sub)) => Some(login::run_login(sub, &context, stderr).await?),
+            Some(("logout", sub)) => Some(login::run_logout(sub, &context)?),
+            _ => None,
+        };
+        if let Some(output) = output {
             return Ok(Some(output.write_to(stdout, stderr)?));
         }
         let Some(service_type) = built_in_service(matches) else {
             return Ok(None);
         };
-        let config = context.load_config(service_type)?;
+        let config = context.load_config_fresh(service_type).await?;
         dispatch_with_config_to(matches, &config, stdout, stderr).await
     }
 }
@@ -518,7 +611,8 @@ pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutp
 
 /// Run a built-in command with a caller-supplied configuration for its service.
 ///
-/// Returns `None` for commands not owned by this crate. The caller can inspect
+/// Returns `None` for commands not owned by this crate, and for `login` and
+/// `logout`, which need a [`CliContext`]. The caller can inspect
 /// or reformat both output streams without changing process-global state.
 pub async fn dispatch_with_config(
     matches: &ArgMatches,
