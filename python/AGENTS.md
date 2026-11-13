@@ -19,6 +19,31 @@ API root. Preserve useful Python exception types and the full response data
 where the public API promises it. Synchronous network calls must continue to
 release the GIL and use the shared runtime in `src/utils/runtime.rs`.
 
+## Lay out a service binding
+
+A service binding with more than one class lives in a folder under
+`src/clients/`, as `drs/` and `wes/` do:
+
+- `mod.rs` has the module docs, which list the files, and `register()`, which
+  adds the classes to the Python module. It re-exports every class and every
+  other public item with `pub use`.
+- One file per topic holds the classes, such as `client.rs` for the client and
+  one file for each group of result classes. These submodules are private
+  (`mod`, not `pub mod`), so the re-exports in `mod.rs` stay the only Rust paths
+  for extension crates, such as `clients::wes::PyWES`.
+- `helpers.rs` holds the functions that only this binding's files share, as
+  `pub(super)`; it defines no Python classes.
+- Helpers that another binding needs in the same form go to `src/utils/`
+  instead, such as `utils::json` (`field()`, `invalid_response()`,
+  `parse_body()`) and `utils::validate` (`require_id()`). Pass the API name
+  where a message names it, as in `Invalid WES response: …`.
+
+Moving code between these files must not change the Python API. Keep the doc
+comments word for word: PyO3 turns them into the docstrings that `help()`
+shows. Keep the order of `register()`, the `name` and `module` of each
+`#[pyclass]`, the stub and the error messages. Bindings that are still single
+files, such as `tes.rs`, move to this layout one API at a time.
+
 ## Verify user behavior
 
 - Build the bindings in a virtual environment as described in `README.md`.
@@ -30,6 +55,9 @@ release the GIL and use the shared runtime in `src/utils/runtime.rs`.
   changes.
 - If the Rust extension API changes, compile a small downstream PyO3 crate with
   `default-features = false`; a workspace build alone does not prove that use.
+- When code moves between binding files, compare the `__doc__`, member docs,
+  text signatures and `__module__` of the affected classes in wheels built from
+  `main` and from the branch; the two must be identical.
 - Follow the root guide's Rust checks for changes to Rust code or the workspace
   dependency graph.
 
