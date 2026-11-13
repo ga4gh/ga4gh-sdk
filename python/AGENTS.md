@@ -40,9 +40,10 @@ A service binding with more than one class lives in a folder under
 
 Moving code between these files must not change the Python API. Keep the doc
 comments word for word: PyO3 turns them into the docstrings that `help()`
-shows. Keep the order of `register()`, the `name` and `module` of each
-`#[pyclass]`, the stub and the error messages. Bindings that are still single
-files, such as `tes.rs`, move to this layout one API at a time.
+shows. Keep the order of `register()`, which is the order of the classes in the
+Python module, the `name` and `module` of each `#[pyclass]`, the type stub
+`ga4gh_sdk.pyi` and the error messages. Bindings that are still single files,
+such as `tes.rs`, move to this layout one API at a time.
 
 ## Verify user behavior
 
@@ -57,7 +58,10 @@ files, such as `tes.rs`, move to this layout one API at a time.
   `default-features = false`; a workspace build alone does not prove that use.
 - When code moves between binding files, compare the `__doc__`, member docs,
   text signatures and `__module__` of the affected classes in wheels built from
-  `main` and from the branch; the two must be identical.
+  `main` and from the branch; the two must be identical. For example, unpack
+  each wheel, print `cls.__module__`, `cls.__doc__`, `cls.__text_signature__`
+  and, for each entry of `vars(cls)`, its `__doc__` and `__text_signature__`,
+  and `diff` the two outputs.
 - Follow the root guide's Rust checks for changes to Rust code or the workspace
   dependency graph.
 
