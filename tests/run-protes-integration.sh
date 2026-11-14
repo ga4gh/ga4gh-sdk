@@ -4,8 +4,8 @@
 # Starts the services of tests/protes/compose.yaml, gets an access token of
 # the fake identity provider, runs `lib/tests/protes_tes.rs` and
 # `cli/tests/protes_cli.rs` and removes the services again. Needs Docker
-# with Compose, curl and the `funnel` executable on PATH (or in
-# FUNNEL_BIN), as for run-integration-tests.sh.
+# with Compose, curl, and a Linux `funnel` executable matching the container
+# architecture (on PATH or in FUNNEL_BIN).
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
