@@ -34,6 +34,65 @@ polling loop has a 180-second deadline; an in-flight CLI request can extend
 that wait by its configured timeout. The other `tes` tests of the CLI run
 against mock servers in the default `cargo test`.
 
+## proTES/TES
+
+[proTES](https://github.com/elixir-cloud-aai/proTES) is a TES gateway: it
+serves the TES API itself, requires access tokens for tasks, and relays tasks
+to other TES instances. This suite runs the TES client against proTES 0.6.0
+relaying to Funnel, so the client meets a second TES implementation, with
+authentication, while tasks still run for real.
+
+Prerequisites: Docker with Compose, `curl`, network access (to pull images
+and the identity provider's file), and a Linux Funnel 0.11.14 executable
+matching the Funnel container's architecture. This suite runs Funnel inside
+a Linux container, so the host-native macOS executable used by the Funnel/TES
+suite above cannot run here.
+
+On Linux, with a compatible `funnel` on `PATH`, run:
+
+```sh
+tests/run-protes-integration.sh
+```
+
+On macOS, download the `funnel-linux-arm64` or `funnel-linux-amd64` archive
+from the Funnel release linked above to match the container, extract it, and
+point `FUNNEL_BIN` to that executable:
+
+```sh
+FUNNEL_BIN=/absolute/path/to/linux/funnel tests/run-protes-integration.sh
+```
+
+The script starts the services of [`protes/compose.yaml`](protes/compose.yaml):
+proTES and its worker, MongoDB, RabbitMQ, Funnel (the host's executable, in a
+container that uses the host's Docker daemon), and the fake identity provider
+of the proTES smoke test, whose file it downloads from a pinned proTES commit
+and checks against a checksum. It gets an access token of a test user from
+the identity provider and runs [`protes_tes.rs`](../lib/tests/protes_tes.rs):
+
+- a task without inputs or outputs runs to completion through the gateway
+  (state, logs, the backend tag of proTES and the list filter), within 180
+  seconds;
+- a long task is canceled;
+- requests without a token, or with an invalid one, get HTTP 401.
+
+The test passes the token with `Configuration::with_oauth_access_token`. On
+exit, the script prints the service logs if a step failed and removes the
+services and its temporary files.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `FUNNEL_BIN` | `funnel` on `PATH` | Linux Funnel executable for the container |
+| `DOCKER_SOCKET` | from the Docker context | Docker socket for Funnel |
+| `PROTES_PORT` | `8090` | Port of proTES on `127.0.0.1`; must be free |
+| `PROTES_STARTUP_TIMEOUT_SECONDS` | `300` | Time limit for the services to become healthy |
+
+All images are pinned by digest. To update proTES, bump its image digest in
+the Compose file together with `protes_commit` and `fake_tes_sha256` in the
+script; the Docker CLI image of Funnel is `DOCKER_CLI_IMAGE` in the script.
+The [CI workflow](../.github/workflows/ci.yml) installs Funnel as for the
+Funnel suite and runs this suite (`Integration (protes)`) when TES, shared
+library, dependency or its own files change.
+
 ## Starter Kit WES
 
 This suite needs a running Docker daemon with a usable Unix socket, plus
@@ -55,7 +114,7 @@ below, `wes cancel`, `wes run --attachment` and the paging of `wes list` are
 checked only against a mock server, in the default CLI tests.
 The [CI workflow](../.github/workflows/ci.yml) runs this suite on an Ubuntu
 runner when WES, CLI, shared library, dependency, or integration files change.
-It runs both integration suites on manual dispatch. The `CI passed` job checks
+It runs all integration suites on manual dispatch. The `CI passed` job checks
 their results alongside lint, unit tests, and builds.
 
 Starter Kit WES 0.2.0 only accepts a GitHub-shaped Nextflow project URL; its
