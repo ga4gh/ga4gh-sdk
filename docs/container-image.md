@@ -23,8 +23,8 @@ executors.
 
 The [Release workflow](../.github/workflows/release.yml) publishes the image
 for each version tag (see the [release guide](releasing.md#cli-image)).
-Until the first release that includes it, build the image yourself (see
-[Building the image](#building-the-image)).
+No release includes the image yet; until one does, build the image yourself
+(see [Building the image](#building-the-image)).
 
 Use a version and pin its digest, so that every run uses exactly the same
 image:

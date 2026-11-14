@@ -93,8 +93,8 @@ There is no `latest` tag. An upstream TestPyPI rehearsal (`PYPI_INDEX` set
 to `testpypi` in `ga4gh/ga4gh-sdk`) pushes the platform images by digest
 but tags no image, and **Publish image** is skipped. Unlike files on PyPI,
 a tag can be moved: a re-run of **Publish image** points the version tag at
-the images of that run, and earlier digests stay available. Once the
-package is on PyPI, use **Re-run failed jobs**, not **Re-run all jobs**:
+the images of that run, and earlier digests stay available. For a release
+to PyPI, once the package is there, use **Re-run failed jobs**, not **Re-run all jobs**:
 PyPI refuses files it already has, so a full re-run fails at **Publish
 package** and skips **Publish image**.
 
@@ -102,9 +102,9 @@ On the first push, GitHub creates the `ga4gh-cli` package, connected to this
 repository. Check after the first release that the package is public (the
 package's settings on GitHub, **Change visibility**) and that it inherits
 access from the repository; organization settings can restrict who creates
-public packages. Then replace the sentence starting "Until the first
-release that includes it" in `docs/container-image.md` with the first
-version that includes the image.
+public packages. Then replace the sentence starting "No release
+includes the image yet" in `docs/container-image.md` with the first version
+that includes the image.
 
 ## One-time setup
 
@@ -171,8 +171,9 @@ confirmed.
 ## Dry run in a fork
 
 Try changes to the workflows in a fork before tagging `ga4gh/ga4gh-sdk`. The
-run also pushes the CLI image to `ghcr.io/<fork owner>/ga4gh-cli`, a package
-of the fork's owner to delete afterwards (step 7). Use
+run also pushes the CLI image to `ghcr.io/<fork owner>/ga4gh-cli` and tags
+it (only an upstream TestPyPI rehearsal skips the tag), a package of the
+fork's owner to delete afterwards (step 7). Use
 a distinct, available test-only distribution name that explains its purpose,
 such as `ga4gh-sdk-release-rehearsal`. The TestPyPI publisher and the name in
 `python/pyproject.toml` must match exactly:
