@@ -185,3 +185,35 @@ Gen3 bulk access behavior is unverified.
   public object and one unknown ID, recorded on 2026-11-10 and reformatted
   with sorted keys. It contains public metadata only and is used by
   [`drs_bulk.rs`](../lib/tests/drs_bulk.rs).
+
+## Third-horizon optional experiments
+
+These downstream prototypes keep normative TES/WES models unchanged. Their
+runtime dependencies and evidence boundaries are documented alongside each
+experiment. None needs cloud credentials for its local checks.
+
+| Suite | Command from the repository root | Prerequisites and evidence |
+| --- | --- | --- |
+| Durable adaptive campaigns | `python3 tests/run-h3-campaign.py` | Fast contract checks; optional Temporal Python package enables adapter checks |
+| Actual campaign interruption/recovery | `python3 tests/run-h3-campaign.py --integration --evidence /tmp/h3-campaign-new-run` | Python binding from this checkout, pinned Temporal dependency and native Temporal development service; two real loopback CPU targets, saved histories and independent replay |
+| Portable checkpoints and admission | `python3 -m unittest discover -s examples/portable-execution -p test_provider.py -v` | Python standard library, loopback sockets; concurrent writer, expiry, cancellation and managed-staging regressions |
+| Actual checkpoint continuation | `python3 examples/portable-execution/demo.py --output /tmp/h3-provider-demo.json` | Real bounded host CPU subprocesses and cooperating durable coordinator; no container/cloud claim |
+| Exact deterministic reuse | `cargo test -p ga4gh-lib --features workflow-contracts --test result_reuse --locked` | Offline contract/trust/access/integrity checks |
+| Actual container reuse | `python3 examples/result-reuse/run.py` | Docker with the pinned image cached and checkout shared into its VM; explicit `GA4GH_REUSE_DOCKER_CONTEXT` where needed, one A execution and zero B submissions |
+| Shared scenario API | `python3 tests/run-h3-scenarios.py` | Rust, Python, Node 22+ and npm; HTTP isolation/replay tests plus actual SDK and maintained RestWesProvider histories |
+| Deployed scenario API | `python3 tests/run-h3-scenarios.py --url http://127.0.0.1:8815` | An already running source or imported OCI deployment; exercises the supplied URL rather than starting another service |
+| Direct SDK real TES profile | `cargo test -p ga4gh-lib --test provider_profiles -- --ignored` | Explicit `TES_PROFILE_API_ROOT` for an operator-owned disposable TES; preferably invoke through the profile wrapper below |
+| Provider profile classifications | `python3 -m unittest discover -s tests/interop -p 'test_*.py'` | Python; verifies distinct passed/not-run/unsupported/failure classifications |
+| Native private diagnostics | `python3 tests/interop/native_diagnostics.py` | Rust or `SEQERA_PROFILE_SDK_BIN`; actual SDK on loopback, private error bounds/0600/no-public-leak and one-POST ledger guard |
+| Seqera multipart fixture | `python3 tests/interop/run.py --profile seqera-native-wes --offline-seqera --out tests/interop/reports/seqera-offline` | Rust and Python, real MIME parsing on loopback; simulated protocol only |
+
+Read [campaign instructions](../examples/adaptive-campaign/README.md),
+[provider contracts](../docs/horizon3-provider-contracts.md),
+[result reuse](../docs/result-reuse.md), [scenario API](../docs/scenario-api.md)
+and [provider profiles](../docs/provider-profiles.md) before opt-in execution.
+The profiles wrap the existing pinned proTES suite, direct Funnel, and
+nf-ga4gh/Nextflow with shared storage, exact fixture manifests and separate
+JSON/JUnit evidence. Native Seqera discovery and a separately approved single
+live job use private environment configuration. Missing operator access,
+physical cleanup observation or hosted Reference Cloud deployment remains a
+coverage gap; protocol fixtures never establish real execution or certification.

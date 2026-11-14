@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-11-10T03:31:38.659568+00:00",
+  "sdk_revision": "9accb8fc1baa9d1ca601ce9bfa80c685a7e97b16",
+  "sdk_dirty": false,
+  "harness_sha256": "db60860f6add0209f612385fa67f326f1de1f9e3baf234adb74ffbc8c1236eae",
+  "sdk_example_sha256": "52005d4ab3c0d05c658529bc36ad789549e74d4dcb497c433211ce2e851600d9",
+  "command": [
+    "tests/interop/run.py",
+    "--profile",
+    "protes-funnel",
+    "--execute",
+    "--out",
+    "tests/interop/reports/final-protes"
+  ],
+  "profiles": [
+    {
+      "id": "protes-funnel",
+      "profile": {
+        "schema_version": 1,
+        "fixtures": "../fixtures/manifest.json",
+        "advertised_spec": "observed in report; never inferred from the endpoint path",
+        "authentication": {
+          "kind": "synthetic OIDC for disposable local stack; bearer via environment/file",
+          "secrets_in_profile": false
+        },
+        "storage": {
+          "shared_work": "same absolute path on Nextflow host, Funnel and Docker VM",
+          "private_backend": "loopback published API, internal database/broker"
+        },
+        "upstream_suites": [
+          {
+            "repository": "https://github.com/elixir-cloud-aai/proTES",
+            "revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+            "path": "tests/integration/check.sh"
+          },
+          {
+            "repository": "https://github.com/ga4gh/openapi-test-runner",
+            "revision": "bc3eb911e877521409348e0225852d072d4de196",
+            "use": "optional existing schema suite; not replaced by this harness"
+          },
+          {
+            "repository": "https://github.com/ga4gh/drs-compliance-suite",
+            "use": "seed deployment-owned DRS objects before that existing suite; not run by TES-only profile"
+          }
+        ],
+        "id": "protes-funnel",
+        "kind": "tes-suite",
+        "api_root": {
+          "environment": "TES_PROFILE_API_ROOT"
+        },
+        "spec": {
+          "protocol": "TES",
+          "tested": "1.1.0"
+        },
+        "implementation": {
+          "name": "proTES with Funnel",
+          "revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+          "image": "h3-protes@sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593",
+          "backend": "direct-funnel",
+          "advertised_version": "0.0.0+h3.55c4d15"
+        },
+        "client": {
+          "name": "proTES existing real integration script",
+          "suite_sha256": "7e8664a6b03ddde30cc079fba8642d9af6903a317257da8b27a538c23dd917b7"
+        },
+        "features": [
+          "inline input staging",
+          "stdout/stderr",
+          "executor failure",
+          "cancel API state"
+        ],
+        "upstream_issues": [
+          "https://github.com/nextflow-io/nf-ga4gh/issues/2",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/6",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/7",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/11",
+          "https://github.com/nextflow-io/nf-ga4gh/issues/12"
+        ]
+      },
+      "evidence": "real_execution",
+      "checks": [
+        {
+          "id": "fixtures",
+          "outcome": "passed",
+          "detail": "Public fixture bytes verified and seeded",
+          "observed": {
+            "schema_version": 1,
+            "fixtures": [
+              {
+                "path": "main.nf",
+                "sha256": "b89064c24114e603b17c8ea816ca425c3c2773c578eac2b518b80cdd9e7bb6fc",
+                "size": 387
+              },
+              {
+                "path": "seed.txt",
+                "sha256": "c69c404318a3dbf8df2d67374f244c03cd5969c94ba42ca24b73a54712f594fa",
+                "size": 34
+              },
+              {
+                "path": "seqera.nf",
+                "sha256": "86ed3a8dd1ebfb1132468141b9f89f52e63b2dcfed6ce148657f2f86356a5db9",
+                "size": 246
+              }
+            ]
+          }
+        },
+        {
+          "id": "discovery",
+          "outcome": "passed",
+          "detail": "TES advertised spec matches profile",
+          "observed": {
+            "spec": "1.1.0",
+            "implementation": "0.0.0+h3.55c4d15"
+          }
+        },
+        {
+          "id": "upstream_real_backend_suite",
+          "outcome": "passed",
+          "detail": "Existing proTES integration/check.sh: completion, input staging, stdout/stderr, exit failure and cancellation",
+          "observed": {
+            "suite_sha256": "7e8664a6b03ddde30cc079fba8642d9af6903a317257da8b27a538c23dd917b7",
+            "exit_code": 0
+          }
+        },
+        {
+          "id": "physical_worker_cleanup",
+          "outcome": "unsupported",
+          "detail": "Upstream suite observes backend TES state; a separate operator/container observation is required"
+        },
+        {
+          "id": "operator_running_container_snapshot",
+          "outcome": "passed",
+          "detail": "Independent Docker snapshot of this disposable stack: no task-labelled containers running at suite end; point-in-time container evidence only",
+          "observed": {
+            "running_task_containers": 0
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "service": "funnel",
+          "configured": "python@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c",
+          "resolved": "sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c"
+        },
+        {
+          "service": "protes",
+          "configured": "h3-protes@sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593",
+          "resolved": "sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593"
+        },
+        {
+          "service": "protes-worker",
+          "configured": "h3-protes@sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593",
+          "resolved": "sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+# Config overlay for the integration test (`compose.yaml`): tasks go to real
+# TES implementations, which they choose with the tag `gateway.backends`
+# (`check.sh`). The fake identity provider of the smoke test
+# (`../smoke/fake_tes.py`, not used as a TES backend here) issues the tokens of
+# users; proTES has no credentials at the backends, as they require none
+security:
+  auth:
+    issuers:
+      - http://fake-tes:8080/oidc/
+    audience:
+      - smoke-client
+    userinfo_claims:
+      - groups
+  access_control:
+    claim_groups: groups
+    group_mapping:
+      smoke-users: user
+      smoke-admins: admin
+custom:
+  tes:
+    backends:
+      # Reports an empty `type.version`, so it needs the label
+      - type: ga4gh-tes
+        url: http://funnel:8000
+        url_schemes:
+          - http
+        auth: none
+        labels:
+          tes.version: "1.1"
+    url_schemes: [http]
+  controllers:
+    post_task:
+      polling:
+        wait: 1
+plugins:
+  pipeline:
+    - id: route
+      alternatives:
+        - plugin: foca.routing.ordered

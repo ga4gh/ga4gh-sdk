@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "runs": [
+    {
+      "evidence": "nextflow-final-observed-failure",
+      "source_revision": "a8dc2042b766a97e2b05450e935cd5fb9f3ec9d8",
+      "dirty": false,
+      "outcomes": {
+        "passed": 7,
+        "unsupported": 2,
+        "not_run": 2,
+        "observed_failure": 1
+      }
+    },
+    {
+      "evidence": "nextflow-earlier-pass",
+      "source_revision": "9accb8fc1baa9d1ca601ce9bfa80c685a7e97b16",
+      "dirty": false,
+      "outcomes": {
+        "passed": 8,
+        "unsupported": 1
+      }
+    },
+    {
+      "evidence": "protes",
+      "source_revision": "9accb8fc1baa9d1ca601ce9bfa80c685a7e97b16",
+      "dirty": false,
+      "outcomes": {
+        "passed": 4,
+        "unsupported": 1
+      }
+    },
+    {
+      "evidence": "direct",
+      "source_revision": "955bf54128b00297842734976547d6c285e377a2",
+      "dirty": false,
+      "outcomes": {
+        "passed": 3,
+        "unsupported": 1
+      }
+    },
+    {
+      "evidence": "native-offline-attachment",
+      "source_revision": "a694463637a00dbd7e8c62b9f8bc925b724097dc",
+      "dirty": false,
+      "outcomes": {
+        "passed": 10,
+        "unsupported": 1
+      }
+    },
+    {
+      "evidence": "native-offline-hello",
+      "source_revision": "a694463637a00dbd7e8c62b9f8bc925b724097dc",
+      "dirty": false,
+      "outcomes": {
+        "passed": 10,
+        "unsupported": 3
+      }
+    },
+    {
+      "evidence": "native-read-only",
+      "source_revision": "955bf54128b00297842734976547d6c285e377a2",
+      "dirty": false,
+      "outcomes": {
+        "passed": 2,
+        "not_run": 1
+      }
+    },
+    {
+      "evidence": "native-live-one-attempt",
+      "source_revision": "a694463637a00dbd7e8c62b9f8bc925b724097dc",
+      "dirty": false,
+      "outcomes": {
+        "passed": 2,
+        "unsupported": 3,
+        "observed_failure": 1
+      }
+    },
+    {
+      "evidence": "default-no-provider",
+      "source_revision": "955bf54128b00297842734976547d6c285e377a2",
+      "dirty": false,
+      "outcomes": {
+        "passed": 4,
+        "not_run": 4
+      }
+    }
+  ],
+  "nextflow_discovery_inherited_from": {
+    "report": "protes/report.json",
+    "same_runtime_images": true,
+    "tested_spec": "1.1.0",
+    "advertised_service_version": "0.0.0+h3.55c4d15",
+    "protes_image": "h3-protes@sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593",
+    "funnel_version": "0.12.3",
+    "note": "Same isolated stack and image identities, not the earlier phase-two 0.0.0.dev0 deployment"
+  },
+  "native_live": {
+    "attempts": 1,
+    "http_status": 400,
+    "acknowledged_run_id": false,
+    "evidence": "real_service",
+    "submission_resolution": "SUBMISSION_OUTCOME_UNKNOWN",
+    "retry": false,
+    "status_logs_cancel": "not_run without acknowledged ID",
+    "approval": "explicit fresh human approval received before this exact attempt; earlier approval-review block was superseded"
+  },
+  "worker_observation": {
+    "api_state": "CANCELED",
+    "final_profile_running_containers_after_15_seconds": 1,
+    "later_independent_binding_probe": {
+      "protes_state": "CANCELED",
+      "funnel_state": "CANCELED",
+      "running_task_containers": 0
+    },
+    "earlier_direct_profile": {
+      "initial_running": 1,
+      "final_running": 0,
+      "observation_seconds": 1.044
+    },
+    "scope": "Point-in-time container evidence; do not infer immediate cancellation or whole-worker cleanup"
+  },
+  "upstream_scope_gaps": {
+    "nf-ga4gh#2": "unsupported: shared filesystem fixture does not cover object/nonshared storage",
+    "nf-ga4gh#6": "not_run: one attempt does not establish authoritative LAST TesTaskLog selection",
+    "nf-ga4gh#12": "not_run: this direct TES profile does not expose TES IDs as WES TaskLog",
+    "nf-ga4gh#7/#11": "only the valid directory/glob fixture, submitted mapping and actual output bytes; no issue-fix claim"
+  },
+  "validation": {
+    "combined_standard_checks": "combined-standard-checks.json",
+    "combined_source_revision": "56fa5ab275c9a6101c1bdfa9a1fe3f6de7ef94d7",
+    "checks": "fmt/Clippy/build/test all exit0; controller actual integrated evidence reused for unchanged code",
+    "local_profile_tests": 6,
+    "post_dependency_merge": "Native example rebuilt; both offline variants rerun; no cloud replay"
+  },
+  "lifecycle": "cleanup.json",
+  "runtime_platforms": {
+    "funnel": "linux/arm64 official binary in arm64 Python image",
+    "protes": "linux/amd64 under registered qemu emulation",
+    "mongodb": "linux/arm64",
+    "rabbitmq": "linux/arm64",
+    "nextflow_java_client": "darwin/arm64"
+  }
+}
