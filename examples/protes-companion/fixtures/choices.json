@@ -1,0 +1,9 @@
+{
+  "pipeline": "qc",
+  "backends": {
+    "type": "allow",
+    "backends": [
+      "https://node-b.example/tes"
+    ]
+  }
+}

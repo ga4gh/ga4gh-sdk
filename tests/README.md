@@ -185,3 +185,12 @@ Gen3 bulk access behavior is unverified.
   public object and one unknown ID, recorded on 2026-11-10 and reformatted
   with sorted keys. It contains public metadata only and is used by
   [`drs_bulk.rs`](../lib/tests/drs_bulk.rs).
+
+## Downstream proTES consumer
+
+`examples/protes-companion` is a standalone crate using SDK transport with
+explicit bearer-client injection.
+Run `cargo test --manifest-path examples/protes-companion/Cargo.toml` for provenance
+retention, ordered attempts, rerun sanitization and 403/404 semantics. Its README
+provides actual offline CLI examples and describes the outstanding live pipeline
+acceptance. Fixture tests do not demonstrate remote gateway execution.
