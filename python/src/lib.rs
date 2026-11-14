@@ -73,6 +73,16 @@ pub enum PyServiceType {
     REGISTRY,
 }
 
+// PyO3 0.30 no longer extracts owned pyclasses automatically. Keep the
+// existing Rust method signatures by cloning the Python-owned enum.
+impl<'a, 'py> FromPyObject<'a, 'py> for PyServiceType {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(value.cast::<Self>()?.borrow().clone())
+    }
+}
+
 impl From<PyServiceType> for ServiceType {
     fn from(py_service_type: PyServiceType) -> Self {
         match py_service_type {
@@ -93,8 +103,10 @@ pub enum ServiceSection {
     Custom(String),
 }
 
-impl<'py> FromPyObject<'py> for ServiceSection {
-    fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+impl<'a, 'py> FromPyObject<'a, 'py> for ServiceSection {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         if let Ok(service_type) = value.extract::<PyServiceType>() {
             return Ok(ServiceSection::BuiltIn(service_type));
         }

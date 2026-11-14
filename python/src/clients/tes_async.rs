@@ -124,7 +124,7 @@ impl PyAsyncTES {
         arguments.extend(args.iter());
         let client = cls.call(PyTuple::new(py, arguments)?, kwargs)?;
         let (tes, settings) = {
-            let this = client.downcast::<Self>()?.borrow();
+            let this = client.cast::<Self>()?.borrow();
             (this.inner.clone(), this.config.clone())
         };
         let client = client.unbind();
@@ -255,7 +255,7 @@ impl PyAsyncTask {
             let state = spawn_io(move || async move { task_status(&task).await })
                 .await
                 .map_err(PyRuntimeError::new_err)?;
-            Python::with_gil(|py| state_to_python(py, state))
+            Python::attach(|py| state_to_python(py, state))
         })
     }
 

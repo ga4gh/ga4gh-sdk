@@ -13,7 +13,7 @@ use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::Transport;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::sync::GILOnceCell;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyMapping, PyString, PyTuple, PyType};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -67,7 +67,7 @@ class TesState(str, enum.Enum):
 "#
 );
 
-static TES_STATE: GILOnceCell<Py<PyType>> = GILOnceCell::new();
+static TES_STATE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
 
 /// The `TesState` Python enum (a `str` enum, created once per interpreter).
 pub fn tes_state_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
@@ -82,14 +82,14 @@ pub fn tes_state_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
             Ok(namespace
                 .get_item("TesState")?
                 .ok_or_else(|| PyRuntimeError::new_err("TesState is not defined"))?
-                .downcast_into::<PyType>()?
+                .cast_into::<PyType>()?
                 .unbind())
         })
         .map(|cls| cls.bind(py))
 }
 
 /// Converts a TES state to the matching `TesState` member.
-pub fn state_to_python(py: Python<'_>, state: TesState) -> PyResult<PyObject> {
+pub fn state_to_python(py: Python<'_>, state: TesState) -> PyResult<Py<PyAny>> {
     Ok(tes_state_type(py)?
         .getattr(state.to_string().as_str())?
         .unbind())
@@ -125,7 +125,7 @@ pub async fn connect(config: &Configuration) -> Result<TES, String> {
 /// JSON file as `str` or `os.PathLike`. A `str` is always a path. `method` names the
 /// caller in errors, for example `"TES.create()"`.
 pub fn task_to_create(task: &Bound<'_, PyAny>, method: &str) -> PyResult<Value> {
-    if let Ok(text) = task.downcast::<PyString>() {
+    if let Ok(text) = task.cast::<PyString>() {
         // Lossy, so that paths with surrogate escapes (non-UTF-8 file names) pass.
         if text.to_string_lossy().trim_start().starts_with('{') {
             return Err(PyValueError::new_err(format!(
@@ -243,7 +243,7 @@ impl PyTask {
     }
 
     /// The task's current state, as a `TesState`.
-    pub fn status(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn status(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let state = io(py, |rt| rt.block_on(task_status(&self.inner)))?;
         state_to_python(py, state)
     }
@@ -289,10 +289,10 @@ impl PyTesTask {
 
     /// Builds a task from a `TesTask`, a JSON-serialisable object or JSON text.
     pub fn from_python(task: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(task) = task.downcast::<PyTesTask>() {
+        if let Ok(task) = task.cast::<PyTesTask>() {
             return Ok(task.borrow().clone());
         }
-        if let Ok(mapping) = task.downcast::<PyMapping>() {
+        if let Ok(mapping) = task.cast::<PyMapping>() {
             if !task.is_instance_of::<PyDict>() {
                 // `json.dumps` takes only `dict`s, so copy other mappings into one.
                 let dict = PyDict::new(task.py());
@@ -312,7 +312,7 @@ impl PyTesTask {
         Self::from_value(raw)
     }
 
-    fn field(&self, py: Python<'_>, key: &str) -> PyResult<Option<PyObject>> {
+    fn field(&self, py: Python<'_>, key: &str) -> PyResult<Option<Py<PyAny>>> {
         match self.raw.get(key) {
             None | Some(Value::Null) => Ok(None),
             Some(value) => to_python(py, value).map(Some),
@@ -372,7 +372,7 @@ impl PyTesTask {
     #[allow(clippy::type_complexity)]
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyType>, (PyObject,), Option<Bound<'py, PyAny>>)> {
+    ) -> PyResult<(Bound<'py, PyType>, (Py<PyAny>,), Option<Bound<'py, PyAny>>)> {
         let raw = to_python(slf.py(), &slf.borrow().raw)?;
         let state = slf.getattr("__dict__").ok();
         Ok((slf.get_type(), (raw,), state))
@@ -386,13 +386,13 @@ impl PyTesTask {
     /// The task's state as a `TesState`; `UNKNOWN` if the task has none or one that
     /// TES 1.1 doesn't define.
     #[getter]
-    pub fn state(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn state(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         state_to_python(py, self.inner.state.unwrap_or_default())
     }
 
     /// Same as `state`.
     #[getter]
-    pub fn status(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn status(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.state(py)
     }
 
@@ -412,37 +412,37 @@ impl PyTesTask {
     }
 
     #[getter]
-    fn inputs(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn inputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "inputs")
     }
 
     #[getter]
-    fn outputs(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn outputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "outputs")
     }
 
     #[getter]
-    fn resources(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn resources(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "resources")
     }
 
     #[getter]
-    fn executors(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn executors(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "executors")
     }
 
     #[getter]
-    fn volumes(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn volumes(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "volumes")
     }
 
     #[getter]
-    fn tags(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn tags(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "tags")
     }
 
     #[getter]
-    fn logs(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn logs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "logs")
     }
 
@@ -452,7 +452,7 @@ impl PyTesTask {
     }
 
     /// The task as a new `dict`, as given or received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 
@@ -469,6 +469,15 @@ impl PyTesTask {
 #[derive(Clone)]
 pub struct PyListTasksParams {
     pub inner: ListTasksParams,
+}
+
+// Preserve the owned Rust argument type used by TES and AsyncTES.
+impl<'a, 'py> FromPyObject<'a, 'py> for PyListTasksParams {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(value.cast::<Self>()?.borrow().clone())
+    }
 }
 
 #[pymethods]
@@ -511,7 +520,7 @@ impl PyListTasksParams {
 
     /// The state filter as a `TesState`, or `None`.
     #[getter]
-    fn state(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn state(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.inner
             .state
             .map(|state| state_to_python(py, state))
@@ -593,7 +602,7 @@ impl PyTesListTasksResponse {
     }
 
     /// The response as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 }
@@ -610,7 +619,7 @@ pub struct PyTES {
 impl PyTES {
     /// Build a TES client for Rust extension crates while releasing the GIL during discovery.
     pub fn new(config: &PyConfiguration) -> PyResult<Self> {
-        Python::with_gil(|py| Self::new_with_gil(py, config))
+        Python::attach(|py| Self::new_with_gil(py, config))
     }
 
     fn new_with_gil(py: Python<'_>, config: &PyConfiguration) -> PyResult<Self> {

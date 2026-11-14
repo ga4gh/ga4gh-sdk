@@ -41,7 +41,7 @@ pub fn io<T: Send>(
     py: Python<'_>,
     operation: impl FnOnce(&Runtime) -> Result<T, String> + Send,
 ) -> PyResult<T> {
-    py.allow_threads(|| operation(runtime()?))
+    py.detach(|| operation(runtime()?))
         .map_err(PyRuntimeError::new_err)
 }
 

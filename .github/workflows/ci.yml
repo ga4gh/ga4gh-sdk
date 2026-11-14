@@ -23,7 +23,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --locked
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     name: Test
@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [funnel, wes-starter-kit]
+        suite: [funnel, protes, wes-starter-kit]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,6 +108,11 @@ jobs:
                 lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
                 lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs
                 cli/Cargo.toml cli/src/ cli/tests/funnel_cli.rs)
+            elif [[ "$SUITE" == protes ]]; then
+              paths=("${common[@]}" tests/run-protes-integration.sh tests/protes/
+                lib/src/clients/tes/ lib/src/clients/serviceinfo/ lib/src/clients/wait.rs
+                lib/src/utils/ lib/src/clients/mod.rs lib/src/lib.rs lib/tests/protes_tes.rs
+                cli/Cargo.toml cli/src/ cli/tests/protes_cli.rs)
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
@@ -122,8 +127,9 @@ jobs:
           fi
           echo "run=$run_suite" >> "$GITHUB_OUTPUT"
           echo "$SUITE: run=$run_suite" >> "$GITHUB_STEP_SUMMARY"
+      # Also for proTES, which relays tasks to Funnel
       - name: Install Funnel
-        if: matrix.suite == 'funnel' && steps.changes.outputs.run == 'true'
+        if: contains(fromJSON('["funnel", "protes"]'), matrix.suite) && steps.changes.outputs.run == 'true'
         shell: bash
         run: |
           archive=funnel-linux-amd64-v0.11.14.tar.gz
@@ -136,6 +142,9 @@ jobs:
       - name: Test against Funnel
         if: matrix.suite == 'funnel' && steps.changes.outputs.run == 'true'
         run: bash run-integration-tests.sh
+      - name: Test against proTES
+        if: matrix.suite == 'protes' && steps.changes.outputs.run == 'true'
+        run: tests/run-protes-integration.sh
       - name: Test against Starter Kit WES
         if: matrix.suite == 'wes-starter-kit' && steps.changes.outputs.run == 'true'
         run: tests/run-wes-docker-integration.sh

@@ -4,7 +4,7 @@ use ga4gh_sdk::utils::query::encode_query;
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
-use pyo3::PyTypeInfo;
+use pyo3::{PyClass, PyTypeInfo};
 use serde_json::Value;
 use std::ffi::CString;
 use std::path::Path;
@@ -15,7 +15,7 @@ use std::path::Path;
 /// accepts and ignores arguments beyond its own when `cls` is a subclass that defines
 /// `__init__(self, <base arguments>, extra, ...)` to take them. Otherwise, as for `T` itself,
 /// they are an error.
-pub fn check_extra_args<T: PyTypeInfo>(
+pub fn check_extra_args<T: PyTypeInfo + PyClass>(
     cls: &Bound<'_, PyType>,
     args: &Bound<'_, PyTuple>,
     kwargs: Option<&Bound<'_, PyDict>>,
@@ -25,7 +25,7 @@ pub fn check_extra_args<T: PyTypeInfo>(
         return Ok(());
     }
     let object_init = cls.py().get_type::<PyAny>().getattr("__init__")?;
-    if cls.is(&T::type_object(cls.py())) || cls.getattr("__init__")?.is(&object_init) {
+    if cls.is(T::type_object(cls.py())) || cls.getattr("__init__")?.is(&object_init) {
         return Err(PyTypeError::new_err(format!(
             "{}() got unexpected arguments",
             T::NAME
@@ -80,7 +80,7 @@ pub fn define_class(py: Python<'_>, source: &str, name: &str) -> PyResult<Py<PyT
     Ok(namespace
         .get_item(name)?
         .ok_or_else(|| PyRuntimeError::new_err(format!("{name} is not defined")))?
-        .downcast_into::<PyType>()?
+        .cast_into::<PyType>()?
         .unbind())
 }
 
@@ -89,7 +89,7 @@ pub fn define_class(py: Python<'_>, source: &str, name: &str) -> PyResult<Py<PyT
 /// A `str` is parsed as JSON text. Any other object is serialised with Python's `json` module,
 /// so `dict`, `list`, numbers, booleans and `None` work as expected.
 pub fn to_json(value: &Bound<'_, PyAny>, what: &str) -> PyResult<Value> {
-    let text = if let Ok(text) = value.downcast::<PyString>() {
+    let text = if let Ok(text) = value.cast::<PyString>() {
         text.to_cow()?.into_owned()
     } else {
         let json = value.py().import("json")?;
@@ -109,7 +109,7 @@ pub fn to_json_opt(value: Option<&Bound<'_, PyAny>>, what: &str) -> PyResult<Opt
 }
 
 /// Converts a JSON value to the equivalent Python object (`dict`, `list`, `str`, ...).
-pub fn to_python(py: Python<'_>, value: &Value) -> PyResult<PyObject> {
+pub fn to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
     let json = py.import("json")?;
     Ok(json.call_method1("loads", (value.to_string(),))?.unbind())
 }

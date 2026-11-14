@@ -81,7 +81,7 @@ from the repository root before opening a pull request:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
 cargo test --workspace
 ```
