@@ -41,8 +41,10 @@ create a GitHub release; that comes with the CLI binaries
    `linux/amd64` also against Funnel) and pushes each platform image by
    digest, without a tag. The push rebuilds the checked image from the
    builder's layer cache, with the source and revision labels and
-   reproducible timestamps, and runs `--version` on the pushed digest. CI
-   runs the same build and checks on every pull request, without pushing.
+   reproducible timestamps, and runs `--version` on the pushed digest.
+   Unlike the wheel matrix, CI also runs this build and its checks on every
+   pull request (the **CLI image** job, about two minutes per platform),
+   without pushing.
 4. **Publish package** waits for the wheels and the image, so that nothing
    reaches PyPI unless every artefact is built. It uploads all files with
    [trusted publishing](https://docs.pypi.org/trusted-publishers/): there is no
@@ -97,8 +99,9 @@ On the first push, GitHub creates the `ga4gh-cli` package, connected to this
 repository. Check after the first release that the package is public (the
 package's settings on GitHub, **Change visibility**) and that it inherits
 access from the repository; organization settings can restrict who creates
-public packages. Then remove the notes in `README.md` and
-`docs/container-image.md` that say no release includes the image yet.
+public packages. Then replace the sentence starting "Until the first
+release that includes it" in `docs/container-image.md` with the first
+version that includes the image.
 
 ## One-time setup
 
@@ -164,7 +167,9 @@ confirmed.
 
 ## Dry run in a fork
 
-Try changes to the workflows in a fork before tagging `ga4gh/ga4gh-sdk`. Use
+Try changes to the workflows in a fork before tagging `ga4gh/ga4gh-sdk`. The
+run also pushes the CLI image to `ghcr.io/<fork owner>/ga4gh-cli`, a package
+of the fork's owner to delete afterwards (step 7). Use
 a distinct, available test-only distribution name that explains its purpose,
 such as `ga4gh-sdk-release-rehearsal`. The TestPyPI publisher and the name in
 `python/pyproject.toml` must match exactly:

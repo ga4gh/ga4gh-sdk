@@ -81,7 +81,9 @@ jobs:
     uses: ./.github/workflows/wheels.yml
 
   # Builds the CLI image of every supported platform and checks it, on
-  # linux/amd64 also against Funnel; nothing is pushed.
+  # linux/amd64 also against Funnel; nothing is pushed. Unlike the wheels,
+  # this runs on PRs: it takes about two minutes per platform and is the
+  # only check of the Dockerfile, build context and site check script.
   image:
     name: CLI image
     uses: ./.github/workflows/image.yml
