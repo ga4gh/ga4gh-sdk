@@ -25,16 +25,41 @@ repos:
         exclude: \.rs$
       - id: check-toml
       - id: check-yaml
+        # This exact upstream DRS snapshot has a duplicate description key.
+        # spec-pins.json pins its SHA-256; preserve the published bytes.
+        exclude: ^testbed/pack/drs/components/parameters/BulkObjectIdNoPassport\.yaml$
       - id: end-of-file-fixer
         exclude: >-
           (?x)^(
             lib/src/clients/[^/]+/models/|utils/patches/
             |lib/src/workflow/schemas/ga4gh\-io\-profile\.schema\.json$
+            |testbed/pack/drs/components/requestBodies/Passports\.yaml$
+            |testbed/pack/drs/components/responses/200OkAccess\.yaml$
+            |testbed/pack/drs/components/responses/200OkAuthorizations\.yaml$
+            |testbed/pack/drs/components/responses/200OkDrsObject\.yaml$
+            |testbed/pack/drs/components/responses/202Accepted\.yaml$
+            |testbed/pack/drs/components/responses/400BadRequest\.yaml$
+            |testbed/pack/drs/components/responses/401Unauthorized\.yaml$
+            |testbed/pack/drs/components/responses/403Forbidden\.yaml$
+            |testbed/pack/drs/components/responses/404NotFoundAccess\.yaml$
+            |testbed/pack/drs/components/responses/500InternalServerError\.yaml$
+            |testbed/pack/service\-info\.yaml$
+            |testbed/pack/trs\.openapi\.yaml$
+            |testbed/pack/wes\.openapi\.yaml$
             |tests/fixtures/io\-profile/invalid\.schema\.json$
             |tests/fixtures/io\-profile/valid\.schema\.json$
           )
       - id: trailing-whitespace
-        exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
+        exclude: >-
+          (?x)^(
+            lib/src/clients/[^/]+/models/|utils/patches/
+            |testbed/pack/drs/components/schemas/DrsService\.yaml$
+            |testbed/pack/drs/paths/service\-info\.yaml$
+            |testbed/pack/drs/tags/Auth\.md$
+            |testbed/pack/tes\.openapi\.yaml$
+            |testbed/pack/trs\.openapi\.yaml$
+            |testbed/pack/wes\.openapi\.yaml$
+          )
   # Schemas of GitHub's files: issue forms and their `config.yml`, workflows
   # and the Dependabot configuration
   - repo: https://github.com/python-jsonschema/check-jsonschema
@@ -54,7 +79,12 @@ repos:
     rev: 4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85  # frozen: v1.52.0
     hooks:
       - id: typos
-        exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
+        exclude: >-
+          (?x)^(
+            lib/src/clients/[^/]+/models/|utils/patches/
+            |testbed/pack/drs/tags/Auth\.md$
+            |testbed/pack/tes\.openapi\.yaml$
+          )
   # The same commands as the `lint` job; they need the toolchain from
   # `rust-toolchain.toml`
   - repo: local

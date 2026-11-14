@@ -121,6 +121,21 @@ supplies both reports to IPython. Evidence is written to
 `GA4GH_QC_NO_CONTAINER=1` mode executes on the host and must be reported separately.
 This suite uses native WES discovery; it makes no external-node/federation claim.
 
+## Shared synthetic GA4GH scenarios
+
+The optional [scenario API](../docs/scenario-api.md) runs entirely on loopback
+and does not execute submitted tasks. It needs Python 3.12+, Rust, Node 22+,
+and npm access to install the pinned TypeScript compiler on the first run:
+
+```sh
+python3 tests/run-h3-scenarios.py
+```
+
+The harness checks the server over HTTP, runs the ignored Rust SDK scenario
+test and compares its WES history with the maintained browser-oriented client.
+Pass `--url http://127.0.0.1:8815` to test an already running source server or
+OCI image. Replay evidence is written under `target/h3-scenarios/`.
+
 ## TRS public registries
 
 These smoke tests call WorkflowHub and Dockstore, so they need network

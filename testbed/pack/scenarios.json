@@ -1,0 +1,18 @@
+{
+  "format": "ga4gh-scenario-pack-v1",
+  "version": "0.1.0",
+  "synthetic_only": true,
+  "cases": [
+    {"name":"lifecycle","classification":"normative","services":["tes","wes"],"events":["create","advance","get","advance","get"]},
+    {"name":"lost-response","classification":"provider-specific","services":["tes","wes"],"fault":"accepted POST then closed socket","expected":"one acceptance; client retains unknown submission; no blind POST retry"},
+    {"name":"cancel-completion-race","classification":"normative","services":["tes","wes"],"expected":"completion may win; cancellation acknowledgement does not prove worker termination"},
+    {"name":"bounded-overload","classification":"normative","faults":[429,503],"max_fault_responses":5},
+    {"name":"opaque-paging","classification":"provider-specific","expected":"return next token unchanged"},
+    {"name":"drs-pending","classification":"normative","expected":"202 with Retry-After before logical advance"},
+    {"name":"artifact-expiry","classification":"provider-specific","expected":"403 after logical tick 10"},
+    {"name":"malformed-json","classification":"intentional-malformed","expected":"decode failure is not a conformance requirement"}
+  ],
+  "tes_request":{"executors":[{"image":"synthetic","command":["fixture"]}]},
+  "wes_request":{"workflow_params":{"message":"synthetic"},"workflow_type":"CWL","workflow_type_version":"v1.2","workflow_url":"fixture.cwl"},
+  "non_goals":["container execution","arbitrary URL fetch","full conformance","physical cancellation proof"]
+}
