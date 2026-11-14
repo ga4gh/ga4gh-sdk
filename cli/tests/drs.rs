@@ -152,7 +152,9 @@ fn service_failures_have_nonzero_exit_codes() {
         let output = run(&home, &args);
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
-        assert!(String::from_utf8_lossy(&output.stderr).contains(expected));
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(message.contains("404"), "{message}");
+        assert!(!message.contains(expected), "{message}");
     }
     service.assert();
     object.assert();
@@ -184,4 +186,36 @@ fn pending_drs_responses_have_nonzero_exit_codes() {
     service.assert();
     object.assert();
     access.assert();
+}
+
+#[test]
+fn server_text_is_omitted_from_errors() {
+    let _service = mock("GET", "/escape/ga4gh/drs/v1/service-info")
+        .with_status(200)
+        .with_body(
+            json!({
+                "id": "org.example.drs",
+                "name": "Example DRS",
+                "type": {"group": "org.ga4gh", "artifact": "drs", "version": "1.4.0"},
+                "organization": {"name": "Example", "url": "https://example.org"},
+                "version": "1.0.0",
+            })
+            .to_string(),
+        )
+        .create();
+    let _object = mock("GET", "/escape/ga4gh/drs/v1/objects/missing")
+        .with_status(404)
+        .with_body("gone\u{1b}[2K\nforged")
+        .create();
+    let home = home_with_drs_config(&format!("{}/escape/ga4gh/drs/v1", mockito::server_url()));
+    let output = run(&home, &["drs", "get", "missing"]);
+    assert_eq!(output.status.code(), Some(1));
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(!message.contains('\u{1b}'), "{message}");
+    assert!(message.contains("404"), "{message}");
+    assert!(
+        !message.contains("gone") && !message.contains("forged"),
+        "{message}"
+    );
+    assert_eq!(message.lines().count(), 1, "{message}");
 }

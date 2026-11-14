@@ -1,4 +1,4 @@
-"""The type stubs in `GA4GH.pyi` match the module."""
+"""The type stubs in `ga4gh_sdk.pyi` match the module."""
 
 import ast
 import enum
@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-import GA4GH
+import ga4gh_sdk
 
-STUB = Path(__file__).parents[1] / "GA4GH.pyi"
+STUB = Path(__file__).parents[1] / "ga4gh_sdk.pyi"
 TREE = ast.parse(STUB.read_text())
 
 
@@ -87,13 +87,13 @@ def runtime_parameters(function):
 
 
 def test_stub_declares_every_class():
-    runtime = {name for name, value in vars(GA4GH).items() if inspect.isclass(value)}
+    runtime = {name for name, value in vars(ga4gh_sdk).items() if inspect.isclass(value)}
     assert set(stub_class_nodes()) | stub_aliases() == runtime
 
 
 @pytest.mark.parametrize("name", sorted(stub_class_nodes()))
 def test_stub_declares_every_member(name):
-    cls = getattr(GA4GH, name)
+    cls = getattr(ga4gh_sdk, name)
     assert stub_members(stub_class_nodes()[name]) == runtime_members(cls)
 
 
@@ -101,13 +101,13 @@ def test_stub_declares_every_member(name):
     "name", sorted(set(stub_class_nodes()) - {"TesState", "WesState", "ServiceType"})
 )
 def test_stub_parameters_match(name):
-    cls = getattr(GA4GH, name)
+    cls = getattr(ga4gh_sdk, name)
     for method, parameters in stub_methods(stub_class_nodes()[name]).items():
         runtime = cls if method == "__init__" else getattr(cls, method)
         assert parameters == runtime_parameters(runtime), f"{name}.{method}"
 
 
 def test_package_ships_stubs_and_marker():
-    package = Path(GA4GH.__file__).parent
+    package = Path(ga4gh_sdk.__file__).parent
     assert (package / "py.typed").is_file()
     assert (package / "__init__.pyi").is_file()

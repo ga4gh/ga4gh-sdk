@@ -1,4 +1,3 @@
-#![allow(non_snake_case)] // allow the Python module to be named as GA4GH instead of ga4gh; should be the first line.
 //! This module provides Python bindings for the GA4GH SDK using PyO3.
 //! It exposes several key structs and their methods to Python, allowing for interaction with GA4GH services.
 //!
@@ -28,7 +27,7 @@
 //! # Example
 //!
 //! ```python
-//! from GA4GH import Configuration, ListTasksParams, TES, TesState, Transport
+//! from ga4gh_sdk import Configuration, ListTasksParams, TES, TesState, Transport
 //!
 //! config = Configuration("http://localhost:8000/ga4gh/tes/v1")
 //! tes = TES(config)
@@ -48,7 +47,7 @@
 //!   async classes run their requests on the same runtime.
 //! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`.
 
-use ga4gh_sdk::clients::ServiceType;
+use ::ga4gh_sdk::clients::ServiceType;
 use pyo3::prelude::*;
 
 pub mod clients;
@@ -61,7 +60,9 @@ use crate::clients::tes_async::{PyAsyncTES, PyAsyncTask};
 use crate::utils::configuration::PyConfiguration;
 use crate::utils::transport::PyTransport;
 
-#[pyclass(name = "ServiceType", module = "GA4GH", eq, eq_int)]
+/// A built-in section of the configuration file, for `Configuration.from_file()`.
+/// Other sections are named by a `str`.
+#[pyclass(name = "ServiceType", module = "ga4gh_sdk", eq, eq_int)]
 #[derive(Clone, PartialEq, Eq)]
 pub enum PyServiceType {
     TES,
@@ -69,6 +70,17 @@ pub enum PyServiceType {
     TRS,
     AAI,
     WES,
+    REGISTRY,
+}
+
+// PyO3 0.30 no longer extracts owned pyclasses automatically. Keep the
+// existing Rust method signatures by cloning the Python-owned enum.
+impl<'a, 'py> FromPyObject<'a, 'py> for PyServiceType {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(value.cast::<Self>()?.borrow().clone())
+    }
 }
 
 impl From<PyServiceType> for ServiceType {
@@ -79,12 +91,46 @@ impl From<PyServiceType> for ServiceType {
             PyServiceType::TRS => ServiceType::TRS,
             PyServiceType::AAI => ServiceType::AAI,
             PyServiceType::WES => ServiceType::WES,
+            PyServiceType::REGISTRY => ServiceType::REGISTRY,
+        }
+    }
+}
+
+/// A section of the configuration file: a `ServiceType`, or the name of any other
+/// section as a `str`, which becomes `ServiceType::Custom`.
+pub enum ServiceSection {
+    BuiltIn(PyServiceType),
+    Custom(String),
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for ServiceSection {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if let Ok(service_type) = value.extract::<PyServiceType>() {
+            return Ok(ServiceSection::BuiltIn(service_type));
+        }
+        if let Ok(name) = value.extract::<String>() {
+            return Ok(ServiceSection::Custom(name));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "service_type must be a ServiceType or a str, not {}",
+            value.get_type().qualname()?
+        )))
+    }
+}
+
+impl From<ServiceSection> for ServiceType {
+    fn from(section: ServiceSection) -> Self {
+        match section {
+            ServiceSection::BuiltIn(service_type) => service_type.into(),
+            ServiceSection::Custom(name) => ServiceType::Custom(name),
         }
     }
 }
 
 #[pymodule]
-fn GA4GH(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn ga4gh_sdk(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyServiceType>()?;
     m.add_class::<PyConfiguration>()?;
     m.add_class::<PyServiceInfo>()?;

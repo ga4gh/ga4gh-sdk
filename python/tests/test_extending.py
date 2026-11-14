@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-import GA4GH
-from GA4GH import Configuration, ListTasksParams, TES, TesTask, Transport
+import ga4gh_sdk
+from ga4gh_sdk import Configuration, ListTasksParams, TES, TesTask, Transport
 from examples.tes_extension import ProvenanceTES
 
 from .mock_server import TASK
@@ -27,16 +27,16 @@ class PluginTransport(Transport):
 @pytest.mark.parametrize(
     "cls",
     [
-        GA4GH.Configuration,
-        GA4GH.ServiceInfo,
-        GA4GH.Transport,
-        GA4GH.TES,
-        GA4GH.Task,
-        GA4GH.TesTask,
-        GA4GH.ListTasksParams,
-        GA4GH.ListTasksResponse,
-        GA4GH.AsyncTES,
-        GA4GH.AsyncTask,
+        ga4gh_sdk.Configuration,
+        ga4gh_sdk.ServiceInfo,
+        ga4gh_sdk.Transport,
+        ga4gh_sdk.TES,
+        ga4gh_sdk.Task,
+        ga4gh_sdk.TesTask,
+        ga4gh_sdk.ListTasksParams,
+        ga4gh_sdk.ListTasksResponse,
+        ga4gh_sdk.AsyncTES,
+        ga4gh_sdk.AsyncTask,
     ],
 )
 def test_classes_can_be_subclassed(cls):
@@ -116,8 +116,8 @@ def test_listed_tasks_keep_full_json(server, config):
 
 
 def test_task_cancel_and_status_still_work(server, config):
-    task = GA4GH.Task("task-1", Transport(config))
-    assert task.status() is GA4GH.TesState.COMPLETE
+    task = ga4gh_sdk.Task("task-1", Transport(config))
+    assert task.status() is ga4gh_sdk.TesState.COMPLETE
     assert task.cancel() is None
     assert server.last()["path"] == "/api/tasks/task-1:cancel"
 
@@ -149,7 +149,7 @@ def test_query_parameters_are_encoded_and_appended(server, config):
     transport = Transport(config)
     transport.get("tasks/task-1?view=MINIMAL", {"name": "a b&c=d"})
     assert server.last()["query"] == {"view": ["MINIMAL"], "name": ["a b&c=d"]}
-    transport.get("tasks/task-1?", {"view": "BASIC", "skip": [None]})
+    transport.get("tasks/task-1?", {"view": "BASIC", "skip": None, "empty": []})
     assert server.last()["query"] == {"view": ["BASIC"]}
     transport.get("tasks/task-1#top", {"view": "FULL"})
     assert server.last()["query"] == {"view": ["FULL"]}
@@ -157,7 +157,9 @@ def test_query_parameters_are_encoded_and_appended(server, config):
     assert server.last()["query"] == {}
 
 
-@pytest.mark.parametrize("params", ['["a"]', {"nested": {"a": 1}}, {"list": [{"a": 1}]}])
+@pytest.mark.parametrize(
+    "params", ['["a"]', {"nested": {"a": 1}}, {"list": [{"a": 1}]}, {"list": ["a", None]}]
+)
 def test_invalid_query_parameters(config, params):
     with pytest.raises(ValueError, match="params"):
         Transport(config).get("tasks", params)
@@ -209,7 +211,7 @@ def base_args(cls, server, config):
     """The arguments that each class's constructor requires."""
     if cls is Configuration:
         return (server.base,)
-    if cls in (GA4GH.Task, GA4GH.AsyncTask):
+    if cls in (ga4gh_sdk.Task, ga4gh_sdk.AsyncTask):
         return ("task-1", Transport(config))
     if cls is TesTask:
         return (TASK,)
@@ -218,13 +220,13 @@ def base_args(cls, server, config):
 
 CONSTRUCTED_CLASSES = [
     Configuration,
-    GA4GH.ServiceInfo,
+    ga4gh_sdk.ServiceInfo,
     Transport,
     TES,
-    GA4GH.Task,
+    ga4gh_sdk.Task,
     TesTask,
-    GA4GH.AsyncTES,
-    GA4GH.AsyncTask,
+    ga4gh_sdk.AsyncTES,
+    ga4gh_sdk.AsyncTask,
 ]
 
 
@@ -263,7 +265,7 @@ def test_subclass_keeps_base_state(server):
 def test_client_getters(server, config):
     tes = TES(config)
     assert tes.config.get_base_path() == server.base
-    task = GA4GH.Task("task-1", tes.transport)
+    task = ga4gh_sdk.Task("task-1", tes.transport)
     assert json.loads(task.transport.get("tasks/task-1/provenance")) == {"events": ["created"]}
 
 
@@ -324,4 +326,4 @@ def test_list_tasks_params_rejects_unknown_state():
 
 
 def test_old_task_class_name_still_works():
-    assert GA4GH.PyTesTask is GA4GH.TesTask
+    assert ga4gh_sdk.PyTesTask is ga4gh_sdk.TesTask

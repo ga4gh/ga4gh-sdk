@@ -1,3 +1,4 @@
+use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgMatches, Command};
 use ga4gh_sdk::clients::registry::models::{ExternalService, ServiceType};
@@ -63,7 +64,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                     CommandOutput::success(format!("{}\n", json_printable(&json)))
                 }
                 // A 404 means an unknown ID here, so no base_path hint.
-                Err(error) => CommandOutput::failure(printable(&error.to_string())),
+                Err(error) => CommandOutput::failure(error),
             }
         }
         Some(("types", _)) => match registry.list_service_types().await {
@@ -80,57 +81,17 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     Ok(output)
 }
 
-/// Error messages can hold the server's response body, so they are escaped too.
 fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
-    let message = printable(&error.to_string());
     if error
         .downcast_ref::<HttpError>()
         .is_some_and(|http| http.status == 404)
     {
         CommandOutput::failure(format!(
-            "{message}. Check that base_path is the Service Registry API root"
+            "{error}. Check that base_path is the Service Registry API root"
         ))
     } else {
-        CommandOutput::failure(message)
+        CommandOutput::failure(error)
     }
-}
-
-/// Escapes control and bidirectional formatting characters in a value from
-/// the registry, so that it can't add lines, terminal sequences or reordered
-/// text to the output.
-pub(crate) fn printable(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| {
-            if needs_escape(c) {
-                c.escape_default().collect()
-            } else {
-                c.to_string()
-            }
-        })
-        .collect()
-}
-
-/// Escapes the same characters as [`printable`] in serialised JSON, as JSON
-/// `\uXXXX` escapes, so that the output stays valid JSON. Serde escapes C0
-/// controls in strings already; the remaining ones are all in the Basic
-/// Multilingual Plane and can only occur inside strings.
-pub(crate) fn json_printable(json: &str) -> String {
-    json.chars()
-        .map(|c| {
-            // Raw newlines are the layout of pretty JSON; serde escapes the rest.
-            if c != '\n' && needs_escape(c) {
-                format!("\\u{:04x}", u32::from(c))
-            } else {
-                c.to_string()
-            }
-        })
-        .collect()
-}
-
-fn needs_escape(c: char) -> bool {
-    c.is_control()
-        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 fn type_label(service_type: &ServiceType) -> String {

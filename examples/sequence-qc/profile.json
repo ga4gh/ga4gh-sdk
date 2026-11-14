@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ga4gh:qc-demo:1",
+  "title": "Public synthetic sequence QC",
+  "type": "object",
+  "properties": {
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "sequences": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[ACGT]+$"
+          }
+        }
+      },
+      "required": [
+        "sequences"
+      ],
+      "additionalProperties": false
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "sequence_count": {
+              "type": "integer"
+            },
+            "total_length": {
+              "type": "integer"
+            },
+            "mean_length": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "sequence_count",
+            "total_length",
+            "mean_length"
+          ],
+          "additionalProperties": false
+        },
+        "report": {
+          "type": "object",
+          "properties": {
+            "class": {
+              "const": "File"
+            },
+            "location": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "required": [
+            "class",
+            "location"
+          ],
+          "contentMediaType": "text/html",
+          "x-ga4gh-ui-widget": "html-viewer"
+        }
+      },
+      "required": [
+        "metrics",
+        "report"
+      ]
+    }
+  }
+}

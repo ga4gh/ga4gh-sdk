@@ -3,7 +3,18 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "GA4GH-SDK"
+name = "ga4gh-sdk"
+description = "Python bindings for GA4GH API service clients"
+readme = { text = """
+# GA4GH SDK for Python
+
+Python clients for GA4GH TES, WES, DRS, and Service Info APIs.
+
+Install with `pip install ga4gh-sdk` and import classes from `ga4gh_sdk`.
+For examples, supported Python APIs, and configuration, see the
+[Python bindings guide](https://github.com/ga4gh/ga4gh-sdk/blob/main/python/README.md).
+""", content-type = "text/markdown" }
+license = "Apache-2.0"
 requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Rust",
@@ -18,6 +29,11 @@ classifiers = [
 ]
 dynamic = ["version"]
 
+[project.urls]
+Homepage = "https://github.com/ga4gh/ga4gh-sdk"
+Documentation = "https://github.com/ga4gh/ga4gh-sdk/blob/main/python/README.md"
+Issues = "https://github.com/ga4gh/ga4gh-sdk/issues"
+
 [project.optional-dependencies]
 tests = [
     "pytest",
@@ -25,6 +41,6 @@ tests = [
 
 [tool.maturin]
 bindings = "pyo3"
-module-name = "GA4GH"
+module-name = "ga4gh_sdk"
 # Generate Python import libraries when cross-compiling for Windows, including aarch64.
 features = ["pyo3/generate-import-lib"]

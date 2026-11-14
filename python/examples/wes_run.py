@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from GA4GH import WES, Configuration, WesState
+from ga4gh_sdk import WES, Configuration, WesState
 
 TERMINAL_STATES = {
     WesState.COMPLETE,

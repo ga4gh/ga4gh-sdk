@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "inputs": {"type": "object", "properties": {"k": {"type": "integer", "minimum": 1, "maximum": 10}}, "required": ["k"]},
+    "outputs": {"type": "object", "properties": {"histogram": {"type": "string", "format": "uri", "contentMediaType": "application/json"}}, "required": ["histogram"], "additionalProperties": false}
+  }
+}

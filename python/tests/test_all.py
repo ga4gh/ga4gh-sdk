@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from GA4GH import Configuration, ServiceInfo, Transport
+from ga4gh_sdk import Configuration, ServiceInfo, Transport
 
 
 def test_get_service_info(server, config):

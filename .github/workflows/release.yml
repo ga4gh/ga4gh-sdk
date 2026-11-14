@@ -25,6 +25,7 @@ jobs:
       index: ${{ steps.index.outputs.index }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       version: ${{ steps.version.outputs.version }}
+      project: ${{ steps.version.outputs.project }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,6 +38,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import os
+          import re
           import sys
           import tomllib
 
@@ -46,11 +48,15 @@ jobs:
           print(f'tag: {tag}, workspace version: {version}')
           if tag != f'v{version}':
               sys.exit(f'::error::Tag {tag} does not match the workspace version v{version}')
+          with open('python/pyproject.toml', 'rb') as manifest:
+              project = tomllib.load(manifest)['project']['name']
+          project = re.sub(r'[-_.]+', '-', project).lower()
           # Every release before 1.0.0, and every version with a pre-release
           # part (for example 1.1.0-rc.1), is a GitHub pre-release.
           prerelease = version.startswith('0.') or '-' in version.split('+')[0]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               print(f'version={version}', file=output)
+              print(f'project={project}', file=output)
               print(f'prerelease={str(prerelease).lower()}', file=output)
           PY
       - name: Check that the tagged commit is on main
@@ -64,6 +70,7 @@ jobs:
         env:
           OVERRIDE: ${{ vars.PYPI_INDEX }}
           UPSTREAM: ${{ github.repository == 'ga4gh/ga4gh-sdk' }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           if [[ -n "$OVERRIDE" ]]; then
             index="$OVERRIDE"
@@ -77,6 +84,10 @@ jobs:
             exit 1
           fi
           if [[ "$UPSTREAM" == true && "$index" == testpypi ]]; then
+            if [[ "$VERSION" != *-* ]]; then
+              echo "::error::Use a distinct pre-release version and tag for an upstream TestPyPI rehearsal"
+              exit 1
+            fi
             echo "::warning::PYPI_INDEX sends this release to TestPyPI, not PyPI"
           fi
           echo "index=$index" >> "$GITHUB_OUTPUT"
@@ -96,7 +107,7 @@ jobs:
     timeout-minutes: 10
     environment:
       name: ${{ needs.prepare.outputs.index }}
-      url: ${{ needs.prepare.outputs.index == 'pypi' && 'https://pypi.org/p/ga4gh-sdk' || 'https://test.pypi.org/p/ga4gh-sdk' }}
+      url: ${{ needs.prepare.outputs.index == 'pypi' && format('https://pypi.org/p/{0}', needs.prepare.outputs.project) || format('https://test.pypi.org/p/{0}', needs.prepare.outputs.project) }}
     permissions:
       id-token: write
     steps:

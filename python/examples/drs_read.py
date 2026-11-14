@@ -7,7 +7,7 @@ Run from ``python/`` after installing the bindings::
 
 import argparse
 
-from GA4GH import Configuration, DRS
+from ga4gh_sdk import Configuration, DRS
 
 
 def main() -> None:

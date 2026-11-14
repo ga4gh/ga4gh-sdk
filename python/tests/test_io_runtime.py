@@ -44,7 +44,7 @@ def wes_body(command, path):
 
 
 def exercise(scenario):
-    from GA4GH import Configuration, ServiceInfo, TES, Task, TesState, Transport, WES, WesState
+    from ga4gh_sdk import Configuration, ServiceInfo, TES, Task, TesState, Transport, WES, WesState
     ports = []
     requests = []
     ticks = []
@@ -232,7 +232,7 @@ def drs_object(object_id):
 
 
 def exercise_drs(port, ports, requests, ticks):
-    from GA4GH import Configuration, DRS, DrsResolver
+    from ga4gh_sdk import Configuration, DRS, DrsResolver
     drs = DRS(Configuration(f'http://127.0.0.1:{port}/drs'))
     before = len(ticks)
     assert drs.get_object('slow').id == 'slow'

@@ -6,17 +6,109 @@ services described in each section.
 
 ## Funnel/TES
 
-Install the `funnel` executable using the [Funnel developer guide](https://ohsu-comp-bio.github.io/funnel/docs/development/developers/)
-and make sure `curl` is available. The suite uses `localhost:8000`.
+On Linux or macOS, download the matching archive from the
+[Funnel 0.11.14 release](https://github.com/calypr/funnel/releases/tag/v0.11.14).
+Extract the `funnel` executable and add its directory to `PATH`. CI uses this release.
+Make sure `curl` and a Docker daemon are available. The suite uses `localhost:8000`.
 
 ```sh
 bash run-integration-tests.sh
 ```
 
 The script starts Funnel if its `/healthz` endpoint is not healthy, waits for
-that endpoint, then runs the `integration_tests` feature suite.
+that endpoint, then runs the `integration_tests` feature suites of the library
+and of the CLI.
 It waits up to 60 seconds by default; set `FUNNEL_STARTUP_TIMEOUT_SECONDS`
 to change the limit. It does not stop a Funnel process that it starts.
+
+The CLI suite, [`funnel_cli.rs`](../cli/tests/funnel_cli.rs), runs the
+`ga4gh-cli` binary with a temporary home directory whose config points to
+Funnel. It runs a task without inputs or outputs to completion with
+`tes create`, `tes status`, `tes get` and `tes list`. The list checks cover
+matching and nonmatching tag filters. The suite also cancels a running task
+with `tes cancel` and checks that an unknown task returns a non-zero exit
+status, empty stdout, and HTTP 404 on stderr.
+
+Funnel needs network access to pull `alpine:3.22` for these tasks. Each state
+polling loop has a 180-second deadline; an in-flight CLI request can extend
+that wait by its configured timeout. The other `tes` tests of the CLI run
+against mock servers in the default `cargo test`.
+
+## proTES/TES
+
+[proTES](https://github.com/elixir-cloud-aai/proTES) is a TES gateway: it
+serves the TES API itself, requires access tokens for tasks, and relays tasks
+to other TES instances. This suite runs the TES client against proTES 0.6.0
+relaying to Funnel, so the client meets a second TES implementation, with
+authentication, while tasks still run for real.
+
+Prerequisites: Docker with Compose, `curl`, network access (to pull images
+and the identity provider's file), and a Linux Funnel 0.11.14 executable
+matching the Funnel container's architecture. This suite runs Funnel inside
+a Linux container, so the host-native macOS executable used by the Funnel/TES
+suite above cannot run here.
+
+On Linux, with a compatible `funnel` on `PATH`, run:
+
+```sh
+tests/run-protes-integration.sh
+```
+
+On macOS, download the `funnel-linux-arm64` or `funnel-linux-amd64` archive
+from the Funnel release linked above to match the container, extract it, and
+point `FUNNEL_BIN` to that executable:
+
+```sh
+FUNNEL_BIN=/absolute/path/to/linux/funnel tests/run-protes-integration.sh
+```
+
+The script starts the services of [`protes/compose.yaml`](protes/compose.yaml):
+proTES and its worker, MongoDB, RabbitMQ, Funnel (the host's executable, in a
+container that uses the host's Docker daemon), and the fake identity provider
+of the proTES smoke test, whose file it downloads from a pinned proTES commit
+and checks against a checksum. It gets an access token of a test user from
+the identity provider and runs [`protes_tes.rs`](../lib/tests/protes_tes.rs):
+
+- a task without inputs or outputs runs to completion through the gateway
+  (state, logs, the backend tag of proTES and the list filter), within 180
+  seconds;
+- a long task is canceled;
+- requests without a token, or with an invalid one, get HTTP 401.
+
+The library test passes the token with
+`Configuration::with_oauth_access_token`.
+
+It then runs the CLI suite, [`protes_cli.rs`](../cli/tests/protes_cli.rs).
+It runs the `ga4gh-cli` binary with a temporary home directory whose config
+points to proTES and holds the access token as `oauth_access_token`, so the
+token reaches proTES from the CLI configuration only:
+
+- a task runs to completion with `tes create`, `tes status`, `tes get` and
+  `tes list` (with matching and nonmatching tag filters);
+- a running task is canceled with `tes cancel`;
+- with a config without a token, `tes create`, `tes status`, `tes get`,
+  `tes list` and `tes cancel` (`status`, `get` and `cancel` on an existing
+  task of the test user) fail with a non-zero exit status, empty stdout,
+  and HTTP 401 on stderr.
+
+The script builds both test binaries before it starts the services, because
+the access token expires 10 minutes after it is issued. On exit, it prints
+the service logs if a step failed and removes the services and its temporary
+files.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `FUNNEL_BIN` | `funnel` on `PATH` | Linux Funnel executable for the container |
+| `DOCKER_SOCKET` | from the Docker context | Docker socket for Funnel |
+| `PROTES_PORT` | `8090` | Port of proTES on `127.0.0.1`; must be free |
+| `PROTES_STARTUP_TIMEOUT_SECONDS` | `300` | Time limit for the services to become healthy |
+
+All images are pinned by digest. To update proTES, bump its image digest in
+the Compose file together with `protes_commit` and `fake_tes_sha256` in the
+script; the Docker CLI image of Funnel is `DOCKER_CLI_IMAGE` in the script.
+The [CI workflow](../.github/workflows/ci.yml) installs Funnel as for the
+Funnel suite and runs this suite (`Integration (protes)`) when TES, CLI,
+shared library, dependency or its own files change.
 
 ## Starter Kit WES
 
@@ -39,7 +131,7 @@ below, `wes cancel`, `wes run --attachment` and the paging of `wes list` are
 checked only against a mock server, in the default CLI tests.
 The [CI workflow](../.github/workflows/ci.yml) runs this suite on an Ubuntu
 runner when WES, CLI, shared library, dependency, or integration files change.
-It runs both integration suites on manual dispatch. The `CI passed` job checks
+It runs all integration suites on manual dispatch. The `CI passed` job checks
 their results alongside lint, unit tests, and builds.
 
 Starter Kit WES 0.2.0 only accepts a GitHub-shaped Nextflow project URL; its
@@ -79,6 +171,31 @@ fields from service-info; the test uses explicitly supplied backend identity
 instead of the SDK's generic discovery constructor. TRS is a controlled fixture;
 WES, the CWL engine and output verification are real. Starter Kit's disabled
 attachment handling remains unsupported for this bundle scenario.
+
+## Workflow contracts and two local QC executions
+
+```sh
+cargo test -p ga4gh-lib --features workflow-contracts --test workflow_contracts
+cargo test -p ga4gh-cli --test workflow
+python3 tests/run-workflow-contracts-qc.py
+```
+
+The first two commands exercise offline Draft 2020-12 validation, pinned upstream
+fixtures, actual CLI JSON/errors, partial output delivery and comparison policies.
+The [fixture README](fixtures/io-profile/README.md) records their upstream revision
+and checksums; the [example README](../examples/sequence-qc/README.md) maps the
+workflow, request, profile, policy and viewer adapter. The optional Python
+harness requires Python 3.12+, Rust on PATH and a working Docker context with
+this checkout shared into its VM. It installs Toil 9.3.0 and IPython 9.6.0,
+checking those versions when reusing an environment. Their transitive Python
+dependencies are not locked. The harness starts two independent loopback-only
+WES processes, submits the same sequence-QC CWL descriptor in its pinned Python
+container, verifies metrics and golden report bytes, compares their results and
+supplies both reports to IPython. Evidence is written to
+`target/workflow-contracts-qc/evidence.json`; servers stop on exit.
+`GA4GH_TOIL_ENV_DIR` can reuse an environment. The optional
+`GA4GH_QC_NO_CONTAINER=1` mode executes on the host and must be reported separately.
+This suite uses native WES discovery; it makes no external-node/federation claim.
 
 ## TRS public registries
 

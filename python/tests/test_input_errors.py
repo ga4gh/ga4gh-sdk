@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from GA4GH import Configuration, ServiceType, Transport
+from ga4gh_sdk import Configuration, ServiceType, Transport
 
 
 class InputErrorsTest(unittest.TestCase):

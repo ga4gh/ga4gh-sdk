@@ -1,8 +1,9 @@
 name: CLI binaries
 
 # Builds the ga4gh-cli binary for each release platform and packs it with the
-# licence and README into one archive per platform. Called by CI (build only)
-# and by Release (build, then attach to the GitHub release).
+# licence and README into one archive per platform. Called by CI after a main
+# push or manual dispatch (build only), and by Release on a version tag
+# (build, then attach to the GitHub release).
 on:
   workflow_call:
 

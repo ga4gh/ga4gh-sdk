@@ -70,7 +70,7 @@ pub async fn connected(tes: &LazyTES, config: &Configuration) -> Result<Arc<TES>
 /// `AsyncTES(config)` doesn't contact the server; its first call checks the service, as
 /// `TES(config)` does. `await AsyncTES.connect(config)` checks it right away. Subclass it to
 /// add endpoints, using `self.transport`.
-#[pyclass(name = "AsyncTES", module = "GA4GH", subclass)]
+#[pyclass(name = "AsyncTES", module = "ga4gh_sdk", subclass)]
 pub struct PyAsyncTES {
     /// The client's configuration.
     pub config: Configuration,
@@ -119,13 +119,12 @@ impl PyAsyncTES {
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = cls.py();
         // Fail as the other methods do, before building anything, without a running loop.
-        py.import_bound("asyncio")?
-            .call_method0("get_running_loop")?;
+        py.import("asyncio")?.call_method0("get_running_loop")?;
         let mut arguments = vec![config.clone().into_any()];
         arguments.extend(args.iter());
-        let client = cls.call(PyTuple::new_bound(py, arguments), kwargs)?;
+        let client = cls.call(PyTuple::new(py, arguments)?, kwargs)?;
         let (tes, settings) = {
-            let this = client.downcast::<Self>()?.borrow();
+            let this = client.cast::<Self>()?.borrow();
             (this.inner.clone(), this.config.clone())
         };
         let client = client.unbind();
@@ -207,7 +206,7 @@ impl PyAsyncTES {
 }
 
 /// A TES task on the server, addressed by its ID, for `asyncio`: its methods return awaitables.
-#[pyclass(name = "AsyncTask", module = "GA4GH", subclass)]
+#[pyclass(name = "AsyncTask", module = "ga4gh_sdk", subclass)]
 pub struct PyAsyncTask {
     pub inner: Task,
 }
@@ -256,7 +255,7 @@ impl PyAsyncTask {
             let state = spawn_io(move || async move { task_status(&task).await })
                 .await
                 .map_err(PyRuntimeError::new_err)?;
-            Python::with_gil(|py| state_to_python(py, state))
+            Python::attach(|py| state_to_python(py, state))
         })
     }
 
@@ -266,7 +265,8 @@ impl PyAsyncTask {
         future_into_py(py, async move {
             spawn_io(move || async move { cancel_task(&task).await })
                 .await
-                .map_err(PyRuntimeError::new_err)
+                .map_err(PyRuntimeError::new_err)?;
+            Ok(None::<()>)
         })
     }
 }

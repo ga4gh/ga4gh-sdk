@@ -1,3 +1,4 @@
+use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
@@ -21,6 +22,13 @@ pub fn command() -> Command {
             Command::new("create")
                 .about("Create a task")
                 .arg(arg!(<TASK_FILE> "Task file, inline JSON, or - for stdin"))
+                .arg(
+                    clap::Arg::new("format")
+                        .long("format")
+                        .help("Output text or a JSON object containing the original ID")
+                        .value_parser(["text", "json"])
+                        .default_value("text"),
+                )
                 // .arg(arg!(--url <URL> "The URL for the task"))
                 .arg_required_else_help(true),
         )
@@ -108,15 +116,22 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                 "File does not exist: {task_file}"
             )));
         };
-        let testask: TesTask = serde_json::from_str(&task_json)
-            .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {e}"))?;
+        let task = parse_task(&task_json)?;
 
         let tes = match TES::new(config).await {
             Ok(tes) => tes,
             Err(error) => return Ok(service_failure(error.as_ref())),
         };
-        match tes.create(testask).await {
-            Ok(task) => return Ok(CommandOutput::success(format!("{}\n", task.id))),
+        match tes.create_value(task).await {
+            Ok(task) => {
+                let output = if sub.get_one::<String>("format").map(String::as_str) == Some("json")
+                {
+                    json_printable(&serde_json::json!({"id": task.id}).to_string())
+                } else {
+                    printable(&task.id)
+                };
+                return Ok(CommandOutput::success(format!("{output}\n")));
+            }
             Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
@@ -199,7 +214,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             Err(error) => return Ok(service_failure(error.as_ref())),
         };
         match tes.get_raw(view, id).await {
-            Ok(task) => return Ok(CommandOutput::success(task)),
+            Ok(task) => return Ok(CommandOutput::json(task)),
             Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
@@ -226,12 +241,29 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         let task = Task::new(id, transport);
         match task.cancel().await {
             Ok(output) => {
-                return Ok(CommandOutput::success(format!("STATUS: {output:?}\n")));
+                // Debug escapes most controls in strings already; `printable`
+                // applies the text-output rules whatever Debug leaves.
+                let status = printable(&format!("{output:?}"));
+                return Ok(CommandOutput::success(format!("STATUS: {status}\n")));
             }
             Err(error) => return Ok(CommandOutput::failure(error)),
         }
     }
     Ok(CommandOutput::success(String::new()))
+}
+
+/// Parse task input as JSON and check it against the TES task model.
+///
+/// Returns the parsed value itself, not the model, so that the request carries
+/// the input's JSON structure unchanged, including fields that the model
+/// doesn't know. The check is the one that [`TES::create_value`] applies; it
+/// runs here as well so that invalid input fails before service discovery.
+fn parse_task(task_json: &str) -> anyhow::Result<serde_json::Value> {
+    let task: serde_json::Value = serde_json::from_str(task_json)
+        .map_err(|error| anyhow::anyhow!("Failed to parse JSON: {error}"))?;
+    <TesTask as serde::Deserialize>::deserialize(&task)
+        .map_err(|error| anyhow::anyhow!("Invalid TES task: {error}"))?;
+    Ok(task)
 }
 
 fn service_failure(error: &(dyn std::error::Error + 'static)) -> CommandOutput {
@@ -287,7 +319,7 @@ fn tes_state_to_str(state: &Option<TesState>) -> &str {
 fn format_task(task: &TesTask) -> String {
     format!(
         "{:<25} {:<15}\n",
-        task.id.as_deref().unwrap_or("None"),
+        printable(task.id.as_deref().unwrap_or("None")),
         tes_state_to_str(&task.state)
     )
 }
@@ -304,7 +336,7 @@ fn format_tasks_response(response: &TesListTasksResponse) -> String {
         .as_deref()
         .filter(|token| !token.is_empty())
     {
-        table.push_str(&format!("Next page token: {token}\n"));
+        table.push_str(&format!("Next page token: {}\n", printable(token)));
     }
     table
 }
@@ -363,7 +395,7 @@ pub async fn export_all(
     let tes = match TES::new(config).await {
         Ok(tes) => tes,
         Err(error) => {
-            writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
+            writeln!(stderr, "{}", printable(&error.to_string()))?;
             return Ok(std::process::ExitCode::FAILURE);
         }
     };
@@ -389,7 +421,7 @@ pub(crate) async fn write_jsonl(
             Ok(Some(page)) => {
                 for record in page.items {
                     let line = serde_json::to_string(&record)?;
-                    stdout.write_all(crate::registry::json_printable(&line).as_bytes())?;
+                    stdout.write_all(json_printable(&line).as_bytes())?;
                     writeln!(stdout)?;
                 }
                 stdout.flush()?;
@@ -400,18 +432,18 @@ pub(crate) async fn write_jsonl(
                     writeln!(
                         stderr,
                         "Listing stopped at configured limit; resume checkpoint: {}",
-                        crate::registry::json_printable(&serde_json::to_string(&checkpoint)?)
+                        json_printable(&serde_json::to_string(&checkpoint)?)
                     )?;
                     return Ok(std::process::ExitCode::FAILURE);
                 }
                 return Ok(std::process::ExitCode::SUCCESS);
             }
             Err(error) => {
-                writeln!(stderr, "{}", crate::registry::printable(&error.to_string()))?;
+                writeln!(stderr, "{}", printable(&error.to_string()))?;
                 writeln!(
                     stderr,
                     "Resume checkpoint: {}",
-                    crate::registry::json_printable(&serde_json::to_string(&error.checkpoint)?)
+                    json_printable(&serde_json::to_string(&error.checkpoint)?)
                 )?;
                 return Ok(std::process::ExitCode::FAILURE);
             }

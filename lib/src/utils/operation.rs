@@ -24,9 +24,14 @@ pub struct Operation {
     pub cancellation: CancellationToken,
 }
 impl Operation {
+    /// Starts an operation that ends `budget` from now. A budget beyond what
+    /// the platform clock can represent ends in about 30 years instead.
     pub fn new(budget: Duration) -> Self {
+        let now = Instant::now();
         Self {
-            deadline: Instant::now() + budget,
+            deadline: now
+                .checked_add(budget)
+                .unwrap_or_else(|| now + Duration::from_secs(30 * 365 * 86_400)),
             cancellation: CancellationToken::new(),
         }
     }
@@ -127,4 +132,17 @@ pub fn retry_after(value: &str, now: std::time::SystemTime) -> Result<Duration, 
     }
     let date = httpdate::parse_http_date(value).map_err(|_| "invalid Retry-After")?;
     Ok(date.duration_since(now).unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Operation;
+    use std::time::Duration;
+    use tokio::time::Instant;
+
+    #[test]
+    fn a_huge_budget_does_not_overflow() {
+        let operation = Operation::new(Duration::MAX);
+        assert!(operation.deadline > Instant::now() + Duration::from_secs(365 * 86_400));
+    }
 }

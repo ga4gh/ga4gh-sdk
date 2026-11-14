@@ -11,7 +11,7 @@ from typing import Any, TypeVar
 
 import pytest
 
-from GA4GH import (
+from ga4gh_sdk import (
     AsyncTask,
     AsyncTES,
     Configuration,

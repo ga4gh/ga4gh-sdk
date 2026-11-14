@@ -14,8 +14,8 @@ from types import MappingProxyType
 
 import pytest
 
-import GA4GH
-from GA4GH import (
+import ga4gh_sdk
+from ga4gh_sdk import (
     Configuration,
     Run,
     RunListResponse,
@@ -100,9 +100,9 @@ def test_state_enum_members_are_strings():
     assert str(WesState.RUNNING) == "RUNNING"
     assert f"{WesState.RUNNING:<9}|" == "RUNNING  |"
     assert json.dumps({"state": WesState.RUNNING}) == '{"state": "RUNNING"}'
-    assert WesState.__module__ == "GA4GH"
+    assert WesState.__module__ == "ga4gh_sdk"
     assert pickle.loads(pickle.dumps(WesState.QUEUED)) is WesState.QUEUED
-    assert WesState is not GA4GH.TesState
+    assert WesState is not ga4gh_sdk.TesState
 
 
 def test_service_type_has_wes():
@@ -198,6 +198,16 @@ def test_run_from_request_object_and_other_mapping(server, wes_config):
         assert set(fields) == {"workflow_type", "workflow_type_version", "workflow_url", "workflow_params", "tags"}
 
 
+def test_run_sends_extension_fields_as_form_parts(server, wes_config):
+    request = {**RUN_REQUEST, "x_priority": "high", "x_limits": {"cpus": 2}, "x_retries": 3, "x_dry_run": True}
+    WES(wes_config).run(request)
+    fields = text_fields(server.last())
+    assert fields["x_priority"] == "high"
+    assert json.loads(fields["x_limits"]) == {"cpus": 2}
+    assert fields["x_retries"] == "3"
+    assert fields["x_dry_run"] == "true"
+
+
 def test_run_from_file_path(server, wes_config, tmp_path):
     path = tmp_path / "run.json"
     path.write_text(json.dumps(RUN_REQUEST))
@@ -266,6 +276,7 @@ def test_run_with_missing_attachment_file_raises_os_error(server, wes_config, tm
         ({key: value for key, value in RUN_REQUEST.items() if key != "workflow_params"}, "workflow_params"),
         ({**RUN_REQUEST, "workflow_params": [1]}, "workflow_params must be a JSON object"),
         ({**RUN_REQUEST, "tags": {"n": 1}}, "run request"),
+        ({**RUN_REQUEST, "workflow_attachment": "main.cwl"}, "attachments argument"),
         ([RUN_REQUEST], "run request"),
         (object(), "run request"),
     ],

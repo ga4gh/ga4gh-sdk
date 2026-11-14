@@ -1,10 +1,12 @@
 //! Conversions between Python objects, JSON values and query strings.
 
+use ga4gh_sdk::utils::query::encode_query;
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
-use pyo3::PyTypeInfo;
+use pyo3::{PyClass, PyTypeInfo};
 use serde_json::Value;
+use std::ffi::CString;
 use std::path::Path;
 
 /// Lets subclasses take further constructor arguments.
@@ -13,7 +15,7 @@ use std::path::Path;
 /// accepts and ignores arguments beyond its own when `cls` is a subclass that defines
 /// `__init__(self, <base arguments>, extra, ...)` to take them. Otherwise, as for `T` itself,
 /// they are an error.
-pub fn check_extra_args<T: PyTypeInfo>(
+pub fn check_extra_args<T: PyTypeInfo + PyClass>(
     cls: &Bound<'_, PyType>,
     args: &Bound<'_, PyTuple>,
     kwargs: Option<&Bound<'_, PyDict>>,
@@ -22,8 +24,8 @@ pub fn check_extra_args<T: PyTypeInfo>(
     if !has_extra {
         return Ok(());
     }
-    let object_init = cls.py().get_type_bound::<PyAny>().getattr("__init__")?;
-    if cls.is(&T::type_object_bound(cls.py())) || cls.getattr("__init__")?.is(&object_init) {
+    let object_init = cls.py().get_type::<PyAny>().getattr("__init__")?;
+    if cls.is(T::type_object(cls.py())) || cls.getattr("__init__")?.is(&object_init) {
         return Err(PyTypeError::new_err(format!(
             "{}() got unexpected arguments",
             T::NAME
@@ -51,7 +53,7 @@ pub fn read_file(py: Python<'_>, path: &Path) -> PyResult<String> {
 pub fn os_error(py: Python<'_>, error: std::io::Error, path: &Path) -> PyErr {
     match error.raw_os_error() {
         Some(errno) => match py
-            .import_bound("os")
+            .import("os")
             .and_then(|os| os.call_method1("strerror", (errno,)))
             .and_then(|message| message.extract::<String>())
         {
@@ -66,17 +68,19 @@ pub fn os_error(py: Python<'_>, error: std::io::Error, path: &Path) -> PyErr {
 
 /// Defines a Python class, such as a `str` enum, from Python source.
 ///
-/// The source runs in a namespace of its own whose `__name__` is `GA4GH`.
+/// The source runs in a namespace of its own whose `__name__` is `ga4gh_sdk`.
 /// `PyModule::from_code_bound` would register a module in `sys.modules` and, under the
-/// name `GA4GH`, overwrite the package's attributes.
+/// name `ga4gh_sdk`, overwrite the package's attributes.
 pub fn define_class(py: Python<'_>, source: &str, name: &str) -> PyResult<Py<PyType>> {
-    let namespace = PyDict::new_bound(py);
-    namespace.set_item("__name__", "GA4GH")?;
-    py.run_bound(source, Some(&namespace), None)?;
+    let namespace = PyDict::new(py);
+    namespace.set_item("__name__", "ga4gh_sdk")?;
+    let c_source =
+        CString::new(source).map_err(|e| PyValueError::new_err(format!("Invalid source: {e}")))?;
+    py.run(&c_source, Some(&namespace), None)?;
     Ok(namespace
         .get_item(name)?
         .ok_or_else(|| PyRuntimeError::new_err(format!("{name} is not defined")))?
-        .downcast_into::<PyType>()?
+        .cast_into::<PyType>()?
         .unbind())
 }
 
@@ -85,10 +89,10 @@ pub fn define_class(py: Python<'_>, source: &str, name: &str) -> PyResult<Py<PyT
 /// A `str` is parsed as JSON text. Any other object is serialised with Python's `json` module,
 /// so `dict`, `list`, numbers, booleans and `None` work as expected.
 pub fn to_json(value: &Bound<'_, PyAny>, what: &str) -> PyResult<Value> {
-    let text = if let Ok(text) = value.downcast::<PyString>() {
+    let text = if let Ok(text) = value.cast::<PyString>() {
         text.to_cow()?.into_owned()
     } else {
-        let json = value.py().import_bound("json")?;
+        let json = value.py().import("json")?;
         json.call_method1("dumps", (value,))
             .and_then(|text| text.extract::<String>())
             .map_err(|error| {
@@ -105,48 +109,24 @@ pub fn to_json_opt(value: Option<&Bound<'_, PyAny>>, what: &str) -> PyResult<Opt
 }
 
 /// Converts a JSON value to the equivalent Python object (`dict`, `list`, `str`, ...).
-pub fn to_python(py: Python<'_>, value: &Value) -> PyResult<PyObject> {
-    let json = py.import_bound("json")?;
+pub fn to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
+    let json = py.import("json")?;
     Ok(json.call_method1("loads", (value.to_string(),))?.unbind())
-}
-
-fn scalar(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => Some(text.clone()),
-        Value::Bool(flag) => Some(flag.to_string()),
-        Value::Number(number) => Some(number.to_string()),
-        _ => None,
-    }
 }
 
 /// Appends query parameters to an endpoint.
 ///
-/// `params` must be a JSON object. Its values may be strings, numbers, booleans, `null`
-/// (skipped) or arrays of these (one parameter per item, as in `tag_key=a&tag_key=b`).
+/// `params` must be a JSON object, encoded by the Rust transport's policy in
+/// [`ga4gh_sdk::utils::query`]: strings, numbers and booleans give one parameter,
+/// `null` none, and a list of strings, numbers and booleans one per item, as in
+/// `tag_key=a&tag_key=b`. Other values, including `null` in a list, raise `ValueError`.
+/// The parameters follow any query already in `endpoint`.
 pub fn with_query(endpoint: &str, params: Option<Value>) -> PyResult<String> {
     let Some(params) = params else {
         return Ok(endpoint.to_owned());
     };
-    let Value::Object(map) = params else {
-        return Err(PyValueError::new_err("params must be a JSON object"));
-    };
-    let mut query = url::form_urlencoded::Serializer::new(String::new());
-    for (key, value) in &map {
-        let items = match value {
-            Value::Null => continue,
-            Value::Array(items) => items.iter().filter(|item| !item.is_null()).collect(),
-            other => vec![other],
-        };
-        for item in items {
-            let text = scalar(item).ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "params value for '{key}' must be a string, number, boolean or a list of these"
-                ))
-            })?;
-            query.append_pair(key, &text);
-        }
-    }
-    let query = query.finish();
+    let query = encode_query(&params)
+        .map_err(|error| PyValueError::new_err(format!("Invalid params: {error}")))?;
     if query.is_empty() {
         return Ok(endpoint.to_owned());
     }

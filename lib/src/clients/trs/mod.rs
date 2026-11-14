@@ -1,4 +1,4 @@
-//! Client for the GA4GH Tool Registry Service (TRS) API, version 2.0.1.
+//! Client for GA4GH TRS 2.0.1 and 2.0.2, with per-connection compatibility.
 //!
 //! `Configuration.base_path` is the TRS API root, including the service's
 //! path prefix, with or without a trailing slash, for example
@@ -13,7 +13,7 @@
 //! List workflows and fetch the bare descriptor of a version:
 //!
 //! ```no_run
-//! use ga4gh_sdk::clients::trs::models::DescriptorTypeWithPlain;
+//! use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain};
 //! use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
 //! use ga4gh_sdk::utils::configuration::Configuration;
 //!
@@ -34,23 +34,43 @@
 //!     .get_descriptor("2", "1", DescriptorTypeWithPlain::PlainGalaxy)
 //!     .await?;
 //! println!("{}", descriptor.content.unwrap_or_default());
+//!
+//! // All files of a CWL version as one ZIP archive, at most 10 MiB.
+//! let archive = trs
+//!     .get_files_zip("2", "1", DescriptorType::Cwl, 10 * 1024 * 1024)
+//!     .await?;
+//! println!("{} bytes", archive.len());
 //! # Ok(())
 //! # }
 //! ```
 
-pub mod models;
+mod compatibility;
 pub mod responses;
+mod wire;
+use crate::compatibility::CapabilityOverride;
+pub use compatibility::{TrsCompatibility, TrsOptions, TrsVersion};
+pub use wire::v2_0_1::models;
 
 use crate::clients::serviceinfo::models::Service;
 use crate::clients::trs::models::{
     DescriptorType, DescriptorTypeWithPlain, FileWrapper, Tool, ToolClass, ToolFile, ToolVersion,
 };
 use crate::utils::configuration::Configuration;
-use crate::utils::transport::{urlencode, Transport};
+use crate::utils::transport::{read_bounded, urlencode, Transport};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use serde_json::Value;
 use std::error::Error;
+
+impl ToolVersion {
+    /// String description when supplied by a registry. TRS 2.0.2 defines it;
+    /// both profiles retain the original value as extension data, even if a
+    /// server supplies a non-string value. Such values return `None` here but
+    /// remain available in `extra` and in serialized JSON.
+    pub fn description(&self) -> Option<&str> {
+        self.extra.get("description").and_then(Value::as_str)
+    }
+}
 
 // Encodes a path parameter as one URL path segment. Empty values and dot
 // segments would change the path that the URL resolves to, so they are
@@ -113,10 +133,19 @@ fn plain_tests(body: String) -> Vec<FileWrapper> {
     }
 }
 
-/// Query parameters for [`TRS::list_tools`], as defined by TRS 2.0.1.
+// `tags` is a query array with `explode: false`: one comma-separated value.
+fn join_tags<S: Serializer>(tags: &[String], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&tags.join(","))
+}
+
+/// Query parameters for [`TRS::list_tools`], as defined by TRS 2.0.2.
 ///
-/// Every field is optional; unset fields are not sent. `offset` is a string
-/// because registries may page by values other than numbers.
+/// Every field is optional; unset fields and an empty `tags` list are not
+/// sent. `offset` is a string because registries may page by values other
+/// than numbers. [`ToolFilter::query`] checks the tags and is the supported
+/// way to turn a filter into query parameters, also for
+/// [`responses::list_tools_page`]; serializing a filter directly skips the
+/// check.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ToolFilter {
     /// A tool ID, scoped to the registry.
@@ -152,6 +181,10 @@ pub struct ToolFilter {
     /// Return only checker workflows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checker: Option<bool>,
+    /// Registry-specific tags (TRS 2.0.2). They are sent as one
+    /// comma-separated value, so a tag must not be empty or contain a comma.
+    #[serde(skip_serializing_if = "Vec::is_empty", serialize_with = "join_tags")]
+    pub tags: Vec<String>,
     /// The start index of the page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<String>,
@@ -160,41 +193,112 @@ pub struct ToolFilter {
     pub limit: Option<i32>,
 }
 
-/// The main struct for interacting with a TRS service.
+impl ToolFilter {
+    /// Returns the filter as query parameters for
+    /// [`Transport`](crate::utils::transport::Transport) requests, or `None`
+    /// if no field is set.
+    ///
+    /// # Errors
+    /// If a tag is empty or contains a comma, which `tags` can't send.
+    pub fn query(&self) -> Result<Option<Value>, Box<dyn Error>> {
+        if self
+            .tags
+            .iter()
+            .any(|tag| tag.is_empty() || tag.contains(','))
+        {
+            return Err("TRS tags must not be empty or contain a comma".into());
+        }
+        let params = serde_json::to_value(self)?;
+        Ok(match params.as_object() {
+            Some(object) if !object.is_empty() => Some(params),
+            _ => None,
+        })
+    }
+}
+
+/// A TRS connection with an immutable transport, discovery snapshot, and profile.
+/// Use accessors to inspect them; create a new client to change the API root.
 #[derive(Debug)]
 pub struct TRS {
-    /// The configuration of this client; `base_path` is the TRS API root.
-    pub config: Configuration,
-    /// The service info fetched when the client was created.
-    pub service: Result<Service, Box<dyn Error>>,
-    /// The transport layer for sending HTTP requests.
-    pub transport: Transport,
+    transport: Transport,
+    service: Option<Service>,
+    compatibility: TrsCompatibility,
 }
 
 impl TRS {
-    /// Creates a new `TRS` instance and checks that the endpoint is a TRS.
-    ///
-    /// # Arguments
-    /// - `config`: The client configuration; `base_path` is the TRS API root.
-    ///
-    /// # Returns
-    /// - A new `TRS` instance, or an error if the service info can't be
-    ///   fetched or doesn't describe a TRS (`org.ga4gh`, artifact `trs`).
+    /// Discover a TRS and select its profile. Unknown declarations use the
+    /// 2.0.1 read contract with unverified compatibility; tags need an override.
+    /// Use [`TrsOptions`] for strict or explicit version selection.
     pub async fn new(config: &Configuration) -> Result<Self, Box<dyn Error>> {
-        let mut instance = TRS {
-            config: config.clone(),
-            transport: Transport::new(config),
-            // Replaced below; `new` never returns an instance without it.
-            service: Ok(Service::default()),
-        };
-        let service =
-            tokio::time::timeout(std::time::Duration::from_secs(10), instance.service_info())
-                .await??;
+        Self::with_options(config, TrsOptions::default()).await
+    }
+
+    /// Discover a TRS with explicit version/capability policy.
+    pub async fn with_options(
+        config: &Configuration,
+        options: TrsOptions,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::with_transport_and_options(Transport::new(config), options).await
+    }
+
+    /// Discover a TRS using the supplied transport, retaining its configuration
+    /// and authentication policy for discovery and subsequent operations.
+    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn Error>> {
+        Self::with_transport_and_options(transport, TrsOptions::default()).await
+    }
+
+    /// Discover a TRS with a supplied transport and compatibility options.
+    pub async fn with_transport_and_options(
+        transport: Transport,
+        options: TrsOptions,
+    ) -> Result<Self, Box<dyn Error>> {
+        let service = Self::fetch_service_info(&transport).await?;
         if !is_trs(&service) {
             return Err("The endpoint is not an instance of TRS".into());
         }
-        instance.service = Ok(service);
-        Ok(instance)
+        let compatibility = TrsCompatibility::select(Some(&service.r#type.version), options)?;
+        Ok(Self {
+            transport,
+            service: Some(service),
+            compatibility,
+        })
+    }
+
+    /// Connect under a caller-selected contract without a discovery request.
+    /// This does not verify service identity. Use it for a known deployment with
+    /// absent or incompatible service-info; discovery errors never select it
+    /// automatically. Configure credentials and the API root on `transport`.
+    pub fn without_discovery(transport: Transport, version: TrsVersion) -> Self {
+        Self {
+            transport,
+            service: None,
+            compatibility: TrsCompatibility::without_discovery(version),
+        }
+    }
+
+    /// Apply independently established knowledge of this server's tag filter.
+    /// This consumes the client and does not change its selected wire profile.
+    pub fn with_tag_filter_override(mut self, value: CapabilityOverride) -> Self {
+        self.compatibility.override_tags(value);
+        self
+    }
+
+    /// The transport configuration that determines this connection's identity.
+    pub fn configuration(&self) -> &Configuration {
+        &self.transport.config
+    }
+    /// Shared transport for lower-level operations. Passing `self` to the typed
+    /// pagination helpers also preserves this client's compatibility policy.
+    pub fn transport(&self) -> &Transport {
+        &self.transport
+    }
+    /// Initial discovery snapshot; absent for [`TRS::without_discovery`].
+    pub fn discovered_service_info(&self) -> Option<&Service> {
+        self.service.as_ref()
+    }
+    /// Selected profile, its provenance, and deployment capabilities.
+    pub fn compatibility(&self) -> &TrsCompatibility {
+        &self.compatibility
     }
 
     // `path` is relative to the API root; `Transport` resolves it below
@@ -208,17 +312,24 @@ impl TRS {
         path: &str,
         params: Option<Value>,
     ) -> Result<T, Box<dyn Error>> {
-        let body = self.get_text(path, params).await?;
-        Ok(serde_json::from_str(&body)?)
+        let (_, value) = responses::json(&self.transport, path, params, Default::default()).await?;
+        Ok(value)
     }
 
-    /// Fetches the service info of the registry (`GET /service-info`).
+    /// Fetches the service info of the registry (`GET /service-info`), within
+    /// the `discovery` limit of the transport's configuration.
     ///
     /// Dockstore sends `createdAt` and `updatedAt` as numbers, while
     /// service-info defines them as strings; such non-string values are
     /// dropped instead of failing the whole response.
     pub async fn service_info(&self) -> Result<Service, Box<dyn Error>> {
-        let mut value: Value = self.get_json("service-info", None).await?;
+        Self::fetch_service_info(&self.transport).await
+    }
+
+    async fn fetch_service_info(transport: &Transport) -> Result<Service, Box<dyn Error>> {
+        let mut value: Value = transport
+            .get_json_within("service-info", transport.config.timeouts.discovery)
+            .await?;
         if let Some(object) = value.as_object_mut() {
             for key in ["createdAt", "updatedAt"] {
                 if object.get(key).is_some_and(|v| !v.is_string()) {
@@ -238,12 +349,13 @@ impl TRS {
     /// Lists tools, filtered by `filter` (`GET /tools`).
     ///
     /// Returns one page; use `filter.offset` and `filter.limit` to page.
+    /// Fails before sending a request if a tag can't be sent (see
+    /// [`ToolFilter::query`]).
     pub async fn list_tools(&self, filter: &ToolFilter) -> Result<Vec<Tool>, Box<dyn Error>> {
-        let params = serde_json::to_value(filter)?;
-        let params = match params.as_object() {
-            Some(object) if !object.is_empty() => Some(params),
-            _ => None,
-        };
+        let params = filter.query()?;
+        if !filter.tags.is_empty() {
+            self.compatibility.tag_filter().require("TRS", "tags")?;
+        }
         self.get_json("tools", params).await
     }
 
@@ -350,7 +462,7 @@ impl TRS {
     /// Lists the files of a tool version with their paths and file types
     /// (`GET /tools/{id}/versions/{version_id}/{type}/files`).
     ///
-    /// The `format=zip` variant is not supported.
+    /// To download the files themselves, use [`TRS::get_files_zip`].
     pub async fn list_files(
         &self,
         id: &str,
@@ -363,6 +475,37 @@ impl TRS {
             segment("descriptor type", &descriptor_type.to_string())?
         );
         self.get_json(&path, None).await
+    }
+
+    /// Downloads all files of a tool version as one ZIP archive
+    /// (`GET /tools/{id}/versions/{version_id}/{type}/files?format=zip`).
+    ///
+    /// The archive is read into memory, at most `limit` bytes; a larger body
+    /// fails with a [`BodyLimitError`](crate::utils::transport::BodyLimitError).
+    /// A response without a ZIP file signature (for example the JSON file
+    /// list of a registry that ignores `format`) is an error. This does not
+    /// validate the archive's contents or extract it. To stream large
+    /// archives instead, use
+    /// [`responses::files_zip`] with `self.transport`.
+    pub async fn get_files_zip(
+        &self,
+        id: &str,
+        version_id: &str,
+        descriptor_type: DescriptorType,
+        limit: usize,
+    ) -> Result<Vec<u8>, Box<dyn Error>> {
+        // Validate before building the request, with the same messages as
+        // the other methods (`files_zip` checks again, more generally).
+        version_path(id, version_id)?;
+        let response =
+            responses::files_zip(&self.transport, id, version_id, descriptor_type).await?;
+        let body = read_bounded(response, limit).await?.body;
+        // Local-file and empty-archive signatures. A bare `PK` prefix is not
+        // enough to distinguish an archive from an arbitrary response body.
+        if !body.starts_with(b"PK\x03\x04") && !body.starts_with(b"PK\x05\x06") {
+            return Err("TRS response is not a ZIP archive".into());
+        }
+        Ok(body)
     }
 
     /// Fetches the container specifications, e.g. Dockerfiles, of a tool
@@ -381,6 +524,8 @@ impl TRS {
 mod tests {
     use super::*;
     use crate::clients::trs::models::tool_file::FileType;
+    use crate::utils::auth::FixedToken;
+    use crate::utils::transport::BodyLimitError;
     use mockito::{mock, server_url, Matcher, Mock};
     use url::Url;
 
@@ -404,7 +549,8 @@ mod tests {
         serde_json::json!({
             "url": "https://example.org/tools/1/versions/1",
             "id": VERSION_ID,
-            "descriptor_type": ["CWL"]
+            "descriptor_type": ["CWL"],
+            "description": "First release"
         })
     }
 
@@ -412,7 +558,7 @@ mod tests {
         serde_json::json!({
             "id": "org.example.trs",
             "name": "Example TRS",
-            "type": { "group": "org.ga4gh", "artifact": artifact, "version": "2.0.1" },
+            "type": { "group": "org.ga4gh", "artifact": artifact, "version": "2.0.2" },
             "organization": { "name": "Example", "url": "https://example.org" },
             "version": "1.0.0"
         })
@@ -427,11 +573,7 @@ mod tests {
             .map(|slash| {
                 let base = format!("{}/{prefix}/ga4gh/trs/v2{slash}", server_url());
                 let config = Configuration::new(Url::parse(&base).unwrap());
-                TRS {
-                    transport: Transport::new(&config),
-                    config,
-                    service: Ok(Service::default()),
-                }
+                TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2)
             })
             .collect()
     }
@@ -462,16 +604,9 @@ mod tests {
     #[test]
     fn test_debug_output() {
         let config = crate::utils::configuration::config_with_markers();
-        let trs = TRS {
-            transport: Transport::new(&config),
-            config,
-            service: Ok(Service::default()),
-        };
+        let trs = TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2);
         let output = format!("{:?}", trs);
-        assert!(
-            output.starts_with("TRS { config: Configuration {"),
-            "{output}"
-        );
+        assert!(output.starts_with("TRS { transport:"), "{output}");
         assert!(!output.contains("SENTINEL"), "{output}");
     }
 
@@ -480,11 +615,7 @@ mod tests {
         for slash in ["", "/"] {
             let base = Url::parse(&format!("https://example.org/a%20b/trs/v2{slash}")).unwrap();
             let config = Configuration::new(base);
-            let trs = TRS {
-                transport: Transport::new(&config),
-                config,
-                service: Ok(Service::default()),
-            };
+            let trs = TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2);
             assert_eq!(
                 trs.transport.endpoint("tools/a%2Fb").unwrap().as_str(),
                 "https://example.org/a%20b/trs/v2/tools/a%2Fb"
@@ -503,10 +634,58 @@ mod tests {
     async fn test_new_checks_service_info_below_api_root() {
         let m = get_mock("new", "service-info", &service_info_json("trs").to_string());
         for client in clients("new") {
-            let trs = TRS::new(&client.config).await.unwrap();
+            let trs = TRS::new(client.configuration()).await.unwrap();
             assert_eq!(trs.service.unwrap().r#type.artifact, "trs");
         }
         m.assert();
+    }
+
+    #[tokio::test]
+    async fn token_provider_authenticates_discovery_and_tool_reads() {
+        let prefix = "provider";
+        let info = mock("GET", path(prefix, "service-info").as_str())
+            .match_header("authorization", "Bearer good")
+            .with_body(service_info_json("trs").to_string())
+            .create();
+        let tools = mock("GET", path(prefix, "tools").as_str())
+            .match_header("authorization", "Bearer good")
+            .with_body("[]")
+            .create();
+        let config = Configuration::new(
+            Url::parse(&format!("{}/{prefix}/ga4gh/trs/v2", server_url())).unwrap(),
+        )
+        .with_token_provider(FixedToken("good"));
+        let trs = TRS::new(&config).await.unwrap();
+        assert!(trs
+            .list_tools(&ToolFilter::default())
+            .await
+            .unwrap()
+            .is_empty());
+        info.assert();
+        tools.assert();
+    }
+
+    #[tokio::test]
+    async fn test_old_trs_service_and_version_without_description() {
+        let mut info = service_info_json("trs");
+        info["type"]["version"] = serde_json::json!("2.0.1");
+        let service = get_mock("trs-201", "service-info", &info.to_string());
+        let mut version = version_json();
+        version.as_object_mut().unwrap().remove("description");
+        let response = get_mock("trs-201", &tool_version(""), &version.to_string());
+        for client in clients("trs-201") {
+            let trs = TRS::new(client.configuration()).await.unwrap();
+            assert_eq!(trs.service.as_ref().unwrap().r#type.version, "2.0.1");
+            assert_eq!(
+                trs.get_version(TOOL_ID, VERSION_ID)
+                    .await
+                    .unwrap()
+                    .description(),
+                None
+            );
+        }
+        service.assert();
+        response.assert();
     }
 
     #[tokio::test]
@@ -518,14 +697,22 @@ mod tests {
         numeric_update["updatedAt"] = serde_json::json!(1794200849592u64);
         let m = get_mock("dockstore", "service-info", &info.to_string());
         for client in clients("dockstore") {
-            let service = TRS::new(&client.config).await.unwrap().service.unwrap();
+            let service = TRS::new(client.configuration())
+                .await
+                .unwrap()
+                .service
+                .unwrap();
             assert_eq!(service.created_at, None);
             assert_eq!(service.updated_at.as_deref(), Some("2026-11-09T00:00:00Z"));
         }
         m.assert();
         let m = get_mock("dockstore-2", "service-info", &numeric_update.to_string());
         for client in clients("dockstore-2") {
-            let service = TRS::new(&client.config).await.unwrap().service.unwrap();
+            let service = TRS::new(client.configuration())
+                .await
+                .unwrap()
+                .service
+                .unwrap();
             assert_eq!((service.created_at, service.updated_at), (None, None));
         }
         m.assert();
@@ -539,7 +726,7 @@ mod tests {
             &service_info_json("wes").to_string(),
         );
         for client in clients("not-trs") {
-            let error = TRS::new(&client.config).await.unwrap_err();
+            let error = TRS::new(client.configuration()).await.unwrap_err();
             assert!(
                 error.to_string().contains("not an instance of TRS"),
                 "{error}"
@@ -554,7 +741,7 @@ mod tests {
             .with_status(404)
             .create();
         for client in clients("no-info") {
-            assert!(TRS::new(&client.config).await.is_err());
+            assert!(TRS::new(client.configuration()).await.is_err());
         }
     }
 
@@ -615,6 +802,8 @@ mod tests {
                 Matcher::UrlEncoded("checker".into(), "false".into()),
                 Matcher::UrlEncoded("offset".into(), "abc".into()),
                 Matcher::UrlEncoded("limit".into(), "5".into()),
+                // `explode: false`: one comma-separated value.
+                Matcher::UrlEncoded("tags".into(), "a b,c&d".into()),
             ]))
             .with_status(200)
             .with_body("[]")
@@ -632,6 +821,7 @@ mod tests {
             description: Some("a&b".into()),
             author: Some("Ada".into()),
             checker: Some(false),
+            tags: vec!["a b".into(), "c&d".into()],
             offset: Some("abc".into()),
             limit: Some(5),
         };
@@ -687,7 +877,7 @@ mod tests {
             assert!(client.list_tool_classes().await.is_err());
             let error = client.list_tools(&ToolFilter::default()).await.unwrap_err();
             assert!(error.to_string().contains("500"), "{error}");
-            assert!(TRS::new(&client.config).await.is_err());
+            assert!(TRS::new(client.configuration()).await.is_err());
         }
     }
 
@@ -773,6 +963,20 @@ mod tests {
         for client in clients("version") {
             let version = client.get_version(TOOL_ID, VERSION_ID).await.unwrap();
             assert_eq!(version.id, VERSION_ID);
+            assert_eq!(version.description(), Some("First release"));
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_get_version_preserves_non_string_optional_description() {
+        let mut version = version_json();
+        version["description"] = serde_json::json!(42);
+        let m = get_mock("bad-description", &tool_version(""), &version.to_string());
+        for client in clients("bad-description") {
+            let actual = client.get_version(TOOL_ID, VERSION_ID).await.unwrap();
+            assert_eq!(actual.description(), None);
+            assert_eq!(actual.extra["description"], 42);
         }
         m.assert();
     }
@@ -921,6 +1125,144 @@ mod tests {
             assert_eq!(files[1].file_type, Some(FileType::Containerfile));
         }
         m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_list_tools_rejects_tags_that_cannot_be_sent() {
+        // No mock: these must fail before any request is sent.
+        for client in clients("bad-tags") {
+            for tag in ["", "a,b"] {
+                let filter = ToolFilter {
+                    tags: vec!["ok".into(), tag.into()],
+                    ..Default::default()
+                };
+                let error = client.list_tools(&filter).await.unwrap_err();
+                assert!(error.to_string().contains("TRS tag"), "{error}");
+            }
+        }
+    }
+
+    // The shared query encoding percent-encodes the separating comma
+    // (`tags=a%2Cb`); servers decode the value before splitting it.
+    #[tokio::test]
+    async fn test_list_tools_sends_tags_with_an_encoded_comma() {
+        let m = mock("GET", path("tags-wire", "tools").as_str())
+            .match_query(Matcher::Exact("tags=a%2Cb".into()))
+            .with_status(200)
+            .with_body("[]")
+            .expect(2)
+            .create();
+        let filter = ToolFilter {
+            tags: vec!["a".into(), "b".into()],
+            ..Default::default()
+        };
+        for client in clients("tags-wire") {
+            assert!(client.list_tools(&filter).await.unwrap().is_empty());
+        }
+        m.assert();
+    }
+
+    #[test]
+    fn test_tool_filter_query() {
+        assert_eq!(ToolFilter::default().query().unwrap(), None);
+        let filter = ToolFilter {
+            tags: vec!["x".into(), "y".into()],
+            limit: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            filter.query().unwrap(),
+            Some(serde_json::json!({ "tags": "x,y", "limit": 1 }))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_files_zip() {
+        let bytes = include_bytes!("../../../../tests/fixtures/trs/workflow.zip");
+        let m = mock("GET", path("zip", &tool_version("CWL/files")).as_str())
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_header("content-type", "application/zip")
+            .with_body(bytes.as_slice())
+            .expect(2)
+            .create();
+        for client in clients("zip") {
+            let archive = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, bytes.len())
+                .await
+                .unwrap();
+            assert_eq!(archive, bytes);
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_get_files_zip_checks_limit_and_body() {
+        let too_large = mock(
+            "GET",
+            path("zip-limit", &tool_version("CWL/files")).as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+        .with_status(200)
+        .with_body("PK\x03\x04 more than ten bytes")
+        .expect(2)
+        .create();
+        let not_zip = mock("GET", path("zip-json", &tool_version("CWL/files")).as_str())
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_body(r#"[{"path":"main.cwl"}]"#)
+            .expect(2)
+            .create();
+        let fake_zip = mock("GET", path("zip-fake", &tool_version("CWL/files")).as_str())
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_body("PK not an archive")
+            .expect(2)
+            .create();
+        let missing = mock("GET", path("zip-404", &tool_version("CWL/files")).as_str())
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(404)
+            .expect(2)
+            .create();
+        for client in clients("zip-limit") {
+            let error = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 10)
+                .await
+                .unwrap_err();
+            assert!(error.is::<BodyLimitError>(), "{error}");
+        }
+        for client in clients("zip-json") {
+            let error = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("not a ZIP archive"), "{error}");
+        }
+        for client in clients("zip-fake") {
+            let error = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("not a ZIP archive"), "{error}");
+        }
+        for client in clients("zip-404") {
+            let error = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("404"), "{error}");
+        }
+        for client in clients("zip-ids") {
+            let error = client
+                .get_files_zip("..", VERSION_ID, DescriptorType::Cwl, 1024)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("tool ID"), "{error}");
+        }
+        too_large.assert();
+        not_zip.assert();
+        fake_zip.assert();
+        missing.assert();
     }
 
     #[tokio::test]
