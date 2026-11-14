@@ -43,10 +43,23 @@ relaying to Funnel, so the client meets a second TES implementation, with
 authentication, while tasks still run for real.
 
 Prerequisites: Docker with Compose, `curl`, network access (to pull images
-and the identity provider's file), and the `funnel` executable (as above).
+and the identity provider's file), and a Linux Funnel 0.11.14 executable
+matching the Funnel container's architecture. This suite runs Funnel inside
+a Linux container, so the host-native macOS executable used by the Funnel/TES
+suite above cannot run here.
+
+On Linux, with a compatible `funnel` on `PATH`, run:
 
 ```sh
 tests/run-protes-integration.sh
+```
+
+On macOS, download the `funnel-linux-arm64` or `funnel-linux-amd64` archive
+from the Funnel release linked above to match the container, extract it, and
+point `FUNNEL_BIN` to that executable:
+
+```sh
+FUNNEL_BIN=/absolute/path/to/linux/funnel tests/run-protes-integration.sh
 ```
 
 The script starts the services of [`protes/compose.yaml`](protes/compose.yaml):
@@ -68,7 +81,7 @@ services and its temporary files.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `FUNNEL_BIN` | `funnel` on `PATH` | Funnel executable |
+| `FUNNEL_BIN` | `funnel` on `PATH` | Linux Funnel executable for the container |
 | `DOCKER_SOCKET` | from the Docker context | Docker socket for Funnel |
 | `PROTES_PORT` | `8090` | Port of proTES on `127.0.0.1`; must be free |
 | `PROTES_STARTUP_TIMEOUT_SECONDS` | `300` | Time limit for the services to become healthy |
