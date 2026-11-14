@@ -5,6 +5,14 @@ pre-commit hooks, coverage, lints, the CI checks, and the issue and pull
 request templates. The rules for changes and the standard checks are in
 [AGENTS.md](../AGENTS.md); run all commands from the repository root.
 
+## Engineering and review guidance
+
+[AGENTS.md](../AGENTS.md) routes contributors and coding agents to the
+engineering principles, reviewer framework, and technical writing guide.
+Read the sections relevant to the current task. The
+[dated assessment](assessments/2026-11-10-engineering.md) is archived evidence;
+linked issues own current remediation status.
+
 ## Prerequisites
 
 - [rustup](https://rustup.rs/), for the toolchain pinned in
@@ -36,11 +44,12 @@ bump them, so update this guide when you change them.
 | `make test` | `cargo test --workspace --locked` (unit and documentation tests) |
 | `make fmt` | `cargo fmt --all` |
 | `make fmt-check` | `cargo fmt --all --check` |
-| `make clippy` | `cargo clippy --workspace --all-targets --locked` |
+| `make clippy` | `cargo clippy --workspace --all-targets --locked -- -D warnings` |
 | `make lint` | `fmt-check` and `clippy` |
 | `make check` | `lint`, `build` and `test`: the standard checks |
 | `make coverage` | Coverage report in `coverage/` (see below) |
 | `make clean-coverage` | Removes coverage data and `coverage/` |
+| `make downstream` | Formatting, Clippy and tests of the [downstream example](downstream.md#checks) |
 | `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
 | `make models` | Runs `utils/build_models_wrapper.sh`; run `make fmt` afterwards |
 | `make pre-commit` | `pre-commit run --all-files` |
@@ -67,8 +76,9 @@ against their schemas, lint the workflows with
 [actionlint](https://github.com/rhysd/actionlint), fix spelling with
 [typos](https://github.com/crate-ci/typos) (intended words that it flags go
 into [`_typos.toml`](../_typos.toml)), and run `cargo fmt --all` and
-`cargo clippy --workspace --all-targets --locked`. When a hook changes
-files, the commit stops: review the changes, stage them, and commit again.
+`cargo clippy --workspace --all-targets --locked -- -D warnings`. When a
+hook changes files, the commit stops: review the changes, stage them, and
+commit again.
 
 The formatting and spelling hooks skip generated models in
 `lib/src/clients/*/models/`, because their text comes from the upstream
@@ -98,13 +108,44 @@ suites are not included. For an HTML report of the same data, run this after
 
 ```sh
 cargo llvm-cov report --html --open \
-  --ignore-filename-regex 'lib/src/clients/[^/]+/models/'
+  --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
 ```
+
+In CI, the `codecov` job uploads `coverage/lcov.info` from the `coverage`
+job to [Codecov](https://codecov.io/gh/ga4gh/ga4gh-sdk), which shows the
+coverage of `main` in the README badge and, on pull requests, the change in
+coverage as a comment and as the `codecov/project` and `codecov/patch`
+statuses. [`codecov.yml`](../codecov.yml) makes these statuses
+informational: they never fail, and `CI passed` remains the only required
+check.
+
+The upload authenticates with an OIDC token of the workflow run, so the
+repository needs no Codecov secret; uploads from forks need no token. Uploads
+need the Codecov GitHub app, which the ga4gh organization has installed for
+this repository. Dependabot pull requests may get no OIDC token, and then no
+Codecov report.
+A failed upload doesn't fail the job: the job summary and the `coverage`
+artifact of the `coverage` job are then still there, and the job log of
+`codecov` shows the reason.
 
 ## Lints
 
-`make clippy` checks all workspace targets. The CI lint job runs the same
-command and checks formatting. Documentation lint enforcement remains in
+`make clippy` checks all workspace targets and fails on any Clippy warning
+(`-- -D warnings`). The CI lint job runs the same command and checks
+formatting. Fix a new warning in the code where you can. Otherwise allow the
+lint as narrowly as possible, with a comment that says why. Allows in
+hand-written code sit on single items; two wider allows cover code that isn't
+hand-written:
+
+- Generated models: `clippy::derivable_impls` (the generator writes
+  `Default` for enums by hand) is allowed on the `models` module of the DRS,
+  TES, TRS and WES clients, and `clippy::too_many_arguments` (`new` takes
+  one argument per required field) on that of WES, so that the models stay
+  as the generator writes them (see
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). A new client
+  whose models trigger these lints needs the same attribute.
+
+Documentation lint enforcement remains in
 [#87](https://github.com/ga4gh/ga4gh-sdk/issues/87); it needs a policy for
 generated models and the existing undocumented public API before it can become
 a useful gate.
@@ -116,19 +157,28 @@ on pushes to `main` and on manual dispatch:
 
 | Job | Name | What it does |
 | --- | --- | --- |
-| `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` |
+| `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` with `-D warnings` |
 | `test` | Test | `cargo test --workspace --locked` |
-| `build` | Build | Lockfile check, builds of library, CLI and Python wheel |
+| `build` | Build | Lockfile check, standalone library and CLI builds |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
-| `wheels` | Python wheels | Builds the wheels of every release platform and the sdist |
+| `wheels` | Python wheels | Full platform wheel and sdist matrix on `main` pushes and manual runs; skipped on PRs |
 | `image` | CLI image | Builds the [CLI image](container-image.md) for `linux/amd64` and `linux/arm64` and runs `tests/run-image-tests.sh` (with Funnel on `linux/amd64`) |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
+| `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
-| `passed` | CI passed | Fails unless all jobs above succeeded |
+| `downstream` | Downstream example | `make downstream`: builds and tests [`examples/downstream-sdk/`](downstream.md) |
+| `passed` | CI passed | Requires all applicable jobs to succeed; accepts the intentionally skipped wheel matrix on PRs |
 
 `CI passed` is the check to require for merges. A new job must be added to
-its `needs:` and to the list of expected jobs in its script.
+its `needs:` and to the list of expected jobs in its script. Ordinary PRs run
+the Python binding tests, including a local wheel build, but do not run the
+five-platform wheel and sdist matrix. Every push to `main` runs that matrix;
+version tags also build it as part of the [release workflow](releasing.md).
+For a PR that changes packaging, native dependencies, supported platforms or
+the wheel/release workflows, open **Actions → CI → Run workflow**, select the
+PR branch and run the full matrix before merging. Check the wheel and sdist
+jobs. The manual run builds artifacts but does not publish them.
 
 ## Issue and pull request templates
 

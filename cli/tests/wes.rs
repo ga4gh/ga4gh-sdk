@@ -332,11 +332,8 @@ fn run_reports_rejected_submissions_and_wrong_services() {
     let output = run(&home, &args);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(
-        stderr(&output).contains("unsupported workflow type"),
-        "{}",
-        stderr(&output)
-    );
+    assert!(stderr(&output).contains("400"), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("unsupported workflow type"));
     submit.assert();
 
     let missing = home_with_wes_config("/no-wes-here");
@@ -526,13 +523,13 @@ fn service_failures_have_nonzero_exit_codes() {
         .create();
     let home = home_with_wes_config(prefix);
     for (args, expected) in [
-        (vec!["wes", "get", "missing"], "run not found"),
-        (vec!["wes", "status", "missing"], "status not found"),
+        (vec!["wes", "get", "missing"], "404"),
+        (vec!["wes", "status", "missing"], "404"),
         (
             vec!["wes", "cancel", "done"],
             "cancellation cannot be confirmed",
         ),
-        (vec!["wes", "list"], "list unavailable"),
+        (vec!["wes", "list"], "503"),
     ] {
         let output = run(&home, &args);
         assert_eq!(output.status.code(), Some(1), "{args:?}");
@@ -574,10 +571,8 @@ fn list_all_escapes_server_text_in_records_and_errors() {
     let record: Value = serde_json::from_str(records.trim()).unwrap();
     assert_eq!(record["run_id"], "a\u{202E}b\u{9b}c");
     let diagnostics = stderr(&output);
-    assert!(
-        diagnostics.contains(r"down\u{1b}]0;title\u{7}"),
-        "{diagnostics}"
-    );
+    assert!(diagnostics.contains("503"), "{diagnostics}");
+    assert!(!diagnostics.contains("down"), "{diagnostics}");
     assert!(
         !diagnostics.contains('\u{1b}') && !diagnostics.contains('\u{9b}'),
         "{diagnostics}"

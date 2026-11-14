@@ -29,7 +29,12 @@ create a GitHub release; that comes with the CLI binaries
    bundling OpenSSL. Elsewhere (for example musl-based Linux such as Alpine,
    or glibc older than 2.28), pip builds from the sdist, which needs the Rust
    toolchain (see the [Python guide](../python/README.md#prerequisites)).
-   CI runs the same build on every pull request, without publishing.
+   CI builds the same matrix after each merge to `main` and on manual runs,
+   without publishing. PRs run the Python binding tests, which build a local
+   wheel for their selected interpreter; they do not run the full platform
+   matrix by default. For packaging, native dependency or platform changes,
+   run CI manually on the PR branch before merging (see the
+   [development guide](development.md#ci)).
 3. **Release image** ([`image.yml`](../.github/workflows/image.yml)) builds
    the [CLI image](container-image.md) natively for `linux/amd64` and
    `linux/arm64`, checks each with `tests/run-image-tests.sh` (on
@@ -150,6 +155,12 @@ confirmed.
    docker buildx imagetools inspect ghcr.io/ga4gh/ga4gh-cli:0.2.0
    gh attestation verify oci://ghcr.io/ga4gh/ga4gh-cli:0.2.0 --repo ga4gh/ga4gh-sdk
    ```
+
+5. After the first release that includes the image, make the `ga4gh-cli`
+   package public, as described under [CLI image](#cli-image); new packages
+   on the GitHub Container Registry are private by default. Until then,
+   `docker pull` without a login fails for anyone without access to the
+   package.
 
 ## Dry run in a fork
 

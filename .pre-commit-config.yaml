@@ -67,7 +67,7 @@ repos:
         pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --workspace --all-targets --locked
+        entry: cargo clippy --workspace --all-targets --locked -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false

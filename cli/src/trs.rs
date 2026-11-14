@@ -1,16 +1,28 @@
 use crate::render::{json_printable, printable};
 use crate::CommandOutput;
-use clap::{arg, ArgMatches, Command};
+use clap::{arg, ArgAction, ArgMatches, Command};
 use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain, FileWrapper};
-use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
+use ga4gh_sdk::clients::trs::{ToolFilter, TrsOptions, TrsVersion, TRS};
+use ga4gh_sdk::compatibility::{CapabilityOverride, VersionPolicy};
 use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::transport::HttpError;
+use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use std::error::Error;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+/// The largest ZIP archive that `trs files --zip` downloads.
+const ZIP_LIMIT: usize = 64 * 1024 * 1024;
 
 /// Build the TRS commands for browsing tools and fetching their descriptors.
 pub fn command() -> Command {
     Command::new("trs")
         .about("Tool Registry Service commands")
+        .arg(arg!(--"api-version" <VERSION> "Response contract: auto, strict, 2.0.1 or 2.0.2")
+            .value_parser(["auto", "strict", "2.0.1", "2.0.2"]).default_value("auto").global(true))
+        .arg(arg!(--"tag-filter" <SUPPORT> "Override tag-filter support only for a known deployment")
+            .value_parser(["auto", "enabled", "disabled"]).default_value("auto").global(true))
+        .arg(arg!(--"no-discovery" "Skip service-info; requires an explicit --api-version")
+            .global(true))
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
@@ -20,6 +32,10 @@ pub fn command() -> Command {
                 .arg(arg!(--"descriptor-type" <TYPE> "Descriptor type: CWL, WDL, NFL, GALAXY or SMK"))
                 .arg(arg!(--organization <ORGANIZATION> "Organization that published the tool"))
                 .arg(arg!(--name <NAME> "Name of the tool's image"))
+                .arg(
+                    arg!(--tag <TAG> "Registry-specific tag; repeat for several tags")
+                        .action(ArgAction::Append),
+                )
                 .arg(arg!(--offset <OFFSET> "Start of the page, as returned by the registry"))
                 .arg(arg!(--limit <LIMIT> "Number of tools per page")),
         )
@@ -50,10 +66,14 @@ pub fn command() -> Command {
         )
         .subcommand(
             Command::new("files")
-                .about("List the files of a tool version")
+                .about("List the files of a tool version, or download them as a ZIP archive")
                 .arg(arg!(<TOOL_ID> "Tool ID"))
                 .arg(arg!(<VERSION_ID> "Version ID"))
-                .arg(type_arg()),
+                .arg(type_arg())
+                .arg(
+                    arg!(--zip <FILE> "Write all files as a ZIP archive to FILE (must not exist)")
+                        .value_parser(clap::value_parser!(PathBuf)),
+                ),
         )
         .subcommand(
             Command::new("tests")
@@ -71,7 +91,8 @@ fn type_arg() -> clap::Arg {
 
 /// A TRS request, checked before any request is sent.
 enum Request {
-    Tools(ToolFilter),
+    // Boxed: the filter is much larger than the other variants.
+    Tools(Box<ToolFilter>),
     Tool(String),
     Versions(String),
     Version {
@@ -89,6 +110,7 @@ enum Request {
         tool: String,
         version: String,
         descriptor_type: DescriptorType,
+        zip: Option<PathBuf>,
     },
     Tests {
         tool: String,
@@ -101,7 +123,17 @@ enum Request {
 /// Run a parsed TRS command using the supplied service configuration.
 pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<CommandOutput> {
     let request = parse(sub)?;
-    let trs = match TRS::new(config).await {
+    let options = connection_options(sub)?;
+    let connection = if sub.get_flag("no-discovery") {
+        let VersionPolicy::Explicit(version) = options.version else {
+            anyhow::bail!("--no-discovery requires --api-version 2.0.1 or 2.0.2");
+        };
+        Ok(TRS::without_discovery(Transport::new(config), version)
+            .with_tag_filter_override(options.tag_filter))
+    } else {
+        TRS::with_options(config, options).await
+    };
+    let trs = match connection {
         Ok(trs) => trs,
         Err(error) => return Ok(service_failure(error.as_ref())),
     };
@@ -109,6 +141,25 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         Ok(stdout) => CommandOutput::success(stdout),
         Err(error) => CommandOutput::failure(printable(&error.to_string())),
     })
+}
+
+fn connection_options(sub: &ArgMatches) -> anyhow::Result<TrsOptions> {
+    let version = match sub.get_one::<String>("api-version").map(String::as_str) {
+        Some("auto") | None => VersionPolicy::Auto,
+        Some("strict") => VersionPolicy::RequireKnown,
+        Some("2.0.1") => VersionPolicy::Explicit(TrsVersion::V2_0_1),
+        Some("2.0.2") => VersionPolicy::Explicit(TrsVersion::V2_0_2),
+        _ => anyhow::bail!("Invalid TRS API version"),
+    };
+    let tag_filter = match sub.get_one::<String>("tag-filter").map(String::as_str) {
+        Some("auto") | None => CapabilityOverride::Auto,
+        Some("enabled") => CapabilityOverride::Enabled,
+        Some("disabled") => CapabilityOverride::Disabled,
+        _ => anyhow::bail!("Invalid TRS tag-filter policy"),
+    };
+    Ok(TrsOptions::default()
+        .with_version(version)
+        .with_tag_filter(tag_filter))
 }
 
 fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
@@ -121,7 +172,7 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
     let segment = |id: &str| segment_arg(id, required(id)?);
 
     Ok(match name {
-        "tools" => Request::Tools(ToolFilter {
+        "tools" => Request::Tools(tool_filter(ToolFilter {
             tool_class: string("tool-class"),
             descriptor_type: string("descriptor-type")
                 .map(|value| parse_descriptor_type(&value))
@@ -139,8 +190,12 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
                     })
                 })
                 .transpose()?,
+            tags: args
+                .get_many::<String>("tag")
+                .map(|tags| tags.cloned().collect())
+                .unwrap_or_default(),
             ..Default::default()
-        }),
+        })?),
         "tool" => Request::Tool(segment("TOOL_ID")?),
         "versions" => Request::Versions(segment("TOOL_ID")?),
         "version" => Request::Version {
@@ -166,6 +221,10 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
                     tool,
                     version,
                     descriptor_type,
+                    zip: args
+                        .get_one::<PathBuf>("zip")
+                        .map(|path| new_file_arg(path.clone()))
+                        .transpose()?,
                 },
                 _ => Request::Tests {
                     tool,
@@ -177,6 +236,107 @@ fn parse(sub: &ArgMatches) -> anyhow::Result<Request> {
         }
         _ => anyhow::bail!("Unrecognized TRS command: {name}"),
     })
+}
+
+// Checks the filter as the library would, so that invalid tags fail before
+// the registry is contacted.
+fn tool_filter(filter: ToolFilter) -> anyhow::Result<Box<ToolFilter>> {
+    filter
+        .query()
+        .map_err(|error| anyhow::anyhow!("{}", printable(&error.to_string())))?;
+    Ok(Box::new(filter))
+}
+
+// The archive never replaces an existing file; checked here so that the
+// registry isn't contacted, and again when the archive is linked into place.
+fn new_file_arg(path: PathBuf) -> anyhow::Result<PathBuf> {
+    if path.exists() {
+        anyhow::bail!(
+            "{} already exists; choose another --zip file",
+            printable(&path.display().to_string())
+        );
+    }
+    Ok(path)
+}
+
+/// A new file that appears under its final name only when it is complete.
+///
+/// The content goes to a hidden temporary file next to the target, created
+/// before the download so that an unwritable location fails early. `finish`
+/// hard-links it to the target, which fails if the target exists, so nothing
+/// is replaced. The temporary file is removed when this value is dropped, also
+/// after errors; only an interrupted process can leave it behind.
+struct NewFile {
+    target: PathBuf,
+    temp: PathBuf,
+    file: std::fs::File,
+}
+
+impl NewFile {
+    fn create(target: &Path) -> Result<Self, Box<dyn Error>> {
+        // `file_name` ignores a trailing separator, which names a directory.
+        let name = target
+            .file_name()
+            .filter(|_| !target.as_os_str().to_string_lossy().ends_with(['/', '\\']))
+            .ok_or_else(|| format!("{} is not a file path", target.display()))?;
+        let mut temp_name = std::ffi::OsString::from(".");
+        temp_name.push(name);
+        temp_name.push(format!(".partial-{}", std::process::id()));
+        let temp = target.with_file_name(temp_name);
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|error| format!("Can't create {}: {error}", temp.display()))?;
+        Ok(Self {
+            target: target.to_path_buf(),
+            temp,
+            file,
+        })
+    }
+
+    fn finish(mut self, bytes: &[u8]) -> Result<String, Box<dyn Error>> {
+        self.file
+            .write_all(bytes)
+            .and_then(|()| self.file.sync_all())
+            .map_err(|error| format!("Can't write {}: {error}", self.temp.display()))?;
+        match std::fs::hard_link(&self.temp, &self.target) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(format!("Can't create {}: {error}", self.target.display()).into());
+            }
+            // Filesystems without hard links (e.g. FAT): write the target
+            // directly, still without replacing a file.
+            Err(_) => write_new(&self.target, bytes)?,
+        }
+        Ok(format!(
+            "Wrote {} bytes to {}\n",
+            bytes.len(),
+            printable(&self.target.display().to_string())
+        ))
+    }
+}
+
+// Creates `path`, which must not exist, with `bytes`; removes it again if
+// writing fails.
+fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("Can't create {}: {error}", path.display()))?;
+    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(format!("Can't write {}: {error}", path.display()).into());
+    }
+    Ok(())
+}
+
+impl Drop for NewFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.temp);
+    }
 }
 
 fn segment_arg(name: &str, value: String) -> anyhow::Result<String> {
@@ -220,6 +380,20 @@ async fn execute(trs: &TRS, request: Request) -> Result<String, Box<dyn Error>> 
             tool,
             version,
             descriptor_type,
+            zip: Some(path),
+        } => {
+            // Before the download, so that an unusable path fails early.
+            let file = NewFile::create(&path)?;
+            let archive = trs
+                .get_files_zip(&tool, &version, descriptor_type, ZIP_LIMIT)
+                .await?;
+            file.finish(&archive)
+        }
+        Request::Files {
+            tool,
+            version,
+            descriptor_type,
+            zip: None,
         } => json(serde_json::to_value(
             trs.list_files(&tool, &version, descriptor_type).await?,
         )),
@@ -309,7 +483,7 @@ fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_descriptor_type, plain_files, with_plain};
+    use super::{parse_descriptor_type, plain_files, with_plain, NewFile};
     use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain, FileWrapper};
 
     #[test]
@@ -321,6 +495,54 @@ mod tests {
         );
         let error = parse_descriptor_type("PLAIN_CWL").unwrap_err().to_string();
         assert!(error.contains("CWL, WDL, NFL, GALAXY, or SMK"), "{error}");
+    }
+
+    #[test]
+    fn new_file_appears_complete_and_keeps_existing_files() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let path = directory.path().join("workflow.zip");
+        let entries = || std::fs::read_dir(directory.path()).unwrap().count();
+        let file = NewFile::create(&path).unwrap();
+        assert!(!path.exists());
+        assert!(file
+            .finish(b"PK new")
+            .unwrap()
+            .starts_with("Wrote 6 bytes to "));
+        assert_eq!(std::fs::read(&path).unwrap(), b"PK new");
+        assert_eq!(entries(), 1);
+
+        // The file appeared after the arguments were checked.
+        let file = NewFile::create(&path).unwrap();
+        let error = file.finish(b"PK other").unwrap_err().to_string();
+        assert!(error.contains("Can't create"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"PK new");
+        assert_eq!(entries(), 1);
+
+        // A dropped file (e.g. after a failed download) leaves nothing.
+        drop(NewFile::create(&directory.path().join("other.zip")).unwrap());
+        assert_eq!(entries(), 1);
+    }
+
+    #[test]
+    fn write_new_never_replaces_files() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let path = directory.path().join("direct.zip");
+        super::write_new(&path, b"PK one").unwrap();
+        let error = super::write_new(&path, b"PK two").unwrap_err().to_string();
+        assert!(error.contains("Can't create"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"PK one");
+    }
+
+    #[test]
+    fn new_file_fails_early_for_unusable_paths() {
+        let directory = tempfile::TempDir::new().unwrap();
+        for path in [
+            directory.path().join("missing/workflow.zip"),
+            directory.path().join("out/"),
+            "".into(),
+        ] {
+            assert!(NewFile::create(&path).is_err(), "{path:?}");
+        }
     }
 
     #[test]
