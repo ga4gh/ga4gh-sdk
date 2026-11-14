@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use serde_json::Value;
 
 /// A field of a JSON object as a Python object, or `None` if it is missing or `null`.
-pub fn field(py: Python<'_>, raw: &Value, key: &str) -> PyResult<Option<PyObject>> {
+pub fn field(py: Python<'_>, raw: &Value, key: &str) -> PyResult<Option<Py<PyAny>>> {
     match raw.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(value) => to_python(py, value).map(Some),

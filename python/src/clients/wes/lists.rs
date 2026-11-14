@@ -53,7 +53,7 @@ impl PyRunSummary {
     /// The run's state as a `WesState`; `UNKNOWN` if the run has none or one
     /// that WES 1.1 does not define.
     #[getter]
-    fn state(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn state(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         state_to_python(py, self.inner.state.unwrap_or_default())
     }
 
@@ -68,7 +68,7 @@ impl PyRunSummary {
     }
 
     #[getter]
-    fn tags(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn tags(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "tags")
     }
 
@@ -78,7 +78,7 @@ impl PyRunSummary {
     }
 
     /// The run as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 
@@ -139,7 +139,7 @@ impl PyRunListResponse {
     }
 
     /// The response as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 }
@@ -187,7 +187,7 @@ impl PyTaskListResponse {
     }
 
     /// The response as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 }

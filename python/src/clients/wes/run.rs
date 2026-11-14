@@ -66,7 +66,7 @@ impl PyRun {
     }
 
     /// The run's current state, as a `WesState`.
-    pub fn status(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn status(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let state = io(py, |rt| {
             rt.block_on(self.inner.status())
                 .map_err(|e| format!("Failed to get run status: {e}"))

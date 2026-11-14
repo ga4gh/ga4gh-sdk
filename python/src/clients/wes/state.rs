@@ -3,7 +3,7 @@
 use crate::utils::convert::define_class;
 use ga4gh_sdk::clients::wes::models::State;
 use pyo3::prelude::*;
-use pyo3::sync::GILOnceCell;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
 
 /// Python source of the `WesState` enum. Its members must match the variants of `State`.
@@ -39,7 +39,7 @@ class WesState(str, enum.Enum):
         return format(self.value, format_spec)
 "#;
 
-static WES_STATE: GILOnceCell<Py<PyType>> = GILOnceCell::new();
+static WES_STATE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
 
 /// The `WesState` Python enum (a `str` enum, created once per interpreter).
 pub fn wes_state_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
@@ -49,7 +49,7 @@ pub fn wes_state_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
 }
 
 /// Converts a WES state to the matching `WesState` member.
-pub fn state_to_python(py: Python<'_>, state: State) -> PyResult<PyObject> {
+pub fn state_to_python(py: Python<'_>, state: State) -> PyResult<Py<PyAny>> {
     Ok(wes_state_type(py)?
         .getattr(state.to_string().as_str())?
         .unbind())

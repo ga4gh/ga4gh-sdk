@@ -1,10 +1,6 @@
 //! Results that keep the JSON the server sent: `DrsObject`, `AccessURL` and
 //! `BulkAccessURL`.
 
-// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
-// clippy reports at every method that returns one, as in `tes.rs`.
-#![allow(clippy::useless_conversion)]
-
 use super::helpers::{invalid_response, parse_model};
 use crate::utils::convert::to_python;
 use crate::utils::json::field;
@@ -82,17 +78,17 @@ impl PyDrsObject {
     }
 
     #[getter]
-    fn checksums(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn checksums(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "checksums")
     }
 
     #[getter]
-    fn access_methods(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn access_methods(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "access_methods")
     }
 
     #[getter]
-    fn contents(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn contents(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "contents")
     }
 
@@ -112,7 +108,7 @@ impl PyDrsObject {
     }
 
     /// The object as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 
@@ -166,7 +162,7 @@ impl PyAccessURL {
     }
 
     /// The access URL as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 
@@ -227,7 +223,7 @@ impl PyBulkAccessURL {
     }
 
     /// The entry as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 

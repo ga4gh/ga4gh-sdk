@@ -144,12 +144,6 @@ hand-written:
   as the generator writes them (see
   [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). A new client
   whose models trigger these lints needs the same attribute.
-- Python bindings: `clippy::useless_conversion` is allowed for the whole
-  `python` crate, because PyO3 0.22's `#[pymethods]` code triggers it at
-  methods that return `PyResult`, and an `#[allow]` on the `impl` block or
-  the method doesn't reach that code. It is crate-wide rather than per file,
-  so that new binding files don't each need it. Remove it after upgrading
-  PyO3 ([#239](https://github.com/ga4gh/ga4gh-sdk/issues/239)).
 
 Documentation lint enforcement remains in
 [#87](https://github.com/ga4gh/ga4gh-sdk/issues/87); it needs a policy for

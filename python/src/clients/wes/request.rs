@@ -53,13 +53,13 @@ impl PyRunRequest {
 
     /// Builds a request from a `RunRequest`, a JSON-serialisable object or JSON text.
     pub fn from_python(request: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(request) = request.downcast::<PyRunRequest>() {
+        if let Ok(request) = request.cast::<PyRunRequest>() {
             return Ok(request.borrow().clone());
         }
-        if let Ok(mapping) = request.downcast::<PyMapping>() {
+        if let Ok(mapping) = request.cast::<PyMapping>() {
             if !request.is_instance_of::<PyDict>() {
                 // `json.dumps` takes only `dict`s, so copy other mappings into one.
-                let dict = PyDict::new_bound(request.py());
+                let dict = PyDict::new(request.py());
                 dict.update(mapping)?;
                 return Self::from_value(to_json(&dict, "run request")?);
             }
@@ -146,7 +146,7 @@ impl PyRunRequest {
         cls: &Bound<'py, PyType>,
         request: &Bound<'py, PyMapping>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let dict = PyDict::new_bound(cls.py());
+        let dict = PyDict::new(cls.py());
         dict.update(request)?;
         cls.call1((dict,))
     }
@@ -172,7 +172,7 @@ impl PyRunRequest {
     #[allow(clippy::type_complexity)]
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyType>, (PyObject,), Option<Bound<'py, PyAny>>)> {
+    ) -> PyResult<(Bound<'py, PyType>, (Py<PyAny>,), Option<Bound<'py, PyAny>>)> {
         let raw = to_python(slf.py(), &slf.borrow().raw)?;
         let state = slf.getattr("__dict__").ok();
         Ok((slf.get_type(), (raw,), state))
@@ -194,12 +194,12 @@ impl PyRunRequest {
     }
 
     #[getter]
-    fn workflow_params(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn workflow_params(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "workflow_params")
     }
 
     #[getter]
-    fn tags(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn tags(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "tags")
     }
 
@@ -214,7 +214,7 @@ impl PyRunRequest {
     }
 
     #[getter]
-    fn workflow_engine_parameters(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn workflow_engine_parameters(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "workflow_engine_parameters")
     }
 
@@ -224,7 +224,7 @@ impl PyRunRequest {
     }
 
     /// The request as a new `dict`, as given or received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 
@@ -288,13 +288,13 @@ pub(super) fn attachment_list(
     py: Python<'_>,
     attachments: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<StreamingAttachment>> {
-    let pairs = match attachments.downcast::<PyMapping>() {
+    let pairs = match attachments.cast::<PyMapping>() {
         Ok(mapping) => mapping.items()?.into_any(),
         Err(_) => attachments.clone(),
     };
     let mut names = HashSet::new();
     let mut result = Vec::new();
-    for pair in pairs.iter()? {
+    for pair in pairs.try_iter()? {
         let (filename, content): (String, Bound<'_, PyAny>) = pair?
             .extract()
             .map_err(|_| PyValueError::new_err(ATTACHMENTS))?;

@@ -45,12 +45,12 @@ impl PyRunLog {
     /// The run's state as a `WesState`; `UNKNOWN` if the run has none or one
     /// that WES 1.1 does not define.
     #[getter]
-    fn state(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn state(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         state_to_python(py, self.inner.state.unwrap_or_default())
     }
 
     #[getter]
-    fn run_log(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn run_log(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "run_log")
     }
 
@@ -60,12 +60,12 @@ impl PyRunLog {
     }
 
     #[getter]
-    fn task_logs(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn task_logs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "task_logs")
     }
 
     #[getter]
-    fn outputs(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn outputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, &self.raw, "outputs")
     }
 
@@ -75,7 +75,7 @@ impl PyRunLog {
     }
 
     /// The run as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 
@@ -164,7 +164,7 @@ impl PyTaskLog {
     }
 
     /// The task as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 

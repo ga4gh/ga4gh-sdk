@@ -73,14 +73,14 @@ pub(super) fn parse_body(body: &str) -> PyResult<Value> {
     json::parse_body("DRS", body)
 }
 
-pub(super) fn response_object(py: Python<'_>, raw: &Value) -> PyResult<PyObject> {
+pub(super) fn response_object(py: Python<'_>, raw: &Value) -> PyResult<Py<PyAny>> {
     if !raw.is_object() {
         return Err(invalid_response("not a JSON object"));
     }
     to_python(py, raw)
 }
 
-pub(super) fn raw_json(py: Python<'_>, raw: Value) -> Result<PyObject, String> {
+pub(super) fn raw_json(py: Python<'_>, raw: Value) -> Result<Py<PyAny>, String> {
     response_object(py, &raw).map_err(|_| "could not convert JSON object to Python".to_owned())
 }
 
@@ -138,7 +138,7 @@ pub(super) fn strings(values: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<Str
         return Err(error());
     }
     values
-        .iter()
+        .try_iter()
         .map_err(|_| error())?
         .map(|item| item?.extract::<String>().map_err(|_| error()))
         .collect()

@@ -1,11 +1,3 @@
-// The code that PyO3 0.22 generates for `#[pymethods]` triggers
-// `clippy::useless_conversion`, reported at the `PyResult` return type of
-// methods; an `#[allow]` on the `impl` block or the method doesn't reach it.
-// It is crate-wide so that new binding files don't each need it. Remove it
-// once PyO3 is upgraded (#239) to a version whose generated code doesn't
-// trigger it.
-#![allow(clippy::useless_conversion)]
-
 //! This module provides Python bindings for the GA4GH SDK using PyO3.
 //! It exposes several key structs and their methods to Python, allowing for interaction with GA4GH services.
 //!
@@ -81,6 +73,16 @@ pub enum PyServiceType {
     REGISTRY,
 }
 
+// PyO3 0.30 no longer extracts owned pyclasses automatically. Keep the
+// existing Rust method signatures by cloning the Python-owned enum.
+impl<'a, 'py> FromPyObject<'a, 'py> for PyServiceType {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(value.cast::<Self>()?.borrow().clone())
+    }
+}
+
 impl From<PyServiceType> for ServiceType {
     fn from(py_service_type: PyServiceType) -> Self {
         match py_service_type {
@@ -101,8 +103,10 @@ pub enum ServiceSection {
     Custom(String),
 }
 
-impl<'py> FromPyObject<'py> for ServiceSection {
-    fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+impl<'a, 'py> FromPyObject<'a, 'py> for ServiceSection {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         if let Ok(service_type) = value.extract::<PyServiceType>() {
             return Ok(ServiceSection::BuiltIn(service_type));
         }

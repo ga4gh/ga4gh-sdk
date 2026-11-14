@@ -27,7 +27,7 @@ pub struct PyWES {
 impl PyWES {
     /// Build a WES client for Rust extension crates while releasing the GIL during discovery.
     pub fn new(config: &PyConfiguration) -> PyResult<Self> {
-        Python::with_gil(|py| Self::new_with_gil(py, config))
+        Python::attach(|py| Self::new_with_gil(py, config))
     }
 
     fn new_with_gil(py: Python<'_>, config: &PyConfiguration) -> PyResult<Self> {
@@ -86,7 +86,7 @@ impl PyWES {
         request: &Bound<'_, PyAny>,
         attachments: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyRun> {
-        if let Ok(text) = request.downcast::<PyString>() {
+        if let Ok(text) = request.cast::<PyString>() {
             // Lossy, so that paths with surrogate escapes (non-UTF-8 file names) pass.
             if text.to_string_lossy().trim_start().starts_with('{') {
                 return Err(PyValueError::new_err(

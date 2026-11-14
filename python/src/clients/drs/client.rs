@@ -1,9 +1,5 @@
 //! `DRS`: the client for one DRS service.
 
-// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
-// clippy reports at every method that returns one, as in `tes.rs`.
-#![allow(clippy::useless_conversion)]
-
 use super::bulk::{access_pairs, PyBulkPolicy, PyBulkReport};
 use super::helpers::{
     access_endpoint, budget, object_endpoint, parse_body, raw_json, require_attempts,
@@ -34,7 +30,7 @@ pub struct PyDRS {
 impl PyDRS {
     /// Build a DRS client for Rust extension crates while releasing the GIL during discovery.
     pub fn new(config: &PyConfiguration) -> PyResult<Self> {
-        Python::with_gil(|py| Self::new_with_gil(py, config))
+        Python::attach(|py| Self::new_with_gil(py, config))
     }
 
     fn new_with_gil(py: Python<'_>, config: &PyConfiguration) -> PyResult<Self> {
@@ -176,14 +172,14 @@ impl PyDRS {
 
     /// Gets the object's complete JSON as a `dict`, without model validation.
     /// This also accepts provider extensions such as `created_time: null`.
-    pub fn get_object_raw(&self, py: Python<'_>, object_id: &str) -> PyResult<PyObject> {
+    pub fn get_object_raw(&self, py: Python<'_>, object_id: &str) -> PyResult<Py<PyAny>> {
         let raw = self.ready(py, object_endpoint(object_id)?, "DRS object")?;
         response_object(py, &raw)
     }
 
     /// Asks once for an object: returns a `DrsObject`, or a `PendingResolution` if the
     /// server is still preparing it.
-    pub fn get_object_once(&self, py: Python<'_>, object_id: &str) -> PyResult<PyObject> {
+    pub fn get_object_once(&self, py: Python<'_>, object_id: &str) -> PyResult<Py<PyAny>> {
         let answer = self.once(py, object_endpoint(object_id)?, "DRS object")?;
         ready_or_pending(py, answer, PyDrsObject::from_json)
     }
@@ -225,7 +221,7 @@ impl PyDRS {
         py: Python<'_>,
         object_id: &str,
         access_id: &str,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let raw = self.ready(py, access_endpoint(object_id, access_id)?, "access URL")?;
         response_object(py, &raw)
     }
@@ -237,7 +233,7 @@ impl PyDRS {
         py: Python<'_>,
         object_id: &str,
         access_id: &str,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let answer = self.once(py, access_endpoint(object_id, access_id)?, "access URL")?;
         ready_or_pending(py, answer, PyAccessURL::from_json)
     }
