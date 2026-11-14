@@ -36,15 +36,10 @@ with the CLI binaries, which a maintainer completes and publishes.
    matrix by default. For packaging, native dependency or platform changes,
    run CI manually on the PR branch before merging (see the
    [development guide](development.md#ci)).
-3. **Publish package** uploads all files with
-   [trusted publishing](https://docs.pypi.org/trusted-publishers/): there is no
-   API token, PyPI accepts the upload because it comes from this workflow and
-   environment. The upload also carries
-   [attestations](https://docs.pypi.org/attestations/) of where each file was
-   built.
-4. **Release binaries** ([`binaries.yml`](../.github/workflows/binaries.yml))
+3. **Release binaries** ([`binaries.yml`](../.github/workflows/binaries.yml))
    builds `ga4gh-cli` natively on one runner per platform, runs `--help` and
-   `--version` on it, and packs it with `LICENSE` and `README.md` into
+   `--version` on it, and packs it with `LICENSE` and the CLI guide
+   (`cli/README.md`, as `README.md`) into
    `ga4gh-cli-<version>-<target>.tar.gz` (`.zip` on Windows):
 
    | Platform | Target | Runner |
@@ -64,8 +59,15 @@ with the CLI binaries, which a maintainer completes and publishes.
    wheels, CI builds the same matrix after each merge to `main` and on manual
    runs, without publishing; for changes to the CLI's native dependencies or
    platform support, run CI manually on the PR branch before merging. This job
-   runs in parallel with the wheels; **Publish package** waits for both, so
-   that nothing reaches PyPI unless every artefact of the release is built.
+   runs in parallel with the wheels.
+4. **Publish package** waits for the wheels and the CLI binaries, so that
+   nothing reaches PyPI unless every artefact of the release is built. It
+   uploads all files with
+   [trusted publishing](https://docs.pypi.org/trusted-publishers/): there is no
+   API token, PyPI accepts the upload because it comes from this workflow and
+   environment. The upload also carries
+   [attestations](https://docs.pypi.org/attestations/) of where each file was
+   built.
 5. **GitHub release** runs after the package is published. It writes
    `SHA256SUMS` for the archives, records
    [build provenance attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
@@ -100,7 +102,9 @@ For an upstream TestPyPI rehearsal, use a distinct pre-release workspace
 version and tag, such as `0.1.0-dev.1` and `v0.1.0-dev.1`. The workflow rejects
 an upstream TestPyPI upload of a stable version. An immutable tag cannot later
 be reused to publish the same version to PyPI. The run shows a warning; delete
-the variable afterwards, or the next tag goes to TestPyPI, too.
+the variable afterwards, or the next tag goes to TestPyPI, too. Such a run
+also creates a draft GitHub release for the rehearsal tag; check it, then
+delete it, and never publish it.
 
 ## One-time setup
 
@@ -109,8 +113,9 @@ environments limited to `v*` tags. Both require approval by
 `pavelnikonorov` or `uniqueg` and prevent self-approval; neither needs secrets.
 Two tag rulesets allow only those two users to create `v*` tags and prevent
 updates or deletion. Verify these protections before each release. The CLI
-binaries and the GitHub release need no environment and no secret; that job
-gets write access to the repository contents from the workflow's own token.
+binaries and the GitHub release need no environment and no secret. The binary
+builds are read-only; only the **GitHub release** job gets `contents`,
+`attestations` and `id-token` write access, from the workflow's own token.
 
 For the demonstrator release, the
 [`pavelnikonorov` PyPI account](https://pypi.org/user/pavelnikonorov/) will

@@ -55,8 +55,9 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libssl-dev pkg-config
       - name: Install rustup
-        # Not every runner image ships rustup; the toolchain itself comes from
-        # rust-toolchain.toml either way.
+        # The windows-11-arm image may lack rustup (windows-2025 ships it); the
+        # step does nothing where rustup exists. The toolchain itself comes
+        # from rust-toolchain.toml either way.
         if: runner.os == 'Windows'
         env:
           TARGET: ${{ matrix.target }}
@@ -117,7 +118,14 @@ jobs:
           name="ga4gh-cli-$version-$TARGET"
           staging="$RUNNER_TEMP/$name"
           mkdir -p "$staging" dist
-          cp "$binary" LICENSE README.md "$staging/"
+          cp "$binary" LICENSE "$staging/"
+          # The CLI guide, not the SDK overview of the repository root. Its
+          # relative links would be dead in the archive, so they point to the
+          # files of the release tag instead (in-page anchors stay as they are).
+          base="https://github.com/$GITHUB_REPOSITORY/blob/v$version"
+          sed -E -e "s#\]\(\.\./#](${base}/#g" \
+            -e "s#\]\(([a-z][a-z0-9_./-]*\.[a-z]+[^)]*)\)#](${base}/cli/\1)#g" \
+            cli/README.md > "$staging/README.md"
           if [[ "$RUNNER_OS" == Windows ]]; then
             archive="$name.zip"
             (cd "$RUNNER_TEMP" && 7z a -tzip "$GITHUB_WORKSPACE/dist/$archive" "$name" > /dev/null)
