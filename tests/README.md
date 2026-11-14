@@ -75,9 +75,26 @@ the identity provider and runs [`protes_tes.rs`](../lib/tests/protes_tes.rs):
 - a long task is canceled;
 - requests without a token, or with an invalid one, get HTTP 401.
 
-The test passes the token with `Configuration::with_oauth_access_token`. On
-exit, the script prints the service logs if a step failed and removes the
-services and its temporary files.
+The library test passes the token with
+`Configuration::with_oauth_access_token`.
+
+It then runs the CLI suite, [`protes_cli.rs`](../cli/tests/protes_cli.rs).
+It runs the `ga4gh-cli` binary with a temporary home directory whose config
+points to proTES and holds the access token as `oauth_access_token`, so the
+token reaches proTES from the CLI configuration only:
+
+- a task runs to completion with `tes create`, `tes status`, `tes get` and
+  `tes list` (with matching and nonmatching tag filters);
+- a running task is canceled with `tes cancel`;
+- with a config without a token, `tes create`, `tes status`, `tes get`,
+  `tes list` and `tes cancel` (`status`, `get` and `cancel` on an existing
+  task of the test user) fail with a non-zero exit status, empty stdout,
+  and HTTP 401 on stderr.
+
+The script builds both test binaries before it starts the services, because
+the access token expires 10 minutes after it is issued. On exit, it prints
+the service logs if a step failed and removes the services and its temporary
+files.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -90,8 +107,8 @@ All images are pinned by digest. To update proTES, bump its image digest in
 the Compose file together with `protes_commit` and `fake_tes_sha256` in the
 script; the Docker CLI image of Funnel is `DOCKER_CLI_IMAGE` in the script.
 The [CI workflow](../.github/workflows/ci.yml) installs Funnel as for the
-Funnel suite and runs this suite (`Integration (protes)`) when TES, shared
-library, dependency or its own files change.
+Funnel suite and runs this suite (`Integration (protes)`) when TES, CLI,
+shared library, dependency or its own files change.
 
 ## Starter Kit WES
 

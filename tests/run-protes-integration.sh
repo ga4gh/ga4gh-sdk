@@ -2,9 +2,10 @@
 # Integration suite of the TES client against proTES, a TES gateway that
 # requires access tokens, relaying tasks to Funnel (see tests/README.md).
 # Starts the services of tests/protes/compose.yaml, gets an access token of
-# the fake identity provider, runs `lib/tests/protes_tes.rs` and removes the
-# services again. Needs Docker with Compose, curl and a Linux `funnel`
-# executable matching the container architecture (on PATH or in FUNNEL_BIN).
+# the fake identity provider, runs `lib/tests/protes_tes.rs` and
+# `cli/tests/protes_cli.rs` and removes the services again. Needs Docker
+# with Compose, curl, and a Linux `funnel` executable matching the container
+# architecture (on PATH or in FUNNEL_BIN).
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -87,6 +88,14 @@ curl --fail --location --silent --show-error --retry 3 --max-time 60 \
   "https://raw.githubusercontent.com/elixir-cloud-aai/proTES/$protes_commit/tests/smoke/fake_tes.py"
 echo "$fake_tes_sha256  $FAKE_TES_FILE" | sha256sum --check --quiet
 
+# Build the test binaries first: the access token expires 10 minutes after
+# it is issued, which a cold build could use up
+(cd "$repo_root" &&
+  cargo test --locked -p ga4gh-lib --features protes_integration_tests \
+    --test protes_tes --no-run &&
+  cargo test --locked -p ga4gh-cli --features protes_integration_tests \
+    --test protes_cli --no-run)
+
 started=true
 docker compose up --detach --wait --wait-timeout "$startup_timeout"
 
@@ -103,3 +112,5 @@ echo "proTES ready at $PROTES_TES_URL"
 cd "$repo_root"
 RUST_BACKTRACE=1 cargo test --locked -p ga4gh-lib --features protes_integration_tests \
   --test protes_tes -- --nocapture
+RUST_BACKTRACE=1 cargo test --locked -p ga4gh-cli --features protes_integration_tests \
+  --test protes_cli -- --nocapture
