@@ -169,6 +169,13 @@ The script always uses the model template, also for other crates, so their
 models keep unknown fields and values too. Their crate needs `serde_json` and
 `serde` 1.0.181 or later.
 
+The generated enums implement `Default` by hand, and some constructors take
+more than seven arguments. Clippy warns about these (`derivable_impls`,
+`too_many_arguments`); this repository allows each on the parent `models`
+module of the clients where it fires (see [Lints](development.md#lints)). A crate that lints with
+`-D warnings` needs an `#[allow]` on its `models` module for those of these
+lints that fire there.
+
 ## Hand edits
 
 Each API has at most one patch, `utils/patches/<api>.patch`, which the wrapper
