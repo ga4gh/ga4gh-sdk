@@ -1,3 +1,11 @@
+// The code that PyO3 0.22 generates for `#[pymethods]` triggers
+// `clippy::useless_conversion`, reported at the `PyResult` return type of
+// methods; an `#[allow]` on the `impl` block or the method doesn't reach it.
+// It is crate-wide so that new binding files don't each need it. Remove it
+// once PyO3 is upgraded (#239) to a version whose generated code doesn't
+// trigger it.
+#![allow(clippy::useless_conversion)]
+
 //! This module provides Python bindings for the GA4GH SDK using PyO3.
 //! It exposes several key structs and their methods to Python, allowing for interaction with GA4GH services.
 //!
