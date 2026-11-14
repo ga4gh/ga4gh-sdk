@@ -136,6 +136,7 @@ CliContext::new("downstream-cli", env!("CARGO_PKG_VERSION"))
 | Configuration file | `~/.<name>/config.json`; `with_config_path` sets another | `~/.ga4gh-cli/config.json` | `~/.downstream-cli/config.json` |
 | Token variable | none; `with_token_env` sets one and its sections | none | `DOWNSTREAM_CLI_TOKEN` for `TES` and `QUOTA` |
 | Profile variable | none; `with_profile_env` sets one | `GA4GH_CLI_PROFILE`; `without_profile_env` turns it off | none |
+| Token store of `login` | `tokens.json` next to the configuration file; `with_token_store_path` sets another | `~/.ga4gh-cli/tokens.json` | `~/.downstream-cli/tokens.json` |
 
 The name, version and help text are `&'static str`, usually literals or
 `env!` values. For the default configuration file, the name must be usable
@@ -151,6 +152,15 @@ token to another service, name a variable in its section with
 `oauth_access_token_env`. The SDK applies the credential to discovery and
 service requests under the configured API root; see the
 [authentication guide](authentication.md).
+
+The context's command tree also has `login` and `logout`, for sections with
+`oidc` settings (see
+[Logging in with OpenID Connect](../cli/README.md#logging-in-with-openid-connect)).
+`dispatch` and `dispatch_to` run them; `dispatch_with_config` and
+`dispatch_with_config_to` return `None` for them, as they need the context.
+`load_config` gives sections with `oidc` a token provider with the stored
+login. When the token variable applies to such a section and is set, its
+token is used instead; for such a section, an unset variable is no error.
 
 The configuration file can hold [profiles](usage.md#profiles). The context's
 command tree has a global `--profile` option; its dispatch methods apply it

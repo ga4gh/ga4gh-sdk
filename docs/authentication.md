@@ -3,8 +3,11 @@
 The SDK applies one configured credential source to requests under each
 service's `base_path`. This applies to Rust service clients, Python bindings,
 and built-in CLI service commands, including service discovery and TES/WES
-submissions. Configure each service section separately. The SDK does not log in,
-refresh a token, or infer a token from a global environment variable.
+submissions. Configure each service section separately. The library does not
+log in, refresh a token, or infer a token from a global environment variable.
+The CLI's `login` command can get tokens from an OpenID Connect provider with
+the device flow, for sections with `oidc` settings, and refreshes them; see
+[CLI login](#cli-login-with-openid-connect).
 
 ## Choose one source
 
@@ -89,3 +92,43 @@ audiences, 401 handling, and the distinction between provider failures and
 HTTP errors. The provider's own error and a caller-selected audience can
 contain sensitive data; default `TokenProviderError` diagnostics omit both.
 Rust callers may explicitly inspect its underlying source error.
+
+## CLI login with OpenID Connect
+
+A CLI section with an `oidc` object (`issuer`, `client_id`, optional `scope`)
+gets its token from the CLI's token store instead of the configuration file.
+`ga4gh-cli login <SECTION>` fills the store through the OAuth 2.0 device
+authorization grant ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)) with
+any provider that publishes a `device_authorization_endpoint` in its
+[OpenID Connect discovery](https://openid.net/specs/openid-connect-discovery-1_0.html)
+document. The client is public: no client secret is configured, sent, or
+stored. The [CLI README](../cli/README.md#logging-in-with-openid-connect)
+describes the settings and commands.
+
+- `oidc` is one credential source: a section that also sets Basic, OAuth or
+  generic bearer credentials is an error. A downstream binary's token
+  variable, when set, takes the place of the login for its listed sections.
+- The issuer and the discovered endpoints must use HTTPS (HTTP only on
+  loopback addresses), and the discovery document must name the configured
+  issuer. Requests to the provider don't follow redirects.
+- The store, `tokens.json` next to the configuration file, is written with
+  mode `0600` in a directory created with mode `0700`, and a store that other
+  users can access is rejected. It is keyed by issuer and client ID.
+  Processes lock `tokens.json.lock` while they change the store, and a
+  refresh starts from the stored tokens, so that processes don't reuse a
+  refresh token that another one has replaced. A refresh doesn't store a
+  login again that `logout` has deleted. If writing refreshed tokens fails,
+  the command still uses them and prints a warning; the next command may then
+  need a new login.
+- The CLI sends the access token as an OAuth bearer token through a
+  [token provider](usage.md#token-providers), so it reaches only the
+  section's API root, as other credentials do. It refreshes an expired token
+  before the command and once after a `401`, and writes refreshed tokens back
+  to the store. A refresh that fails before the command is reported with its
+  reason; one that fails after a `401` is reported as a token-provider
+  failure.
+- Tokens are never printed. Errors from the provider are reported by their
+  OAuth `error` code; other fields of the response are not shown. A rejected
+  refresh token (`invalid_grant`) or a missing one asks the user to log in
+  again.
+- `logout` deletes the stored tokens but doesn't revoke them at the provider.

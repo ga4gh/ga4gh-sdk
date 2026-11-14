@@ -117,6 +117,92 @@ SDK-owned clients do not follow redirects. See the
 contracts. Dynamic token-provider integration is tracked in
 [#215](https://github.com/ga4gh/ga4gh-sdk/pull/215).
 
+### Logging in with OpenID Connect
+
+Instead of pasting a token, you can log in with an OpenID Connect provider
+that supports the
+[device authorization grant](https://www.rfc-editor.org/rfc/rfc8628) (device
+flow). Give each section that should use the login an `oidc` object with the
+provider's issuer and a public client ID that the provider has registered for
+the device flow:
+
+```json
+{
+    "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oidc": {
+            "issuer": "https://login.example.org/realms/example",
+            "client_id": "my-cli-client"
+        }
+    }
+}
+```
+
+- `issuer` (string, required): the provider's issuer URL. The CLI reads the
+  provider's endpoints from `<issuer>/.well-known/openid-configuration`.
+  It must use HTTPS; HTTP is accepted only for loopback addresses, such as a
+  local test provider.
+- `client_id` (string, required): a public client. The CLI sends no client
+  secret, and the configuration can't hold one.
+- `scope` (string, optional): the scopes to request, separated by spaces.
+  The default is `openid offline_access`; `offline_access` asks for a refresh
+  token. Some providers need other scopes, for example one that sets the
+  token's audience.
+
+A section with `oidc` can't also set `basic_auth`, `oauth_access_token`,
+`bearer_access_token` or their `_env` variants. Other keys of `oidc` are
+errors. `ga4gh-cli` itself has no token variable; to use a token from the
+environment for a section, remove `oidc` and set `oauth_access_token_env`.
+Binaries built on this CLI with a token variable (see the
+[downstream guide](../docs/downstream.md)) use the variable's token instead of
+the login when the variable is set.
+
+Then log in, naming the section (the service commands' names, such as `tes`,
+stand for their sections):
+
+```sh
+ga4gh-cli login tes
+```
+
+The CLI shows a URL and a code on standard error. Open the URL in a browser,
+enter the code and approve the login. The CLI asks the provider at the
+interval the provider sets (by default every 5 seconds, and never more
+often than once a second) until you have approved, denied, or the code has expired. It then
+stores the tokens in `tokens.json` next to the configuration file
+(`~/.ga4gh-cli/tokens.json`). It creates the file with mode `0600` and its
+directory, if missing, with mode `0700`; it refuses to read a file that other
+users can access. The CLI never prints the tokens. On Windows, the file gets
+the default permissions of its directory. The CLI doesn't use an OS keyring.
+Processes that change the store take turns through the lock file
+`tokens.json.lock` next to it. `login` prints a confirmation, but no token,
+on standard error, leaves standard output empty and exits with code 0; it
+exits with code 1 if the configuration, the provider, or the approval fails.
+
+Sections with `oidc` now send the stored access token. When it has expired, or
+will within 30 seconds, the CLI refreshes it with the refresh token before the
+command and stores the new tokens. If a service rejects the token with `401`,
+the CLI refreshes it once and sends a read-only request again; submissions are
+not resent. If another process has refreshed the tokens in the meantime, the
+CLI uses its tokens instead. If the provider issued no refresh token, or
+rejects the refresh token (`invalid_grant`), the command fails and asks you
+to log in again; other refresh errors are reported by their OAuth error code.
+If the CLI can't store refreshed tokens, it still uses them and prints a
+warning. Tokens are stored per issuer and client ID, so all sections with the
+same `oidc` settings share one login, in every profile. The token store's
+directory must be writable.
+
+```sh
+ga4gh-cli logout tes
+```
+
+`logout` deletes the stored tokens of the section's issuer and client ID and
+says so on standard error; it exits with code 0, also if you weren't logged
+in. It doesn't revoke the tokens at the provider; they stay valid there until
+they expire. Commands that are still running then can't refresh their token
+and don't store it again.
+
+`--profile` selects the profile whose section `login` and `logout` read.
+
 ## Usage
 
 ### Basic local setup
