@@ -121,11 +121,17 @@ jobs:
           cp "$binary" LICENSE "$staging/"
           # The CLI guide, not the SDK overview of the repository root. Its
           # relative links would be dead in the archive, so they point to the
-          # files of the release tag instead (in-page anchors stay as they are).
+          # files of the release tag instead (in-page anchors stay as they are);
+          # in CI runs without a tag, these links don't resolve.
           base="https://github.com/$GITHUB_REPOSITORY/blob/v$version"
           sed -E -e "s#\]\(\.\./#](${base}/#g" \
             -e "s#\]\(([a-z][a-z0-9_./-]*\.[a-z]+[^)]*)\)#](${base}/cli/\1)#g" \
             cli/README.md > "$staging/README.md"
+          # Fail on a link form the rewrite doesn't cover.
+          if grep -oE '\]\([^)]*\)' "$staging/README.md" | grep -vE '^\]\((https?://|#|mailto:)'; then
+            echo "::error::cli/README.md has relative links that the archive README can't resolve (see above)"
+            exit 1
+          fi
           if [[ "$RUNNER_OS" == Windows ]]; then
             archive="$name.zip"
             (cd "$RUNNER_TEMP" && 7z a -tzip "$GITHUB_WORKSPACE/dist/$archive" "$name" > /dev/null)
