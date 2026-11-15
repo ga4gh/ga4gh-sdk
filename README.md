@@ -1,10 +1,15 @@
 # GA4GH SDK
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Documentation](https://readthedocs.org/projects/ga4gh-sdk/badge/?version=latest)](https://ga4gh-sdk.readthedocs.io/en/latest/)
 [![Coverage](https://codecov.io/gh/ga4gh/ga4gh-sdk/graph/badge.svg?branch=main)](https://codecov.io/gh/ga4gh/ga4gh-sdk)
 
 ## Synopsis
 
 A Generic SDK and CLI for GA4GH API services.
+
+The [documentation](https://ga4gh-sdk.readthedocs.io/) has this README, the
+usage, CLI and Python guides, the Rust API reference and the development
+guides on one site.
 
 ## Basic usage
 
@@ -74,6 +79,46 @@ All models now keep what their spec doesn't define (see
 - `TesTask::new(executors)` now sets `executors`; it used to ignore them.
 
 ## Installation
+
+### Download the CLI
+
+Each [release](https://github.com/ga4gh/ga4gh-sdk/releases) has an archive of
+`ga4gh-cli` per platform, named `ga4gh-cli-<version>-<target>`:
+
+| Platform | Target | Archive |
+| --- | --- | --- |
+| Linux x86-64 | `x86_64-unknown-linux-gnu` | `.tar.gz` |
+| Linux aarch64 | `aarch64-unknown-linux-gnu` | `.tar.gz` |
+| macOS x86-64 | `x86_64-apple-darwin` | `.tar.gz` |
+| macOS arm64 | `aarch64-apple-darwin` | `.tar.gz` |
+| Windows x86-64 | `x86_64-pc-windows-msvc` | `.zip` |
+| Windows arm64 | `aarch64-pc-windows-msvc` | `.zip` |
+
+The Linux binaries need glibc 2.34 or newer (for example Ubuntu 22.04,
+Debian 12, RHEL 9 or newer), the OpenSSL 3 library (`libssl3` on Debian and
+Ubuntu, `openssl-libs` on Fedora and RHEL) and CA certificates
+(`ca-certificates`); minimal container images may lack the last two.
+Elsewhere, build from source as below. The binaries aren't signed, so macOS
+may block them until you remove the quarantine attribute
+(`xattr -d com.apple.quarantine ga4gh-cli`). For example, on Linux x86-64,
+check the download against the release's `SHA256SUMS` and, optionally, its
+build provenance, then unpack it (replace the example version with that of
+the release):
+
+```sh
+version=0.2.0
+target=x86_64-unknown-linux-gnu
+archive="ga4gh-cli-$version-$target.tar.gz"
+base="https://github.com/ga4gh/ga4gh-sdk/releases/download/v$version"
+curl --fail --location --remote-name "$base/$archive"
+curl --fail --location --remote-name "$base/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify "$archive" --repo ga4gh/ga4gh-sdk  # needs the GitHub CLI
+tar -xzf "$archive"
+"ga4gh-cli-$version-$target/ga4gh-cli" --help
+```
+
+### Build from source
 
 These instructions install the SDK from this source repository.
 

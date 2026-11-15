@@ -15,7 +15,11 @@
 //! - `TesTask`: a task to create or as returned by the server, with its full JSON
 //!   (`PyTesTask` is an alias).
 //! - `TesState`: the state of a task, a `str` enum.
+//! - `WaitTimeoutError`: raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
 //! - `ListTasksParams` and `ListTasksResponse`: filters and results of `TES.list()`.
+//! - `TRS`: a TRS client (TRS 2.0.1 and 2.0.2) for tools, versions, descriptors and files.
+//!   `Tool`, `ToolVersion`, `FileWrapper` and `ToolFile` are results with their full JSON;
+//!   `ToolPage` is one page of tools.
 //! - `WES`: a WES client; `Run`: a WES run addressed by its ID; `RunRequest`: a run to
 //!   start; `WesState`: the state of a run, a `str` enum. `RunLog`, `RunSummary`,
 //!   `RunListResponse`, `TaskLog` and `TaskListResponse` are results with their full JSON.
@@ -45,7 +49,8 @@
 //!
 //! - Synchronous network calls release the GIL and share a persistent Tokio runtime. The
 //!   async classes run their requests on the same runtime.
-//! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`.
+//! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`. A wait
+//!   that runs out of time raises `WaitTimeoutError`, a `TimeoutError`.
 
 use ::ga4gh_sdk::clients::ServiceType;
 use pyo3::prelude::*;
@@ -54,7 +59,8 @@ pub mod clients;
 pub mod utils;
 use crate::clients::serviceinfo::PyServiceInfo;
 use crate::clients::tes::{
-    tes_state_type, PyListTasksParams, PyTES, PyTask, PyTesListTasksResponse, PyTesTask,
+    tes_state_type, wait_timeout_error_type, PyListTasksParams, PyTES, PyTask,
+    PyTesListTasksResponse, PyTesTask,
 };
 use crate::clients::tes_async::{PyAsyncTES, PyAsyncTask};
 use crate::utils::configuration::PyConfiguration;
@@ -146,6 +152,8 @@ fn ga4gh_sdk(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAsyncTES>()?;
     m.add_class::<PyAsyncTask>()?;
     m.add("TesState", tes_state_type(py)?)?;
+    m.add("WaitTimeoutError", wait_timeout_error_type(py)?)?;
     clients::drs::register(py, m)?;
+    clients::trs::register(py, m)?;
     Ok(())
 }

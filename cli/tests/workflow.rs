@@ -1,4 +1,4 @@
-use ga4gh_cli::{command, dispatch_with_config};
+use ga4gh_cli::{command, dispatch_with_config, CliContext};
 use ga4gh_sdk::utils::configuration::Configuration;
 use serde_json::{json, Value};
 use std::{path::Path, process::Command};
@@ -204,6 +204,90 @@ async fn downstream_workflow_submission_uses_supplied_config() {
     assert!(output.stderr.is_empty(), "{}", output.stderr);
     let response: Value = serde_json::from_str(&output.stdout).unwrap();
     assert_eq!(response["run_id"], "injected-run");
+    service.assert();
+    submission.assert();
+}
+
+#[tokio::test]
+async fn workflow_submit_reports_failed_oidc_refresh_before_sending() {
+    let temp = tempfile::tempdir().unwrap();
+    let issuer = format!("{}/workflow-idp", mockito::server_url());
+    let wes_root = format!("{}/workflow-wes", mockito::server_url());
+    let config_path = temp.path().join("config.json");
+    std::fs::write(
+        &config_path,
+        json!({"WES": {
+            "base_path": wes_root,
+            "oidc": {"issuer": issuer, "client_id": "workflow-cli"}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let token_store = temp.path().join("tokens.json");
+    std::fs::write(
+        &token_store,
+        json!({"logins": [{
+            "issuer": issuer,
+            "client_id": "workflow-cli",
+            "scope": "openid offline_access",
+            "token_endpoint": format!("{issuer}/token"),
+            "access_token": "expired-access",
+            "refresh_token": "expired-refresh",
+            "expires_at": 0
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&token_store, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let refresh = mockito::mock("POST", "/workflow-idp/token")
+        .match_body(mockito::Matcher::UrlEncoded(
+            "refresh_token".into(),
+            "expired-refresh".into(),
+        ))
+        .with_status(400)
+        .with_body(r#"{"error":"invalid_grant"}"#)
+        .expect(1)
+        .create();
+    let service = mockito::mock("GET", "/workflow-wes/service-info")
+        .expect(0)
+        .create();
+    let submission = mockito::mock("POST", "/workflow-wes/runs")
+        .expect(0)
+        .create();
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let schema = root.join("examples/sequence-qc/profile.json");
+    let request = root.join("examples/sequence-qc/request.json");
+    let pin = "45d41324353cb4900fdd999c307c2e36a3f2a410";
+    let context = CliContext::new("test-cli", "1.0.0").with_config_path(config_path);
+    let matches = context
+        .command()
+        .try_get_matches_from([
+            "test-cli",
+            "workflow",
+            "submit",
+            schema.to_str().unwrap(),
+            request.to_str().unwrap(),
+            "public-qc@1",
+            "--profile-revision",
+            pin,
+            "--vocabulary-revision",
+            pin,
+        ])
+        .unwrap();
+    let output = context.dispatch(&matches).await.unwrap().unwrap();
+    assert_eq!(output.exit_code, std::process::ExitCode::FAILURE);
+    assert!(
+        output.stderr.contains("run 'test-cli login WES' again"),
+        "{}",
+        output.stderr
+    );
+    assert!(!output.stderr.contains("expired-refresh"));
+    refresh.assert();
     service.assert();
     submission.assert();
 }

@@ -147,7 +147,8 @@ pub(crate) async fn run_with_context(
                     let config = match service_config {
                         Some(config) => config.clone(),
                         None => context
-                            .load_config(ServiceType::WES)
+                            .load_config_fresh(ServiceType::WES)
+                            .await
                             .map_err(|error| error.to_string())?,
                     };
                     let wes = WES::new(&config).await?;

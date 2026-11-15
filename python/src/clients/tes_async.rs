@@ -8,18 +8,24 @@
 
 use crate::clients::tes::{
     cancel_task, connect, create_task, get_task, list_endpoint, list_tasks, parse_view,
-    state_to_python, task_status, task_to_create, PyListTasksParams,
+    state_to_python, task_path, task_status, task_to_create, wait_end, wait_result, wait_settings,
+    PyListTasksParams, WaitEnd, WaitSettings,
 };
 use crate::utils::convert::check_extra_args;
 // Public, so that Rust extensions can add async methods the same way.
 pub use crate::utils::runtime::{future_into_py, spawn_io};
 use crate::{PyConfiguration, PyTransport};
-use ga4gh_sdk::clients::tes::{Task, TES};
+use ga4gh_sdk::clients::tes::{Task, TesView, TES};
+use ga4gh_sdk::clients::wait::observe;
 use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::transport::Transport;
+use ga4gh_sdk::utils::operation::{OperationError, ReplaySafety};
+use ga4gh_sdk::utils::transport::{BodyLimits, RequestOptions, Transport};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
+use reqwest::Method;
+use serde_json::Value;
+use std::error::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
@@ -269,4 +275,97 @@ impl PyAsyncTask {
             Ok(None::<()>)
         })
     }
+
+    /// Waits until the task ends; takes the same arguments as `Task.wait()` and gives the
+    /// same result.
+    ///
+    /// Invalid arguments raise `ValueError` when the method is called. Cancelling the
+    /// awaiting coroutine stops polling; it doesn't cancel the task. Between polls, the
+    /// wait holds no call thread, so other async calls don't queue behind it.
+    #[pyo3(signature = (timeout=None, *, poll_interval=1.0, max_interval=None, view=None))]
+    pub fn wait<'py>(
+        &self,
+        py: Python<'py>,
+        timeout: Option<f64>,
+        poll_interval: f64,
+        max_interval: Option<f64>,
+        view: Option<&str>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let settings = wait_settings(timeout, poll_interval, max_interval, view)?;
+        let task = self.inner.clone();
+        let id = task.id.clone();
+        future_into_py(py, async move {
+            let end = wait_task_send(task, settings).await;
+            Python::attach(|py| wait_result(py, &id, end))
+        })
+    }
+}
+
+/// Why a poll on a call thread failed.
+enum PollError {
+    /// The wait's deadline or cancellation, kept for the waiter to tell apart.
+    Operation(OperationError),
+    /// Any other error, as its message.
+    Other(String),
+}
+
+/// Polls the task in the minimal view on a call thread, as the library's waiter does.
+///
+/// The future is `Send`: it takes a call thread only while the request runs.
+async fn poll_on_call_thread(task: Task, options: RequestOptions) -> Result<Value, Box<dyn Error>> {
+    let polled = spawn_io(move || async move {
+        let params = serde_json::json!({ "view": TesView::Minimal });
+        let result = task
+            .transport
+            .request_with_policy(Method::GET, &task_path(&task), None, Some(params), &options)
+            .await;
+        Ok(match result {
+            Ok(body) => {
+                serde_json::from_str::<Value>(&body).map_err(|e| PollError::Other(e.to_string()))
+            }
+            Err(error) => Err(match error.downcast_ref::<OperationError>() {
+                Some(error) => PollError::Operation(*error),
+                None => PollError::Other(error.to_string()),
+            }),
+        })
+    })
+    .await;
+    match polled {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(PollError::Operation(error))) => Err(Box::new(error)),
+        Ok(Err(PollError::Other(error))) | Err(error) => Err(error.into()),
+    }
+}
+
+/// Waits for the task like [`crate::clients::tes::wait_task`], with the library's state
+/// machine ([`observe`]), as a `Send` future.
+///
+/// The SDK's futures, and so `Task::wait`, aren't `Send`: `wait_task` would hold a call
+/// thread for the whole wait. This one sleeps on the runtime between polls and takes a call
+/// thread (see [`spawn_io`]) only for each request. The wait's deadline and cancellation
+/// hold on the runtime, also while a request waits for a call thread. Like the sync wait,
+/// it doesn't fetch failure logs (`WaitOptions::fetch_failure_logs` is off).
+pub async fn wait_task_send(task: Task, settings: WaitSettings) -> WaitEnd {
+    let WaitSettings { options, view } = settings;
+    let request = RequestOptions {
+        operation: options.operation.clone(),
+        retry: options.retry.clone(),
+        safety: ReplaySafety::ReadOnly,
+        limits: BodyLimits::default(),
+    };
+    let result = observe(task.remote_handle(), &options, || {
+        poll_on_call_thread(task.clone(), request.clone())
+    })
+    .await;
+    wait_end(result, &options, view, |view| {
+        let task = task.clone();
+        spawn_io(move || async move {
+            let params = serde_json::json!({ "view": view });
+            task.transport
+                .get(&task_path(&task), Some(params))
+                .await
+                .map_err(|error| error.to_string())
+        })
+    })
+    .await
 }

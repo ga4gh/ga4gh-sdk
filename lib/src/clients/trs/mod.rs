@@ -195,7 +195,7 @@ pub struct ToolFilter {
 
 impl ToolFilter {
     /// Returns the filter as query parameters for
-    /// [`Transport`](crate::utils::transport::Transport) requests, or `None`
+    /// [`Transport`] requests, or `None`
     /// if no field is set.
     ///
     /// # Errors
