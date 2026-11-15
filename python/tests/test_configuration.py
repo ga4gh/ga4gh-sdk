@@ -86,6 +86,21 @@ def test_token_from_named_environment_variable(write_config, monkeypatch):
     assert config.get_extra() == {}
 
 
+def test_profiles_file_reads_the_default_profile(write_config):
+    write_config(
+        {
+            "default_profile": "remote",
+            "profiles": {
+                "default": {"TES": {"base_path": "https://default.example.org/"}},
+                "remote": {"TES": {"base_path": "https://remote.example.org/"}},
+            },
+        }
+    )
+    config = Configuration("https://wrong.example")
+    config.from_file(ServiceType.TES)
+    assert config.get_base_path() == "https://remote.example.org/"
+
+
 def test_missing_custom_section_is_value_error(write_config):
     write_config({"TES": {"base_path": "https://example.org/ga4gh/tes/v1"}})
     config = Configuration("https://wrong.example")

@@ -15,6 +15,7 @@
 //! - `TesTask`: a task to create or as returned by the server, with its full JSON
 //!   (`PyTesTask` is an alias).
 //! - `TesState`: the state of a task, a `str` enum.
+//! - `WaitTimeoutError`: raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
 //! - `ListTasksParams` and `ListTasksResponse`: filters and results of `TES.list()`.
 //! - `TRS`: a TRS client (TRS 2.0.1 and 2.0.2) for tools, versions, descriptors and files.
 //!   `Tool`, `ToolVersion`, `FileWrapper` and `ToolFile` are results with their full JSON;
@@ -48,7 +49,8 @@
 //!
 //! - Synchronous network calls release the GIL and share a persistent Tokio runtime. The
 //!   async classes run their requests on the same runtime.
-//! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`.
+//! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`. A wait
+//!   that runs out of time raises `WaitTimeoutError`, a `TimeoutError`.
 
 use ::ga4gh_sdk::clients::ServiceType;
 use pyo3::prelude::*;
@@ -57,7 +59,8 @@ pub mod clients;
 pub mod utils;
 use crate::clients::serviceinfo::PyServiceInfo;
 use crate::clients::tes::{
-    tes_state_type, PyListTasksParams, PyTES, PyTask, PyTesListTasksResponse, PyTesTask,
+    tes_state_type, wait_timeout_error_type, PyListTasksParams, PyTES, PyTask,
+    PyTesListTasksResponse, PyTesTask,
 };
 use crate::clients::tes_async::{PyAsyncTES, PyAsyncTask};
 use crate::utils::configuration::PyConfiguration;
@@ -74,6 +77,16 @@ pub enum PyServiceType {
     AAI,
     WES,
     REGISTRY,
+}
+
+// PyO3 0.30 no longer extracts owned pyclasses automatically. Keep the
+// existing Rust method signatures by cloning the Python-owned enum.
+impl<'a, 'py> FromPyObject<'a, 'py> for PyServiceType {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(value.cast::<Self>()?.borrow().clone())
+    }
 }
 
 impl From<PyServiceType> for ServiceType {
@@ -96,8 +109,10 @@ pub enum ServiceSection {
     Custom(String),
 }
 
-impl<'py> FromPyObject<'py> for ServiceSection {
-    fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+impl<'a, 'py> FromPyObject<'a, 'py> for ServiceSection {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         if let Ok(service_type) = value.extract::<PyServiceType>() {
             return Ok(ServiceSection::BuiltIn(service_type));
         }
@@ -137,6 +152,7 @@ fn ga4gh_sdk(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAsyncTES>()?;
     m.add_class::<PyAsyncTask>()?;
     m.add("TesState", tes_state_type(py)?)?;
+    m.add("WaitTimeoutError", wait_timeout_error_type(py)?)?;
     clients::drs::register(py, m)?;
     clients::trs::register(py, m)?;
     Ok(())

@@ -1,46 +1,25 @@
 # Pull request review framework
 
-This is a working guide for reviewing changes to the GA4GH SDK. It synthesizes
-feedback posted by @uniqueg on PRs #106–#112 and adds general review practices.
-Those comments explicitly distinguish static inspection from executed checks;
-some suggestions were nonblocking. [`AGENTS.md`](../AGENTS.md) requires the
-pre-PR review below. The remaining review questions are risk-based guidance,
-not an automated GitHub rule or a substitute for human approval.
+This guide covers review, PR publication, and the change record for the GA4GH
+SDK. The [engineering principles](engineering_principles.md) define properties
+to preserve in implementation. The [technical writing guide](technical_writing.md)
+offers advisory help for documentation and instructions until #185 evaluates
+the pilot. Apply relevant guidance in proportion to the change; repository
+guidance does not certify the existing implementation.
+The [dated assessment](assessments/2026-11-10-engineering.md) retains examples
+behind several rules; linked issues own their current status.
 
 ## How repository agents use this guide
 
-This workflow applies to coding agents that load this repository's instructions,
-including Codex and Claude Code. `AGENTS.md` is the shared entry point: it
-contains the short pre-PR rule and links here for the detailed procedure. An
-agent only needs to load this guide when reviewing changes or preparing a PR.
+Coding agents (e.g., Claude, Codex) use `AGENTS.md` as the shared entry point.
+It routes them to this framework for review or PR preparation and to the
+relevant engineering principles for affected contracts. `CLAUDE.md` imports
+the same root instructions. Use `python/AGENTS.md` for binding-specific work.
 
-- Codex reads the root `AGENTS.md` as project guidance; see the
-  [OpenAI Docs guidance on repository instructions](https://developers.openai.com/cookbook/examples/codex/iterating-development-workflows-with-codex).
-- This repository's `CLAUDE.md` imports `AGENTS.md` with `@AGENTS.md` for Claude
-  Code. [Claude Code's documentation](https://code.claude.com/docs/en/memory)
-  describes that import and notes that instruction files are context, not
-  enforced configuration.
-- Other agents can use the same workflow by loading `AGENTS.md` and following
-  its link to this guide.
-
-The guide and `AGENTS.md` must be present in the working copy. Branches and
-clones receive this workflow only after they include the commit that adds it.
-
-## What the earlier reviews taught us
-
-| Review | Recurring lesson |
-| --- | --- |
-| [#106](https://github.com/ga4gh/ga4gh-sdk/pull/106#issuecomment-6746379367) | Verify that documented commands work, formatting claims match generator behavior, and the review states what was not run. |
-| [#107](https://github.com/ga4gh/ga4gh-sdk/pull/107#issuecomment-6746219194) | Check downstream paths after renames, CI coverage of each crate, and installation requirements for documented tools. |
-| [#108](https://github.com/ga4gh/ga4gh-sdk/pull/108#issuecomment-6747086769) | Validate the lockfile against manifests, use a locked CI check, and separate current dependency risk from unrelated upgrade work. |
-| [#109](https://github.com/ga4gh/ga4gh-sdk/pull/109#issuecomment-6751078622) | Review public URL handling as a security boundary; check encoding, API-root containment, migration effects, and readable errors. |
-| [#110](https://github.com/ga4gh/ga4gh-sdk/pull/110#issuecomment-6750831221) | Make CI coverage and its final gate trustworthy; pin actions, bound job duration, and use accurate issue-closing language. |
-| [#111](https://github.com/ga4gh/ga4gh-sdk/pull/111#issuecomment-6751079448) | Treat a new public CLI library as a downstream contract: output, configuration, errors, dependency versions, examples, and tests. |
-| [#112](https://github.com/ga4gh/ga4gh-sdk/pull/112#issuecomment-6751080322) | Call out behavior changes and scope additions, check error consistency, and examine test isolation on shared mock servers. |
-
-Each linked comment says it was drafted by Claude Code on behalf of @uniqueg.
-The principles below are our synthesis of that feedback, not quotations or a
-claim that every point was a merge blocker.
+Use the instructions from the working copy being reviewed. A branch only has
+these rules after it includes them. Instructions guide agents that load them;
+they are not enforced configuration or an automatic GitHub approval. The
+requested task determines authorization to edit, publish, or merge.
 
 ## Pre-PR publication gate
 
@@ -96,9 +75,15 @@ artifact, but it cannot decide whether a design finding has been resolved.
 
 - Read the linked issue, acceptance criteria, PR description, repository guide,
   and the diff against the PR's **actual base**. For a stacked PR, identify
-  parent branches and review only the new layer; note what will need rebasing.
+  parent branches and review the new layer while accounting for inherited
+  behavior. Check current `main` and identify already merged or superseded work;
+  an old branch diff can include changes that are no longer part of the task.
 - Write down the contracts this change touches: SDK API, CLI behavior, Python
   API, HTTP requests, configuration, generated models, build, CI, or docs.
+- Select the relevant [engineering principles](engineering_principles.md#apply-the-principles-to-a-concrete-change).
+  Connect each finding to a trigger, violated property, enforcement point, and
+  evidence. Distinguish demonstrated defects from design questions and optional
+  improvements; a code smell alone is not a blocking finding.
 - Identify user-visible and wire-level behavior **before** evaluating the
   implementation. Compare old and new behavior, including failure paths.
 - Scan the whole diff for accidental formatting, generated files, secrets,
@@ -121,14 +106,17 @@ caller of a public function.
 
 Check these boundaries where relevant:
 
-- **URLs and credentials:** require relative endpoints under the configured
-  API root; reject origin changes, dot segments, and ambiguous base URLs.
+- **URLs and credentials:** keep configured service credentials within their
+  API-root boundary. Check endpoint encoding and containment, redirects, and
+  ownership of injected-client policy. Treat artifact credentials separately.
   Distinguish encoding of a path segment from encoding of a query value.
-  Never let a future caller direct an authenticated request to another origin.
-- **Inputs and errors:** reject malformed input without a panic, silent
-  fallback, or misleading second error. A failed request must not look like a
-  successful CLI invocation. Preserve structured status and full response data
-  for callers; keep displayed messages bounded and free of secrets.
+- **Inputs and errors:** apply the documented operation requirements and
+  interoperability exceptions without a panic, silent fallback, or misleading
+  second error. A failed request must not look like a
+  successful CLI invocation. Preserve structured status and the response data
+  promised by the API, subject to documented body limits. Keep displayed messages
+  bounded and free of secrets. Exercise retained raw bodies and error causes
+  separately from default diagnostics; an echoing server is a useful test.
 - **Serialization:** check omitted, repeated, empty, Unicode, reserved, and
   unknown values where the protocol permits them. Verify the request actually
   sent, not only the object created before serialization.
@@ -136,9 +124,7 @@ Check these boundaries where relevant:
   through, is retried, or receives a partial response. This matters especially
   for task creation, cancellation, model regeneration, and file replacement.
 
-This source-to-sink approach extends the URL and error findings in
-[#109](https://github.com/ga4gh/ga4gh-sdk/pull/109#issuecomment-6751078622).
-It also follows [OWASP's secure code review guidance](https://cheatsheetseries.owasp.org/cheatsheets/Secure_Code_Review_Cheat_Sheet.html)
+This source-to-sink approach follows [OWASP's secure code review guidance](https://cheatsheetseries.owasp.org/cheatsheets/Secure_Code_Review_Cheat_Sheet.html)
 on examining data flow and trust boundaries.
 
 ### 3. Review the public contract
@@ -154,8 +140,7 @@ on examining data flow and trust boundaries.
 - Are public functions documented with inputs, errors, and a small downstream
   example? Compile or run at least one representative caller when practical.
 
-These questions come from [#111](https://github.com/ga4gh/ga4gh-sdk/pull/111#issuecomment-6751079448)
-and align with the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/checklist.html)
+These questions align with the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/checklist.html)
 on meaningful errors, caller control, `Send`/`Sync`, and examples. Apply them
 to the **actual intended API**; do not require broad abstractions for private
 implementation details.
@@ -168,9 +153,9 @@ implementation details.
 | HTTP path or query | Mock request matching the actual path/query, including encoded and adversarial values; verify no request escapes the API root. |
 | Public Rust/Python API | A downstream call or compile check, error-kind assertions, and a documented usage example. |
 | Configuration | Missing, malformed, and optional fields; migrations from previously accepted configuration. |
-| Generated models | Pinned source/spec, reproducible generation, preservation of hand-maintained adaptations, and a clean formatting check. |
+| Generated models | Pinned source/spec, reproducible generation, preservation of hand-maintained adaptations, and behavioral checks of affected constructors, response views, and request serialization. |
 | Dependency or build change | Workspace and standalone builds, lockfile consistency, supported toolchain, and relevant advisory review. |
-| CI change | A real run of every affected job, a final gate that reflects failures, path-filter behavior, timeouts, and safe permissions. |
+| CI change | Runs of affected execution paths, allowed skips and rejected failures at the final gate, event/path routing, timeouts, and safe permissions. |
 | Documentation | Run or inspect the exact command from its stated working directory; verify filenames, prerequisites, and version claims. |
 
 Run the standard Rust checks in [`AGENTS.md`](../AGENTS.md). Use `--locked` when
@@ -199,18 +184,63 @@ resolve them.
   If they remain in the PR, describe and test them explicitly.
 - Check that docs, scripts, generated output, and CI tell the same story.
   Delete stale commands instead of copying them into new guidance.
+- For documentation and instruction changes, check the affected text against
+  actual behavior, commands, conditions, exceptions, and API identifiers. The
+  [technical writing guide](technical_writing.md#review-and-verification) can
+  help with wording; its use is advisory until #185 evaluates the pilot.
 - Use `Closes #N` only when merging the PR will fully satisfy that issue.
   Otherwise use `Refs #N`, track the follow-up, and leave incomplete issue
   checklist items unchecked until their outcome lands.
 - After fixes, reread every review thread against the new head. Reply with the
   evidence or commit that addresses it; distinguish an answered question from
   a code change. Do not treat a green CI run as automatic approval.
+- For an existing PR, follow the [maintenance procedure](#maintaining-an-existing-pr).
+  Explain material fixes before finalizing the review.
+
+## Maintaining an existing PR
+
+Before integration, compare the original proposal with current `main`, linked
+issues, and later decisions. Preserve the intended capability while determining
+what remains to implement. For each material scope change, identify work already
+merged, retained here, superseded, or deferred with a linked owner. Do not revive
+an obsolete behavior merely to preserve old commits.
+
+Refresh the remote head before editing and again before pushing. If another
+contributor advanced it, inspect and integrate their changes. Preserve their work
+and avoid overwriting a shared branch. Resolve conflicts using the current
+contracts, then review the combined tree; a clean merge alone is not evidence
+that the integration is correct.
+
+For validation evidence in an updated PR description, follow the
+[pre-PR publication gate](#pre-pr-publication-gate). A short scope table can
+preserve continuity after a substantial integration. The title and leading
+summary must still describe the final change. Explain non-obvious decisions
+in commit bodies so the reason remains available when reading history.
+
+Explain material maintainer fixes in the PR record: the problem, resulting
+behavior, affected commits or areas, and the evidence that checks the result.
+For several changes, use a separate comment and link it from a concise final
+review. A small edit can be explained in the review or description itself.
+Keep the final review focused on findings, evidence limits, and the decision.
+This adapts [Google's change-description guidance](https://google.github.io/eng-practices/review/developer/cl-descriptions.html).
+
+Identify the reviewed head and base. If either changes, inspect the delta and
+its interaction with the reviewed contracts. Rerun affected checks and update
+the conclusion. An unrelated base change need not trigger every expensive test
+again; a conflict resolution or changed dependency can invalidate earlier
+results. Verify the head again before final approval. Existing CI, a historical
+approval, or a checkbox does not validate an unreviewed integration.
+
+For issue completion, map each acceptance criterion to merged behavior and its
+evidence. Tick only delivered criteria. Use a focused child issue when an umbrella
+contains independently deliverable work; close the umbrella only when its own
+completion conditions are met. A clarification response alone does not complete
+an implementation requirement.
 
 ## How to classify findings
 
 Severity follows **impact and evidence**, not whether a comment sounds urgent.
-Alex sometimes identified useful follow-ups while explicitly calling them
-nonblocking. Use these categories as a decision aid:
+Use these categories as a decision aid:
 
 | Category | Typical condition | Reviewer action |
 | --- | --- | --- |
@@ -232,15 +262,19 @@ supports line-specific comments and a final review summary.
 > the design is undecided.
 > **Verification:** A test or observable result that would close the finding.
 
-For example, the [#109 URL review](https://github.com/ga4gh/ga4gh-sdk/pull/109#issuecomment-6751078622)
-identified an absolute endpoint that could leave the API root, explained the
-future credential risk, and proposed a same-origin/root check and tests. It
-was actionable because it supplied a specific input and consequence.
+For example, a URL review can identify an absolute endpoint that leaves the
+API root, explain which credential would reach another origin, and propose a
+containment check with a zero-request regression. The concrete path and
+consequence make the finding actionable.
 
 ## Author preflight
 
 - [ ] The PR base and issue are correct; stacked dependencies and merge order
   are stated.
+- [ ] The PR title names the final change and its scope. Commit subjects must
+  follow the Conventional Commits rule in `AGENTS.md`; PR titles are display
+  summaries, so prefer the same `type(scope): summary` form. Put issue closing
+  keywords in the body. Recheck the title when review changes the scope.
 - [ ] The diff has one coherent purpose. I reviewed it myself for accidental
   changes, generated files, credentials, and stale documentation.
 - [ ] The PR describes behavior changes, migration steps, and any unrelated
@@ -251,8 +285,21 @@ was actionable because it supplied a specific input and consequence.
   CI covers the affected crates and the locked graph.
 - [ ] Public API changes have a downstream example or test; docs commands match
   actual paths and prerequisites.
-- [ ] Review threads, issue checkboxes, closing keywords, and follow-up links
-  accurately reflect the state **after** this PR merges.
+- [ ] Affected documentation and instructions preserve technical meaning,
+  conditions, exceptions, and API identifiers. The
+  [technical writing guide](technical_writing.md) is advisory until #185.
+- [ ] Review threads and issue checkboxes reflect delivered work. Closing
+  keywords describe what this merge will complete; follow-up links identify
+  work that remains.
+
+## Squash merge metadata
+
+Before confirming a squash merge, inspect GitHub's generated commit message.
+Remove unresolved placeholders and duplicate `Co-authored-by` trailers: the
+commit author does not also need a co-author trailer. Use an email associated
+with each other co-author's GitHub account if attribution is intended. This
+check belongs at merge time because GitHub may populate the message from the
+PR or its commits.
 
 ## Read-only agent reviewer prompt
 
@@ -261,7 +308,8 @@ is evidence for a human reviewer, not a substitute for approval.
 
 ```text
 Review this PR against its linked issue, actual base branch, AGENTS.md, and
-affected callers. Do not edit files, post comments, approve, or merge.
+affected callers. Apply the relevant sections of docs/engineering_principles.md.
+Do not edit files, post comments, approve, or merge.
 
 First state what you inspected and which checks you actually ran. Trace the
 main success and failure paths, then inspect public API, trust boundaries,
@@ -269,7 +317,8 @@ serialization, tests, CI coverage, and documentation as relevant.
 
 Report only actionable findings, ordered by impact. For each, include a file
 and line, a concrete failing scenario, user or downstream impact, a minimal
-fix or focused question, and a way to verify it. Label blockers, clarifications,
+fix or focused question, and a way to verify it. Connect trigger, violated
+property, enforcement point, and evidence. Label blockers, clarifications,
 follow-ups, and questions separately. Do not turn an unverified possibility
 into a defect. If no findings remain, say so and name any untested areas.
 ```

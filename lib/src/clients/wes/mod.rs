@@ -1,4 +1,7 @@
 pub mod attachments;
+// Generated models (utils/build_models.sh): the generator writes `Default`
+// for enums by hand, and `new` takes one argument per required field.
+#[allow(clippy::derivable_impls, clippy::too_many_arguments)]
 pub mod models;
 
 use crate::clients::serviceinfo::models::Service;
@@ -473,6 +476,38 @@ mod tests {
             }),
         };
         assert!(wes.run_workflow(valid_request()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_wes_run_sends_the_provider_token_once() {
+        let rejected = mock("POST", "/wes-auth/runs")
+            .match_header("authorization", "Bearer run-token")
+            .with_status(401)
+            .expect(1)
+            .create();
+        let base = Url::parse(&format!("{}/wes-auth", server_url())).unwrap();
+        let config = Configuration::new(base)
+            .with_token_provider(crate::utils::auth::FixedToken("run-token"));
+        let wes = WES {
+            transport: Transport::new(&config),
+            config,
+            service: Ok(Service {
+                r#type: Box::new(ServiceType {
+                    artifact: "wes".to_string(),
+                    ..Default::default()
+                }),
+                ..Service::default()
+            }),
+        };
+        let error = wes.run_workflow(valid_request()).await.unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<crate::utils::transport::HttpError>()
+                .unwrap()
+                .status,
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        rejected.assert();
     }
 
     #[tokio::test]

@@ -3,7 +3,9 @@
 //! Multi-thread runtime drivers remain alive between calls, retaining HTTP pools.
 //! Only owned Rust data crosses the GIL boundary. Convert errors to strings there
 //! (the current SDK's boxed errors are not Send); create Python exceptions after
-//! reacquiring the GIL. No Python callbacks or borrowed Python objects run here.
+//! reacquiring the GIL. No Python callbacks or borrowed Python objects run here, except
+//! token providers, which take the GIL on a blocking thread of the runtime (see
+//! `Configuration.set_token_provider()`).
 //!
 //! Synchronous calls block on the runtime with [`io`]. Asynchronous calls run on the same
 //! runtime as `asyncio` futures, with [`future_into_py`].
@@ -39,7 +41,7 @@ pub fn io<T: Send>(
     py: Python<'_>,
     operation: impl FnOnce(&Runtime) -> Result<T, String> + Send,
 ) -> PyResult<T> {
-    py.allow_threads(|| operation(runtime()?))
+    py.detach(|| operation(runtime()?))
         .map_err(PyRuntimeError::new_err)
 }
 
@@ -139,7 +141,7 @@ where
 pub fn future_into_py<F, T>(py: Python<'_>, future: F) -> PyResult<Bound<'_, PyAny>>
 where
     F: Future<Output = PyResult<T>> + Send + 'static,
-    T: IntoPy<PyObject> + Send + 'static,
+    T: for<'p> IntoPyObject<'p> + Send + 'static,
 {
     shared_runtime().map_err(PyRuntimeError::new_err)?;
     pyo3_async_runtimes::tokio::future_into_py(py, future)

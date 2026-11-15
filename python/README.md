@@ -81,9 +81,9 @@ GA4GH_TRS_PUBLIC_TESTS=1 pytest tests/test_trs_public.py
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication) and [Timeouts](#timeouts). |
+| `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. `set_token_provider()` supplies dynamic bearer tokens. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication), [Timeouts](#timeouts) and [Token providers](#token-providers). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
-| `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
+| `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, cancel and wait for TES tasks; read full task JSON including unknown fields. See [Waiting for tasks](#waiting-for-tasks). |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
 | `DRS`, `DrsResolver` | Read DRS objects and access URLs, one at a time or in bulk, wait while the server prepares them, and plan access for `drs://` URIs; read full JSON including unknown fields. See [Using DRS](#using-drs). |
@@ -136,9 +136,11 @@ For a task that is still running, call `task.cancel()`.
 ## Reading the configuration file
 
 `config.from_file()` reads a section of `~/.ga4gh-cli/config.json` (format in
-the [usage guide](../docs/usage.md#configuration-file)). Name a built-in
-section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`, `REGISTRY`), and
-any other section with a `str`. `config.get_extra()` returns the keys of the
+the [usage guide](../docs/usage.md#configuration-file)). In a file with
+[profiles](../docs/usage.md#profiles), it reads the default profile. Name a
+built-in section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`,
+`REGISTRY`), and any other section with a `str`. `config.get_extra()` returns
+the keys of the
 section that the SDK doesn't use itself, as a `dict` with the values as they are
 in the file, so don't log it if it can hold credentials:
 
@@ -158,15 +160,16 @@ unset variable raises `ValueError`, a missing file `FileNotFoundError`.
 ## Authentication
 
 Set one source before constructing a client: `set_basic_auth(username,
-password=None)`, `set_oauth_access_token(token)`, or
-`set_bearer_access_token(token)`. Use `clear_auth()` before choosing a different
-source. `from_file()` can read these sources from the selected service section.
+password=None)`, `set_oauth_access_token(token)`,
+`set_bearer_access_token(token)`, or a [token provider](#token-providers). Use
+`clear_auth()` before choosing a different source. `from_file()` can read
+static credentials from the selected service section.
 The client uses that credential for discovery and later operations; invalid or
 conflicting sources raise an exception before sending the request. The SDK does
 not follow redirects automatically. See the
 [authentication guide](../docs/authentication.md) for file keys, injected
-transport boundaries and errors. Token-provider integration is tracked in
-[#215](https://github.com/ga4gh/ga4gh-sdk/pull/215).
+transport boundaries and errors. The [token-provider section](#token-providers)
+describes dynamic credentials.
 
 ## Timeouts
 
@@ -198,6 +201,55 @@ Clients and `Transport` read the limits when they are built, so set them first.
 Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
 timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
 
+## Token providers
+
+`config.set_token_provider(provider)` makes the clients and `Transport` built from
+`config` ask `provider` for a bearer token before each request, including the
+service check of `TES(config)` and the other clients. `provider(audience)` gets the
+API root (or the `audience` given to `set_token_provider()`) and returns the token
+as a `str`, or as a `(str, float)` tuple with the seconds for which the SDK may
+reuse it:
+
+```python
+from ga4gh_sdk import Configuration, TES
+
+
+def token_provider(audience: str) -> tuple[str, float]:
+    token, expires_in = get_token_for(audience)  # your code
+    return token, expires_in - 30  # reuse it until 30 seconds before it expires
+
+
+config = Configuration("https://example.org/ga4gh/tes/v1")
+config.set_token_provider(token_provider)
+# Or with the audience of a token exchange:
+# config.set_token_provider(token_provider, audience="https://example.org/ga4gh/tes")
+tes = TES(config)
+```
+
+- Set the provider after `from_file()`, which replaces all settings. Clients and
+  `Transport` take it when they are built; `set_token_provider(None)` removes it
+  for those built later.
+- After `401 Unauthorized`, the SDK drops a reused token and asks the provider
+  again; a `GET` request is sent once more right away with a current token, while
+  submissions such as `TES.create()` and `WES.run()` are never sent twice. The
+  provider isn't told about the rejection, so don't let it cache tokens itself:
+  return a `(str, float)` tuple and let the SDK reuse the token instead.
+- If the provider raises, returns something else or a token that can't be an HTTP
+  header value, the call raises `RuntimeError` and the pending request is not
+  sent. A read-only request may already have received `401` before a failed
+  refresh. The default message omits the provider's exception text, which
+  could contain a secret.
+  HTTP errors such as `401` also raise `RuntimeError`; the message distinguishes
+  them from provider failures.
+- A provider can't be combined with other credentials from the configuration file
+  (`basic_auth`, `oauth_access_token`, or a user or password in `base_path`): calls
+  then raise `RuntimeError` before anything is sent.
+- The provider runs on a thread of the SDK's runtime, with the GIL, also for the
+  [asyncio](#asyncio) classes. It may block, for example on a token endpoint, but
+  each call waits for it.
+
+The [usage guide](../docs/usage.md#token-providers) describes the contract.
+
 ## Network behavior
 
 The Python build uses rustls for HTTPS and loads trusted certificates from the
@@ -208,7 +260,8 @@ Synchronous network methods release the Python GIL while Rust waits for I/O.
 They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
 connections remain reusable between calls. Inputs are decoded before releasing
 the GIL and Python results/exceptions are constructed after reacquiring it.
-No Python callback runs on the runtime. The [asyncio](#asyncio) classes run
+No Python callback runs on the runtime, except a [token provider](#token-providers),
+on a blocking thread of its own. The [asyncio](#asyncio) classes run
 their requests on the same runtime. Use multiprocessing's `spawn` mode rather
 than forking a process after starting threaded I/O.
 
@@ -255,6 +308,7 @@ for listed in page.tasks:
   fields that the TES models don't know, and returns a `Task`.
 - `Task` addresses a task on the server by its `id`. `Task.status()` returns the current
   state as a `TesState`; `Task.cancel()` cancels the task and returns `None`.
+  `Task.wait()` waits until the task ends; see [Waiting for tasks](#waiting-for-tasks).
 - `TES.get(view, id)` returns a `TesTask`; `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`
   (case-insensitive). Invalid views raise `ValueError` before a request.
 - `TES.list(params=None)` returns a `ListTasksResponse` with `tasks` (a list of
@@ -295,6 +349,56 @@ two methods for the whole page.
 `TesState.RUNNING == "RUNNING"`, and `str()`, f-strings and `json.dumps()` give the
 state's name. `TesState("RUNNING")` looks a state up by name. Members can be pickled.
 
+### Waiting for tasks
+
+`Task.wait()` polls a task until it ends, so apps need no polling loop of their own:
+
+```python
+from ga4gh_sdk import Configuration, TES, TesState, WaitTimeoutError
+
+tes = TES(Configuration("http://localhost:8000/ga4gh/tes/v1"))
+task = tes.create({"executors": [{"image": "alpine", "command": ["echo", "hello"]}]})
+
+try:
+    state = task.wait(timeout=3600)
+except WaitTimeoutError as error:
+    print(f"{error.id} still {error.last_state} after an hour")
+else:
+    if state is not TesState.COMPLETE:
+        print(task.id, "ended in", state)
+
+# Or get the ended task in a view, for example with its logs:
+details = task.wait(timeout=3600, view="FULL")
+print(details.state, details.logs)
+```
+
+- `Task.wait(timeout=None, *, poll_interval=1.0, max_interval=None, view=None)` returns
+  once the task is in a terminal state: `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`,
+  `CANCELED` or `PREEMPTED`. It returns that state as a `TesState`; with a `view`
+  (`"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case), it returns the task in that view as
+  a `TesTask`. The minimal view is what it polls, so that view needs no further request.
+- It uses the Rust SDK's waiter. Polls ask for the task in the minimal view, starting
+  `poll_interval` seconds apart; the interval doubles after each poll, up to
+  `max_interval` (by default 10 seconds, or `poll_interval` if that's longer). Other
+  states, including states that TES 1.1 doesn't define, don't end the wait.
+- `timeout` is the time in seconds for the whole wait, including the polls and the
+  request for the view; `None` waits as long as it takes. When the time runs out, it
+  raises `WaitTimeoutError`, a `TimeoutError`, whose `id` is the task's ID and
+  `last_state` the last polled state (`None` if no poll succeeded). If the time runs
+  out while it gets an ended task in a view, `last_state` is that task's final state.
+  Each request also keeps the configuration's [timeouts](#timeouts).
+- A failed poll, for example an HTTP error or a response without a state, raises
+  `RuntimeError`; polls are not retried. Invalid arguments, such as a negative timeout,
+  a `poll_interval` of 0 or a `max_interval` below `poll_interval`, raise `ValueError`.
+- The wait releases the GIL, so other threads run meanwhile. In the main thread, it
+  runs signal handlers within about 0.1 seconds: Ctrl-C stops it with
+  `KeyboardInterrupt`, as does any exception that a handler raises. Handlers may call
+  the SDK, for example `task.cancel()`. Python runs signal handlers in the main thread
+  only, so a wait in another thread goes on until it ends or times out.
+- A wait never cancels the task: not when the time runs out, not on Ctrl-C, not when a
+  poll fails. Call `Task.cancel()` for that. To keep waiting, call `wait()` again, also
+  with a new `Task(id, transport)` in another process.
+
 ### asyncio
 
 `AsyncTES` and `AsyncTask` are the TES client and task for `asyncio` apps. They have the
@@ -329,10 +433,20 @@ asyncio.run(main())
   subclass's `__init__` can send its own requests before that check completes.
 - `AsyncTES.create()` gives an `AsyncTask`; `AsyncTask(id, transport)` addresses an
   existing task, like `Task`. `config`, `transport` and `id` are plain properties.
+- `await task.wait(...)` waits for a task like `Task.wait()`, with the same arguments,
+  results and errors. Cancelling the awaiting coroutine, for example with
+  `asyncio.wait_for()`, stops polling; the task on the server goes on. Between polls, a
+  pending wait sleeps on the runtime without a call thread (see below); it takes one
+  only for each request. So an app can wait for many more tasks than there are call
+  threads, and other async calls, including `cancel()`, can run while waits sleep.
+  They may still queue if polls or other requests occupy all 256 call threads.
+  The `timeout` also holds while a request waits for a call thread: if the time runs
+  out before the first poll, `WaitTimeoutError` has `last_state` `None`.
 - The requests run on the runtime of the sync API without the GIL, so they don't block
   the event loop, and several of them run at the same time. Because the SDK's futures
-  aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256
-  calls run at once. Further calls wait for a slot without occupying a pool thread;
+  aren't `Send` yet, each active request takes a thread of a pool of its own: up to 256
+  requests run at once. A wait releases its slot between requests. Further calls wait
+  for a slot without occupying a pool thread;
   cancelling a waiting call prevents it from starting. This limits concurrent calls,
   not the number of futures an app can schedule.
 - The methods return `asyncio.Future`s of the running event loop, so call them from a
@@ -873,7 +987,12 @@ request use the uppercase TES spelling. Invalid views raise `ValueError` before 
 
 The `ga4gh` crate in this directory builds as a Python module and as a Rust library. A
 PyO3 crate (same PyO3 version) can depend on it and extend the classes in Rust, for
-example with `#[pyclass(extends = PyTES)]`; the `inner` field of each class holds the
+example with `#[pyclass(extends = PyTES)]`. Existing extension crates need to update
+their direct `pyo3` dependency to `0.30.1` (and `pyo3-async-runtimes` to `0.30.0` if
+used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
+`Python::with_gil`, and `Bound::downcast` to `Py<PyAny>`, `Python::attach`, and
+`Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
+The `inner` field of each class holds the
 library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES calls
 that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with

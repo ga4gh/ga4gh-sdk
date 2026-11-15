@@ -14,6 +14,13 @@ A route can answer with a ``Raw`` body instead of JSON, or be a function of the
 query parameters; ``{host}`` in a reply header becomes the request's host. Reply
 headers are a ``dict`` or a list of pairs, which may repeat a name; a ``bytes``
 value is sent as it is.
+Below ``/auth``, the TES of ``/api`` answers requests with the bearer token
+``good`` and rejects all others with ``401 Unauthorized``.
+``GET /api/tasks/state-<STATE>`` answers at once with a task of that ID in that
+state, and ``GET /api/tasks/progress-<n>`` with one that is queued, running, then
+complete on later requests, for tests of waiting; ``GET /api/tasks/ended`` answers with a complete task
+in the minimal view, after 2 seconds in the basic view, and with a 500 in the full
+view.
 """
 
 import base64
@@ -171,6 +178,8 @@ ROUTES.update(
 )
 
 REQUESTS = []
+# How often each `/api/tasks/progress-<n>` path was asked for.
+PROGRESS = {}
 DISCONNECTS = []
 
 
@@ -225,9 +234,38 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._reply(200, {**TASK, "id": task_id, "state": "RUNNING"})
             return
+        if self.command == "GET" and url.path.startswith("/api/tasks/progress-"):
+            # Queued, then running, then complete, counted per task ID.
+            polls = PROGRESS.get(url.path, 0)
+            PROGRESS[url.path] = polls + 1
+            state = ["QUEUED", "RUNNING", "COMPLETE"][min(polls, 2)]
+            self._reply(200, {**TASK, "id": url.path.rsplit("/", 1)[1], "state": state})
+            return
+        if self.command == "GET" and url.path == "/api/tasks/ended":
+            view = parse_qs(url.query).get("view", ["MINIMAL"])[0]
+            if view == "FULL":
+                self._reply(500, {"msg": "failed"})
+                return
+            if view == "BASIC" and self._client_left_within(2):
+                DISCONNECTS.append(url.path)
+                return
+            self._reply(200, {**TASK, "id": "ended", "state": "COMPLETE"})
+            return
+        if self.command == "GET" and url.path.startswith("/api/tasks/state-"):
+            task_id = url.path.rsplit("/", 1)[1]
+            self._reply(200, {**TASK, "id": task_id, "state": task_id.removeprefix("state-")})
+            return
         if url.path.startswith("/failing-") and url.path.endswith("/service-info"):
             time.sleep(float(url.path.split("/")[1].removeprefix("failing-")))
             self._reply(503, {"msg": "unavailable"})
+            return
+        if url.path.startswith("/auth/"):
+            # The TES below `/api`, for requests with the token `good` only.
+            if self.headers.get("Authorization") != "Bearer good":
+                self._reply(401, {"msg": "unauthorized"})
+                return
+            path = "/api/" + url.path.removeprefix("/auth/")
+            self._reply(*ROUTES.get((self.command, path), (404, {"msg": "not found"})))
             return
         if url.path == "/hang/service-info":
             self._reply(200, SERVICE_INFO)

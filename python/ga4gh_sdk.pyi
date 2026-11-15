@@ -6,8 +6,8 @@
 import asyncio
 import enum
 import os
-from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, Generic, Self, TypeAlias, TypeVar, final
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Any, Generic, Self, TypeAlias, TypeVar, final, overload
 
 _JSONObject: TypeAlias = dict[str, Any]
 """A JSON object as a `dict`, for example a task's executor."""
@@ -33,9 +33,12 @@ class Configuration:
     """The API root and settings for connecting to a GA4GH service.
 
     `from_file()` reads a section of `~/.ga4gh-cli/config.json`, named by a
-    `ServiceType` or by a `str`; `get_extra()` returns the section's other keys.
+    `ServiceType` or by a `str`; in a file with profiles it reads the default
+    profile. `get_extra()` returns the section's other keys.
     `set_timeouts()` and `get_timeouts()` set and give the time limits of
     requests in seconds; clients and transports read them when they are built.
+    `set_token_provider()` sets a callable that gives a bearer token for each
+    request.
     """
 
     def __init__(self, base_path: str) -> None: ...
@@ -55,6 +58,12 @@ class Configuration:
         submission: float | None = None,
     ) -> None: ...
     def get_timeouts(self) -> dict[str, float]: ...
+    def set_token_provider(
+        self,
+        provider: Callable[[str], str | tuple[str, float]] | None,
+        *,
+        audience: str | None = None,
+    ) -> None: ...
     def from_file(self, service_type: ServiceType | str) -> None: ...
 
 class ServiceInfo:
@@ -767,6 +776,54 @@ class Task:
     def transport(self) -> Transport: ...
     def status(self) -> TesState: ...
     def cancel(self) -> None: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: None = None,
+    ) -> TesState: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: str,
+    ) -> TesTask: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: str | None = None,
+    ) -> TesState | TesTask:
+        """Waits until the task ends; gives its final state, or the task in `view`.
+
+        A task ends in `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`, `CANCELED` or
+        `PREEMPTED`. Polls start `poll_interval` seconds apart; the interval doubles up to
+        `max_interval` (by default 10 seconds, or `poll_interval` if that's longer).
+        `timeout` is the time in seconds for the whole wait; `None` waits as long as it
+        takes. Raises `WaitTimeoutError` when the time runs out, `RuntimeError` if a poll
+        fails and `ValueError` for invalid arguments. Releases the GIL; Ctrl-C stops the
+        wait with `KeyboardInterrupt`. None of these cancels the task.
+        """
+
+class WaitTimeoutError(TimeoutError):
+    """Raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
+
+    The task goes on running.
+    """
+
+    id: str | None
+    """The task's ID; `None` on an error raised by other code."""
+    last_state: TesState | None
+    """The task's last polled state, or `None` if no poll succeeded."""
 
 class ListTasksParams:
     """Filters and paging for `TES.list()`."""
@@ -850,3 +907,36 @@ class AsyncTask:
     def transport(self) -> Transport: ...
     def status(self) -> asyncio.Future[TesState]: ...
     def cancel(self) -> asyncio.Future[None]: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: None = None,
+    ) -> asyncio.Future[TesState]: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: str,
+    ) -> asyncio.Future[TesTask]: ...
+    @overload
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 1.0,
+        max_interval: float | None = None,
+        view: str | None = None,
+    ) -> asyncio.Future[TesState] | asyncio.Future[TesTask]:
+        """Waits until the task ends, like `Task.wait()`.
+
+        Invalid arguments raise `ValueError` when the method is called. Cancelling the
+        awaiting coroutine stops polling; it doesn't cancel the task. Between polls, the
+        wait holds no call thread, so sleeping waits do not delay other async calls.
+        """

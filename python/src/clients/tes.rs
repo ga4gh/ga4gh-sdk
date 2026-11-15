@@ -9,14 +9,18 @@ use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::Task;
 use ga4gh_sdk::clients::tes::TesView;
 use ga4gh_sdk::clients::tes::TES;
+use ga4gh_sdk::clients::wait::{WaitOptions, WaitOutcome, WaitResult};
 use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::transport::Transport;
+use ga4gh_sdk::utils::operation::OperationError;
+use ga4gh_sdk::utils::transport::{urlencode, Transport};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::sync::GILOnceCell;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyMapping, PyString, PyTuple, PyType};
 use serde_json::Value;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 fn invalid_response_text(error: impl std::fmt::Display) -> String {
     format!("Invalid TES response: {error}")
@@ -33,7 +37,8 @@ pub fn parse_view(view: &str) -> PyResult<TesView> {
 }
 
 /// Python source of the `TesState` enum. Its members must match the variants of `TesState`.
-const TES_STATE_SOURCE: &str = r#"
+const TES_STATE_SOURCE: &std::ffi::CStr = pyo3::ffi::c_str!(
+    r#"
 import enum
 
 
@@ -63,31 +68,35 @@ class TesState(str, enum.Enum):
 
     def __format__(self, format_spec):
         return format(self.value, format_spec)
-"#;
+"#
+);
 
-static TES_STATE: GILOnceCell<Py<PyType>> = GILOnceCell::new();
+static TES_STATE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
 
 /// The `TesState` Python enum (a `str` enum, created once per interpreter).
 pub fn tes_state_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     TES_STATE
-        .get_or_try_init(py, || {
-            // Runs in a namespace of its own. `PyModule::from_code_bound` would register a
-            // module in `sys.modules` and, under the name `ga4gh_sdk`, overwrite the package's
-            // attributes; the class itself names `ga4gh_sdk` as its module.
-            let namespace = PyDict::new_bound(py);
-            namespace.set_item("__name__", "ga4gh_sdk")?;
-            py.run_bound(TES_STATE_SOURCE, Some(&namespace), None)?;
-            Ok(namespace
-                .get_item("TesState")?
-                .ok_or_else(|| PyRuntimeError::new_err("TesState is not defined"))?
-                .downcast_into::<PyType>()?
-                .unbind())
-        })
+        .get_or_try_init(py, || define_type(py, TES_STATE_SOURCE, "TesState"))
         .map(|cls| cls.bind(py))
 }
 
+/// Runs the Python `source` of a class and gives the class `name` that it defines.
+fn define_type(py: Python<'_>, source: &std::ffi::CStr, name: &str) -> PyResult<Py<PyType>> {
+    // Runs in a namespace of its own. `PyModule::from_code_bound` would register a
+    // module in `sys.modules` and, under the name `ga4gh_sdk`, overwrite the package's
+    // attributes; the class itself names `ga4gh_sdk` as its module.
+    let namespace = PyDict::new(py);
+    namespace.set_item("__name__", "ga4gh_sdk")?;
+    py.run(source, Some(&namespace), None)?;
+    Ok(namespace
+        .get_item(name)?
+        .ok_or_else(|| PyRuntimeError::new_err(format!("{name} is not defined")))?
+        .cast_into::<PyType>()?
+        .unbind())
+}
+
 /// Converts a TES state to the matching `TesState` member.
-pub fn state_to_python(py: Python<'_>, state: TesState) -> PyResult<PyObject> {
+pub fn state_to_python(py: Python<'_>, state: TesState) -> PyResult<Py<PyAny>> {
     Ok(tes_state_type(py)?
         .getattr(state.to_string().as_str())?
         .unbind())
@@ -123,7 +132,7 @@ pub async fn connect(config: &Configuration) -> Result<TES, String> {
 /// JSON file as `str` or `os.PathLike`. A `str` is always a path. `method` names the
 /// caller in errors, for example `"TES.create()"`.
 pub fn task_to_create(task: &Bound<'_, PyAny>, method: &str) -> PyResult<Value> {
-    if let Ok(text) = task.downcast::<PyString>() {
+    if let Ok(text) = task.cast::<PyString>() {
         // Lossy, so that paths with surrogate escapes (non-UTF-8 file names) pass.
         if text.to_string_lossy().trim_start().starts_with('{') {
             return Err(PyValueError::new_err(format!(
@@ -197,6 +206,205 @@ pub async fn cancel_task(task: &Task) -> Result<(), String> {
         .map_err(|e| format!("Failed to cancel task: {e}"))
 }
 
+/// Python source of the `WaitTimeoutError` exception.
+const WAIT_TIMEOUT_ERROR_SOURCE: &std::ffi::CStr = pyo3::ffi::c_str!(
+    r#"
+class WaitTimeoutError(TimeoutError):
+    """Raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
+
+    `id` is the task's ID, and `last_state` its last polled state as a `TesState`, or
+    `None` if no poll succeeded. The wait doesn't cancel the task, which may still be
+    running (if the time ran out while getting an ended task in a view, `last_state` is
+    its final state). Both are `None` on an error raised by other code.
+    """
+
+    __module__ = "ga4gh_sdk"
+
+    id = None
+    last_state = None
+"#
+);
+
+static WAIT_TIMEOUT_ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+
+/// The `WaitTimeoutError` Python exception, a `TimeoutError` (created once per interpreter).
+pub fn wait_timeout_error_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
+    WAIT_TIMEOUT_ERROR
+        .get_or_try_init(py, || {
+            define_type(py, WAIT_TIMEOUT_ERROR_SOURCE, "WaitTimeoutError")
+        })
+        .map(|cls| cls.bind(py))
+}
+
+/// How long a sync wait blocks without the GIL before it checks for signals, such as Ctrl-C.
+const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+
+/// The settings of a wait, from the arguments of `wait()`.
+pub struct WaitSettings {
+    /// The library waiter's options; their deadline counts from the call of `wait()`.
+    pub options: WaitOptions,
+    /// The view in which to give the ended task, or `None` to give its state.
+    pub view: Option<TesView>,
+}
+
+/// A duration in seconds from Python; `name` names the argument in errors.
+fn seconds(name: &str, value: f64) -> PyResult<Duration> {
+    Duration::try_from_secs_f64(value).map_err(|_| {
+        PyValueError::new_err(format!(
+            "{name} must be a finite number of seconds, at least 0, not {value}"
+        ))
+    })
+}
+
+/// Checks the arguments of `wait()` and builds its settings; errors are `ValueError`s.
+///
+/// `timeout` is the time for the whole wait (`None` waits as long as it takes). Polls
+/// start `poll_interval` apart, and the interval doubles up to `max_interval` (by default
+/// 10 seconds, or `poll_interval` if that's longer).
+pub fn wait_settings(
+    timeout: Option<f64>,
+    poll_interval: f64,
+    max_interval: Option<f64>,
+    view: Option<&str>,
+) -> PyResult<WaitSettings> {
+    let budget = timeout
+        .map(|timeout| seconds("timeout", timeout))
+        .transpose()?
+        .unwrap_or(Duration::MAX);
+    let poll_interval = seconds("poll_interval", poll_interval)?;
+    if poll_interval.is_zero() {
+        return Err(PyValueError::new_err("poll_interval must be more than 0"));
+    }
+    let view = view.map(parse_view).transpose()?;
+    let mut options = WaitOptions::new(budget);
+    let max_interval = match max_interval {
+        Some(max_interval) => seconds("max_interval", max_interval)?,
+        // The library's default (10 seconds), unless `poll_interval` is longer.
+        None => options.max_interval.max(poll_interval),
+    };
+    if max_interval < poll_interval {
+        return Err(PyValueError::new_err(
+            "max_interval must be at least poll_interval",
+        ));
+    }
+    options.poll_interval = poll_interval;
+    options.max_interval = max_interval;
+    Ok(WaitSettings { options, view })
+}
+
+/// How a wait ended, as owned, `Send` data; [`wait_result`] converts it for Python.
+pub enum WaitEnd {
+    /// The task reached this terminal state.
+    State(TesState),
+    /// The task ended; this is the task in the view asked for.
+    Task(Box<PyTesTask>),
+    /// The time ran out; the last polled state, if a poll succeeded.
+    Timeout(Option<TesState>),
+    /// The wait was stopped locally.
+    Interrupted,
+    /// A poll or the lookup of the ended task failed.
+    Failed(String),
+}
+
+/// Reads a state name from a TES response; names that TES 1.1 doesn't define read as
+/// `Unknown`.
+fn read_state(state: &str) -> TesState {
+    serde_json::from_value(Value::String(state.to_owned())).unwrap_or_default()
+}
+
+/// The path of a task's lookup.
+pub fn task_path(task: &Task) -> String {
+    format!("tasks/{}", urlencode(&task.id))
+}
+
+/// Waits for the task with the library's waiter until it ends, the time runs out or the
+/// settings' operation is cancelled. Never cancels the task.
+///
+/// This is the sync `Task.wait()`. The future is not `Send`, so `AsyncTask.wait()` uses
+/// `tes_async::wait_task_send` instead, which shares [`wait_end`].
+pub async fn wait_task(task: &Task, settings: WaitSettings) -> WaitEnd {
+    let WaitSettings { options, view } = settings;
+    let result = task.wait(&options).await;
+    wait_end(result, &options, view, |view| async move {
+        let params = serde_json::json!({ "view": view });
+        task.transport
+            .get(&task_path(task), Some(params))
+            .await
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+/// Converts the library waiter's result into the end of the wait.
+///
+/// With a `view` other than the minimal one, `get_view` gets the ended task's JSON in that
+/// view, within the deadline of `options`. The future is `Send` if `get_view`'s is.
+pub async fn wait_end<G, Fut>(
+    result: WaitResult,
+    options: &WaitOptions,
+    view: Option<TesView>,
+    get_view: G,
+) -> WaitEnd
+where
+    G: FnOnce(TesView) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+{
+    let last_state = result.last_state.as_deref().map(read_state);
+    match result.outcome {
+        WaitOutcome::Complete
+        | WaitOutcome::ExecutorError
+        | WaitOutcome::SystemError
+        | WaitOutcome::Canceled
+        | WaitOutcome::Preempted => {}
+        WaitOutcome::Deadline => return WaitEnd::Timeout(last_state),
+        WaitOutcome::Interrupted => return WaitEnd::Interrupted,
+        WaitOutcome::PollingFailed => {
+            let error = result.error.unwrap_or_else(|| "unknown error".to_owned());
+            return WaitEnd::Failed(format!("Failed to wait for task: {error}"));
+        }
+    }
+    // The waiter ends only on states that TES 1.1 defines.
+    let state = last_state.unwrap_or_default();
+    let raw = match (view, result.last_response) {
+        (None, _) => return WaitEnd::State(state),
+        // The waiter polls the minimal view; no need to ask again.
+        (Some(TesView::Minimal), Some(raw)) => Ok(raw),
+        (Some(view), _) => match options.operation.run(get_view(view)).await {
+            Ok(Ok(body)) => serde_json::from_str(&body).map_err(invalid_response_text),
+            Ok(Err(error)) => Err(format!("Failed to get task: {error}")),
+            Err(OperationError::Deadline) => return WaitEnd::Timeout(Some(state)),
+            Err(OperationError::Cancelled) => return WaitEnd::Interrupted,
+        },
+    };
+    match raw.and_then(|raw| PyTesTask::parse(raw).map_err(invalid_response_text)) {
+        Ok(task) => WaitEnd::Task(Box::new(task)),
+        Err(error) => WaitEnd::Failed(error),
+    }
+}
+
+/// Converts the end of a wait for the task `id` into its Python result or exception.
+pub fn wait_result(py: Python<'_>, id: &str, end: WaitEnd) -> PyResult<Py<PyAny>> {
+    match end {
+        WaitEnd::State(state) => state_to_python(py, state),
+        WaitEnd::Task(task) => Ok(Py::new(py, *task)?.into_any()),
+        WaitEnd::Timeout(last_state) => {
+            let last_state = match last_state {
+                Some(state) => state_to_python(py, state)?,
+                None => py.None(),
+            };
+            let message = format!("Timed out waiting for task {id}");
+            let error = wait_timeout_error_type(py)?.call1((message,))?;
+            error.setattr("id", id)?;
+            error.setattr("last_state", last_state)?;
+            Err(PyErr::from_value(error))
+        }
+        // Not expected: the sync wait raises the signal handler's exception instead, and
+        // the async one drops the waiter rather than cancelling it.
+        WaitEnd::Interrupted => Err(PyRuntimeError::new_err("The wait was stopped locally")),
+        WaitEnd::Failed(error) => Err(PyRuntimeError::new_err(error)),
+    }
+}
+
 /// A TES task on the server, addressed by its ID.
 #[pyclass(name = "Task", module = "ga4gh_sdk", subclass)]
 pub struct PyTask {
@@ -241,7 +449,7 @@ impl PyTask {
     }
 
     /// The task's current state, as a `TesState`.
-    pub fn status(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn status(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let state = io(py, |rt| rt.block_on(task_status(&self.inner)))?;
         state_to_python(py, state)
     }
@@ -249,6 +457,60 @@ impl PyTask {
     /// Asks the server to cancel the task. Returns `None`.
     pub fn cancel(&self, py: Python<'_>) -> PyResult<()> {
         io(py, |rt| rt.block_on(cancel_task(&self.inner)))
+    }
+
+    /// Waits until the task ends. Returns its final state as a `TesState`, or, with a
+    /// `view` (`"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case), the task in that view as
+    /// a `TesTask`.
+    ///
+    /// A task ends in `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`, `CANCELED` or
+    /// `PREEMPTED`. Polls start `poll_interval` seconds apart; the interval doubles up to
+    /// `max_interval` (by default 10 seconds, or `poll_interval` if that's longer).
+    /// `timeout` is the time in seconds for the whole wait; `None` waits as long as it
+    /// takes. Raises `WaitTimeoutError` when the time runs out, `RuntimeError` if a poll
+    /// fails, and `ValueError` for invalid arguments. The wait releases the GIL, and
+    /// Ctrl-C stops it with `KeyboardInterrupt`. None of these cancels the task.
+    #[pyo3(signature = (timeout=None, *, poll_interval=1.0, max_interval=None, view=None))]
+    pub fn wait(
+        &self,
+        py: Python<'_>,
+        timeout: Option<f64>,
+        poll_interval: f64,
+        max_interval: Option<f64>,
+        view: Option<&str>,
+    ) -> PyResult<Py<PyAny>> {
+        let settings = wait_settings(timeout, poll_interval, max_interval, view)?;
+        let cancellation = settings.options.operation.cancellation.clone();
+        // Python runs signal handlers in the main thread only; other threads just wait.
+        let threading = py.import("threading")?;
+        // Idents, since `current_thread()` would register threads that Python didn't start.
+        let main_thread = threading
+            .call_method0("get_ident")?
+            .eq(threading.call_method0("main_thread")?.getattr("ident")?)?;
+        let (end, interrupt) = io(py, |rt| {
+            let waiting = wait_task(&self.inner, settings);
+            tokio::pin!(waiting);
+            if !main_thread {
+                return Ok((rt.block_on(waiting), None));
+            }
+            loop {
+                let slice =
+                    async { tokio::time::timeout(SIGNAL_CHECK_INTERVAL, &mut waiting).await };
+                if let Ok(end) = rt.block_on(slice) {
+                    return Ok((end, None));
+                }
+                // Outside `block_on`, so that handlers can make sync calls of their own.
+                if let Err(error) = Python::attach(|py| py.check_signals()) {
+                    // Stops the waiter, which then ends at once.
+                    cancellation.cancel();
+                    return Ok((rt.block_on(waiting), Some(error)));
+                }
+            }
+        })?;
+        match interrupt {
+            Some(error) => Err(error),
+            None => wait_result(py, &self.inner.id, end),
+        }
     }
 }
 
@@ -287,13 +549,13 @@ impl PyTesTask {
 
     /// Builds a task from a `TesTask`, a JSON-serialisable object or JSON text.
     pub fn from_python(task: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(task) = task.downcast::<PyTesTask>() {
+        if let Ok(task) = task.cast::<PyTesTask>() {
             return Ok(task.borrow().clone());
         }
-        if let Ok(mapping) = task.downcast::<PyMapping>() {
+        if let Ok(mapping) = task.cast::<PyMapping>() {
             if !task.is_instance_of::<PyDict>() {
                 // `json.dumps` takes only `dict`s, so copy other mappings into one.
-                let dict = PyDict::new_bound(task.py());
+                let dict = PyDict::new(task.py());
                 dict.update(mapping)?;
                 return Self::from_value(to_json(&dict, "task")?);
             }
@@ -310,7 +572,7 @@ impl PyTesTask {
         Self::from_value(raw)
     }
 
-    fn field(&self, py: Python<'_>, key: &str) -> PyResult<Option<PyObject>> {
+    fn field(&self, py: Python<'_>, key: &str) -> PyResult<Option<Py<PyAny>>> {
         match self.raw.get(key) {
             None | Some(Value::Null) => Ok(None),
             Some(value) => to_python(py, value).map(Some),
@@ -343,7 +605,7 @@ impl PyTesTask {
         cls: &Bound<'py, PyType>,
         task: &Bound<'py, PyMapping>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let dict = PyDict::new_bound(cls.py());
+        let dict = PyDict::new(cls.py());
         dict.update(task)?;
         cls.call1((dict,))
     }
@@ -370,7 +632,7 @@ impl PyTesTask {
     #[allow(clippy::type_complexity)]
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyType>, (PyObject,), Option<Bound<'py, PyAny>>)> {
+    ) -> PyResult<(Bound<'py, PyType>, (Py<PyAny>,), Option<Bound<'py, PyAny>>)> {
         let raw = to_python(slf.py(), &slf.borrow().raw)?;
         let state = slf.getattr("__dict__").ok();
         Ok((slf.get_type(), (raw,), state))
@@ -384,13 +646,13 @@ impl PyTesTask {
     /// The task's state as a `TesState`; `UNKNOWN` if the task has none or one that
     /// TES 1.1 doesn't define.
     #[getter]
-    pub fn state(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn state(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         state_to_python(py, self.inner.state.unwrap_or_default())
     }
 
     /// Same as `state`.
     #[getter]
-    pub fn status(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn status(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.state(py)
     }
 
@@ -410,37 +672,37 @@ impl PyTesTask {
     }
 
     #[getter]
-    fn inputs(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn inputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "inputs")
     }
 
     #[getter]
-    fn outputs(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn outputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "outputs")
     }
 
     #[getter]
-    fn resources(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn resources(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "resources")
     }
 
     #[getter]
-    fn executors(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn executors(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "executors")
     }
 
     #[getter]
-    fn volumes(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn volumes(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "volumes")
     }
 
     #[getter]
-    fn tags(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn tags(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "tags")
     }
 
     #[getter]
-    fn logs(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn logs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "logs")
     }
 
@@ -450,7 +712,7 @@ impl PyTesTask {
     }
 
     /// The task as a new `dict`, as given or received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 
@@ -467,6 +729,15 @@ impl PyTesTask {
 #[derive(Clone)]
 pub struct PyListTasksParams {
     pub inner: ListTasksParams,
+}
+
+// Preserve the owned Rust argument type used by TES and AsyncTES.
+impl<'a, 'py> FromPyObject<'a, 'py> for PyListTasksParams {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(value.cast::<Self>()?.borrow().clone())
+    }
 }
 
 #[pymethods]
@@ -509,7 +780,7 @@ impl PyListTasksParams {
 
     /// The state filter as a `TesState`, or `None`.
     #[getter]
-    fn state(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn state(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.inner
             .state
             .map(|state| state_to_python(py, state))
@@ -591,7 +862,7 @@ impl PyTesListTasksResponse {
     }
 
     /// The response as a new `dict`, as received.
-    pub fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &self.raw)
     }
 }
@@ -608,7 +879,7 @@ pub struct PyTES {
 impl PyTES {
     /// Build a TES client for Rust extension crates while releasing the GIL during discovery.
     pub fn new(config: &PyConfiguration) -> PyResult<Self> {
-        Python::with_gil(|py| Self::new_with_gil(py, config))
+        Python::attach(|py| Self::new_with_gil(py, config))
     }
 
     fn new_with_gil(py: Python<'_>, config: &PyConfiguration) -> PyResult<Self> {
@@ -678,5 +949,109 @@ impl PyTES {
         io(py, |rt| {
             rt.block_on(list_tasks(&self.inner.transport, &endpoint))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ga4gh_sdk::clients::wait::{RemoteHandle, ServiceKind};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A waiter's result for a task that ended in `state`, with its minimal view.
+    fn ended(state: &str) -> WaitResult {
+        WaitResult {
+            handle: RemoteHandle {
+                service: ServiceKind::Tes,
+                api_root: "http://localhost/".to_owned(),
+                id: "task-1".to_owned(),
+            },
+            outcome: WaitOutcome::Complete,
+            last_state: Some(state.to_owned()),
+            last_response: Some(serde_json::json!({ "id": "task-1", "state": state })),
+            details: None,
+            error: None,
+        }
+    }
+
+    /// Runs `future` on a runtime of its own.
+    fn block_on<F: Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn the_minimal_view_reuses_the_last_poll() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        let asked = AtomicBool::new(false);
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Minimal),
+            |_| async {
+                asked.store(true, Ordering::SeqCst);
+                Ok(String::new())
+            },
+        ));
+        assert!(matches!(end, WaitEnd::Task(task) if task.raw["id"] == "task-1"));
+        assert!(!asked.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn other_views_give_the_task_from_the_view_request() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Full),
+            |view| async move {
+                assert_eq!(view, TesView::Full);
+                Ok(r#"{"id": "task-1", "state": "COMPLETE", "logs": []}"#.to_owned())
+            },
+        ));
+        assert!(matches!(end, WaitEnd::Task(task) if task.raw.get("logs").is_some()));
+    }
+
+    #[test]
+    fn a_failed_view_request_fails_the_wait() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Full),
+            |_| async { Err("HTTP 500".to_owned()) },
+        ));
+        assert!(matches!(end, WaitEnd::Failed(error) if error == "Failed to get task: HTTP 500"));
+    }
+
+    #[test]
+    fn the_deadline_during_the_view_request_keeps_the_final_state() {
+        let options = WaitOptions::new(Duration::from_millis(10));
+        let end = block_on(wait_end(
+            ended("EXECUTOR_ERROR"),
+            &options,
+            Some(TesView::Basic),
+            |_| std::future::pending(),
+        ));
+        assert!(matches!(
+            end,
+            WaitEnd::Timeout(Some(TesState::ExecutorError))
+        ));
+    }
+
+    #[test]
+    fn cancellation_during_the_view_request_interrupts_the_wait() {
+        let options = WaitOptions::new(Duration::from_secs(5));
+        options.operation.cancellation.cancel();
+        let end = block_on(wait_end(
+            ended("COMPLETE"),
+            &options,
+            Some(TesView::Basic),
+            |_| std::future::pending(),
+        ));
+        assert!(matches!(end, WaitEnd::Interrupted));
     }
 }
