@@ -8,7 +8,7 @@ description = "Python bindings for GA4GH API service clients"
 readme = { text = """
 # GA4GH SDK for Python
 
-Python clients for GA4GH TES, WES, DRS, and Service Info APIs.
+Python clients for GA4GH TES, WES, DRS, TRS, and Service Info APIs.
 
 Install with `pip install ga4gh-sdk` and import classes from `ga4gh_sdk`.
 For examples, supported Python APIs, and configuration, see the

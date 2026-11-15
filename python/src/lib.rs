@@ -17,6 +17,9 @@
 //! - `TesState`: the state of a task, a `str` enum.
 //! - `WaitTimeoutError`: raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
 //! - `ListTasksParams` and `ListTasksResponse`: filters and results of `TES.list()`.
+//! - `TRS`: a TRS client (TRS 2.0.1 and 2.0.2) for tools, versions, descriptors and files.
+//!   `Tool`, `ToolVersion`, `FileWrapper` and `ToolFile` are results with their full JSON;
+//!   `ToolPage` is one page of tools.
 //! - `WES`: a WES client; `Run`: a WES run addressed by its ID; `RunRequest`: a run to
 //!   start; `WesState`: the state of a run, a `str` enum. `RunLog`, `RunSummary`,
 //!   `RunListResponse`, `TaskLog` and `TaskListResponse` are results with their full JSON.
@@ -151,5 +154,6 @@ fn ga4gh_sdk(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TesState", tes_state_type(py)?)?;
     m.add("WaitTimeoutError", wait_timeout_error_type(py)?)?;
     clients::drs::register(py, m)?;
+    clients::trs::register(py, m)?;
     Ok(())
 }
