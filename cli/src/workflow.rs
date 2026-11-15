@@ -1,5 +1,5 @@
 //! Offline workflow contract commands; submission is explicit and uses WES configuration.
-use crate::CommandOutput;
+use crate::{CliContext, CommandOutput};
 use clap::{Arg, ArgMatches, Command};
 use ga4gh_sdk::{
     clients::{
@@ -103,6 +103,16 @@ pub async fn run(
     args: &ArgMatches,
     service_config: Option<&Configuration>,
 ) -> anyhow::Result<CommandOutput> {
+    run_with_context(args, service_config, &CliContext::default()).await
+}
+
+/// Like [`run`]; without a supplied configuration, submission reads the
+/// WES section of `context`'s configuration file.
+pub(crate) async fn run_with_context(
+    args: &ArgMatches,
+    service_config: Option<&Configuration>,
+    context: &CliContext,
+) -> anyhow::Result<CommandOutput> {
     let result: Result<Value, Box<dyn std::error::Error>> = async {
         let (name, m) = args.subcommand().ok_or("missing workflow command")?;
         let get = |key: &str| {
@@ -136,16 +146,11 @@ pub async fn run(
                 } else {
                     let config = match service_config {
                         Some(config) => config.clone(),
-                        None => Configuration::from_file(ServiceType::WES)?,
+                        None => context
+                            .load_config(ServiceType::WES)
+                            .map_err(|error| error.to_string())?,
                     };
-                    let mut headers = ga4gh_sdk::reqwest::header::HeaderMap::new();
-                    if config.basic_auth.is_some() || config.api_key.is_some() { return Err("workflow CLI supports OAuth bearer auth; use a caller-owned transport for other schemes".into()); }
-                    if let Some(token)=config.oauth_access_token.as_ref().or(config.bearer_access_token.as_ref()) {
-                        let mut value=ga4gh_sdk::reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
-                        value.set_sensitive(true);headers.insert(ga4gh_sdk::reqwest::header::AUTHORIZATION,value);
-                    }
-                    let client=ga4gh_sdk::reqwest::Client::builder().default_headers(headers).redirect(ga4gh_sdk::reqwest::redirect::Policy::none()).connect_timeout(std::time::Duration::from_secs(10)).timeout(std::time::Duration::from_secs(60)).build()?;
-                    let wes = WES::from_transport(ga4gh_sdk::utils::transport::Transport::with_client(&config,client)).await?;
+                    let wes = WES::new(&config).await?;
                     let attachments = m
                         .get_many::<String>("attachment")
                         .into_iter()

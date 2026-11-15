@@ -76,7 +76,7 @@ pub fn query_pairs(params: &Value) -> Result<Vec<(String, String)>, QueryError> 
     let object = params.as_object().ok_or(QueryError::NotAnObject)?;
     let mut pairs = Vec::new();
     let mut entries: Vec<_> = object.iter().collect();
-    entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    entries.sort_unstable_by_key(|(left, _)| *left);
     for (key, value) in entries {
         let items = match value {
             Value::Null => continue,

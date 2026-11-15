@@ -60,6 +60,11 @@ def test_relative_to_page_with_fragment() -> None:
     assert _render("[x](../Makefile#L1)", page="docs/usage.md") == f"[x]({BLOB}/Makefile#L1)"
 
 
+def test_rewritten_link_preserves_query_and_fragment() -> None:
+    """A GitHub file link retains its query and fragment."""
+    assert _render("[x](LICENSE?raw=1#L1)") == f"[x]({BLOB}/LICENSE?raw=1#L1)"
+
+
 def test_directory() -> None:
     """A link to a directory goes to its tree."""
     assert _render("[x](lib/src/)") == f"[x]({hooks.REPO_URL}/tree/main/lib/src)"
