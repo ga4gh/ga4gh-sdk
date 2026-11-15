@@ -217,7 +217,9 @@ fn cli_keeps_the_built_in_commands_and_adds_its_own() {
     for name in ["create", "list", "get", "status", "cancel", "usage"] {
         assert!(tes.find_subcommand(name).is_some(), "missing tes {name}");
     }
-    for name in ["drs", "trs", "wes", "workflow", "registry", "quota"] {
+    for name in [
+        "drs", "trs", "wes", "workflow", "registry", "login", "logout", "quota",
+    ] {
         assert!(command.find_subcommand(name).is_some(), "missing {name}");
     }
     cli::command().debug_assert();

@@ -90,6 +90,10 @@ built-in services, or any other name for a custom service:
   variable isn't set, reading the section is an error.
 - `bearer_access_token` or `bearer_access_token_env` (string, optional): a
   generic bearer token, or the name of the variable that holds it.
+- `oidc` (object, optional, CLI only): the OpenID Connect provider that the
+  CLI's `login` command logs in with, in place of the credentials above. The
+  library and Python keep it in `extra` and don't use it. See
+  [Logging in with OpenID Connect](../cli/README.md#logging-in-with-openid-connect).
 - `timeouts` (object, optional): time limits in seconds, as positive numbers:
   `connect`, `request`, `discovery` and `submission`. Limits that the object
   doesn't name keep their defaults; see [Timeouts](#timeouts).
@@ -111,7 +115,8 @@ The [authentication guide](authentication.md) describes how credentials reach
 Rust, Python, and CLI requests, and the behavior of redirects and injected
 clients. Previously stored credentials now take effect on requests. Rust and
 Python callers can instead set a [token provider](#token-providers); the
-configuration file and CLI cannot set one.
+configuration file can't set one. The CLI uses one for sections with `oidc`
+settings, with the tokens stored by its `login` command.
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
@@ -173,7 +178,9 @@ commands (`run`, `list`, `get`, `status`, `cancel`), DRS commands (`get`,
 `access`), TRS commands (`tools`, `tool`, `versions`, `version`, `descriptor`,
 `files`, `tests`), and Service Registry commands (`list`, `get`, `types`). It
 reads the matching `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` configuration
-section, including its `timeouts`. The [CLI README](../cli/README.md) describes
+section, including its `timeouts`. `login` and `logout` get and delete tokens
+from an OpenID Connect provider for sections with `oidc` settings. The
+[CLI README](../cli/README.md) describes
 each command, its output and exit codes. `ServiceInfo` is available from the
 Rust library below.
 
