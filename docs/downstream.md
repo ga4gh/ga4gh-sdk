@@ -165,6 +165,11 @@ as they need the context.
 login. When the token variable applies to such a section and is set, its
 token is used instead; for such a section, an unset variable is no error.
 
+Downstream contexts also inherit the built-in `tes files`, `tes log` and
+`tes save` commands. The [CLI guide](../cli/README.md#tes-logs-and-output-files)
+describes their selectors and storage URL policy; artifact downloads do not
+forward the TES section's credential.
+
 The configuration file can hold [profiles](usage.md#profiles). The context's
 command tree has a global `--profile` option; its dispatch methods apply it
 to built-in commands. For an added command, the example calls

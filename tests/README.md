@@ -17,9 +17,9 @@ bash run-integration-tests.sh
 
 The script starts Funnel if its `/healthz` endpoint is not healthy, waits for
 that endpoint, then runs the `integration_tests` feature suites of the library
-and of the CLI.
-It waits up to 60 seconds by default; set `FUNNEL_STARTUP_TIMEOUT_SECONDS`
-to change the limit. It does not stop a Funnel process that it starts.
+and of the CLI. It waits up to 60 seconds by default; set
+`FUNNEL_STARTUP_TIMEOUT_SECONDS` to change the limit. It does not stop a Funnel
+process that it starts.
 
 The CLI suite, [`funnel_cli.rs`](../cli/tests/funnel_cli.rs), runs the
 `ga4gh-cli` binary with a temporary home directory whose config points to
@@ -28,6 +28,11 @@ Funnel. It runs a task without inputs or outputs to completion with
 matching and nonmatching tag filters. The suite also cancels a running task
 with `tes cancel` and checks that an unknown task returns a non-zero exit
 status, empty stdout, and HTTP 404 on stderr.
+
+The [`funnel_tes_files.rs`](../cli/tests/funnel_tes_files.rs) CLI suite runs a
+task and checks its stdout through `tes files`, `tes log` and `tes save`.
+Downloads of output files from HTTP and S3 storage are checked against mock
+servers in the default CLI tests.
 
 Funnel needs network access to pull `alpine:3.22` for these tasks. Each state
 polling loop has a 180-second deadline; an in-flight CLI request can extend

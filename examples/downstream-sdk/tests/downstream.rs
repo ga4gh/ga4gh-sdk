@@ -214,7 +214,9 @@ fn cli_keeps_the_built_in_commands_and_adds_its_own() {
     let command = cli::command();
     assert_eq!(command.get_name(), cli::BIN_NAME);
     let tes = command.find_subcommand("tes").unwrap();
-    for name in ["create", "list", "get", "status", "cancel", "usage"] {
+    for name in [
+        "create", "list", "get", "status", "cancel", "files", "log", "save", "usage",
+    ] {
         assert!(tes.find_subcommand(name).is_some(), "missing tes {name}");
     }
     for name in [

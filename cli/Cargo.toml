@@ -23,6 +23,12 @@ anyhow = "1.0.86"
 url = "2.5.2"
 log = "0.4.22"
 env_logger = "0.11.5"
+futures-util = "0.3"
+percent-encoding = "2"
+# Same major version as ga4gh-lib; `stream` reads downloads in chunks.
+reqwest = { version = "0.11", features = ["stream"] }
+# S3 downloads, using object_store's AWS configuration and credential chain.
+object_store = { version = "0.12", default-features = false, features = ["aws"] }
 
 [features]
 # Runs the CLI against Starter Kit WES; see tests/README.md.

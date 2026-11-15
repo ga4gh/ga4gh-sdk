@@ -107,7 +107,8 @@ jobs:
               paths=("${common[@]}" run-integration-tests.sh lib/src/clients/tes/
                 lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
                 lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs
-                cli/Cargo.toml cli/src/ cli/tests/funnel_cli.rs)
+                cli/Cargo.toml cli/src/ cli/tests/funnel_cli.rs
+                cli/tests/funnel_tes_files.rs)
             elif [[ "$SUITE" == protes ]]; then
               paths=("${common[@]}" tests/run-protes-integration.sh tests/protes/
                 lib/src/clients/tes/ lib/src/clients/serviceinfo/ lib/src/clients/wait.rs

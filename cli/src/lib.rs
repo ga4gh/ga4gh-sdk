@@ -37,6 +37,7 @@ mod login;
 pub mod registry;
 mod render;
 pub mod tes;
+mod tes_files;
 pub mod trs;
 pub mod wes;
 pub mod workflow;
