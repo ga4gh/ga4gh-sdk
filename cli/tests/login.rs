@@ -63,6 +63,7 @@ fn write_store(dir: &Path, prefix: &str, access: &str, refresh: &str, expires_at
     let store = json!({"logins": [{
         "issuer": issuer,
         "client_id": "test-cli",
+        "scope": "openid",
         "token_endpoint": format!("{issuer}/token"),
         "access_token": access,
         "refresh_token": refresh,
@@ -298,6 +299,67 @@ fn a_section_with_oidc_needs_a_login_and_no_other_credential() {
     assert!(error.to_string().contains("issuer"), "{error}");
 }
 
+#[tokio::test]
+async fn login_rejects_a_conflicting_credential_before_discovery() {
+    let prefix = "/login-conflicting-credential";
+    let dir = tempfile::TempDir::new().unwrap();
+    let context = write_config(
+        dir.path(),
+        prefix,
+        json!({"oauth_access_token": "configured"}),
+    );
+    let discovery = mock(
+        "GET",
+        format!("{prefix}/idp/.well-known/openid-configuration").as_str(),
+    )
+    .expect(0)
+    .create();
+    let error = run_error(&context, &["test-cli", "login", "registry"]).await;
+    assert!(error.contains("both 'oidc' and a credential"), "{error}");
+    assert!(!dir.path().join("tokens.json").exists());
+    discovery.assert();
+}
+
+#[tokio::test]
+async fn dispatch_requires_a_caller_owned_prompt_for_login() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let context = write_config(dir.path(), "/login-prompt", json!({}));
+    let matches = context
+        .command()
+        .try_get_matches_from(["test-cli", "login", "registry"])
+        .unwrap();
+    let error = context.dispatch(&matches).await.err().unwrap().to_string();
+    assert!(error.contains("dispatch_to"), "{error}");
+    assert!(!dir.path().join("tokens.json").exists());
+}
+
+#[tokio::test]
+async fn provider_error_that_echoes_refresh_token_is_not_printed() {
+    let prefix = "/login-echoed-refresh-token";
+    let dir = tempfile::TempDir::new().unwrap();
+    let context = write_config(dir.path(), prefix, json!({}));
+    write_store(
+        dir.path(),
+        prefix,
+        "old-access",
+        "refresh-secret",
+        now() - 10,
+    );
+    let response = mock("POST", format!("{prefix}/idp/token").as_str())
+        .match_body(Matcher::UrlEncoded(
+            "refresh_token".into(),
+            "refresh-secret".into(),
+        ))
+        .with_status(400)
+        .with_body(json!({"error": "refresh-secret"}).to_string())
+        .expect(1)
+        .create();
+    let error = run_error(&context, &["test-cli", "registry", "list"]).await;
+    assert!(error.contains("unrecognized_error"), "{error}");
+    assert!(!error.contains("refresh-secret"), "{error}");
+    response.assert();
+}
+
 #[test]
 fn the_token_variable_overrides_the_login() {
     const VARIABLE: &str = "GA4GH_SDK_LOGIN_TEST_OVERRIDE";
@@ -341,6 +403,46 @@ async fn logout_deletes_only_the_sections_login() {
 }
 
 #[tokio::test]
+async fn sections_with_different_scopes_keep_separate_logins() {
+    let prefix = "/login-distinct-scopes";
+    let dir = tempfile::TempDir::new().unwrap();
+    let context = write_config(dir.path(), prefix, json!({}));
+    let config_path = dir.path().join("config.json");
+    let mut config: Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    let mut tes = config["REGISTRY"].clone();
+    tes["base_path"] = json!(format!("{}{prefix}/tes", mockito::server_url()));
+    tes["oidc"]["scope"] = json!("openid tes.read");
+    config["TES"] = tes;
+    std::fs::write(&config_path, config.to_string()).unwrap();
+
+    write_store(
+        dir.path(),
+        prefix,
+        "registry-access",
+        "registry-refresh",
+        now() + 3600,
+    );
+    let mut store = read_store(dir.path());
+    let mut tes_login = store["logins"][0].clone();
+    tes_login["scope"] = json!("openid tes.read");
+    tes_login["access_token"] = json!("tes-access");
+    store["logins"].as_array_mut().unwrap().push(tes_login);
+    std::fs::write(dir.path().join("tokens.json"), store.to_string()).unwrap();
+
+    assert!(context.load_config(ServiceType::REGISTRY).is_ok());
+    assert!(context.load_config(ServiceType::TES).is_ok());
+    let (_, stderr, success) = run(&context, &["test-cli", "logout", "registry"]).await;
+    assert!(success, "{stderr}");
+    let remaining = read_store(dir.path())["logins"].as_array().unwrap().clone();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0]["scope"], "openid tes.read");
+    assert_eq!(remaining[0]["access_token"], "tes-access");
+    assert!(context.load_config(ServiceType::TES).is_ok());
+    assert!(context.load_config(ServiceType::REGISTRY).is_err());
+}
+
+#[tokio::test]
 async fn login_needs_oidc_settings() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("config.json");
@@ -381,6 +483,7 @@ async fn an_expired_login_without_refresh_token_asks_to_log_in_again() {
     let store = json!({"logins": [{
         "issuer": issuer,
         "client_id": "test-cli",
+        "scope": "openid",
         "token_endpoint": format!("{issuer}/token"),
         "access_token": "old",
         "expires_at": now() - 10,

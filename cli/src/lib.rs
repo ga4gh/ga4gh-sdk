@@ -120,24 +120,6 @@ impl CommandOutput {
     }
 }
 
-#[cfg(test)]
-mod output_tests {
-    use super::CommandOutput;
-
-    #[test]
-    fn valid_large_numbers_and_deep_extensions_are_preserved() {
-        let nested = format!("{}0{}", "[".repeat(150), "]".repeat(150));
-        let body = format!("{{\"large\":1e400,\"nested\":{nested}}}");
-        let output = CommandOutput::json(body.clone());
-        assert!(output.stderr.is_empty(), "{}", output.stderr);
-        assert_eq!(output.stdout, body);
-
-        let invalid = CommandOutput::json(format!("{body} forged"));
-        assert!(invalid.stdout.is_empty());
-        assert!(invalid.stderr.contains("not valid JSON"));
-    }
-}
-
 /// The settings of a binary built on this CLI: its name, version, help text,
 /// configuration file, profile and token variable.
 ///
@@ -426,13 +408,6 @@ impl CliContext {
         let has_credential = config.basic_auth.is_some()
             || config.oauth_access_token.is_some()
             || config.bearer_access_token.is_some();
-        if oidc.is_some() && has_credential {
-            anyhow::bail!(
-                "Section '{}' sets both '{}' and a credential; remove one of them",
-                printable(section),
-                login::OIDC_KEY
-            );
-        }
         if let Some(name) = &self.token_env {
             if self.token_sections.iter().any(|listed| listed == section) && !has_credential {
                 match std::env::var(name) {
@@ -465,7 +440,10 @@ impl CliContext {
     /// Like [`load_config`](Self::load_config), and refreshes an expired
     /// stored login first, so that a failed refresh is reported with its
     /// reason. The token provider itself reports only that it failed.
-    async fn load_config_fresh(&self, service_type: ServiceType) -> anyhow::Result<Configuration> {
+    pub(crate) async fn load_config_fresh(
+        &self,
+        service_type: ServiceType,
+    ) -> anyhow::Result<Configuration> {
         let (config, provider) = self.load_config_with_login(service_type)?;
         if let Some(provider) = provider {
             provider.ensure_fresh().await?;
@@ -523,7 +501,9 @@ impl CliContext {
 
     /// Runs a built-in command with its service's section of this context's
     /// configuration file, in the profile of `--profile` if it is given; see
-    /// [`crate::dispatch`].
+    /// [`crate::dispatch`]. Interactive `login` requires
+    /// [`dispatch_to`](Self::dispatch_to) so its prompt reaches a caller-owned
+    /// writer before the command completes.
     pub async fn dispatch(&self, matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
         let context = self.with_profile_from(matches);
         match matches.subcommand() {
@@ -532,11 +512,8 @@ impl CliContext {
                     .await
                     .map(Some);
             }
-            // The instructions for the user can't wait for the output.
-            Some(("login", sub)) => {
-                return login::run_login(sub, &context, &mut std::io::stderr())
-                    .await
-                    .map(Some);
+            Some(("login", _)) => {
+                anyhow::bail!("Interactive login requires CliContext::dispatch_to")
             }
             Some(("logout", sub)) => return login::run_logout(sub, &context).map(Some),
             _ => {}
@@ -660,5 +637,23 @@ pub async fn dispatch_with_config_to(
     match dispatch_with_config(matches, config).await? {
         Some(output) => Ok(Some(output.write_to(stdout, stderr)?)),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::CommandOutput;
+
+    #[test]
+    fn valid_large_numbers_and_deep_extensions_are_preserved() {
+        let nested = format!("{}0{}", "[".repeat(150), "]".repeat(150));
+        let body = format!("{{\"large\":1e400,\"nested\":{nested}}}");
+        let output = CommandOutput::json(body.clone());
+        assert!(output.stderr.is_empty(), "{}", output.stderr);
+        assert_eq!(output.stdout, body);
+
+        let invalid = CommandOutput::json(format!("{body} forged"));
+        assert!(invalid.stdout.is_empty());
+        assert!(invalid.stderr.contains("not valid JSON"));
     }
 }

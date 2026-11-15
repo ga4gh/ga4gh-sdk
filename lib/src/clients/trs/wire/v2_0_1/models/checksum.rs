@@ -18,7 +18,7 @@ pub struct Checksum {
     /// The hex-string encoded checksum for the data.
     #[serde(rename = "checksum")]
     pub checksum: String,
-    /// The digest method used to create the checksum. The value (e.g. `sha-256`) SHOULD be listed as `Hash Name String` in the https://github.com/ga4gh-discovery/ga4gh-checksum/blob/master/hash-alg.csv[GA4GH Checksum Hash Algorithm Registry]. Other values MAY be used, as long as implementors are aware of the issues discussed in https://tools.ietf.org/html/rfc6920#section-9.4[RFC6920]. GA4GH may provide more explicit guidance for use of non-IANA-registered algorithms in the future.
+    /// The digest method used to create the checksum. The value (e.g. `sha-256`) SHOULD be listed as `Hash Name String` in the [GA4GH Checksum Hash Algorithm Registry](https://github.com/ga4gh-discovery/ga4gh-checksum/blob/master/hash-alg.csv). Other values MAY be used, as long as implementors are aware of the issues discussed in [RFC6920](https://tools.ietf.org/html/rfc6920#section-9.4). GA4GH may provide more explicit guidance for use of non-IANA-registered algorithms in the future.
     #[serde(rename = "type")]
     pub r#type: String,
     /// Fields that the spec doesn't define, kept as received, so that writing

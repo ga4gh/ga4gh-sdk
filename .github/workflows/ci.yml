@@ -23,7 +23,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --locked
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     name: Test
@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [funnel, wes-starter-kit]
+        suite: [funnel, protes, wes-starter-kit, trs-filer]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,6 +108,16 @@ jobs:
                 lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
                 lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs
                 cli/Cargo.toml cli/src/ cli/tests/funnel_cli.rs)
+            elif [[ "$SUITE" == protes ]]; then
+              paths=("${common[@]}" tests/run-protes-integration.sh tests/protes/
+                lib/src/clients/tes/ lib/src/clients/serviceinfo/ lib/src/clients/wait.rs
+                lib/src/utils/ lib/src/clients/mod.rs lib/src/lib.rs lib/tests/protes_tes.rs
+                cli/Cargo.toml cli/src/ cli/tests/protes_cli.rs)
+            elif [[ "$SUITE" == trs-filer ]]; then
+              paths=("${common[@]}" tests/run-trs-filer-integration.sh tests/fixtures/trs-filer/
+                lib/src/clients/trs/ lib/src/clients/serviceinfo/ lib/src/utils/
+                lib/src/clients/mod.rs lib/src/lib.rs lib/tests/trs_filer.rs
+                cli/Cargo.toml cli/src/ cli/tests/trs_filer.rs)
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
@@ -122,8 +132,9 @@ jobs:
           fi
           echo "run=$run_suite" >> "$GITHUB_OUTPUT"
           echo "$SUITE: run=$run_suite" >> "$GITHUB_STEP_SUMMARY"
+      # Also for proTES, which relays tasks to Funnel
       - name: Install Funnel
-        if: matrix.suite == 'funnel' && steps.changes.outputs.run == 'true'
+        if: contains(fromJSON('["funnel", "protes"]'), matrix.suite) && steps.changes.outputs.run == 'true'
         shell: bash
         run: |
           archive=funnel-linux-amd64-v0.11.14.tar.gz
@@ -136,9 +147,15 @@ jobs:
       - name: Test against Funnel
         if: matrix.suite == 'funnel' && steps.changes.outputs.run == 'true'
         run: bash run-integration-tests.sh
+      - name: Test against proTES
+        if: matrix.suite == 'protes' && steps.changes.outputs.run == 'true'
+        run: tests/run-protes-integration.sh
       - name: Test against Starter Kit WES
         if: matrix.suite == 'wes-starter-kit' && steps.changes.outputs.run == 'true'
         run: tests/run-wes-docker-integration.sh
+      - name: Test against TRS-Filer
+        if: matrix.suite == 'trs-filer' && steps.changes.outputs.run == 'true'
+        run: tests/run-trs-filer-integration.sh
 
   # Coverage of the unit tests, without the generated models; the report
   # goes to the job summary and the `coverage` artifact (LCOV), which the
@@ -236,6 +253,32 @@ jobs:
           SKIP: cargo-fmt,cargo-clippy
         run: pre-commit run --all-files --show-diff-on-failure
 
+  # The documentation site as Read the Docs builds it (`.readthedocs.yaml`):
+  # the Rust API reference, then the strict MkDocs build, which fails on
+  # warnings such as broken links and anchors
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Python version of Read the Docs (`.readthedocs.yaml`)
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Install MkDocs
+        run: |
+          python -m pip install --upgrade 'pip>=25.1'
+          python -m pip install --group python/pyproject.toml:docs
+      - name: Install toolchain
+        run: rustup toolchain install
+      - name: Test hooks
+        run: python -m pytest docs/test_hooks.py
+      - name: Build documentation
+        run: make site
+
   # The example crate in `examples/downstream-sdk/`, built against the
   # library and the CLI as a downstream crate would (see docs/downstream.md)
   downstream:
@@ -251,7 +294,7 @@ jobs:
 
   passed:
     name: CI passed
-    needs: [lint, test, build, python, wheels, integration, coverage, codecov, pre-commit, downstream]
+    needs: [lint, test, build, python, wheels, integration, coverage, codecov, pre-commit, docs, downstream]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -271,7 +314,7 @@ jobs:
               print(f'{name}: {result}')
           expected = {
               'lint', 'test', 'build', 'python', 'wheels', 'integration', 'coverage',
-              'codecov', 'pre-commit', 'downstream',
+              'codecov', 'pre-commit', 'docs', 'downstream',
           }
           expected_results = {name: 'success' for name in expected}
           if os.environ['EVENT_NAME'] == 'pull_request':

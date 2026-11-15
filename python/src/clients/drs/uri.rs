@@ -1,9 +1,5 @@
 //! A hostname-based DRS URI, such as `drs://drs.example.org/object-id`.
 
-// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
-// clippy reports at every method that returns one, as in `tes.rs`.
-#![allow(clippy::useless_conversion)]
-
 use crate::utils::convert::check_extra_args;
 use ga4gh_sdk::clients::drs::uri::DrsUri;
 use pyo3::exceptions::PyValueError;

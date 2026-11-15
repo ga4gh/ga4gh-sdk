@@ -1,9 +1,5 @@
 //! `DrsResolver` and `AccessPlan`: plan access to the objects of `drs://` URIs.
 
-// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
-// clippy reports at every method that returns one, as in `tes.rs`.
-#![allow(clippy::useless_conversion)]
-
 use super::helpers::{budget, count, plan_error, require_attempts};
 use super::pending::PyPendingResolution;
 use super::uri::parse_uri;
@@ -15,6 +11,7 @@ use ga4gh_sdk::clients::drs::uri::{AccessPlan, AccessPreferences, AccessResoluti
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
+use pyo3::IntoPyObjectExt;
 use serde_json::Value;
 
 /// How to fetch a DRS object's bytes: an access method, its URL and its headers.
@@ -178,7 +175,7 @@ impl PyDrsResolver {
         regions: Option<Vec<String>>,
         method_index: Option<i64>,
         timeout: f64,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         parse_uri(uri)?;
         let preferences = Self::preferences(protocols, regions, method_index)?;
         let operation = budget(timeout)?;
@@ -188,10 +185,10 @@ impl PyDrsResolver {
                     format!("Failed to plan DRS access: {}", plan_error(error.as_ref()))
                 })
         })?;
-        Ok(match answer {
-            AccessResolution::Ready(inner) => PyAccessPlan { inner }.into_py(py),
-            AccessResolution::Pending(inner) => PyPendingResolution { inner }.into_py(py),
-        })
+        match answer {
+            AccessResolution::Ready(inner) => PyAccessPlan { inner }.into_py_any(py),
+            AccessResolution::Pending(inner) => PyPendingResolution { inner }.into_py_any(py),
+        }
     }
 
     /// Like `access_plan_once()`, but waits as the server asks while it prepares an

@@ -44,13 +44,14 @@ bump them, so update this guide when you change them.
 | `make test` | `cargo test --workspace --locked` (unit and documentation tests) |
 | `make fmt` | `cargo fmt --all` |
 | `make fmt-check` | `cargo fmt --all --check` |
-| `make clippy` | `cargo clippy --workspace --all-targets --locked` |
+| `make clippy` | `cargo clippy --workspace --all-targets --locked -- -D warnings` |
 | `make lint` | `fmt-check` and `clippy` |
 | `make check` | `lint`, `build` and `test`: the standard checks |
 | `make coverage` | Coverage report in `coverage/` (see below) |
 | `make clean-coverage` | Removes coverage data and `coverage/` |
 | `make downstream` | Formatting, Clippy and tests of the [downstream example](downstream.md#checks) |
 | `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
+| `make site` | The documentation site in `site/` (see [Documentation](#documentation)) |
 | `make models` | Runs `utils/build_models_wrapper.sh`; run `make fmt` afterwards |
 | `make pre-commit` | `pre-commit run --all-files` |
 
@@ -76,8 +77,9 @@ against their schemas, lint the workflows with
 [actionlint](https://github.com/rhysd/actionlint), fix spelling with
 [typos](https://github.com/crate-ci/typos) (intended words that it flags go
 into [`_typos.toml`](../_typos.toml)), and run `cargo fmt --all` and
-`cargo clippy --workspace --all-targets --locked`. When a hook changes
-files, the commit stops: review the changes, stage them, and commit again.
+`cargo clippy --workspace --all-targets --locked -- -D warnings`. When a
+hook changes files, the commit stops: review the changes, stage them, and
+commit again.
 
 The formatting and spelling hooks skip generated models in
 `lib/src/clients/*/models/`, because their text comes from the upstream
@@ -129,11 +131,104 @@ artifact of the `coverage` job are then still there, and the job log of
 
 ## Lints
 
-`make clippy` checks all workspace targets. The CI lint job runs the same
-command and checks formatting. Documentation lint enforcement remains in
+`make clippy` checks all workspace targets and fails on any Clippy warning
+(`-- -D warnings`). The CI lint job runs the same command and checks
+formatting. Fix a new warning in the code where you can. Otherwise allow the
+lint as narrowly as possible, with a comment that says why. Allows in
+hand-written code sit on single items; two wider allows cover code that isn't
+hand-written:
+
+- Generated models: `clippy::derivable_impls` (the generator writes
+  `Default` for enums by hand) is allowed on the `models` module of the DRS,
+  TES, TRS and WES clients, and `clippy::too_many_arguments` (`new` takes
+  one argument per required field) on that of WES, so that the models stay
+  as the generator writes them (see
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). A new client
+  whose models trigger these lints needs the same attribute.
+
+Documentation lint enforcement remains in
 [#87](https://github.com/ga4gh/ga4gh-sdk/issues/87); it needs a policy for
 generated models and the existing undocumented public API before it can become
 a useful gate.
+
+## Documentation
+
+The guides are Markdown files next to the code they describe: the
+[README](../README.md), the guides in `docs/`, the
+[CLI README](../cli/README.md), the [Python README](../python/README.md), the
+[integration test guide](../tests/README.md) and the READMEs of the
+examples. [Read the Docs](https://ga4gh-sdk.readthedocs.io/) publishes them
+as one site, built with [MkDocs](https://www.mkdocs.org/) and the
+[Material theme](https://squidfunk.github.io/mkdocs-material/), together with
+the Rust API reference of `cargo doc` for the `ga4gh_sdk` and `ga4gh_cli`
+crates. Once the Read the Docs project is configured as described below, it
+serves `latest` from `main`, a version per tag, and pull request previews.
+
+- [`mkdocs.yml`](../mkdocs.yml) configures the site. Its `nav` lists the
+  pages by their paths in the repository; Markdown files that it doesn't
+  list are not on the site.
+- [`docs/hooks.py`](hooks.py) builds the site from those files where they
+  are, so that relative links between them work on GitHub and on the site
+  alike, and points links to other files that Git tracks, such as source
+  files, to GitHub. Links to untracked files, such as build output, fail the
+  build.
+- [`.readthedocs.yaml`](../.readthedocs.yaml) configures the build on Read the
+  Docs: the dependency group `docs` of
+  [`python/pyproject.toml`](../python/pyproject.toml) (exact versions;
+  Dependabot doesn't bump them, so update them by hand), rustup for the
+  pinned toolchain, `cargo doc`, then MkDocs.
+
+A new guide needs an entry in `nav`; link to it with its relative path, as
+on GitHub. To build the site locally into `site/` as CI does, install the
+tools (pip 25.1 or later) and run `make site`:
+
+```sh
+python3 -m pip install --group python/pyproject.toml:docs
+make site
+```
+
+`make site` runs two strict builds:
+
+- `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` with
+  `RUSTDOCFLAGS="-D warnings"`, so that any unsuppressed rustdoc warning fails it, such as
+  a bare URL (write `<https://...>` or `[text](https://...)`) or an
+  unresolved link. `make docs` builds the whole workspace and stays lenient.
+  Fixes in the docs of generated models go into their patch in
+  `utils/patches/` (see
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). Until the
+  docs of the DRS models are fixed, only their generated `models` module
+  is exempt from the bare-URL and broken-link checks (an `#[allow]` on
+  `pub mod models` in `lib/src/clients/drs/mod.rs`). Hand-written DRS code
+  remains subject to both checks.
+- `mkdocs build --strict`, which fails on warnings such as links to missing
+  files or anchors.
+
+`python3 -m pytest docs/test_hooks.py` tests the hooks; CI
+runs both. After the first `make site`, `mkdocs serve` shows the site
+at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
+
+### Read the Docs project
+
+The project on Read the Docs is set up once, by a maintainer:
+
+1. Import `ga4gh/ga4gh-sdk` on [readthedocs.org](https://readthedocs.org/)
+   (project slug `ga4gh-sdk`) and keep `main` as the default branch, so that
+   `latest` follows it. Prefer a connected repository through the
+   [Read the Docs GitHub App](https://docs.readthedocs.com/platform/stable/reference/git-integration.html#github-app).
+   If the project was imported manually, create a **GitHub incoming webhook**
+   under **Settings > Integrations**. In the GitHub repository's
+   **Settings > Webhooks**, add the displayed URL and secret with the
+   **Pushes**, **Pull requests**, **Branch or tag creation**, and
+   **Branch or tag deletion** events. Without a connected repository or this
+   webhook, Read the Docs receives no changes from GitHub.
+2. Under **Settings > Pull request builds**, turn on builds of pull
+   requests, for the previews. Push a new commit to any PR that was already
+   open when previews were enabled to trigger its first build.
+3. Under **Automation rules**, add a rule that activates new versions of
+   tags (for example, matching SemVer versions), so that every release gets
+   its version.
+
+After a release, check that its version was built.
 
 ## CI
 
@@ -142,7 +237,7 @@ on pushes to `main` and on manual dispatch:
 
 | Job | Name | What it does |
 | --- | --- | --- |
-| `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` |
+| `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` with `-D warnings` |
 | `test` | Test | `cargo test --workspace --locked` |
 | `build` | Build | Lockfile check, standalone library and CLI builds |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
@@ -151,6 +246,7 @@ on pushes to `main` and on manual dispatch:
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
+| `docs` | Docs | `make site`: the Rust API reference, without rustdoc warnings, and the strict MkDocs build |
 | `downstream` | Downstream example | `make downstream`: builds and tests [`examples/downstream-sdk/`](downstream.md) |
 | `passed` | CI passed | Requires all applicable jobs to succeed; accepts the intentionally skipped wheel matrix on PRs |
 

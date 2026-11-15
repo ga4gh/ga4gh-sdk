@@ -22,7 +22,7 @@ impl TokenProvider for PyTokenProvider {
         // The callable may block, for example on a token endpoint, so it runs on a
         // blocking thread of the runtime, with the GIL, and not in the request's future.
         tokio::task::spawn_blocking(move || {
-            Python::with_gil(|py| call_token_provider(py, &callable, &audience))
+            Python::attach(|py| call_token_provider(py, &callable, &audience))
         })
         .await
         .map_err(|error| format!("The token provider didn't finish: {error}"))?
@@ -153,7 +153,7 @@ impl PyConfiguration {
     }
 
     /// Returns the other keys of the configuration file section as a `dict`.
-    pub fn get_extra(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn get_extra(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &Value::Object(self.inner.extra.clone()))
     }
 

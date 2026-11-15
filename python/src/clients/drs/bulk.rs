@@ -1,9 +1,5 @@
 //! Bulk calls: `BulkPolicy`, `BulkOutcome` and `BulkReport`.
 
-// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
-// clippy reports at every method that returns one, as in `tes.rs`.
-#![allow(clippy::useless_conversion)]
-
 use super::helpers::{count, seconds};
 use super::pending::PyPendingResolution;
 use crate::utils::convert::to_json;
@@ -13,6 +9,7 @@ use ga4gh_sdk::utils::operation::RetryPolicy;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyMapping, PyString};
+use pyo3::IntoPyObjectExt;
 use serde_json::Value;
 
 /// Limits of `DRS.get_bulk_objects()` and `DRS.get_bulk_access_urls()`.
@@ -22,6 +19,15 @@ use serde_json::Value;
 #[derive(Clone)]
 pub struct PyBulkPolicy {
     pub inner: BulkPolicy,
+}
+
+// Preserve the owned Rust argument type used by the DRS bulk methods.
+impl<'a, 'py> FromPyObject<'a, 'py> for PyBulkPolicy {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(value.cast::<Self>()?.borrow().clone())
+    }
 }
 
 #[pymethods]
@@ -132,7 +138,7 @@ pub struct PyBulkOutcome {
     pub object_id: String,
     pub access_id: Option<String>,
     /// `DrsObject`s or `BulkAccessURL`s.
-    pub resolved: Vec<PyObject>,
+    pub resolved: Vec<Py<PyAny>>,
     pub failure_codes: Vec<u16>,
     pub pending: Option<PyPendingResolution>,
     pub errors: Vec<String>,
@@ -142,12 +148,15 @@ pub struct PyBulkOutcome {
 impl PyBulkOutcome {
     /// Converts a lib outcome, checking each resolved entry against its model as
     /// `get_bulk_objects` and `get_bulk_access_urls` do.
-    pub(super) fn convert<T: IntoPy<PyObject>>(
-        py: Python<'_>,
+    pub(super) fn convert<'py, T>(
+        py: Python<'py>,
         key: BulkKey,
         outcome: ObjectOutcome<Value>,
         parse: impl Fn(Value) -> Result<T, String>,
-    ) -> Self {
+    ) -> PyResult<Self>
+    where
+        T: IntoPyObject<'py>,
+    {
         // Rebuilt with the entries that fit the model (as placeholders), so that
         // `is_success` is the lib's own `ObjectOutcome::is_success`.
         let mut checked = ObjectOutcome {
@@ -160,7 +169,7 @@ impl PyBulkOutcome {
         for value in outcome.resolved {
             match parse(value) {
                 Ok(item) => {
-                    resolved.push(item.into_py(py));
+                    resolved.push(item.into_py_any(py)?);
                     checked.resolved.push(Value::Null);
                 }
                 Err(error) => checked
@@ -168,7 +177,7 @@ impl PyBulkOutcome {
                     .push(format!("invalid resolved entry: {error}")),
             }
         }
-        PyBulkOutcome {
+        Ok(PyBulkOutcome {
             object_id: key.object_id,
             access_id: key.access_id,
             resolved,
@@ -184,7 +193,7 @@ impl PyBulkOutcome {
                 },
             }),
             errors: checked.errors,
-        }
+        })
     }
 }
 
@@ -204,7 +213,7 @@ impl PyBulkOutcome {
     /// The `DrsObject`s or `BulkAccessURL`s that the server returned for the ID; one, if all
     /// went well.
     #[getter]
-    fn resolved(&self, py: Python<'_>) -> Vec<PyObject> {
+    fn resolved(&self, py: Python<'_>) -> Vec<Py<PyAny>> {
         self.resolved
             .iter()
             .map(|item| item.clone_ref(py))
@@ -263,15 +272,18 @@ pub struct PyBulkReport {
 }
 
 impl PyBulkReport {
-    pub(super) fn convert<T: IntoPy<PyObject>>(
-        py: Python<'_>,
+    pub(super) fn convert<'py, T>(
+        py: Python<'py>,
         report: BulkReport<Value>,
         parse: impl Fn(Value) -> Result<T, String> + Copy,
-    ) -> PyResult<Self> {
+    ) -> PyResult<Self>
+    where
+        T: IntoPyObject<'py>,
+    {
         let outcomes = report
             .outcomes
             .into_iter()
-            .map(|(key, outcome)| Py::new(py, PyBulkOutcome::convert(py, key, outcome, parse)))
+            .map(|(key, outcome)| Py::new(py, PyBulkOutcome::convert(py, key, outcome, parse)?))
             .collect::<PyResult<_>>()?;
         Ok(PyBulkReport {
             outcomes,
@@ -327,12 +339,12 @@ pub(super) fn access_pairs(pairs: &Bound<'_, PyAny>) -> PyResult<Vec<BulkKey>> {
     if pairs.is_instance_of::<PyString>() {
         return Err(PyValueError::new_err(PAIRS));
     }
-    let items = match pairs.downcast::<PyMapping>() {
+    let items = match pairs.cast::<PyMapping>() {
         Ok(mapping) => mapping.items()?.into_any(),
         Err(_) => pairs.clone(),
     };
     items
-        .iter()
+        .try_iter()
         .map_err(|_| PyValueError::new_err(PAIRS))?
         .map(|pair| {
             let (object_id, access_id): (String, String) =

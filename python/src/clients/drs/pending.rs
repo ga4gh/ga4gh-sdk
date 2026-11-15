@@ -1,13 +1,10 @@
 //! `PendingResolution`: the server is still preparing an answer.
 
-// The `#[pymethods]` expansion of PyO3 0.22 converts each `PyResult` into itself, which
-// clippy reports at every method that returns one, as in `tes.rs`.
-#![allow(clippy::useless_conversion)]
-
 use super::helpers::parse_body;
 use ga4gh_sdk::clients::drs::resolution::{PendingResolution, Resolution};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::IntoPyObjectExt;
 use serde_json::Value;
 
 /// The server is still preparing an object or access URL: ask again after `retry_after`
@@ -43,7 +40,7 @@ impl PyPendingResolution {
 
     /// The pending state as a new `dict` with `api_root`, `endpoint` and `retry_after`.
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         dict.set_item("api_root", self.api_root())?;
         dict.set_item("endpoint", self.endpoint())?;
         dict.set_item("retry_after", self.retry_after())?;
@@ -61,13 +58,16 @@ impl PyPendingResolution {
 }
 
 /// Converts the answer of one request to a result or the pending state.
-pub(super) fn ready_or_pending<T: IntoPy<PyObject>>(
-    py: Python<'_>,
+pub(super) fn ready_or_pending<'py, T>(
+    py: Python<'py>,
     answer: Resolution<String>,
     convert: impl FnOnce(Value) -> PyResult<T>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>>
+where
+    T: IntoPyObject<'py>,
+{
     match answer {
-        Resolution::Ready(body) => Ok(convert(parse_body(&body)?)?.into_py(py)),
-        Resolution::Pending(inner) => Ok(PyPendingResolution { inner }.into_py(py)),
+        Resolution::Ready(body) => convert(parse_body(&body)?)?.into_py_any(py),
+        Resolution::Pending(inner) => PyPendingResolution { inner }.into_py_any(py),
     }
 }

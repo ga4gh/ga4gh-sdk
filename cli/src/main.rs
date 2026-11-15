@@ -6,7 +6,7 @@ use std::process::ExitCode;
 async fn main() -> anyhow::Result<ExitCode> {
     // Log messages can hold a service's response body, so they are escaped
     // like the rest of the text output.
-    env_logger::Builder::from_default_env()
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
         .format(|buf, record| {
             writeln!(
                 buf,

@@ -185,17 +185,19 @@ the CLI refreshes it once and sends a read-only request again; submissions are
 not resent. If another process has refreshed the tokens in the meantime, the
 CLI uses its tokens instead. If the provider issued no refresh token, or
 rejects the refresh token (`invalid_grant`), the command fails and asks you
-to log in again; other refresh errors are reported by their OAuth error code.
-If the CLI can't store refreshed tokens, it still uses them and prints a
-warning. Tokens are stored per issuer and client ID, so all sections with the
-same `oidc` settings share one login, in every profile. The token store's
-directory must be writable.
+to log in again; other recognized refresh errors are reported by their OAuth
+error code, while unknown codes receive a generic message.
+If the CLI can't store refreshed tokens, it still uses them and logs a
+warning on standard error. Downstream applications control their own logging.
+Tokens are stored per issuer, client ID and scope, so all sections with the
+same `oidc` settings share one login, in every profile. Sections with different
+scopes keep separate logins. The token store's directory must be writable.
 
 ```sh
 ga4gh-cli logout tes
 ```
 
-`logout` deletes the stored tokens of the section's issuer and client ID and
+`logout` deletes the stored tokens of the section's issuer, client ID and scope and
 says so on standard error; it exits with code 0, also if you weren't logged
 in. It doesn't revoke the tokens at the provider; they stay valid there until
 they expire. Commands that are still running then can't refresh their token

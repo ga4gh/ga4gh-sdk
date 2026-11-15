@@ -156,8 +156,11 @@ service requests under the configured API root; see the
 The context's command tree also has `login` and `logout`, for sections with
 `oidc` settings (see
 [Logging in with OpenID Connect](../cli/README.md#logging-in-with-openid-connect)).
-`dispatch` and `dispatch_to` run them; `dispatch_with_config` and
-`dispatch_with_config_to` return `None` for them, as they need the context.
+`dispatch_to` runs both, writing the interactive login prompt to its caller-owned
+writer. `dispatch` runs `logout` but returns an error for `login`, since a
+completed `CommandOutput` cannot deliver the prompt before approval.
+`dispatch_with_config` and `dispatch_with_config_to` return `None` for them,
+as they need the context.
 `load_config` gives sections with `oidc` a token provider with the stored
 login. When the token variable applies to such a section and is set, its
 token is used instead; for such a section, an unset variable is no error.

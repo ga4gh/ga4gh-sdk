@@ -11,7 +11,7 @@
 //! their token from the store, refreshed with the refresh token when it
 //! expires. `logout <SECTION>` deletes the stored tokens.
 //!
-//! Tokens are stored per issuer and client ID, so all sections with the same
+//! Tokens are stored per issuer, client ID and scope, so all sections with the same
 //! `oidc` settings share one login. Tokens are never printed. No client secret
 //! is used or stored.
 
@@ -108,13 +108,22 @@ impl OidcSettings {
     /// # Errors
     ///
     /// Fails if `oidc` is not an object of the documented fields, or the
-    /// issuer is not an HTTPS URL (HTTP only on a loopback address).
+    /// issuer is not an HTTPS URL (HTTP only on a loopback address), or the
+    /// section also sets another credential.
     pub(crate) fn from_config(config: &Configuration) -> anyhow::Result<Option<Self>> {
-        match config.extra.get(OIDC_KEY) {
+        let settings = match config.extra.get(OIDC_KEY) {
             None | Some(Value::Null) => Ok(None),
             Some(Value::Object(fields)) => Self::from_fields(fields).map(Some),
             Some(_) => anyhow::bail!("'{OIDC_KEY}' must be an object"),
+        }?;
+        if settings.is_some()
+            && (config.basic_auth.is_some()
+                || config.oauth_access_token.is_some()
+                || config.bearer_access_token.is_some())
+        {
+            anyhow::bail!("Section sets both '{OIDC_KEY}' and a credential; remove one of them");
         }
+        Ok(settings)
     }
 
     fn from_fields(fields: &Map<String, Value>) -> anyhow::Result<Self> {
@@ -141,8 +150,12 @@ impl OidcSettings {
         let scope = string("scope")?.unwrap_or_else(|| DEFAULT_SCOPE.to_owned());
         let url = Url::parse(&issuer)
             .map_err(|error| anyhow::anyhow!("Invalid '{OIDC_KEY}.issuer': {error}"))?;
-        if url.query().is_some() || url.fragment().is_some() || !url.username().is_empty() {
-            anyhow::bail!("'{OIDC_KEY}.issuer' must not have a query, fragment or user");
+        if url.query().is_some()
+            || url.fragment().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            anyhow::bail!("'{OIDC_KEY}.issuer' must not have a query, fragment or userinfo");
         }
         check_secure(&url, "issuer")?;
         Ok(Self {
@@ -163,7 +176,9 @@ impl OidcSettings {
 
     /// Whether a stored login belongs to these settings.
     fn matches(&self, login: &StoredLogin) -> bool {
-        same_issuer(&login.issuer, &self.issuer) && login.client_id == self.client_id
+        same_issuer(&login.issuer, &self.issuer)
+            && login.client_id == self.client_id
+            && login.scope == self.scope
     }
 }
 
@@ -175,6 +190,9 @@ fn same_issuer(left: &str, right: &str) -> bool {
 /// Accepts HTTPS URLs, and HTTP URLs on a loopback address, so that tokens
 /// and codes never cross the network unencrypted.
 fn check_secure(url: &Url, what: &str) -> anyhow::Result<()> {
+    if !url.username().is_empty() || url.password().is_some() {
+        anyhow::bail!("The OpenID Connect {what} must not contain userinfo");
+    }
     let loopback = match url.host() {
         Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
         Some(url::Host::Ipv4(address)) => address.is_loopback(),
@@ -193,6 +211,7 @@ fn check_secure(url: &Url, what: &str) -> anyhow::Result<()> {
 struct StoredLogin {
     issuer: String,
     client_id: String,
+    scope: String,
     token_endpoint: String,
     access_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -295,10 +314,12 @@ impl TokenStore {
         Ok(())
     }
 
-    /// Replaces the login of the same issuer and client, or adds it.
+    /// Replaces the login of the same issuer, client and scope, or adds it.
     fn put(&mut self, login: StoredLogin) {
         self.logins.retain(|stored| {
-            !(same_issuer(&stored.issuer, &login.issuer) && stored.client_id == login.client_id)
+            !(same_issuer(&stored.issuer, &login.issuer)
+                && stored.client_id == login.client_id
+                && stored.scope == login.scope)
         });
         self.logins.push(login);
     }
@@ -469,9 +490,30 @@ async fn token_request(
         return Ok(TokenOutcome::Tokens(tokens));
     }
     match body.get("error").and_then(Value::as_str) {
-        Some(error) => Ok(TokenOutcome::Error(error.to_owned())),
+        Some(error) if known_oauth_error(error) => Ok(TokenOutcome::Error(error.to_owned())),
+        Some(_) => Ok(TokenOutcome::Error("unrecognized_error".to_owned())),
         None => anyhow::bail!("The token request failed with HTTP status {status}"),
     }
+}
+
+/// Only protocol-defined error codes can enter default CLI diagnostics. A
+/// provider's arbitrary `error` field may echo a submitted code or token.
+fn known_oauth_error(error: &str) -> bool {
+    matches!(
+        error,
+        "invalid_request"
+            | "invalid_client"
+            | "invalid_grant"
+            | "unauthorized_client"
+            | "unsupported_grant_type"
+            | "invalid_scope"
+            | "authorization_pending"
+            | "slow_down"
+            | "access_denied"
+            | "expired_token"
+            | "server_error"
+            | "temporarily_unavailable"
+    )
 }
 
 /// Whether `token` can be sent as `Authorization: Bearer <token>`.
@@ -564,6 +606,7 @@ async fn device_flow(
                 let mut login = StoredLogin {
                     issuer: settings.issuer.clone(),
                     client_id: settings.client_id.clone(),
+                    scope: settings.scope.clone(),
                     token_endpoint: endpoints.token.to_string(),
                     access_token: String::new(),
                     refresh_token: None,
@@ -781,11 +824,8 @@ impl StoredLoginProvider {
         store.put(login.clone());
         // The provider may have replaced the refresh token already, so the
         // new tokens are used even if they can't be stored.
-        if let Err(error) = store.write(&self.path) {
-            eprintln!(
-                "Warning: {}; the next command may need a new login",
-                crate::printable(&error.to_string())
-            );
+        if store.write(&self.path).is_err() {
+            log::warn!("Could not persist refreshed tokens; the next command may need a new login");
         }
         Ok(())
     }
@@ -888,6 +928,10 @@ mod tests {
                 "query",
             ),
             (
+                json!({"issuer": "https://:secret@idp.example.org", "client_id": "c"}),
+                "userinfo",
+            ),
+            (
                 json!({"issuer": "https://idp.example.org", "client_id": "c", "client_secret": "s"}),
                 "Unknown key",
             ),
@@ -896,6 +940,13 @@ mod tests {
             let error = parse(value).unwrap_err().to_string();
             assert!(error.contains(expected), "{error}");
         }
+        assert!(check_secure(
+            &Url::parse("https://:secret@idp.example.org/token").unwrap(),
+            "token_endpoint"
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("userinfo"));
     }
 
     #[test]
@@ -981,6 +1032,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unknown_device_error_that_echoes_the_device_code_is_not_printed() {
+        let prefix = "/oidc-echoed-device-code";
+        let issuer = format!("{}{prefix}", mockito::server_url());
+        let _discovery = discovery(prefix);
+        let _device = device(prefix);
+        let _rejected = token_error(prefix, "device-code");
+        let error = device_flow(
+            &http_client().unwrap(),
+            &settings(&issuer),
+            &mut Vec::new(),
+            FAST,
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(error.contains("unrecognized_error"), "{error}");
+        assert!(!error.contains("device-code"), "{error}");
+    }
+
+    #[tokio::test]
     async fn device_flow_stops_when_the_code_expires() {
         let prefix = "/oidc-expired";
         let issuer = format!("{}{prefix}", mockito::server_url());
@@ -1040,6 +1112,7 @@ mod tests {
         let mut login = StoredLogin {
             issuer: "https://idp.example.org".into(),
             client_id: "c".into(),
+            scope: DEFAULT_SCOPE.into(),
             token_endpoint: "https://idp.example.org/token".into(),
             access_token: "a".into(),
             refresh_token: Some("r".into()),
@@ -1061,6 +1134,37 @@ mod tests {
         assert!(login.is_fresh(u64::MAX - 100));
     }
 
+    #[test]
+    fn token_store_keeps_logins_with_distinct_scopes() {
+        let first = StoredLogin {
+            issuer: "https://idp.example.org".into(),
+            client_id: "cli".into(),
+            scope: "openid tes.read".into(),
+            token_endpoint: "https://idp.example.org/token".into(),
+            access_token: "tes-access".into(),
+            refresh_token: None,
+            expires_at: None,
+        };
+        let second = StoredLogin {
+            scope: "openid wes.run".into(),
+            access_token: "wes-access".into(),
+            ..first.clone()
+        };
+        let mut store = TokenStore::default();
+        store.put(first.clone());
+        store.put(second.clone());
+        assert_eq!(store.logins.len(), 2);
+        assert_eq!(store.logins[0].access_token, "tes-access");
+        assert_eq!(store.logins[1].access_token, "wes-access");
+        let settings = OidcSettings {
+            issuer: first.issuer,
+            client_id: first.client_id,
+            scope: first.scope,
+        };
+        assert!(settings.matches(&store.logins[0]));
+        assert!(!settings.matches(&store.logins[1]));
+    }
+
     #[cfg(unix)]
     #[test]
     fn token_store_is_private_and_rejects_wider_modes() {
@@ -1071,6 +1175,7 @@ mod tests {
         store.put(StoredLogin {
             issuer: "https://idp.example.org".into(),
             client_id: "c".into(),
+            scope: DEFAULT_SCOPE.into(),
             token_endpoint: "https://idp.example.org/token".into(),
             access_token: "a".into(),
             refresh_token: None,
