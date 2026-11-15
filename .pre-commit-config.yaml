@@ -51,7 +51,7 @@ repos:
       # shellcheck if it is installed (as on GitHub-hosted runners)
       - id: actionlint
   - repo: https://github.com/crate-ci/typos
-    rev: 2611abd15acb0c2e317fb9e45855aabb8b35a414  # frozen: v1.52.1
+    rev: 276087d9a4f06398b3e04825487805e2d7375888  # frozen: v1.52.2
     hooks:
       - id: typos
         exclude: ^(lib/src/clients/[^/]+/models/|utils/patches/)
