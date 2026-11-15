@@ -199,9 +199,17 @@ The project on Read the Docs is set up once, by a maintainer:
 
 1. Import `ga4gh/ga4gh-sdk` on [readthedocs.org](https://readthedocs.org/)
    (project slug `ga4gh-sdk`) and keep `main` as the default branch, so that
-   `latest` follows it.
+   `latest` follows it. Prefer a connected repository through the
+   [Read the Docs GitHub App](https://docs.readthedocs.com/platform/stable/reference/git-integration.html#github-app).
+   If the project was imported manually, create a **GitHub incoming webhook**
+   under **Settings > Integrations**. In the GitHub repository's
+   **Settings > Webhooks**, add the displayed URL and secret with the
+   **Pushes**, **Pull requests**, **Branch or tag creation**, and
+   **Branch or tag deletion** events. Without a connected repository or this
+   webhook, Read the Docs receives no changes from GitHub.
 2. Under **Settings > Pull request builds**, turn on builds of pull
-   requests, for the previews.
+   requests, for the previews. Push a new commit to any PR that was already
+   open when previews were enabled to trigger its first build.
 3. Under **Automation rules**, add a rule that activates new versions of
    tags (for example, matching SemVer versions), so that every release gets
    its version.
