@@ -731,5 +731,6 @@ class AsyncTask:
         """Waits until the task ends, like `Task.wait()`.
 
         Invalid arguments raise `ValueError` when the method is called. Cancelling the
-        awaiting coroutine stops polling; it doesn't cancel the task.
+        awaiting coroutine stops polling; it doesn't cancel the task. Between polls, the
+        wait holds no call thread, so sleeping waits do not delay other async calls.
         """

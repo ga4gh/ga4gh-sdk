@@ -426,16 +426,18 @@ asyncio.run(main())
   existing task, like `Task`. `config`, `transport` and `id` are plain properties.
 - `await task.wait(...)` waits for a task like `Task.wait()`, with the same arguments,
   results and errors. Cancelling the awaiting coroutine, for example with
-  `asyncio.wait_for()`, stops polling; the task on the server goes on. A pending wait
-  takes one of the 256 call threads (see below) for as long as it waits; with 256
-  pending waits, further async calls, including `cancel()`, queue until one ends. Give
-  waits a `timeout` when an app may wait for many tasks at once: a wait that is still
-  queued raises `WaitTimeoutError` (with `last_state` `None`) about a second after its
-  timeout.
+  `asyncio.wait_for()`, stops polling; the task on the server goes on. Between polls, a
+  pending wait sleeps on the runtime without a call thread (see below); it takes one
+  only for each request. So an app can wait for many more tasks than there are call
+  threads, and other async calls, including `cancel()`, can run while waits sleep.
+  They may still queue if polls or other requests occupy all 256 call threads.
+  The `timeout` also holds while a request waits for a call thread: if the time runs
+  out before the first poll, `WaitTimeoutError` has `last_state` `None`.
 - The requests run on the runtime of the sync API without the GIL, so they don't block
   the event loop, and several of them run at the same time. Because the SDK's futures
-  aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256
-  calls run at once. Further calls wait for a slot without occupying a pool thread;
+  aren't `Send` yet, each active request takes a thread of a pool of its own: up to 256
+  requests run at once. A wait releases its slot between requests. Further calls wait
+  for a slot without occupying a pool thread;
   cancelling a waiting call prevents it from starting. This limits concurrent calls,
   not the number of futures an app can schedule.
 - The methods return `asyncio.Future`s of the running event loop, so call them from a
