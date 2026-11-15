@@ -1,4 +1,7 @@
 pub mod bulk;
+// Generated models (utils/build_models.sh): the generator writes `Default`
+// for enums by hand.
+#[allow(clippy::derivable_impls)]
 pub mod models;
 pub mod resolution;
 pub mod uri;
@@ -427,7 +430,7 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(error.contains(&status.to_string()), "{error}");
-            assert!(error.contains("service failure"), "{error}");
+            assert!(!error.contains("service failure"), "{error}");
             assert_eq!(error.contains("base_path"), status == 404, "{error}");
         }
     }

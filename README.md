@@ -1,5 +1,6 @@
 # GA4GH SDK
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Coverage](https://codecov.io/gh/ga4gh/ga4gh-sdk/graph/badge.svg?branch=main)](https://codecov.io/gh/ga4gh/ga4gh-sdk)
 
 ## Synopsis
 
@@ -332,6 +333,13 @@ scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
 for the public sequence-QC example, offline commands and evidence boundaries.
 The same optional feature provides [exact result reuse](docs/result-reuse.md)
 from a trusted receipt and freshly checked artifacts; it does not submit a job.
+
+## Build on this SDK
+
+An SDK for a service with API extensions can build on this SDK without
+forking it: add clients that share its transport, extend its models and add
+CLI subcommands. The guide [Build on this SDK](docs/downstream.md) walks
+through an example crate that CI builds and tests.
 
 ## Building
 

@@ -337,7 +337,8 @@ fn list_sends_repeated_tags_and_displays_next_page_token() {
 #[test]
 fn test_output_on_error_response() {
     for status in [401, 404, 500] {
-        let body = format!("mock failure {status}");
+        // A server can echo a credential in an error response.
+        let body = format!("mock failure {status}: SENTINEL_PASSWORD");
         let _mocks = [
             service_info_mock("/service-info"),
             mock("POST", Matcher::Any)
@@ -365,7 +366,7 @@ fn test_output_on_error_response() {
                 assert!(output.stdout.is_empty(), "{args:?}: {}", stdout(&output));
                 let message = stderr(&output);
                 assert!(message.contains(&status.to_string()), "{args:?}: {message}");
-                assert!(message.contains(&body), "{args:?}: {message}");
+                assert!(!message.contains(&body), "{args:?}: {message}");
             }
         }
     }
@@ -384,7 +385,7 @@ fn service_info_404_keeps_api_root_hint() {
     assert!(stdout(&output).is_empty());
     let message = stderr(&output);
     assert!(message.contains("404"), "{message}");
-    assert!(message.contains("service missing"), "{message}");
+    assert!(!message.contains("service missing"), "{message}");
     assert!(
         message.contains("base_path is the TES API root"),
         "{message}"
@@ -405,7 +406,7 @@ fn canceling_terminal_task_reports_server_conflict() {
         assert!(stdout(&output).is_empty());
         let message = stderr(&output);
         assert!(message.contains("409"), "{message}");
-        assert!(message.contains(&body), "{message}");
+        assert!(!message.contains(&body), "{message}");
     }
 }
 
@@ -629,7 +630,8 @@ fn server_text_is_escaped_in_text_output() {
     assert_eq!(failed.status.code(), Some(1));
     let message = stderr(&failed);
     assert_escaped(&message);
-    assert!(message.contains("down\\u{1b}]0;title\\u{7}"), "{message}");
+    assert!(message.contains("500"), "{message}");
+    assert!(!message.contains("down"), "{message}");
 }
 
 #[test]
@@ -730,7 +732,7 @@ fn get_reports_a_body_that_is_not_json() {
 }
 
 #[test]
-fn log_messages_are_escaped() {
+fn log_messages_omit_untrusted_server_error_body() {
     let _service = mock("GET", "/escape-log/service-info")
         .with_status(500)
         .with_body("down\u{202E}x\nforged")
@@ -748,7 +750,11 @@ fn log_messages_are_escaped() {
             !message.lines().any(|line| line.starts_with("forged")),
             "{log_level:?}: {message}"
         );
-        assert!(message.contains("down\\u{202e}x\\nforged"), "{message}");
+        assert!(message.contains("500"), "{message}");
+        assert!(
+            !message.contains("down") && !message.contains("forged"),
+            "{message}"
+        );
     }
 }
 
