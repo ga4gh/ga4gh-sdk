@@ -25,9 +25,13 @@ repos:
         exclude: \.rs$
       - id: check-toml
       - id: check-yaml
-        # This exact upstream DRS snapshot has a duplicate description key.
-        # spec-pins.json pins its SHA-256; preserve the published bytes.
-        exclude: ^testbed/pack/drs/components/parameters/BulkObjectIdNoPassport\.yaml$
+        # The pinned DRS snapshot contains a duplicate key. MkDocs uses !ENV.
+        exclude: ^(mkdocs\.yml|testbed/pack/drs/components/parameters/BulkObjectIdNoPassport\.yaml)$
+      # MkDocs' tags (`!ENV`) are not plain YAML: check only the syntax
+      - id: check-yaml
+        name: check yaml (MkDocs)
+        args: [--unsafe]
+        files: ^mkdocs\.yml$
       - id: end-of-file-fixer
         exclude: >-
           (?x)^(
@@ -76,7 +80,7 @@ repos:
       # shellcheck if it is installed (as on GitHub-hosted runners)
       - id: actionlint
   - repo: https://github.com/crate-ci/typos
-    rev: 4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85  # frozen: v1.52.0
+    rev: 276087d9a4f06398b3e04825487805e2d7375888  # frozen: v1.52.2
     hooks:
       - id: typos
         exclude: >-
@@ -97,7 +101,7 @@ repos:
         pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --workspace --all-targets --locked
+        entry: cargo clippy --workspace --all-targets --locked -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false

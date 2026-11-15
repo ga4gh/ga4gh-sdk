@@ -159,9 +159,14 @@ impl WES {
                 Ok::<_, Box<dyn Error>>(form)
             })
             .await??;
-        let request = self
-            .transport
-            .request_builder(reqwest::Method::POST, "runs")?
+        // The token provider runs within the operation; running out of time
+        // there is not an ambiguous submission, as nothing was sent.
+        let request = operation
+            .run(
+                self.transport
+                    .authorized_request_builder(reqwest::Method::POST, "runs"),
+            )
+            .await??
             .multipart(form);
         let body = self
             .transport

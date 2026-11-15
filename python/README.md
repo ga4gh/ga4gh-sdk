@@ -74,7 +74,7 @@ pytest
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication) and [Timeouts](#timeouts). |
+| `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. `set_token_provider()` supplies dynamic bearer tokens. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication), [Timeouts](#timeouts) and [Token providers](#token-providers). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
@@ -128,9 +128,11 @@ For a task that is still running, call `task.cancel()`.
 ## Reading the configuration file
 
 `config.from_file()` reads a section of `~/.ga4gh-cli/config.json` (format in
-the [usage guide](../docs/usage.md#configuration-file)). Name a built-in
-section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`, `REGISTRY`), and
-any other section with a `str`. `config.get_extra()` returns the keys of the
+the [usage guide](../docs/usage.md#configuration-file)). In a file with
+[profiles](../docs/usage.md#profiles), it reads the default profile. Name a
+built-in section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`,
+`REGISTRY`), and any other section with a `str`. `config.get_extra()` returns
+the keys of the
 section that the SDK doesn't use itself, as a `dict` with the values as they are
 in the file, so don't log it if it can hold credentials:
 
@@ -150,15 +152,16 @@ unset variable raises `ValueError`, a missing file `FileNotFoundError`.
 ## Authentication
 
 Set one source before constructing a client: `set_basic_auth(username,
-password=None)`, `set_oauth_access_token(token)`, or
-`set_bearer_access_token(token)`. Use `clear_auth()` before choosing a different
-source. `from_file()` can read these sources from the selected service section.
+password=None)`, `set_oauth_access_token(token)`,
+`set_bearer_access_token(token)`, or a [token provider](#token-providers). Use
+`clear_auth()` before choosing a different source. `from_file()` can read
+static credentials from the selected service section.
 The client uses that credential for discovery and later operations; invalid or
 conflicting sources raise an exception before sending the request. The SDK does
 not follow redirects automatically. See the
 [authentication guide](../docs/authentication.md) for file keys, injected
-transport boundaries and errors. Token-provider integration is tracked in
-[#215](https://github.com/ga4gh/ga4gh-sdk/pull/215).
+transport boundaries and errors. The [token-provider section](#token-providers)
+describes dynamic credentials.
 
 ## Timeouts
 
@@ -189,6 +192,55 @@ Clients and `Transport` read the limits when they are built, so set them first.
 Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
 timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
 
+## Token providers
+
+`config.set_token_provider(provider)` makes the clients and `Transport` built from
+`config` ask `provider` for a bearer token before each request, including the
+service check of `TES(config)` and the other clients. `provider(audience)` gets the
+API root (or the `audience` given to `set_token_provider()`) and returns the token
+as a `str`, or as a `(str, float)` tuple with the seconds for which the SDK may
+reuse it:
+
+```python
+from ga4gh_sdk import Configuration, TES
+
+
+def token_provider(audience: str) -> tuple[str, float]:
+    token, expires_in = get_token_for(audience)  # your code
+    return token, expires_in - 30  # reuse it until 30 seconds before it expires
+
+
+config = Configuration("https://example.org/ga4gh/tes/v1")
+config.set_token_provider(token_provider)
+# Or with the audience of a token exchange:
+# config.set_token_provider(token_provider, audience="https://example.org/ga4gh/tes")
+tes = TES(config)
+```
+
+- Set the provider after `from_file()`, which replaces all settings. Clients and
+  `Transport` take it when they are built; `set_token_provider(None)` removes it
+  for those built later.
+- After `401 Unauthorized`, the SDK drops a reused token and asks the provider
+  again; a `GET` request is sent once more right away with a current token, while
+  submissions such as `TES.create()` and `WES.run()` are never sent twice. The
+  provider isn't told about the rejection, so don't let it cache tokens itself:
+  return a `(str, float)` tuple and let the SDK reuse the token instead.
+- If the provider raises, returns something else or a token that can't be an HTTP
+  header value, the call raises `RuntimeError` and the pending request is not
+  sent. A read-only request may already have received `401` before a failed
+  refresh. The default message omits the provider's exception text, which
+  could contain a secret.
+  HTTP errors such as `401` also raise `RuntimeError`; the message distinguishes
+  them from provider failures.
+- A provider can't be combined with other credentials from the configuration file
+  (`basic_auth`, `oauth_access_token`, or a user or password in `base_path`): calls
+  then raise `RuntimeError` before anything is sent.
+- The provider runs on a thread of the SDK's runtime, with the GIL, also for the
+  [asyncio](#asyncio) classes. It may block, for example on a token endpoint, but
+  each call waits for it.
+
+The [usage guide](../docs/usage.md#token-providers) describes the contract.
+
 ## Network behavior
 
 The Python build uses rustls for HTTPS and loads trusted certificates from the
@@ -199,7 +251,8 @@ Synchronous network methods release the Python GIL while Rust waits for I/O.
 They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
 connections remain reusable between calls. Inputs are decoded before releasing
 the GIL and Python results/exceptions are constructed after reacquiring it.
-No Python callback runs on the runtime. The [asyncio](#asyncio) classes run
+No Python callback runs on the runtime, except a [token provider](#token-providers),
+on a blocking thread of its own. The [asyncio](#asyncio) classes run
 their requests on the same runtime. Use multiprocessing's `spawn` mode rather
 than forking a process after starting threaded I/O.
 
@@ -254,7 +307,8 @@ for listed in page.tasks:
   `FileNotFoundError` (an `OSError`). Failed requests and responses that don't fit the TES
   models raise `RuntimeError`. If task creation fails after submission, the error may
   mean the server created the task but its acknowledgement was lost or malformed;
-  do not retry automatically.
+  do not retry automatically. HTTP failures include the status in the exception
+  message but omit the server's untrusted response body.
 
 ### Task objects
 
@@ -725,7 +779,12 @@ request use the uppercase TES spelling. Invalid views raise `ValueError` before 
 
 The `ga4gh` crate in this directory builds as a Python module and as a Rust library. A
 PyO3 crate (same PyO3 version) can depend on it and extend the classes in Rust, for
-example with `#[pyclass(extends = PyTES)]`; the `inner` field of each class holds the
+example with `#[pyclass(extends = PyTES)]`. Existing extension crates need to update
+their direct `pyo3` dependency to `0.30.1` (and `pyo3-async-runtimes` to `0.30.0` if
+used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
+`Python::with_gil`, and `Bound::downcast` to `Py<PyAny>`, `Python::attach`, and
+`Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
+The `inner` field of each class holds the
 library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES calls
 that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
