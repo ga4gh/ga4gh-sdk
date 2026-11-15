@@ -18,11 +18,14 @@ refresh a token, or infer a token from a global environment variable.
 An `_env` field is the **name** of an environment variable, not its token.
 The file reader resolves it when it loads the section. An unset or non-Unicode
 variable is an error. Set exactly one source; combining Basic, OAuth, generic
-bearer, dynamic provider, API key, or URL userinfo fails instead of choosing a precedence. Empty
-or header-invalid bearer values and Basic usernames containing `:` fail before
-the request. File configurations are checked when loaded; programmatic Rust
-fields are checked at request time. In Python, call `clear_auth()` before
-switching schemes. The file does not store token-provider callbacks.
+bearer, dynamic provider, API key, or URL userinfo fails instead of choosing a
+precedence. Empty or header-invalid bearer values, Basic usernames containing
+`:`, and Basic usernames or passwords containing
+[HTTP control characters](https://www.rfc-editor.org/rfc/rfc7617.html#section-2)
+fail before the request. File configurations are checked when loaded;
+programmatic Rust fields are checked at request time. In Python, call
+`clear_auth()` before switching schemes. The file does not store token-provider
+callbacks.
 
 `api_key` is currently unsupported: its placement and prefix are not defined
 by a common GA4GH contract. Supplying one is an error, not an anonymous
@@ -30,7 +33,8 @@ request. Embedded `user:password@host` credentials in `base_path` are also
 unsupported; use `basic_auth` instead. Keep configuration files private, for
 example `chmod 600 ~/.ga4gh-cli/config.json`. Prefer an explicitly named
 environment variable when a token should stay out of that file. Use HTTPS for
-remote services: the SDK does not upgrade a configured `http` API root to TLS.
+remote services: the SDK warns once per process when preparing a credential
+for a non-loopback `http` destination, but does not upgrade it to TLS.
 
 ## Request boundary and failures
 

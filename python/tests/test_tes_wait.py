@@ -519,11 +519,9 @@ def test_cancelling_the_async_wait_stops_polling_only(
     assert not [path for path in server.paths() if path.endswith(":cancel")]
 
 
-def test_a_queued_async_wait_still_times_out(config: Configuration) -> None:
+def test_a_queued_async_wait_still_times_out() -> None:
     """A wait queued behind 256 pending ones raises `WaitTimeoutError` soon after its timeout.
 
-    Args:
-        config: The mock TES's configuration.
     """
 
     async def main() -> float:
@@ -532,10 +530,39 @@ def test_a_queued_async_wait_still_times_out(config: Configuration) -> None:
         Returns:
             How long the queued wait took, in seconds.
         """
-        running = async_task(config, "state-RUNNING")
-        pending = [asyncio.ensure_future(running.wait(poll_interval=10)) for _ in range(256)]
+        polls = 0
+
+        async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            """Serve a minimal running task without creating a thread per request."""
+            nonlocal polls
+            try:
+                await reader.readuntil(b"\r\n\r\n")
+                body = b'{"id":"state-RUNNING","state":"RUNNING"}'
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                    + f"Content-Length: {len(body)}\r\n".encode()
+                    + b"Connection: close\r\n\r\n"
+                    + body
+                )
+                await writer.drain()
+                polls += 1
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(respond, "127.0.0.1", 0, backlog=512)
+        port = server.sockets[0].getsockname()[1]
+        running = async_task(
+            Configuration(f"http://127.0.0.1:{port}/api"), "state-RUNNING"
+        )
+        pending = [asyncio.ensure_future(running.wait(poll_interval=60)) for _ in range(256)]
         try:
-            await asyncio.sleep(0.2)
+            # Each first poll confirms that its wait has acquired a call slot.
+            async def all_slots_occupied() -> None:
+                while polls < 256:
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(all_slots_occupied(), timeout=10)
             started = time.monotonic()
             with pytest.raises(WaitTimeoutError) as raised:
                 await running.wait(0.3)
@@ -545,5 +572,7 @@ def test_a_queued_async_wait_still_times_out(config: Configuration) -> None:
             for waiting in pending:
                 waiting.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+            server.close()
+            await server.wait_closed()
 
     assert run(main) < 5

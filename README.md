@@ -1,9 +1,15 @@
 # GA4GH SDK
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Documentation](https://readthedocs.org/projects/ga4gh-sdk/badge/?version=latest)](https://ga4gh-sdk.readthedocs.io/en/latest/)
+[![Coverage](https://codecov.io/gh/ga4gh/ga4gh-sdk/graph/badge.svg?branch=main)](https://codecov.io/gh/ga4gh/ga4gh-sdk)
 
 ## Synopsis
 
 A Generic SDK and CLI for GA4GH API services.
+
+The [documentation](https://ga4gh-sdk.readthedocs.io/) has this README, the
+usage, CLI and Python guides, the Rust API reference and the development
+guides on one site.
 
 ## Basic usage
 
@@ -332,6 +338,13 @@ scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
 for the public sequence-QC example, offline commands and evidence boundaries.
 The same optional feature provides [exact result reuse](docs/result-reuse.md)
 from a trusted receipt and freshly checked artifacts; it does not submit a job.
+
+## Build on this SDK
+
+An SDK for a service with API extensions can build on this SDK without
+forking it: add clients that share its transport, extend its models and add
+CLI subcommands. The guide [Build on this SDK](docs/downstream.md) walks
+through an example crate that CI builds and tests.
 
 ## Building
 

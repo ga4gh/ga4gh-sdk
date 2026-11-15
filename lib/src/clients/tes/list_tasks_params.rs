@@ -1,7 +1,7 @@
 use crate::clients::tes::models;
 use crate::clients::tes::TesView;
 
-/// struct for passing parameters to the method [`list_tasks`]
+/// struct for passing parameters to the method [`TES::list_tasks`](super::TES::list_tasks)
 #[derive(Serialize, Clone, Debug)]
 pub struct ListTasksParams {
     /// OPTIONAL. Filter the list to include tasks where the name matches this prefix. If unspecified, no task name filtering is done.
