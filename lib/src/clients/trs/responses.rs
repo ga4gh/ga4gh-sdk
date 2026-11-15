@@ -58,16 +58,26 @@ pub(super) async fn json<T: DeserializeOwned>(
     params: Option<Value>,
     limits: BodyLimits,
 ) -> Result<(HeaderMap, T), Box<dyn Error>> {
-    let mut request = transport
-        .request_builder(Method::GET, endpoint)?
-        .header(reqwest::header::ACCEPT, "application/json");
-    if let Some(params) = params {
-        let pairs = crate::utils::query::query_pairs(&params).map_err(std::io::Error::from)?;
-        if !pairs.is_empty() {
-            request = request.query(&pairs);
-        }
-    }
-    let response = request.send().await?;
+    let pairs = if let Some(params) = params {
+        crate::utils::query::query_pairs(&params).map_err(std::io::Error::from)?
+    } else {
+        Vec::new()
+    };
+    let response = transport
+        .send_authorized(
+            Method::GET,
+            endpoint,
+            true,
+            |mut request| {
+                request = request.header(reqwest::header::ACCEPT, "application/json");
+                if !pairs.is_empty() {
+                    request = request.query(&pairs);
+                }
+                Ok(request)
+            },
+            None,
+        )
+        .await?;
     let headers = response.headers().clone();
     Ok((headers, response_json(response, limits).await?))
 }

@@ -68,3 +68,15 @@ def test_unauthorized_response_preserves_status_without_printing_token(server):
     assert "secret-token" not in str(error.value)
     assert header(server) == "Bearer secret-token"
     assert server.paths().count("/api/auth-failure") == before + 1
+
+
+def test_server_echoing_token_does_not_expose_it_in_python_exception(server):
+    config = Configuration(server.base)
+    config.set_bearer_access_token("SENTINEL_TOKEN")
+    with pytest.raises(RuntimeError) as raised:
+        Transport(config).get("auth-echo")
+    message = str(raised.value)
+    assert "401" in message
+    assert "SENTINEL_TOKEN" not in message
+    assert "Authorization" not in message
+    assert header(server) == "Bearer SENTINEL_TOKEN"
