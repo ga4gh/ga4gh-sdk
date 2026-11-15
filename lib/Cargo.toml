@@ -58,3 +58,5 @@ integration_tests = []
 wes_docker_integration_tests = []
 # Runs the TES client against proTES and Funnel; see tests/README.md.
 protes_integration_tests = []
+# Runs the TRS client against TRS-Filer; see tests/README.md.
+trs_filer_integration_tests = []

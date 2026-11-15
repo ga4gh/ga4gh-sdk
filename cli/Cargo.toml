@@ -31,6 +31,8 @@ wes_docker_integration_tests = []
 protes_integration_tests = []
 # Runs the `tes` commands against Funnel; see tests/README.md.
 integration_tests = []
+# Runs the CLI against TRS-Filer; see tests/README.md.
+trs_filer_integration_tests = []
 
 [dev-dependencies]
 mockito = "0.31"
