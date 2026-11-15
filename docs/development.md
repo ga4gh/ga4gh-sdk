@@ -187,9 +187,23 @@ python3 -m pip install --group python/pyproject.toml:docs
 make site
 ```
 
-`make site` runs `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` and
-`mkdocs build --strict`, which fails on warnings such as links to missing
-files or anchors. `python3 -m pytest docs/test_hooks.py` tests the hooks; CI
+`make site` runs two strict builds:
+
+- `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` with
+  `RUSTDOCFLAGS="-D warnings"`, so that any unsuppressed rustdoc warning fails it, such as
+  a bare URL (write `<https://...>` or `[text](https://...)`) or an
+  unresolved link. `make docs` builds the whole workspace and stays lenient.
+  Fixes in the docs of generated models go into their patch in
+  `utils/patches/` (see
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). Until the
+  docs of the DRS models are fixed, only their generated `models` module
+  is exempt from the bare-URL and broken-link checks (an `#[allow]` on
+  `pub mod models` in `lib/src/clients/drs/mod.rs`). Hand-written DRS code
+  remains subject to both checks.
+- `mkdocs build --strict`, which fails on warnings such as links to missing
+  files or anchors.
+
+`python3 -m pytest docs/test_hooks.py` tests the hooks; CI
 runs both. After the first `make site`, `mkdocs serve` shows the site
 at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
 
@@ -232,7 +246,7 @@ on pushes to `main` and on manual dispatch:
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
-| `docs` | Docs | `make site`: the Rust API reference and the strict MkDocs build |
+| `docs` | Docs | `make site`: the Rust API reference, without rustdoc warnings, and the strict MkDocs build |
 | `downstream` | Downstream example | `make downstream`: builds and tests [`examples/downstream-sdk/`](downstream.md) |
 | `passed` | CI passed | Requires all applicable jobs to succeed; accepts the intentionally skipped wheel matrix on PRs |
 
