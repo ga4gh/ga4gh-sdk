@@ -99,7 +99,7 @@ manifest checksum and records fresh evidence; it does not infer trust from a
 newly computed checksum. The demonstration also composes
 `ResultRecord::verify_access_plan` before receipt export.
 
-```rust,ignore
+```rust
 let receipt = ReuseReceipt::import(&authorized_workspace_bytes)?;
 let decision = receipt.assess(&current_task_identity, &current_trust, max_bytes,
                              read_current_artifact);

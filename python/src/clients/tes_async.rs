@@ -125,13 +125,12 @@ impl PyAsyncTES {
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = cls.py();
         // Fail as the other methods do, before building anything, without a running loop.
-        py.import_bound("asyncio")?
-            .call_method0("get_running_loop")?;
+        py.import("asyncio")?.call_method0("get_running_loop")?;
         let mut arguments = vec![config.clone().into_any()];
         arguments.extend(args.iter());
-        let client = cls.call(PyTuple::new_bound(py, arguments), kwargs)?;
+        let client = cls.call(PyTuple::new(py, arguments)?, kwargs)?;
         let (tes, settings) = {
-            let this = client.downcast::<Self>()?.borrow();
+            let this = client.cast::<Self>()?.borrow();
             (this.inner.clone(), this.config.clone())
         };
         let client = client.unbind();
@@ -262,7 +261,7 @@ impl PyAsyncTask {
             let state = spawn_io(move || async move { task_status(&task).await })
                 .await
                 .map_err(PyRuntimeError::new_err)?;
-            Python::with_gil(|py| state_to_python(py, state))
+            Python::attach(|py| state_to_python(py, state))
         })
     }
 
@@ -272,7 +271,8 @@ impl PyAsyncTask {
         future_into_py(py, async move {
             spawn_io(move || async move { cancel_task(&task).await })
                 .await
-                .map_err(PyRuntimeError::new_err)
+                .map_err(PyRuntimeError::new_err)?;
+            Ok(None::<()>)
         })
     }
 
@@ -296,7 +296,7 @@ impl PyAsyncTask {
         let id = task.id.clone();
         future_into_py(py, async move {
             let end = wait_task_send(task, settings).await;
-            Python::with_gil(|py| wait_result(py, &id, end))
+            Python::attach(|py| wait_result(py, &id, end))
         })
     }
 }

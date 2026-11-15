@@ -287,6 +287,29 @@ fn is_dot_segment(segment: &str) -> bool {
     dots == 1 || dots == 2
 }
 
+fn is_plain_http_to_remote(url: &Url) -> bool {
+    if url.scheme() != "http" {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Domain(domain)) => {
+            !domain.eq_ignore_ascii_case("localhost") && !domain.eq_ignore_ascii_case("localhost.")
+        }
+        Some(url::Host::Ipv4(address)) => !address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => !address.is_loopback(),
+        None => true,
+    }
+}
+
+fn warn_plain_http_credential_once() {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        log::warn!(
+            "Configured credentials may be sent over HTTP to a non-loopback host; use HTTPS"
+        );
+    }
+}
+
 // note: could implement custom certs handling, such as in-TEE generated ephemeral certs
 #[derive(Clone)]
 pub struct Transport {
@@ -608,7 +631,14 @@ impl Transport {
         if has_provider && !allow_provider {
             return Err(Box::new(AuthError::ProviderRequiresAsyncBuilder));
         }
-        let mut request = self.client.request(method, self.endpoint(endpoint)?);
+        let url = self.endpoint(endpoint)?;
+        if self.apply_configured_auth
+            && (has_provider || !matches!(auth, ConfiguredAuth::None))
+            && is_plain_http_to_remote(&url)
+        {
+            warn_plain_http_credential_once();
+        }
+        let mut request = self.client.request(method, url);
         if let Some(agent) = &self.config.user_agent {
             request = request.header(reqwest::header::USER_AGENT, agent);
         }
@@ -944,10 +974,32 @@ impl Transport {
 
 #[cfg(test)]
 mod tests {
+    use super::is_plain_http_to_remote;
     use crate::utils::configuration::Configuration;
     use crate::utils::transport::{urlencode, EndpointError, HttpStatusError, Transport};
     use mockito::{mock, Matcher};
     use url::Url;
+
+    #[test]
+    fn remote_plain_http_is_identified_without_warning_for_loopback() {
+        for (url, expected) in [
+            ("https://example.org/tes", false),
+            ("http://example.org/tes", true),
+            ("http://192.0.2.1/tes", true),
+            ("http://[2001:db8::1]/tes", true),
+            ("http://localhost/tes", false),
+            ("http://localhost./tes", false),
+            ("http://localhost../tes", true),
+            ("http://127.0.0.2/tes", false),
+            ("http://[::1]/tes", false),
+        ] {
+            assert_eq!(
+                is_plain_http_to_remote(&Url::parse(url).unwrap()),
+                expected,
+                "{url}"
+            );
+        }
+    }
 
     // effectively no sense in testing various responses, as it's reqwest's responsibility
     // we should test Transport's methods instead

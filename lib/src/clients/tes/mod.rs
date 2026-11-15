@@ -87,6 +87,9 @@ mod list_tasks_params;
 /// # Ok(())
 /// # }
 /// ```
+// Generated models (utils/build_models.sh): the generator writes `Default`
+// for enums by hand.
+#[allow(clippy::derivable_impls)]
 pub mod models;
 mod view;
 use crate::clients::serviceinfo::models::Service;

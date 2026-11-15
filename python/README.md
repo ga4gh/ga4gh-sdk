@@ -128,9 +128,11 @@ For a task that is still running, call `task.cancel()`.
 ## Reading the configuration file
 
 `config.from_file()` reads a section of `~/.ga4gh-cli/config.json` (format in
-the [usage guide](../docs/usage.md#configuration-file)). Name a built-in
-section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`, `REGISTRY`), and
-any other section with a `str`. `config.get_extra()` returns the keys of the
+the [usage guide](../docs/usage.md#configuration-file)). In a file with
+[profiles](../docs/usage.md#profiles), it reads the default profile. Name a
+built-in section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`,
+`REGISTRY`), and any other section with a `str`. `config.get_extra()` returns
+the keys of the
 section that the SDK doesn't use itself, as a `dict` with the values as they are
 in the file, so don't log it if it can hold credentials:
 
@@ -427,14 +429,15 @@ asyncio.run(main())
   `asyncio.wait_for()`, stops polling; the task on the server goes on. Between polls, a
   pending wait sleeps on the runtime without a call thread (see below); it takes one
   only for each request. So an app can wait for many more tasks than there are call
-  threads, and other async calls, including `cancel()`, queue behind waits only while
-  their polls take all 256 call threads at once.
+  threads, and other async calls, including `cancel()`, can run while waits sleep.
+  They may still queue if polls or other requests occupy all 256 call threads.
   The `timeout` also holds while a request waits for a call thread: if the time runs
   out before the first poll, `WaitTimeoutError` has `last_state` `None`.
 - The requests run on the runtime of the sync API without the GIL, so they don't block
   the event loop, and several of them run at the same time. Because the SDK's futures
-  aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256
-  calls run at once. Further calls wait for a slot without occupying a pool thread;
+  aren't `Send` yet, each active request takes a thread of a pool of its own: up to 256
+  requests run at once. A wait releases its slot between requests. Further calls wait
+  for a slot without occupying a pool thread;
   cancelling a waiting call prevents it from starting. This limits concurrent calls,
   not the number of futures an app can schedule.
 - The methods return `asyncio.Future`s of the running event loop, so call them from a
@@ -837,7 +840,12 @@ request use the uppercase TES spelling. Invalid views raise `ValueError` before 
 
 The `ga4gh` crate in this directory builds as a Python module and as a Rust library. A
 PyO3 crate (same PyO3 version) can depend on it and extend the classes in Rust, for
-example with `#[pyclass(extends = PyTES)]`; the `inner` field of each class holds the
+example with `#[pyclass(extends = PyTES)]`. Existing extension crates need to update
+their direct `pyo3` dependency to `0.30.1` (and `pyo3-async-runtimes` to `0.30.0` if
+used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
+`Python::with_gil`, and `Bound::downcast` to `Py<PyAny>`, `Python::attach`, and
+`Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
+The `inner` field of each class holds the
 library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES calls
 that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
