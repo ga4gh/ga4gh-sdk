@@ -116,24 +116,6 @@ impl CommandOutput {
     }
 }
 
-#[cfg(test)]
-mod output_tests {
-    use super::CommandOutput;
-
-    #[test]
-    fn valid_large_numbers_and_deep_extensions_are_preserved() {
-        let nested = format!("{}0{}", "[".repeat(150), "]".repeat(150));
-        let body = format!("{{\"large\":1e400,\"nested\":{nested}}}");
-        let output = CommandOutput::json(body.clone());
-        assert!(output.stderr.is_empty(), "{}", output.stderr);
-        assert_eq!(output.stdout, body);
-
-        let invalid = CommandOutput::json(format!("{body} forged"));
-        assert!(invalid.stdout.is_empty());
-        assert!(invalid.stderr.contains("not valid JSON"));
-    }
-}
-
 /// The settings of a binary built on this CLI: its name, version, help text,
 /// configuration file, profile and token variable.
 ///
@@ -571,5 +553,23 @@ pub async fn dispatch_with_config_to(
     match dispatch_with_config(matches, config).await? {
         Some(output) => Ok(Some(output.write_to(stdout, stderr)?)),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::CommandOutput;
+
+    #[test]
+    fn valid_large_numbers_and_deep_extensions_are_preserved() {
+        let nested = format!("{}0{}", "[".repeat(150), "]".repeat(150));
+        let body = format!("{{\"large\":1e400,\"nested\":{nested}}}");
+        let output = CommandOutput::json(body.clone());
+        assert!(output.stderr.is_empty(), "{}", output.stderr);
+        assert_eq!(output.stdout, body);
+
+        let invalid = CommandOutput::json(format!("{body} forged"));
+        assert!(invalid.stdout.is_empty());
+        assert!(invalid.stderr.contains("not valid JSON"));
     }
 }

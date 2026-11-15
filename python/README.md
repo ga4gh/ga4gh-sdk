@@ -779,7 +779,12 @@ request use the uppercase TES spelling. Invalid views raise `ValueError` before 
 
 The `ga4gh` crate in this directory builds as a Python module and as a Rust library. A
 PyO3 crate (same PyO3 version) can depend on it and extend the classes in Rust, for
-example with `#[pyclass(extends = PyTES)]`; the `inner` field of each class holds the
+example with `#[pyclass(extends = PyTES)]`. Existing extension crates need to update
+their direct `pyo3` dependency to `0.30.1` (and `pyo3-async-runtimes` to `0.30.0` if
+used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
+`Python::with_gil`, and `Bound::downcast` to `Py<PyAny>`, `Python::attach`, and
+`Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
+The `inner` field of each class holds the
 library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES calls
 that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
