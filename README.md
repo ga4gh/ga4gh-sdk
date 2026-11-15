@@ -1,10 +1,15 @@
 # GA4GH SDK
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Documentation](https://readthedocs.org/projects/ga4gh-sdk/badge/?version=latest)](https://ga4gh-sdk.readthedocs.io/en/latest/)
 [![Coverage](https://codecov.io/gh/ga4gh/ga4gh-sdk/graph/badge.svg?branch=main)](https://codecov.io/gh/ga4gh/ga4gh-sdk)
 
 ## Synopsis
 
 A Generic SDK and CLI for GA4GH API services.
+
+The [documentation](https://ga4gh-sdk.readthedocs.io/) has this README, the
+usage, CLI and Python guides, the Rust API reference and the development
+guides on one site.
 
 ## Basic usage
 
