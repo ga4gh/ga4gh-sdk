@@ -23,14 +23,31 @@ fn home_with_tes(prefix: &str) -> TempDir {
     fs::create_dir(&directory).unwrap();
     let config = json!({"TES": {
         "base_path": format!("{}{prefix}", mockito::server_url()),
-        "basic_auth": {"username": "user", "password": "password"},
         "oauth_access_token": "tes-token",
     }});
     fs::write(directory.join("config.json"), config.to_string()).unwrap();
     home
 }
 
+fn home_with_short_timeout(prefix: &str) -> TempDir {
+    let home = home_with_tes(prefix);
+    let config = json!({"TES": {
+        "base_path": format!("{}{prefix}", mockito::server_url()),
+        "timeouts": {"request": 1, "connect": 1},
+    }});
+    fs::write(
+        home.path().join(".ga4gh-cli/config.json"),
+        config.to_string(),
+    )
+    .unwrap();
+    home
+}
+
 fn run(home: &TempDir, args: &[&str]) -> Output {
+    run_with_s3_endpoint(home, args, &mockito::server_url())
+}
+
+fn run_with_s3_endpoint(home: &TempDir, args: &[&str], endpoint: &str) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
     command.args(args).env("HOME", home.path());
     for proxy in [
@@ -52,7 +69,7 @@ fn run(home: &TempDir, args: &[&str]) -> Output {
         }
     }
     command
-        .env("AWS_ENDPOINT", mockito::server_url())
+        .env("AWS_ENDPOINT", endpoint)
         .env("AWS_ALLOW_HTTP", "true")
         .env("AWS_SKIP_SIGNATURE", "true")
         .env("AWS_REGION", "us-east-1");
@@ -160,6 +177,19 @@ fn entries(dir: &Path) -> Vec<String> {
     names
 }
 
+/// Accepts one storage request but never sends response headers.
+fn no_headers_server() -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 4096];
+        let _ = stream.read(&mut request).unwrap();
+        std::thread::sleep(Duration::from_secs(3));
+    });
+    (format!("http://{address}"), server)
+}
+
 #[test]
 fn files_lists_selectors_and_hides_url_secrets() {
     let prefix = "/files-list";
@@ -245,27 +275,29 @@ fn debug_logs_omit_redirected_signed_urls() {
             .create(),
     ];
     let home = home_with_tes(prefix);
-    let dir = home.path().join("results");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
-    command
-        .args([
-            "tes",
-            "save",
-            "t1",
-            "file:0:0",
-            "--dir",
-            dir.to_str().unwrap(),
-        ])
-        .env("HOME", home.path())
-        .env("RUST_LOG", "trace");
-    for proxy in ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
-        command.env_remove(proxy);
-    }
-    let output = command.output().unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(fs::read(dir.join("r.bin")).unwrap(), b"ok");
-    for stream in [stdout(&output), stderr(&output)] {
-        assert!(!stream.contains("SECRET"), "{stream}");
+    for (index, filters) in ["trace", "trace,notreqwest=trace"].into_iter().enumerate() {
+        let dir = home.path().join(format!("results-{index}"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
+        command
+            .args([
+                "tes",
+                "save",
+                "t1",
+                "file:0:0",
+                "--dir",
+                dir.to_str().unwrap(),
+            ])
+            .env("HOME", home.path())
+            .env("RUST_LOG", filters);
+        for proxy in ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+            command.env_remove(proxy);
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{filters}: {}", stderr(&output));
+        assert_eq!(fs::read(dir.join("r.bin")).unwrap(), b"ok");
+        for stream in [stdout(&output), stderr(&output)] {
+            assert!(!stream.contains("SECRET"), "{filters}: {stream}");
+        }
     }
 }
 
@@ -574,6 +606,65 @@ fn a_stalled_download_times_out_and_leaves_no_file() {
     );
     assert!(started.elapsed() < Duration::from_secs(5));
     assert!(entries(&dir).is_empty(), "{:?}", entries(&dir));
+    server.join().unwrap();
+}
+
+#[test]
+fn an_http_server_without_headers_times_out_and_leaves_no_file() {
+    let (storage, server) = no_headers_server();
+    let prefix = "/save-http-no-headers";
+    let task = json!({"id": "t1", "state": "COMPLETE", "logs": [{
+        "logs": [], "outputs": [{"url": format!("{storage}/hang.bin"), "path": "/o/hang.bin"}]
+    }]});
+    let _tes = tes_mocks(prefix, &task);
+    let home = home_with_short_timeout(prefix);
+    let dir = home.path().join("results");
+    let started = Instant::now();
+    let output = run(
+        &home,
+        &[
+            "tes",
+            "save",
+            "t1",
+            "file:0:0",
+            "--dir",
+            dir.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(stderr(&output).contains("stalled before the response"));
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(entries(&dir).is_empty());
+    server.join().unwrap();
+}
+
+#[test]
+fn an_s3_server_without_headers_times_out_and_leaves_no_file() {
+    let (storage, server) = no_headers_server();
+    let prefix = "/save-s3-no-headers";
+    let task = json!({"id": "t1", "state": "COMPLETE", "logs": [{
+        "logs": [], "outputs": [{"url": "s3://bucket/hang.bin", "path": "/o/hang.bin"}]
+    }]});
+    let _tes = tes_mocks(prefix, &task);
+    let home = home_with_short_timeout(prefix);
+    let dir = home.path().join("results");
+    let started = Instant::now();
+    let output = run_with_s3_endpoint(
+        &home,
+        &[
+            "tes",
+            "save",
+            "t1",
+            "file:0:0",
+            "--dir",
+            dir.to_str().unwrap(),
+        ],
+        &storage,
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(stderr(&output).contains("stalled before the response"));
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(entries(&dir).is_empty());
     server.join().unwrap();
 }
 

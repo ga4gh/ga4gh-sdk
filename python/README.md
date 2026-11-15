@@ -70,25 +70,32 @@ python -m pip install pytest
 pytest
 ```
 
+The tests use mock services. Smoke tests of the TRS bindings against
+WorkflowHub and Dockstore need network access and run only on request:
+
+```bash
+GA4GH_TRS_PUBLIC_TESTS=1 pytest tests/test_trs_public.py
+```
+
 ## Supported surface
 
 | Python API | Current behavior |
 | --- | --- |
-| `Configuration` | Set one service API root or read it from a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys; `set_timeouts()` and `get_timeouts()` set and give the time limits of requests. See [Reading the configuration file](#reading-the-configuration-file) and [Timeouts](#timeouts). |
+| `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. `set_token_provider()` supplies dynamic bearer tokens. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication), [Timeouts](#timeouts) and [Token providers](#token-providers). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
-| `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
+| `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, cancel and wait for TES tasks; read full task JSON including unknown fields. See [Waiting for tasks](#waiting-for-tasks). |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
 | `DRS`, `DrsResolver` | Read DRS objects and access URLs, one at a time or in bulk, wait while the server prepares them, and plan access for `drs://` URIs; read full JSON including unknown fields. See [Using DRS](#using-drs). |
 | `WES`, `Run`, `RunRequest` | Start runs (with workflow attachments), list, inspect, poll, and cancel WES runs, and read their tasks; read full JSON including unknown fields. See [Using WES](#using-wes). |
-| TRS, Service Registry | Available in the Rust SDK, not yet as Python client classes. |
+| `TRS`, `Tool`, `ToolVersion`, `FileWrapper`, `ToolFile`, `ToolPage` | List tools page by page, read tools, versions, descriptors, test files, file lists, ZIP archives and container files of TRS 2.0.1 and 2.0.2 registries; read full JSON including unknown fields. See [Using TRS](#using-trs). |
+| Service Registry | Available in the Rust SDK, not yet as a Python client class. |
 
 The Python API is maintained by hand; a new Rust SDK method or model does not
 appear in Python automatically. For each SDK change, decide whether to expose
 it here, then update the wrapper, this table, and the mock-backed tests and
 examples. CI checks the documented Python behavior, but it cannot infer that
-a new Rust API needs a Python counterpart. The SDK currently stores configured
-credentials without sending them in requests (see [#31](https://github.com/ga4gh/ga4gh-sdk/issues/31)); use an anonymous service or an authenticating proxy.
+a new Rust API needs a Python counterpart.
 
 ## Usage
 
@@ -129,9 +136,11 @@ For a task that is still running, call `task.cancel()`.
 ## Reading the configuration file
 
 `config.from_file()` reads a section of `~/.ga4gh-cli/config.json` (format in
-the [usage guide](../docs/usage.md#configuration-file)). Name a built-in
-section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`, `REGISTRY`), and
-any other section with a `str`. `config.get_extra()` returns the keys of the
+the [usage guide](../docs/usage.md#configuration-file)). In a file with
+[profiles](../docs/usage.md#profiles), it reads the default profile. Name a
+built-in section with `ServiceType` (`TES`, `DRS`, `TRS`, `AAI`, `WES`,
+`REGISTRY`), and any other section with a `str`. `config.get_extra()` returns
+the keys of the
 section that the SDK doesn't use itself, as a `dict` with the values as they are
 in the file, so don't log it if it can hold credentials:
 
@@ -145,8 +154,22 @@ queue = config.get_extra().get("queue")
 ```
 
 A section can name an environment variable for its token with
-`oauth_access_token_env`. A missing section or an unset variable raises
-`ValueError`, a missing file `FileNotFoundError`.
+`oauth_access_token_env` or `bearer_access_token_env`. A missing section or an
+unset variable raises `ValueError`, a missing file `FileNotFoundError`.
+
+## Authentication
+
+Set one source before constructing a client: `set_basic_auth(username,
+password=None)`, `set_oauth_access_token(token)`,
+`set_bearer_access_token(token)`, or a [token provider](#token-providers). Use
+`clear_auth()` before choosing a different source. `from_file()` can read
+static credentials from the selected service section.
+The client uses that credential for discovery and later operations; invalid or
+conflicting sources raise an exception before sending the request. The SDK does
+not follow redirects automatically. See the
+[authentication guide](../docs/authentication.md) for file keys, injected
+transport boundaries and errors. The [token-provider section](#token-providers)
+describes dynamic credentials.
 
 ## Timeouts
 
@@ -167,7 +190,8 @@ tes = TES(config)
 - `connect` (default 10): opening each connection.
 - `request` (default 60): each request that the limits below don't apply to.
 - `discovery` (default 10): the service check of `TES(config)`, `AsyncTES`,
-  `WES(config)` and `DRS(config)`, in place of `request`.
+  `WES(config)`, `DRS(config)` and `TRS(config)`, and `TRS.service_info()`, in
+  place of `request`.
 - `submission` (default 300): `TES.create()`, `AsyncTES.create()` and
   `WES.run()`, including uploads, in place of `request`. A submission that runs
   out of time after its request started raises `RuntimeError` with "submission may have
@@ -176,6 +200,55 @@ tes = TES(config)
 Clients and `Transport` read the limits when they are built, so set them first.
 Calls with a `timeout` argument, such as `DRS.resolve_object()`, stop at that
 timeout as well. The [usage guide](../docs/usage.md#timeouts) has the details.
+
+## Token providers
+
+`config.set_token_provider(provider)` makes the clients and `Transport` built from
+`config` ask `provider` for a bearer token before each request, including the
+service check of `TES(config)` and the other clients. `provider(audience)` gets the
+API root (or the `audience` given to `set_token_provider()`) and returns the token
+as a `str`, or as a `(str, float)` tuple with the seconds for which the SDK may
+reuse it:
+
+```python
+from ga4gh_sdk import Configuration, TES
+
+
+def token_provider(audience: str) -> tuple[str, float]:
+    token, expires_in = get_token_for(audience)  # your code
+    return token, expires_in - 30  # reuse it until 30 seconds before it expires
+
+
+config = Configuration("https://example.org/ga4gh/tes/v1")
+config.set_token_provider(token_provider)
+# Or with the audience of a token exchange:
+# config.set_token_provider(token_provider, audience="https://example.org/ga4gh/tes")
+tes = TES(config)
+```
+
+- Set the provider after `from_file()`, which replaces all settings. Clients and
+  `Transport` take it when they are built; `set_token_provider(None)` removes it
+  for those built later.
+- After `401 Unauthorized`, the SDK drops a reused token and asks the provider
+  again; a `GET` request is sent once more right away with a current token, while
+  submissions such as `TES.create()` and `WES.run()` are never sent twice. The
+  provider isn't told about the rejection, so don't let it cache tokens itself:
+  return a `(str, float)` tuple and let the SDK reuse the token instead.
+- If the provider raises, returns something else or a token that can't be an HTTP
+  header value, the call raises `RuntimeError` and the pending request is not
+  sent. A read-only request may already have received `401` before a failed
+  refresh. The default message omits the provider's exception text, which
+  could contain a secret.
+  HTTP errors such as `401` also raise `RuntimeError`; the message distinguishes
+  them from provider failures.
+- A provider can't be combined with other credentials from the configuration file
+  (`basic_auth`, `oauth_access_token`, or a user or password in `base_path`): calls
+  then raise `RuntimeError` before anything is sent.
+- The provider runs on a thread of the SDK's runtime, with the GIL, also for the
+  [asyncio](#asyncio) classes. It may block, for example on a token endpoint, but
+  each call waits for it.
+
+The [usage guide](../docs/usage.md#token-providers) describes the contract.
 
 ## Network behavior
 
@@ -187,7 +260,8 @@ Synchronous network methods release the Python GIL while Rust waits for I/O.
 They share a process-lifetime multi-thread Tokio runtime, so a client's HTTP
 connections remain reusable between calls. Inputs are decoded before releasing
 the GIL and Python results/exceptions are constructed after reacquiring it.
-No Python callback runs on the runtime. The [asyncio](#asyncio) classes run
+No Python callback runs on the runtime, except a [token provider](#token-providers),
+on a blocking thread of its own. The [asyncio](#asyncio) classes run
 their requests on the same runtime. Use multiprocessing's `spawn` mode rather
 than forking a process after starting threaded I/O.
 
@@ -234,6 +308,7 @@ for listed in page.tasks:
   fields that the TES models don't know, and returns a `Task`.
 - `Task` addresses a task on the server by its `id`. `Task.status()` returns the current
   state as a `TesState`; `Task.cancel()` cancels the task and returns `None`.
+  `Task.wait()` waits until the task ends; see [Waiting for tasks](#waiting-for-tasks).
 - `TES.get(view, id)` returns a `TesTask`; `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`
   (case-insensitive). Invalid views raise `ValueError` before a request.
 - `TES.list(params=None)` returns a `ListTasksResponse` with `tasks` (a list of
@@ -242,7 +317,8 @@ for listed in page.tasks:
   `FileNotFoundError` (an `OSError`). Failed requests and responses that don't fit the TES
   models raise `RuntimeError`. If task creation fails after submission, the error may
   mean the server created the task but its acknowledgement was lost or malformed;
-  do not retry automatically.
+  do not retry automatically. HTTP failures include the status in the exception
+  message but omit the server's untrusted response body.
 
 ### Task objects
 
@@ -272,6 +348,56 @@ two methods for the whole page.
 `CANCELED`, `PREEMPTED`, `CANCELING`). Its members are also strings:
 `TesState.RUNNING == "RUNNING"`, and `str()`, f-strings and `json.dumps()` give the
 state's name. `TesState("RUNNING")` looks a state up by name. Members can be pickled.
+
+### Waiting for tasks
+
+`Task.wait()` polls a task until it ends, so apps need no polling loop of their own:
+
+```python
+from ga4gh_sdk import Configuration, TES, TesState, WaitTimeoutError
+
+tes = TES(Configuration("http://localhost:8000/ga4gh/tes/v1"))
+task = tes.create({"executors": [{"image": "alpine", "command": ["echo", "hello"]}]})
+
+try:
+    state = task.wait(timeout=3600)
+except WaitTimeoutError as error:
+    print(f"{error.id} still {error.last_state} after an hour")
+else:
+    if state is not TesState.COMPLETE:
+        print(task.id, "ended in", state)
+
+# Or get the ended task in a view, for example with its logs:
+details = task.wait(timeout=3600, view="FULL")
+print(details.state, details.logs)
+```
+
+- `Task.wait(timeout=None, *, poll_interval=1.0, max_interval=None, view=None)` returns
+  once the task is in a terminal state: `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`,
+  `CANCELED` or `PREEMPTED`. It returns that state as a `TesState`; with a `view`
+  (`"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case), it returns the task in that view as
+  a `TesTask`. The minimal view is what it polls, so that view needs no further request.
+- It uses the Rust SDK's waiter. Polls ask for the task in the minimal view, starting
+  `poll_interval` seconds apart; the interval doubles after each poll, up to
+  `max_interval` (by default 10 seconds, or `poll_interval` if that's longer). Other
+  states, including states that TES 1.1 doesn't define, don't end the wait.
+- `timeout` is the time in seconds for the whole wait, including the polls and the
+  request for the view; `None` waits as long as it takes. When the time runs out, it
+  raises `WaitTimeoutError`, a `TimeoutError`, whose `id` is the task's ID and
+  `last_state` the last polled state (`None` if no poll succeeded). If the time runs
+  out while it gets an ended task in a view, `last_state` is that task's final state.
+  Each request also keeps the configuration's [timeouts](#timeouts).
+- A failed poll, for example an HTTP error or a response without a state, raises
+  `RuntimeError`; polls are not retried. Invalid arguments, such as a negative timeout,
+  a `poll_interval` of 0 or a `max_interval` below `poll_interval`, raise `ValueError`.
+- The wait releases the GIL, so other threads run meanwhile. In the main thread, it
+  runs signal handlers within about 0.1 seconds: Ctrl-C stops it with
+  `KeyboardInterrupt`, as does any exception that a handler raises. Handlers may call
+  the SDK, for example `task.cancel()`. Python runs signal handlers in the main thread
+  only, so a wait in another thread goes on until it ends or times out.
+- A wait never cancels the task: not when the time runs out, not on Ctrl-C, not when a
+  poll fails. Call `Task.cancel()` for that. To keep waiting, call `wait()` again, also
+  with a new `Task(id, transport)` in another process.
 
 ### asyncio
 
@@ -307,10 +433,20 @@ asyncio.run(main())
   subclass's `__init__` can send its own requests before that check completes.
 - `AsyncTES.create()` gives an `AsyncTask`; `AsyncTask(id, transport)` addresses an
   existing task, like `Task`. `config`, `transport` and `id` are plain properties.
+- `await task.wait(...)` waits for a task like `Task.wait()`, with the same arguments,
+  results and errors. Cancelling the awaiting coroutine, for example with
+  `asyncio.wait_for()`, stops polling; the task on the server goes on. Between polls, a
+  pending wait sleeps on the runtime without a call thread (see below); it takes one
+  only for each request. So an app can wait for many more tasks than there are call
+  threads, and other async calls, including `cancel()`, can run while waits sleep.
+  They may still queue if polls or other requests occupy all 256 call threads.
+  The `timeout` also holds while a request waits for a call thread: if the time runs
+  out before the first poll, `WaitTimeoutError` has `last_state` `None`.
 - The requests run on the runtime of the sync API without the GIL, so they don't block
   the event loop, and several of them run at the same time. Because the SDK's futures
-  aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256
-  calls run at once. Further calls wait for a slot without occupying a pool thread;
+  aren't `Send` yet, each active request takes a thread of a pool of its own: up to 256
+  requests run at once. A wait releases its slot between requests. Further calls wait
+  for a slot without occupying a pool thread;
   cancelling a waiting call prevents it from starting. This limits concurrent calls,
   not the number of futures an app can schedule.
 - The methods return `asyncio.Future`s of the running event loop, so call them from a
@@ -604,6 +740,138 @@ To read a DRS section of `~/.ga4gh-cli/config.json`, use
 listed in the [usage guide](../docs/usage.md#drs); `DRS::resolve_reference`, which
 resumes from a stored reference, is not bound yet.
 
+## Using TRS
+
+`TRS` is a client for a Tool Registry Service (TRS 2.0.1 and 2.0.2), such as WorkflowHub
+or Dockstore. It reads tools, their versions, descriptors and files through the Rust TRS
+client, so it checks IDs, versions and filters as the Rust SDK and the CLI do:
+
+```python
+from ga4gh_sdk import TRS, Configuration
+
+trs = TRS(Configuration("https://workflowhub.eu/ga4gh/trs/v2"))
+print(trs.api_version, trs.version_source)  # 2.0.1 declared
+
+page = trs.list_tools(tool_class="Workflow", limit=10)
+for tool in page.tools:
+    print(tool.id, tool.name, [version.id for version in tool.versions])
+if page.next_page:
+    page = trs.next_tools_page(page.next_page)
+
+version = trs.get_version("26", "1")
+print(version.name, version.descriptor_type)
+
+descriptor = trs.get_descriptor("26", "1", "CWL")  # JSON: content, url, checksum
+plain = trs.get_descriptor("26", "1", "PLAIN_CWL")  # the bare file, as content
+other = trs.get_descriptor("26", "1", "CWL", relative_path="ro-crate-metadata.json")
+
+for file in trs.list_files("26", "1", "CWL"):
+    print(file.file_type, file.path)
+archive = trs.get_files_zip("26", "1", "CWL")  # bytes, at most 64 MiB by default
+```
+
+The checked-in [TRS example](examples/trs_read.py) reads a version, its descriptor and its
+file list. Run it from `python/`:
+
+```sh
+python examples/trs_read.py https://workflowhub.eu/ga4gh/trs/v2 26 1 CWL
+```
+
+The Python test suite runs this file against a mock TRS.
+
+- `TRS(config, *, api_version="auto", tag_filter="auto", discovery=True)` reads the service
+  info and raises `RuntimeError` if the service isn't reachable or isn't a TRS. It reads
+  responses by the TRS version that the service declares:
+  - `api_version="auto"` uses 2.0.1 or 2.0.2 as declared. A service that declares another
+    version, or none, is read as 2.0.1, and `version_source` is `"baseline"`: the SDK
+    hasn't checked that the service works with that.
+  - `api_version="strict"` raises `RuntimeError` for such a service instead.
+  - `api_version="2.0.1"` or `"2.0.2"` reads responses by that version, whatever the
+    service declares.
+  - `discovery=False` sends no service info request; it needs `api_version="2.0.1"` or
+    `"2.0.2"`, and doesn't check that the service is a TRS.
+  - `tag_filter="enabled"` or `"disabled"` says whether the server supports the `tags`
+    filter of `list_tools()`, whatever its TRS version says. Use it only if you know
+    the server.
+  Invalid options raise `ValueError` before a request.
+- `api_version` is the TRS version that responses are read with, `declared_version` the
+  version that the service info declares (`None` without discovery), and `version_source`
+  where the choice comes from: `"declared"`, `"caller"` or `"baseline"`. `tag_filter` is
+  `"specified"` (TRS 2.0.2) or `"caller_enabled"` if `list_tools(tags=...)` may be sent;
+  otherwise it is `"not_specified"`, `"caller_disabled"` or `"unknown"`.
+  `discovered_service_info` is the service info as a `dict`; `service_info()` reads it again.
+- `TRS.list_tools(*, id=None, alias=None, tool_class=None, descriptor_type=None,
+  registry=None, organization=None, name=None, toolname=None, description=None,
+  author=None, checker=None, tags=None, offset=None, limit=None)` returns a `ToolPage`. The
+  filters are keyword-only, and unset filters are not sent. `limit` must be between 1 and
+  2147483647, else it raises `ValueError`. `tags` is a list of tags (TRS
+  2.0.2); they are sent as one comma-separated value, so a tag that is empty or contains a
+  comma raises `ValueError`, as do tags for a server whose `tag_filter` doesn't allow them.
+  Requested filters are never dropped silently.
+- A `ToolPage` has `tools` (a list of `Tool`) and the TRS paging headers: `next_page`,
+  `last_page`, `self_link`, `current_offset` and `current_limit` (`str`s, or `None` if the
+  server didn't send them; a repeated header gives its first value);
+  `headers()` returns all response headers as a `dict`, by lowercase name, with repeated
+  headers joined by `", "` and headers that aren't text left out. They can hold cookies,
+  so don't log them.
+  `TRS.next_tools_page(page.next_page)` gets the next page. It follows only URLs of the
+  tools endpoint of the client's API root, and raises `RuntimeError` for others before a
+  request, so credentials never go to another server.
+- `TRS.get_tool(id)` returns a `Tool`, `TRS.list_versions(id)` a list of `ToolVersion`s and
+  `TRS.get_version(id, version_id)` one `ToolVersion`. Some registries, such as Dockstore,
+  take the version's `name` as `version_id`.
+- `TRS.get_descriptor(id, version_id, descriptor_type, relative_path=None)` returns the
+  primary descriptor, or the file at `relative_path` below it, as a `FileWrapper`.
+  `descriptor_type` is a TRS descriptor type such as `"CWL"`, `"WDL"`, `"NFL"`, `"GALAXY"`
+  or `"SMK"`, or the same with `PLAIN_`, for which the server sends the bare file; it
+  comes as a `FileWrapper` with only `content` set. Types are sent as given, also those
+  that TRS doesn't define, so use the spec's uppercase names.
+- `TRS.list_tests(id, version_id, descriptor_type)` returns the test parameter files as
+  `FileWrapper`s; for `PLAIN_` types, a bare test file comes as one `FileWrapper`.
+  `TRS.get_containerfiles(id, version_id)` returns the container specifications, such as
+  Dockerfiles, as `FileWrapper`s.
+- `TRS.list_files(id, version_id, descriptor_type)` returns the version's files as
+  `ToolFile`s with `path` and `file_type`. `TRS.get_files_zip(id, version_id,
+  descriptor_type, limit=None)` downloads them as one ZIP archive and returns it as
+  `bytes`; it reads at most `limit` bytes into memory (`None`: 64 MiB), and a `limit`
+  below 1 raises `ValueError`. Both take descriptor types without `PLAIN_`, such as
+  `"CWL"`. A larger archive, or a response
+  that isn't a ZIP archive (such as the JSON file list of a registry that ignores
+  `format=zip`), raises `RuntimeError`. The archive isn't extracted or checked further.
+- `TRS.list_tool_classes()` returns the registry's tool classes as `dict`s.
+- Credentials set on the configuration (see [Authentication](#authentication)) go with
+  the service info request and every TRS request, including `next_tools_page()`, which
+  only follows URLs at the client's API root.
+- IDs, version IDs and relative paths are sent unchanged, as one percent-encoded URL path
+  segment each, so IDs such as Dockstore's `#workflow/github.com/org/repo` work. Empty
+  values, `.` and `..` raise `ValueError` before a request.
+- Errors: failed requests, such as a missing tool (`404`), and responses that don't fit the
+  TRS models raise `RuntimeError`; the message has the HTTP status, not the server's
+  response body. A version's
+  `description` (TRS 2.0.2) that isn't a string is kept in the JSON, and the
+  `description` property is `None` then.
+
+The results are typed objects with properties. They hold the JSON of the Rust SDK's TRS
+models, including fields that those models don't know: `to_dict()` returns it as a new
+`dict` and `json()` as JSON text. Fields of the TRS models that the server sent as `null`
+are left out.
+
+- `Tool`: `id`, `url`, `aliases`, `organization`, `name`, `toolclass` (a `dict`),
+  `description`, `meta_version`, `has_checker`, `checker_url` and `versions` (a list of
+  `ToolVersion`).
+- `ToolVersion`: `id`, `url`, `name`, `author`, `description`, `is_production`, `images`,
+  `descriptor_type` (a list of `str`), `descriptor_type_version`, `containerfile`,
+  `meta_version`, `verified`, `verified_source`, `signed` and `included_apps`.
+- `FileWrapper`: `content`, `url`, `checksum` and `image_type`. Its `repr()` shows the
+  length of `content`, not the content.
+- `ToolFile`: `path`, `file_type` (as the server sent it, such as `"PRIMARY_DESCRIPTOR"`)
+  and `checksum`.
+
+Nested values, such as `images` and `checksum`, come as `dict`s and `list`s. To read a TRS
+section of `~/.ga4gh-cli/config.json`, use `config.from_file(ServiceType.TRS)`. The
+streaming ZIP download (`responses::files_zip`) of the Rust SDK is not bound yet; use
+`TRS.get_files_zip()` with a `limit`.
+
 ## Extending the bindings
 
 The bindings are meant as a base for clients of services that add endpoints or
@@ -625,6 +893,12 @@ request. A subclass without its own `__init__` accepts only the base arguments.
 result classes (`DrsObject`, `AccessURL`, `BulkAccessURL`, `PendingResolution`,
 `BulkOutcome`, `BulkReport` and `AccessPlan`) allow subclasses as well, for Rust crates
 that extend them, but the clients return instances of the base classes.
+
+`TRS` can be subclassed in the same way; it reads the service info, unless
+`discovery=False`, before a subclass's `__init__` runs. Its keyword arguments
+(`api_version`, `tag_filter` and `discovery`) are taken by the base class; a subclass's
+`__init__` receives them too. The result classes (`Tool`, `ToolVersion`, `FileWrapper`,
+`ToolFile` and `ToolPage`) allow subclasses for Rust crates, like those of DRS.
 
 ### Further endpoints
 
@@ -713,7 +987,12 @@ request use the uppercase TES spelling. Invalid views raise `ValueError` before 
 
 The `ga4gh` crate in this directory builds as a Python module and as a Rust library. A
 PyO3 crate (same PyO3 version) can depend on it and extend the classes in Rust, for
-example with `#[pyclass(extends = PyTES)]`; the `inner` field of each class holds the
+example with `#[pyclass(extends = PyTES)]`. Existing extension crates need to update
+their direct `pyo3` dependency to `0.30.1` (and `pyo3-async-runtimes` to `0.30.0` if
+used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
+`Python::with_gil`, and `Bound::downcast` to `Py<PyAny>`, `Python::attach`, and
+`Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
+The `inner` field of each class holds the
 library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES calls
 that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
@@ -731,7 +1010,11 @@ The DRS classes (`PyDRS`, `PyDrsResolver` and so on, in `clients::drs`) follow t
 pattern; `clients::drs::register(py, m)` registers all of them.
 The WES classes (`PyWES`, `PyRun` and so on, in `clients::wes`) follow the same pattern;
 `clients::wes::register(py, m)` registers all of them, with the `WesState` enum.
-Further bindings, such as TRS, will too.
+The TRS classes (`PyTRS`, `PyTool` and so on, in `clients::trs`) follow it too;
+`clients::trs::register(py, m)` registers all of them. For Rust code, `PyTRS::new(config)`
+builds a client with the default options and `PyTRS::with_options(config, options,
+discovery)` one with `TrsOptions`; its `inner` field holds the library's `TRS`.
+`PyToolPage` keeps the response's `HeaderMap` in `headers`.
 
 ## Documentation
 

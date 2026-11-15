@@ -6,7 +6,8 @@
 //! `stdout:0:0` or `file:0:1`, that names it for `tes log` and `tes save`.
 //!
 //! Downloads send no credentials from the CLI configuration: output URLs can
-//! point to any host. S3 requests use the AWS environment variables only.
+//! point to any host. S3 requests use object_store's AWS credential chain,
+//! independently of credentials configured for TES.
 //! Every file is written to a temporary file in the destination directory and
 //! moved to its name only once all its bytes have arrived.
 
@@ -101,7 +102,7 @@ impl Catalog {
             let path = output.get("path").and_then(Value::as_str);
             let is_directory = output.get("type").and_then(Value::as_str) == Some("DIRECTORY")
                 || output.get("path_prefix").is_some_and(|v| !v.is_null())
-                || path.is_some_and(|path| path.contains('*'));
+                || path.is_some_and(|path| path.chars().any(|ch| matches!(ch, '*' | '?' | '[')));
             let kind = if is_directory {
                 "declared output directory"
             } else {
@@ -600,10 +601,17 @@ async fn download_http(
         .connect_timeout(config.timeouts.connect)
         .build()
         .map_err(|error| anyhow::anyhow!("Can't create an HTTP client: {error}"))?;
-    let response =
-        client.get(url.clone()).send().await.map_err(|error| {
-            anyhow::anyhow!("Request to {shown} failed: {}", error.without_url())
-        })?;
+    // `connect_timeout` ends after connection establishment. Bound the wait
+    // for response headers too; `next_chunk` handles later body stalls.
+    let response = tokio::time::timeout(config.timeouts.request, client.get(url.clone()).send())
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Request to {shown} stalled before the response: no data for {} seconds",
+                config.timeouts.request.as_secs_f64()
+            )
+        })?
+        .map_err(|error| anyhow::anyhow!("Request to {shown} failed: {}", error.without_url()))?;
     let status = response.status();
     if !status.is_success() {
         anyhow::bail!("{shown} returned HTTP {status}");
@@ -678,10 +686,18 @@ async fn download_s3(
         })
         .build()
         .map_err(|error| anyhow::anyhow!("Can't configure S3 access: {error}"))?;
-    let result = store.get(&key).await.map_err(|error| match error {
-        object_store::Error::NotFound { .. } => anyhow::anyhow!("{shown} was not found"),
-        error => anyhow::anyhow!("Request for {shown} failed: {error}"),
-    })?;
+    let result = tokio::time::timeout(config.timeouts.request, store.get(&key))
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Request for {shown} stalled before the response: no data for {} seconds",
+                config.timeouts.request.as_secs_f64()
+            )
+        })?
+        .map_err(|error| match error {
+            object_store::Error::NotFound { .. } => anyhow::anyhow!("{shown} was not found"),
+            error => anyhow::anyhow!("Request for {shown} failed: {error}"),
+        })?;
     let expected = result.meta.size;
     let mut stream = result.into_stream();
     let mut written = 0u64;
@@ -778,6 +794,31 @@ mod tests {
         let table = catalog.table();
         assert!(table.contains("file:0:0       6          output file: s3://bucket/results/out.txt (path /outputs/out.txt)"), "{table}");
         assert!(!table.contains("secret"), "{table}");
+    }
+
+    #[test]
+    fn posix_pattern_outputs_cannot_be_saved_as_one_file() {
+        let dir = tempfile::tempdir().unwrap();
+        for path in ["/outputs/sample?.bam", "/outputs/sample[12].bam"] {
+            let task = json!({"outputs": [{
+                "url": "https://storage.example.org/output-directory",
+                "path": path,
+                "type": "FILE"
+            }]});
+            let catalog = Catalog::from_task(&task);
+            let Content::File { is_directory, .. } = &catalog.find("output:0").unwrap().content
+            else {
+                panic!("file reference expected");
+            };
+            assert!(*is_directory, "{path}");
+            let error = plan(&catalog, &["output:0".into()], None, dir.path(), false)
+                .err()
+                .unwrap();
+            assert!(
+                error.0.contains("directory or a pattern"),
+                "{path}: {error}"
+            );
+        }
     }
 
     #[test]

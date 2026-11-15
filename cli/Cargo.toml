@@ -14,9 +14,10 @@ license-file.workspace = true
 ga4gh-lib = { path = "../lib", features = ["workflow-contracts"] }
 clap = "4"
 tokio = { version = "1", features = ["full"] }
-serde = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "^1.0"
 tempfile = "3.2"
+async-trait = "0.1"
 dirs = "5.0.1"
 anyhow = "1.0.86"
 url = "2.5.2"
@@ -26,14 +27,19 @@ futures-util = "0.3"
 percent-encoding = "2"
 # Same major version as ga4gh-lib; `stream` reads downloads in chunks.
 reqwest = { version = "0.11", features = ["stream"] }
-# S3 downloads, configured from the standard AWS environment variables.
+# S3 downloads, using object_store's AWS configuration and credential chain.
 object_store = { version = "0.12", default-features = false, features = ["aws"] }
 
 [features]
-# Runs the TES file commands against Funnel; see tests/README.md.
-integration_tests = []
 # Runs the CLI against Starter Kit WES; see tests/README.md.
 wes_docker_integration_tests = []
+# Runs the `tes` commands against proTES with an access token; see
+# tests/README.md.
+protes_integration_tests = []
+# Runs the `tes` commands against Funnel; see tests/README.md.
+integration_tests = []
+# Runs the CLI against TRS-Filer; see tests/README.md.
+trs_filer_integration_tests = []
 
 [dev-dependencies]
 mockito = "0.31"
