@@ -27,7 +27,12 @@ repos:
       - id: check-yaml
         # This exact upstream DRS snapshot has a duplicate description key.
         # spec-pins.json pins its SHA-256; preserve the published bytes.
-        exclude: ^testbed/pack/drs/components/parameters/BulkObjectIdNoPassport\.yaml$
+        exclude: ^(mkdocs\.yml|testbed/pack/drs/components/parameters/BulkObjectIdNoPassport\.yaml)$
+      # MkDocs' tags (`!ENV`) are not plain YAML: check only the syntax
+      - id: check-yaml
+        name: check yaml (MkDocs)
+        args: [--unsafe]
+        files: ^mkdocs\.yml$
       - id: end-of-file-fixer
         exclude: >-
           (?x)^(

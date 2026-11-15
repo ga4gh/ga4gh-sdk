@@ -333,8 +333,8 @@ experiment. None needs cloud credentials for its local checks.
 | Native private diagnostics | `python3 tests/interop/native_diagnostics.py` | Rust or `SEQERA_PROFILE_SDK_BIN`; actual SDK on loopback, private error bounds/0600/no-public-leak and one-POST ledger guard |
 | Seqera multipart fixture | `python3 tests/interop/run.py --profile seqera-native-wes --offline-seqera --out tests/interop/reports/seqera-offline` | Rust and Python, real MIME parsing on loopback; simulated protocol only |
 
-Read [campaign instructions](../examples/adaptive-campaign/README.md),
-[provider contracts](../docs/horizon3-provider-contracts.md),
+Read [campaign instructions from PR #157](https://github.com/superbsky/ga4gh-sdk/blob/d3d7a26505b0fa43620e8d0e967b261f8383f1f9/examples/adaptive-campaign/README.md),
+[provider contracts from PR #155](https://github.com/superbsky/ga4gh-sdk/blob/fbcdf57665fcc907a372e36836149e1071dae8e4/docs/horizon3-provider-contracts.md),
 [result reuse](../docs/result-reuse.md), [scenario API](../docs/scenario-api.md)
 and [provider profiles](../docs/provider-profiles.md) before opt-in execution.
 The profiles wrap the existing pinned proTES suite, direct Funnel, and
