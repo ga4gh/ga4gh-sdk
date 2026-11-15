@@ -25,6 +25,12 @@ repos:
         exclude: \.rs$
       - id: check-toml
       - id: check-yaml
+        exclude: ^mkdocs\.yml$
+      # MkDocs' tags (`!ENV`) are not plain YAML: check only the syntax
+      - id: check-yaml
+        name: check yaml (MkDocs)
+        args: [--unsafe]
+        files: ^mkdocs\.yml$
       - id: end-of-file-fixer
         exclude: >-
           (?x)^(

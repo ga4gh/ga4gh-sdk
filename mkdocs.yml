@@ -1,0 +1,110 @@
+site_name: GA4GH SDK
+site_description: >-
+  Rust library, command-line tool and Python bindings for GA4GH API services
+# Read the Docs serves each version under its own path (e.g., `/en/latest/`)
+site_url: !ENV [READTHEDOCS_CANONICAL_URL, "https://ga4gh-sdk.readthedocs.io/en/latest/"]
+repo_url: https://github.com/ga4gh/ga4gh-sdk
+repo_name: ga4gh/ga4gh-sdk
+# Pages keep their paths in the repository (see `docs/hooks.py`)
+edit_uri: edit/main/
+
+# The pages are the Markdown files of the repository that `nav` lists, at
+# their paths in the repository, so that the guides stay where they are and
+# their links work on GitHub and on the site alike; `docs/hooks.py` collects
+# them (and `images/`, the Rust API reference) instead of the files of
+# `docs_dir`, and points links to other files of the repository to GitHub
+docs_dir: docs
+hooks:
+  - docs/hooks.py
+
+# Files included in the site besides `docs/` (for `mkdocs serve`)
+watch:
+  - README.md
+  - cli/README.md
+  - examples
+  - images
+  - python/README.md
+  - tests/README.md
+
+theme:
+  name: material
+  features:
+    - content.action.edit
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+# Paths in the repository. Markdown files that are not listed here are not
+# part of the site; links to them go to GitHub
+nav:
+  - Home: README.md
+  - Guides:
+      - Usage: docs/usage.md
+      - Authentication: docs/authentication.md
+      - API compatibility: docs/api_compatibility.md
+      - Command-line tool: cli/README.md
+      - Python bindings: python/README.md
+      - Downstream use: docs/downstream.md
+      - Experimental:
+          - Workflow contracts: docs/workflow-contracts.md
+          - Result reuse: docs/result-reuse.md
+          - Sequence QC example: examples/sequence-qc/README.md
+          - Result reuse example: examples/result-reuse/README.md
+  - API reference:
+      # Built by `cargo doc` before the site (see `docs/development.md`)
+      - Rust library: rust/ga4gh_sdk/index.html
+      - Rust CLI library: rust/ga4gh_cli/index.html
+      # Signatures and class docstrings; few methods have docstrings yet
+      - Python type stubs: https://github.com/ga4gh/ga4gh-sdk/blob/main/python/ga4gh_sdk.pyi
+  - Development:
+      - Overview: docs/development.md
+      - Testing: tests/README.md
+      - Generated models: docs/autogenerate_OAI_models.md
+      - Reviewing pull requests: docs/reviewer_framework.md
+      - Releasing: docs/releasing.md
+      - Downstream example: examples/downstream-sdk/README.md
+      - Provider contract proposals:
+          - docs/rfcs/README.md
+          - Leased sessions: docs/rfcs/leased-sessions.md
+          - Workload secrets: docs/rfcs/workload-secrets.md
+          - Feasibility examples: examples/provider-contracts/README.md
