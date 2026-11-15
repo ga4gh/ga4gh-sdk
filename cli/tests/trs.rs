@@ -386,7 +386,7 @@ fn plain_tests_reject_url_only_wrappers_without_printing_a_false_file() {
 }
 
 #[test]
-fn json_output_and_server_errors_escape_terminal_controls() {
+fn json_output_escapes_controls_and_server_errors_omit_the_body() {
     let service = service_info(2);
     let mut body = tool();
     body["name"] = json!("workflow\u{202e}name");
@@ -405,7 +405,8 @@ fn json_output_and_server_errors_escape_terminal_controls() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains('\u{1b}'));
-    assert!(stderr.contains("\\u{1b}"), "{stderr}");
+    assert!(stderr.contains("400"), "{stderr}");
+    assert!(!stderr.contains("response"), "{stderr}");
     service.assert();
     tool_mock.assert();
     failed.assert();
@@ -482,7 +483,9 @@ fn service_failures_have_nonzero_exit_codes() {
     let output = run(&home, &["trs", "tool", "missing"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("tool not found"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("404"), "{stderr}");
+    assert!(!stderr.contains("tool not found"), "{stderr}");
     service.assert();
     missing.assert();
 }

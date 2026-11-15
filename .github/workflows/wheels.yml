@@ -1,7 +1,8 @@
 name: Python distributions
 
 # Builds the Python distributions: one abi3 wheel per platform and an sdist.
-# Called by CI (build only) and by Release (build, then publish).
+# Called by CI after a main push or manual dispatch (build only), and by
+# Release on a version tag (build, then publish).
 on:
   workflow_call:
 

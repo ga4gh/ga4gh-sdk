@@ -1,0 +1,32 @@
+# An example of a downstream SDK: a separate crate that builds on the
+# library and the CLI through their public APIs only. See
+# docs/downstream.md for the walkthrough.
+[package]
+name = "downstream-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Example of a downstream SDK built on the GA4GH SDK"
+publish = false
+
+# Its own workspace, not a member of the repository's: the SDK crates are
+# built as path dependencies, as in a downstream repository. A downstream
+# crate would use Git dependencies instead (see docs/downstream.md).
+[workspace]
+
+[dependencies]
+ga4gh-lib = { path = "../../lib" }
+ga4gh-cli = { path = "../../cli" }
+anyhow = "1"
+clap = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+url = "2"
+
+[dev-dependencies]
+mockito = "0.31"
+tempfile = "3"
+
+[[bin]]
+name = "downstream-cli"
+path = "src/main.rs"
