@@ -76,7 +76,7 @@ pytest
 | --- | --- |
 | `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. `set_token_provider()` supplies dynamic bearer tokens. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication), [Timeouts](#timeouts) and [Token providers](#token-providers). |
 | `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
-| `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, and cancel TES tasks; read full task JSON including unknown fields. |
+| `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, cancel and wait for TES tasks; read full task JSON including unknown fields. See [Waiting for tasks](#waiting-for-tasks). |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
 | `DRS`, `DrsResolver` | Read DRS objects and access URLs, one at a time or in bulk, wait while the server prepares them, and plan access for `drs://` URIs; read full JSON including unknown fields. See [Using DRS](#using-drs). |
@@ -299,6 +299,7 @@ for listed in page.tasks:
   fields that the TES models don't know, and returns a `Task`.
 - `Task` addresses a task on the server by its `id`. `Task.status()` returns the current
   state as a `TesState`; `Task.cancel()` cancels the task and returns `None`.
+  `Task.wait()` waits until the task ends; see [Waiting for tasks](#waiting-for-tasks).
 - `TES.get(view, id)` returns a `TesTask`; `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`
   (case-insensitive). Invalid views raise `ValueError` before a request.
 - `TES.list(params=None)` returns a `ListTasksResponse` with `tasks` (a list of
@@ -339,6 +340,56 @@ two methods for the whole page.
 `TesState.RUNNING == "RUNNING"`, and `str()`, f-strings and `json.dumps()` give the
 state's name. `TesState("RUNNING")` looks a state up by name. Members can be pickled.
 
+### Waiting for tasks
+
+`Task.wait()` polls a task until it ends, so apps need no polling loop of their own:
+
+```python
+from ga4gh_sdk import Configuration, TES, TesState, WaitTimeoutError
+
+tes = TES(Configuration("http://localhost:8000/ga4gh/tes/v1"))
+task = tes.create({"executors": [{"image": "alpine", "command": ["echo", "hello"]}]})
+
+try:
+    state = task.wait(timeout=3600)
+except WaitTimeoutError as error:
+    print(f"{error.id} still {error.last_state} after an hour")
+else:
+    if state is not TesState.COMPLETE:
+        print(task.id, "ended in", state)
+
+# Or get the ended task in a view, for example with its logs:
+details = task.wait(timeout=3600, view="FULL")
+print(details.state, details.logs)
+```
+
+- `Task.wait(timeout=None, *, poll_interval=1.0, max_interval=None, view=None)` returns
+  once the task is in a terminal state: `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`,
+  `CANCELED` or `PREEMPTED`. It returns that state as a `TesState`; with a `view`
+  (`"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case), it returns the task in that view as
+  a `TesTask`. The minimal view is what it polls, so that view needs no further request.
+- It uses the Rust SDK's waiter. Polls ask for the task in the minimal view, starting
+  `poll_interval` seconds apart; the interval doubles after each poll, up to
+  `max_interval` (by default 10 seconds, or `poll_interval` if that's longer). Other
+  states, including states that TES 1.1 doesn't define, don't end the wait.
+- `timeout` is the time in seconds for the whole wait, including the polls and the
+  request for the view; `None` waits as long as it takes. When the time runs out, it
+  raises `WaitTimeoutError`, a `TimeoutError`, whose `id` is the task's ID and
+  `last_state` the last polled state (`None` if no poll succeeded). If the time runs
+  out while it gets an ended task in a view, `last_state` is that task's final state.
+  Each request also keeps the configuration's [timeouts](#timeouts).
+- A failed poll, for example an HTTP error or a response without a state, raises
+  `RuntimeError`; polls are not retried. Invalid arguments, such as a negative timeout,
+  a `poll_interval` of 0 or a `max_interval` below `poll_interval`, raise `ValueError`.
+- The wait releases the GIL, so other threads run meanwhile. In the main thread, it
+  runs signal handlers within about 0.1 seconds: Ctrl-C stops it with
+  `KeyboardInterrupt`, as does any exception that a handler raises. Handlers may call
+  the SDK, for example `task.cancel()`. Python runs signal handlers in the main thread
+  only, so a wait in another thread goes on until it ends or times out.
+- A wait never cancels the task: not when the time runs out, not on Ctrl-C, not when a
+  poll fails. Call `Task.cancel()` for that. To keep waiting, call `wait()` again, also
+  with a new `Task(id, transport)` in another process.
+
 ### asyncio
 
 `AsyncTES` and `AsyncTask` are the TES client and task for `asyncio` apps. They have the
@@ -373,6 +424,14 @@ asyncio.run(main())
   subclass's `__init__` can send its own requests before that check completes.
 - `AsyncTES.create()` gives an `AsyncTask`; `AsyncTask(id, transport)` addresses an
   existing task, like `Task`. `config`, `transport` and `id` are plain properties.
+- `await task.wait(...)` waits for a task like `Task.wait()`, with the same arguments,
+  results and errors. Cancelling the awaiting coroutine, for example with
+  `asyncio.wait_for()`, stops polling; the task on the server goes on. A pending wait
+  takes one of the 256 call threads (see below) for as long as it waits; with 256
+  pending waits, further async calls, including `cancel()`, queue until one ends. Give
+  waits a `timeout` when an app may wait for many tasks at once: a wait that is still
+  queued raises `WaitTimeoutError` (with `last_state` `None`) about a second after its
+  timeout.
 - The requests run on the runtime of the sync API without the GIL, so they don't block
   the event loop, and several of them run at the same time. Because the SDK's futures
   aren't `Send` yet, each pending call takes a thread of a pool of its own: up to 256
