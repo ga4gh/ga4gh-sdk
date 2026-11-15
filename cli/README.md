@@ -7,7 +7,9 @@ library also provides a `ServiceInfo` client (see the
 
 ## Installation
 
-From the repository root:
+Releases include ready-made binaries; see
+[Download the CLI](../README.md#download-the-cli). To build from source, run
+from the repository root:
 
 ```sh
 cargo install --path cli --locked
