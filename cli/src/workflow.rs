@@ -17,6 +17,8 @@ use serde_json::Value;
 fn file_arg(name: &'static str) -> Arg {
     Arg::new(name).required(true)
 }
+/// Build the `workflow` command and its subcommands, such as `prepare`,
+/// `submit`, `results` and `verify`.
 pub fn command() -> Command {
     let pins = |c: Command| {
         c.arg(

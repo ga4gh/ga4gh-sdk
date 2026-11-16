@@ -31,6 +31,7 @@
 //! [`CliContext::token_store_path`]). [`CommandOutput`] and
 //! [`printable`] give its own commands the output and exit codes of the
 //! built-in ones.
+#![warn(missing_docs)]
 
 pub mod drs;
 mod login;
@@ -62,8 +63,11 @@ const PROFILE_ARG: &str = "ga4gh-cli-profile";
 /// [`failure`](Self::failure) and [`json`](Self::json), so that their output
 /// is escaped and their exit codes are set as for the built-in commands.
 pub struct CommandOutput {
+    /// The text for standard output.
     pub stdout: String,
+    /// The text for standard error.
     pub stderr: String,
+    /// The process's exit code.
     pub exit_code: ExitCode,
 }
 
