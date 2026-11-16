@@ -103,7 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [funnel, protes, wes-starter-kit, trs-filer]
+        suite: [funnel, protes, wes-starter-kit, trs-filer, keycloak]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -135,6 +135,9 @@ jobs:
                 lib/src/clients/trs/ lib/src/clients/serviceinfo/ lib/src/utils/
                 lib/src/clients/mod.rs lib/src/lib.rs lib/tests/trs_filer.rs
                 cli/Cargo.toml cli/src/ cli/tests/trs_filer.rs)
+            elif [[ "$SUITE" == keycloak ]]; then
+              paths=("${common[@]}" tests/run-keycloak-integration.sh tests/keycloak/
+                lib/src/utils/ cli/Cargo.toml cli/src/ cli/tests/keycloak_login.rs)
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
@@ -173,6 +176,9 @@ jobs:
       - name: Test against TRS-Filer
         if: matrix.suite == 'trs-filer' && steps.changes.outputs.run == 'true'
         run: tests/run-trs-filer-integration.sh
+      - name: Test login against Keycloak
+        if: matrix.suite == 'keycloak' && steps.changes.outputs.run == 'true'
+        run: tests/run-keycloak-integration.sh
 
   # Coverage of the unit tests, without the generated models; the report
   # goes to the job summary and the `coverage` artifact (LCOV), which the
