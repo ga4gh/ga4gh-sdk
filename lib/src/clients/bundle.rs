@@ -27,7 +27,12 @@
 //!     None,
 //! )
 //! .await?;
-//! let wes = WES::new(&Configuration::new(url::Url::parse("https://example.org/ga4gh/wes/v1")?)).await?;
+//! println!("bundle {}", bundle.manifest().bundle_sha256);
+//! for (path, bytes) in bundle.staged_files() {
+//!     println!("{path}: {} bytes", bytes.len());
+//! }
+//! let wes_root = url::Url::parse("https://example.org/ga4gh/wes/v1")?;
+//! let wes = WES::new(&Configuration::new(wes_root)).await?;
 //! let submitted = bundle.submit(&wes, &operation).await?;
 //! println!("{}", serde_json::to_string(&submitted.manifest)?);
 //! # Ok(())
@@ -135,8 +140,8 @@ pub struct BundleManifest {
     pub meta_version: Option<String>,
     /// The staged files, sorted by path.
     pub files: Vec<FileDigest>,
-    /// The hex SHA-256 of the JSON of the fields above, which identifies the
-    /// bundle.
+    /// The hex SHA-256 of the compact JSON object of the fields above, with
+    /// the keys sorted at every level, which identifies the bundle.
     pub bundle_sha256: String,
     /// Where the bundle was submitted; set by [`PreparedBundle::submit`].
     pub execution: Option<ExecutionRecord>,
@@ -174,7 +179,10 @@ fn without_descriptor_url(error: Box<dyn Error>) -> Box<dyn Error> {
     }
 }
 impl AnonymousFetcher {
-    /// Accept only bare HTTP(S) origins; a path or query would otherwise be
+    /// Builds a fetcher for the HTTP(S) `origins`, such as
+    /// `https://example.org`.
+    ///
+    /// Accepts only bare HTTP(S) origins; a path or query would otherwise be
     /// silently widened to the whole host when forming the allowlist.
     ///
     /// # Errors
@@ -671,13 +679,16 @@ impl PreparedBundle {
             request,
         })
     }
+    /// Starts a WES run of the bundle, with the staged files as attachments.
+    ///
     /// Explicit submission uploads the same immutable Arc bytes that were hashed.
     /// Each call may create a separate WES run. Reconcile an ambiguous response
     /// before calling this method again.
     ///
     /// # Errors
     ///
-    /// Fails as [`WES::run_workflow_streaming`] does.
+    /// Fails as [`WES::run_workflow_streaming`] does, or if the WES API root
+    /// can't be recorded.
     pub async fn submit(
         &self,
         wes: &WES,

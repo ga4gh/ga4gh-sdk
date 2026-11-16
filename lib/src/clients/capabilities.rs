@@ -24,7 +24,9 @@
 //! for diagnostic in wes.capabilities.validate_wes(&request) {
 //!     println!("{}: {:?}", diagnostic.field, diagnostic.support);
 //! }
+//! // Strict: refuse the request if a diagnostic blocks it
 //! let run = wes.run_validated(request, true).await?;
+//! println!("{}", run.id);
 //! # Ok(())
 //! # }
 //! ```
@@ -139,14 +141,17 @@ impl CapabilitySnapshot {
             blocks_strict: blocks && self.is_fresh(),
         }
     }
+    /// Checks a run request against the workflow types and engines that the
+    /// service advertises.
+    ///
+    /// The request's `workflow_type` and `workflow_type_version` are checked
+    /// against the advertised `workflow_type_versions`. Its `workflow_engine`,
+    /// when set, is checked against `workflow_engine_versions`, and with it
+    /// its `workflow_engine_version`, when set. Unsupported values block
+    /// strict submissions.
+    ///
     /// Missing metadata remains unknown. An explicit nonempty language map is
     /// authoritative; version/engine constraints are compared only when supplied.
-    ///
-    /// Checks the request's `workflow_type` against the advertised
-    /// `workflow_type_versions`, and its `workflow_type_version`,
-    /// `workflow_engine` and `workflow_engine_version`, when set, against the
-    /// advertised versions and `workflow_engine_versions`. Unsupported values
-    /// block strict submissions.
     pub fn validate_wes(&self, request: &RunRequest) -> Vec<Diagnostic> {
         let mut result = Vec::new();
         let request = serde_json::to_value(request).unwrap_or_default();
@@ -339,6 +344,11 @@ fn ensure_strict(diagnostics: &[Diagnostic], strict: bool) -> Result<(), Box<dyn
 impl TES {
     /// Creates a client and a capability snapshot from one service-info
     /// request, within the `discovery` limit of `config.timeouts`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or times out, or the response isn't a TES
+    /// service info.
     pub async fn discover(
         config: &Configuration,
         max_age: Duration,
@@ -348,6 +358,11 @@ impl TES {
 
     /// Like [`Self::discover`], with a ready `transport`, for example one from
     /// [`Transport::with_client`]. The client's configuration is the transport's.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or times out, or the response isn't a TES
+    /// service info.
     pub async fn discover_with_transport(
         transport: Transport,
         max_age: Duration,
@@ -366,6 +381,11 @@ impl TES {
 impl WES {
     /// Creates a client and a capability snapshot from one service-info
     /// request, within the `discovery` limit of `config.timeouts`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or times out, or the response isn't a WES
+    /// service info.
     pub async fn discover(
         config: &Configuration,
         max_age: Duration,
@@ -375,6 +395,11 @@ impl WES {
 
     /// Like [`Self::discover`], with a ready `transport`, for example one from
     /// [`Transport::with_client`]. The client's configuration is the transport's.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or times out, or the response isn't a WES
+    /// service info.
     pub async fn discover_with_transport(
         transport: Transport,
         max_age: Duration,

@@ -4,7 +4,8 @@
 //! ends, its [`WaitOptions::operation`] runs out of time or is cancelled, or a
 //! poll fails. They return a [`WaitResult`] in every case, never an error. A
 //! [`RemoteHandle`] identifies the task or run, so that another process can
-//! wait for it again.
+//! wait for it again: [`RemoteHandle::task`] and [`RemoteHandle::run`]
+//! rebuild the task or run from it.
 //!
 //! ```no_run
 //! use ga4gh_sdk::clients::tes::Task;
@@ -177,6 +178,8 @@ fn terminal(kind: ServiceKind, state: &str) -> Option<WaitOutcome> {
         _ => None,
     }
 }
+/// Polls a job with `poll` until it ends or the wait stops.
+///
 /// Shared state machine; unknown states stay observable and never become success.
 ///
 /// Calls `poll` until its response has a final `state` of `handle`'s API,
