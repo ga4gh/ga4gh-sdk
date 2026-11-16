@@ -137,7 +137,8 @@ jobs:
                 cli/Cargo.toml cli/src/ cli/tests/trs_filer.rs)
             elif [[ "$SUITE" == keycloak ]]; then
               paths=("${common[@]}" tests/run-keycloak-integration.sh tests/keycloak/
-                lib/src/utils/ cli/Cargo.toml cli/src/ cli/tests/keycloak_login.rs)
+                lib/src/clients/registry/ lib/src/utils/ lib/src/clients/mod.rs
+                lib/src/lib.rs cli/Cargo.toml cli/src/ cli/tests/keycloak_login.rs)
             else
               paths=("${common[@]}" tests/run-wes-docker-integration.sh
                 tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/

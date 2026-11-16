@@ -28,9 +28,11 @@ if ! command -v curl >/dev/null; then
 fi
 
 cd "$repo_root"
-# Build first, so that the time limits below don't include the build.
-cargo test --locked -p ga4gh-cli --features keycloak_integration_tests \
-  --test keycloak_login --no-run
+test_args=(--locked -p ga4gh-cli --features keycloak_integration_tests
+  --test keycloak_login)
+# Build before Keycloak starts, so that its startup limit doesn't include
+# the build.
+cargo test "${test_args[@]}" --no-run
 
 # Random part: the name must not clash with containers of other runs.
 name="ga4gh-sdk-keycloak-$$-$RANDOM"
@@ -79,5 +81,4 @@ done
 
 echo "Keycloak ready at $KEYCLOAK_ISSUER"
 
-cargo test --locked -p ga4gh-cli --features keycloak_integration_tests \
-  --test keycloak_login -- --nocapture
+cargo test "${test_args[@]}" -- --nocapture

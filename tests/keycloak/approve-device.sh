@@ -11,8 +11,8 @@
 # through the HTML forms of its default login theme; it fails if a page
 # doesn't have the expected form.
 #
-# The credentials are those of the throwaway test realm (test only); set
-# KEYCLOAK_TEST_USER and KEYCLOAK_TEST_PASSWORD to use others.
+# The credentials are those of the user in the throwaway test realm; they
+# are for this test only.
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
@@ -26,8 +26,8 @@ case $answer in
   deny) button=cancel; label=No ;;
   *) echo "Unknown answer: $answer" >&2; exit 2 ;;
 esac
-user=${KEYCLOAK_TEST_USER:-test-user}
-password=${KEYCLOAK_TEST_PASSWORD:-test-only-password}
+user=test-user
+password=test-only-password
 
 # scheme://host:port of the verification URL; form actions may be relative.
 if ! [[ $url =~ ^(https?://[^/]+)/ ]]; then

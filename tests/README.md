@@ -288,8 +288,9 @@ The refresh after a `401` and the provider's `slow_down` answer are checked
 only against the fake provider of the default CLI tests.
 
 The [CI workflow](../.github/workflows/ci.yml) runs this suite as the job
-`Integration (keycloak)` when the CLI, the shared library utilities, the
-dependencies or the suite's own files change, and on manual dispatch.
+`Integration (keycloak)` when the CLI, the Registry client used by the
+test, the shared library code, the dependencies or the suite's own files
+change (see the path lists in the workflow), and on manual dispatch.
 
 ## Verified TRS CWL bundle with Toil WES
 

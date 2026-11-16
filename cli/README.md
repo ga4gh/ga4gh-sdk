@@ -214,11 +214,7 @@ and don't store it again.
 
 #### Example: Keycloak
 
-The CLI's tests log in to a [Keycloak](https://www.keycloak.org/) realm
-(version 26.8.2) with the device flow; see the
-[integration test guide](../tests/README.md#keycloakcli-login) and the test
-realm in [`tests/keycloak/realm.json`](../tests/keycloak/realm.json). With
-Keycloak, the issuer is the realm's URL:
+With [Keycloak](https://www.keycloak.org/), the issuer is the realm's URL:
 
 ```json
 {
@@ -242,6 +238,10 @@ to sign in and then to grant the client access. If the realm rotates refresh
 tokens ("Revoke Refresh Token"), each refresh stores the new refresh token;
 Keycloak ends the login if an older one is used again, for example from a
 copy of the token store, and the CLI then asks you to log in again.
+
+An integration suite checks this setup against a Keycloak container; see the
+[integration test guide](../tests/README.md#keycloakcli-login) and the test
+realm in [`tests/keycloak/realm.json`](../tests/keycloak/realm.json).
 
 ## Usage
 

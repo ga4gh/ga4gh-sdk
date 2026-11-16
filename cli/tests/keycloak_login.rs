@@ -11,11 +11,11 @@
 #![cfg(all(unix, feature = "keycloak_integration_tests"))]
 
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::process::{Child, Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
@@ -25,7 +25,9 @@ const CLIENT_ID: &str = "ga4gh-cli-test";
 /// The user that `approve-device.sh` signs in as.
 const USERNAME: &str = "test-user";
 
-/// The CLI refreshes a token this long before it expires (see `login.rs`).
+/// The CLI refreshes a token this long before it expires (`EXPIRY_MARGIN`
+/// in `cli/src/login.rs`). The realm's `accessTokenLifespan` (40 seconds)
+/// must exceed it; the test checks that it does.
 const EXPIRY_MARGIN: u64 = 30;
 
 /// The time limit of a `login`, from the request to the approval.
@@ -115,12 +117,19 @@ fn store_path(home: &TempDir) -> PathBuf {
     home.path().join(".ga4gh-cli/tokens.json")
 }
 
+/// The stored logins; none if there is no token store.
+fn logins(home: &TempDir) -> Vec<Value> {
+    let Ok(text) = std::fs::read_to_string(store_path(home)) else {
+        return Vec::new();
+    };
+    let store: Value = serde_json::from_str(&text).unwrap();
+    store["logins"].as_array().cloned().unwrap_or_default()
+}
+
 /// The only stored login.
 fn stored_login(home: &TempDir) -> Value {
-    let store: Value =
-        serde_json::from_str(&std::fs::read_to_string(store_path(home)).unwrap()).unwrap();
-    let logins = store["logins"].as_array().unwrap();
-    assert_eq!(logins.len(), 1, "{}", logins.len());
+    let logins = logins(home);
+    assert_eq!(logins.len(), 1, "expected one stored login");
     logins[0].clone()
 }
 
@@ -144,28 +153,64 @@ fn cli(home: &TempDir, args: &[&str]) -> (bool, String, String) {
     )
 }
 
+/// Kills the child process when dropped, so that a failed assertion
+/// doesn't leave a `login` polling the provider.
+struct KillOnDrop(Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// Runs `login registry`, answers the device login with `answer` (`accept`
 /// or `deny`) through `approve-device.sh` once the CLI shows the URL, and
 /// returns whether `login` succeeded and its standard error.
 fn login(home: &TempDir, answer: &str) -> (bool, String) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"))
-        .args(["login", "registry"])
-        .env("HOME", home.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut stderr = BufReader::new(child.stderr.take().unwrap());
-    let mut shown = String::new();
-    let url = loop {
-        let mut line = String::new();
-        if stderr.read_line(&mut line).unwrap() == 0 {
-            let _ = child.wait();
-            panic!("login ended before it showed the URL: {shown}");
+    let deadline = Instant::now() + LOGIN_TIMEOUT;
+    let mut child = KillOnDrop(
+        Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"))
+            .args(["login", "registry"])
+            .env("HOME", home.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    // Read in a thread, so that the deadline also applies while the CLI
+    // shows nothing.
+    let stderr = child.0.stderr.take().unwrap();
+    let (lines, received) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            if lines.send(line).is_err() {
+                break;
+            }
         }
-        shown.push_str(&line);
-        if let Some(url) = line.trim_end().strip_prefix("or open ") {
+    });
+    let mut shown = String::new();
+    let next_line = |shown: &mut String| -> Option<String> {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match received.recv_timeout(left) {
+            Ok(line) => {
+                shown.push_str(&line);
+                shown.push('\n');
+                Some(line)
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => None,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("login did not finish within {LOGIN_TIMEOUT:?}: {shown}")
+            }
+        }
+    };
+    let url = loop {
+        let Some(line) = next_line(&mut shown) else {
+            panic!("login ended before it showed the URL: {shown}");
+        };
+        if let Some(url) = line.strip_prefix("or open ") {
             break url.to_owned();
         }
     };
@@ -184,18 +229,9 @@ fn login(home: &TempDir, answer: &str) -> (bool, String) {
         String::from_utf8_lossy(&approval.stderr)
     );
 
-    let deadline = Instant::now() + LOGIN_TIMEOUT;
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            panic!("login did not finish within {LOGIN_TIMEOUT:?}: {shown}");
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    };
-    stderr.read_to_string(&mut shown).unwrap();
+    // The rest of the output, until the CLI exits and closes standard error.
+    while next_line(&mut shown).is_some() {}
+    let status = child.0.wait().unwrap();
     (status.success(), shown)
 }
 
@@ -254,6 +290,8 @@ fn list_with_stored_token(home: &TempDir, service: &Service) -> Value {
     login
 }
 
+// One test for the whole session: the refreshes need the login, and the
+// second refresh needs the refresh token rotated by the first.
 #[test]
 fn login_refresh_and_logout_with_keycloak() {
     let service = Service::start();
@@ -265,6 +303,11 @@ fn login_refresh_and_logout_with_keycloak() {
     assert!(!stderr.contains("refresh token"), "{stderr}");
     let first = stored_login(&home);
     assert_eq!(field(&first, "issuer"), issuer());
+    // Otherwise the first command would already refresh the token.
+    assert!(
+        first["expires_at"].as_u64().unwrap() > now() + EXPIRY_MARGIN + 5,
+        "the realm's access token lifespan must exceed the CLI's refresh margin"
+    );
     assert!(!stderr.contains(&field(&first, "access_token")));
     {
         use std::os::unix::fs::PermissionsExt;
@@ -303,9 +346,7 @@ fn login_refresh_and_logout_with_keycloak() {
     let (success, _, stderr) = cli(&home, &["logout", "registry"]);
     assert!(success, "{stderr}");
     assert!(stderr.contains("Deleted the stored tokens"), "{stderr}");
-    let store: Value =
-        serde_json::from_str(&std::fs::read_to_string(store_path(&home)).unwrap()).unwrap();
-    assert_eq!(store["logins"], json!([]));
+    assert!(logins(&home).is_empty(), "logout left a stored login");
 
     let requests = service.requests().len();
     let (success, _, stderr) = cli(&home, &["registry", "list"]);
@@ -322,12 +363,6 @@ fn a_denied_login_stores_no_tokens() {
     let (success, stderr) = login(&home, "deny");
     assert!(!success);
     assert!(stderr.contains("The login was denied"), "{stderr}");
-    assert!(
-        !store_path(&home).exists() || {
-            let store: Value =
-                serde_json::from_str(&std::fs::read_to_string(store_path(&home)).unwrap()).unwrap();
-            store["logins"].as_array().is_none_or(Vec::is_empty)
-        }
-    );
+    assert!(logins(&home).is_empty(), "a denied login stored tokens");
     assert!(service.requests().is_empty());
 }
