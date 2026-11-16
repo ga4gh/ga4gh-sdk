@@ -5,19 +5,13 @@
 //! [`uri`] parses `drs://` URIs and plans access to their objects. The client
 //! never downloads object bytes.
 
-// Documented in #268
-#[allow(missing_docs)]
 pub mod bulk;
 /// The DRS 1.4 models, generated from its OpenAPI specification.
 // Generated models (utils/build_models.sh): the generator writes `Default`
 // for enums by hand.
 #[allow(clippy::derivable_impls, missing_docs)]
 pub mod models;
-// Documented in #268
-#[allow(missing_docs)]
 pub mod resolution;
-// Documented in #268
-#[allow(missing_docs)]
 pub mod uri;
 
 use crate::clients::drs::models::AccessUrl;
