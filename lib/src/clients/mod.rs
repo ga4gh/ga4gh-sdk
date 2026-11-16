@@ -1,22 +1,14 @@
 //! Clients for the GA4GH APIs, one module per API, and the helpers that they
 //! share.
 
-// Documented in #267
-#[allow(missing_docs)]
 pub mod bundle;
-// Documented in #267
-#[allow(missing_docs)]
 pub mod capabilities;
 pub mod drs;
-// Documented in #267
-#[allow(missing_docs)]
 pub mod pagination;
 pub mod registry;
 pub mod serviceinfo;
 pub mod tes;
 pub mod trs;
-// Documented in #267
-#[allow(missing_docs)]
 pub mod wait;
 pub mod wes;
 
