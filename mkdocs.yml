@@ -97,6 +97,7 @@ nav:
       # Signatures and class docstrings; few methods have docstrings yet
       - Python type stubs: https://github.com/ga4gh/ga4gh-sdk/blob/main/python/ga4gh_sdk.pyi
   - Development:
+      - Developer guide: DEVELOPER_GUIDE.md
       - Overview: docs/development.md
       - Testing: tests/README.md
       - Generated models: docs/autogenerate_OAI_models.md

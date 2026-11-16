@@ -484,6 +484,8 @@ code changes. Please read [these guidelines][contributing] if you want to
 contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
 
+New developers start with the [developer guide](DEVELOPER_GUIDE.md): the
+repository layout, setup, tests, documentation and how to add a client.
 For local checks, coverage, and hooks, see the [development guide](docs/development.md).
 
 ## License
