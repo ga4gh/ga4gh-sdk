@@ -148,11 +148,13 @@ hand-written:
 
 `ga4gh-lib` and `ga4gh-cli` deny public items without a doc comment
 (`#![deny(missing_docs)]`), so every build fails on them, not only
-`make clippy` and CI. Document every new public item, including those
-behind the `workflow-contracts` feature. The generated `models` modules
-are exempt, as the generator writes their docs from the OpenAPI
-specifications; their `#[allow(missing_docs)]` sits next to the Clippy
-allows above.
+`make clippy` and CI. Document every new public item. Items behind the
+`workflow-contracts` feature are checked only in builds that enable it,
+such as workspace builds (the CLI enables it). The generated `models`
+modules are exempt, as the generator writes their docs from the OpenAPI
+specifications: the `models` module of every client carries
+`#[allow(missing_docs)]`, together with the Clippy allows above where
+those apply.
 
 ## Documentation
 

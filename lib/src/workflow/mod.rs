@@ -298,8 +298,9 @@ impl Profile {
         self.document.pointer(pointer)
     }
     /// Validates a WES run request against the profile and returns it as a
-    /// [`PreparedInvocation`], with a fingerprint over the request, the
-    /// identity, the pins and the profile. Submits nothing.
+    /// [`PreparedInvocation`], with a
+    /// [`fingerprint`](PreparedInvocation::fingerprint) over the request,
+    /// the identity, the pins and the profile. Submits nothing.
     ///
     /// # Errors
     ///
@@ -405,8 +406,12 @@ impl PreparedInvocation {
     pub fn request(&self) -> &RunRequest {
         &self.request
     }
-    /// Returns the SHA-256 of the prepared invocation's JSON, which
-    /// identifies it exactly.
+    /// Returns the SHA-256 of the prepared invocation's JSON, taken while
+    /// this field was empty.
+    ///
+    /// The JSON keeps the iteration order of the request's `tags` and
+    /// `workflow_engine_parameters` maps, so the fingerprint is stable
+    /// only if each has at most one entry.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
     }
