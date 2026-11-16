@@ -445,7 +445,10 @@ example `RUST_LOG=debug,reqwest=debug`.
 
 Other schemes, such as `file`, `gs` or `ftp`, are refused with an error, and
 so are declared outputs of type `DIRECTORY` or with a wildcard: save the files
-that the server reports under `file:` instead.
+that the server reports under `file:` instead. A declared output counts as a
+wildcard when its `path` contains `*`, `?` or `[`, or when it has a non-empty
+`path_prefix`; an empty `path_prefix`, which some servers send for single
+files, leaves a `FILE` output a file.
 
 The three commands exit with code 0 on success and code 1 on request, server,
 selection or download errors; missing arguments, such as `--dir`, use exit
