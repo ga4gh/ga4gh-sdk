@@ -195,11 +195,7 @@ make site
   unresolved link. `make docs` builds the whole workspace and stays lenient.
   Fixes in the docs of generated models go into their patch in
   `utils/patches/` (see
-  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). Until the
-  docs of the DRS models are fixed, only their generated `models` module
-  is exempt from the bare-URL and broken-link checks (an `#[allow]` on
-  `pub mod models` in `lib/src/clients/drs/mod.rs`). Hand-written DRS code
-  remains subject to both checks.
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)).
 - `mkdocs build --strict`, which fails on warnings such as links to missing
   files or anchors.
 
