@@ -1,4 +1,10 @@
 //! Bounded comparisons of existing evidence under an explicit versioned policy.
+//!
+//! A [`ComparisonPolicy`] names the outputs to compare, with a
+//! [`Comparator`] for each, and the context keys that must match.
+//! [`ComparisonPolicy::compare`] compares two [`ResultRecord`]s under it
+//! and gives a [`ComparisonReport`]. It reads no artifact; it compares only
+//! the values and the evidence that the records hold.
 use super::{
     results::{AccessStatus, ArtifactEvidence, ContractStatus, IntegrityStatus, ResultRecord},
     ContractError,
@@ -6,43 +12,93 @@ use super::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+/// The outcome of a comparison.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
+    /// The values are the same under the policy.
     EquivalentUnderPolicy,
+    /// The values differ under the policy.
     Different,
+    /// The evidence isn't enough to decide.
     Inconclusive,
 }
+/// How to compare one output of two results.
+///
+/// For both comparators, the output that the pointer starts in must be
+/// [`ContractStatus::Conformant`] in both results; otherwise the outcome is
+/// [`Outcome::Inconclusive`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "comparator", rename_all = "snake_case")]
 pub enum Comparator {
+    /// Compares the SHA-256 of an artifact in both results.
+    ///
+    /// Both results need [`ArtifactEvidence`] at the pointer that is
+    /// [`AccessStatus::Available`] and [`IntegrityStatus::Verified`] against
+    /// an expected SHA-256; otherwise the outcome is inconclusive.
     Sha256 {
+        /// The comparator version; must be 1.
         version: u32,
     },
+    /// Compares the JSON values at the pointer, numbers within tolerances.
+    ///
+    /// Numbers are compared exactly as decimals. Objects must have the same
+    /// keys, and arrays the same length. A `null` on either side, or a
+    /// value larger than the bounds, makes the outcome inconclusive.
     JsonMetrics {
+        /// The comparator version; must be 1.
         version: u32,
+        /// Numbers are equal if they differ by at most this; finite and not
+        /// negative.
         absolute_tolerance: f64,
+        /// Numbers are equal if they differ by at most this share of the
+        /// larger magnitude; finite and not negative.
         relative_tolerance: f64,
+        /// JSON pointers, relative to the compared value, to skip.
         ignored_pointers: Vec<String>,
+        /// Whether to sort arrays before comparing them element by element.
+        /// Requires both tolerances to be 0.
         unordered_arrays: bool,
+        /// The most JSON nodes to compare, from 1 to 1,000,000. Values
+        /// nested deeper than 128 levels or with more than 8 MiB of strings
+        /// and keys are also too large.
         max_nodes: usize,
     },
 }
+/// A versioned policy for comparing two results.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ComparisonPolicy {
+    /// The policy's identifier; not blank.
     pub id: String,
+    /// The policy version; must be 1.
     pub version: u32,
+    /// The comparator for each output, by JSON pointer into the outputs;
+    /// not empty.
     pub outputs: BTreeMap<String, Comparator>,
+    /// The context keys that must be set, not empty and equal in both
+    /// results. `schema_digest` is part of the context.
     pub required_context: Vec<String>,
 }
+/// The result of comparing two results under a policy.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ComparisonReport {
+    /// The policy that was applied.
     pub policy: ComparisonPolicy,
+    /// The run reference of the left result.
     pub left: String,
+    /// The run reference of the right result.
     pub right: String,
+    /// The overall outcome. It is inconclusive if required context is
+    /// missing or differs, or if any output is inconclusive; otherwise
+    /// different if any output differs.
     pub outcome: Outcome,
+    /// The outcome for each output, by JSON pointer.
     pub outputs: BTreeMap<String, Outcome>,
+    /// Every context key, including `schema_digest`, whose values differ,
+    /// with the left and right value.
     pub context_drift: BTreeMap<String, (Option<String>, Option<String>)>,
+    /// The required context keys that are missing or empty in either
+    /// result.
     pub missing_context: Vec<String>,
 }
 fn verified_digest(evidence: &ArtifactEvidence) -> Option<String> {
@@ -221,6 +277,14 @@ fn metrics(
     }
 }
 impl ComparisonPolicy {
+    /// Compares two results under the policy.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the policy is invalid: a blank `id`, a version other than
+    /// 1, no outputs, an output key that isn't a JSON pointer, or a
+    /// comparator with a version other than 1, invalid tolerances or
+    /// bounds, or an ignored pointer that isn't a JSON pointer.
     pub fn compare(
         &self,
         left: &ResultRecord,
