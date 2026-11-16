@@ -64,6 +64,8 @@ impl Error for ResolveError {}
 
 /// Opt-in bounded state machine. Local cancellation stops observation only.
 /// Zero seconds is clamped to one; missing/malformed/overflow/>1h delays fail.
+// ResolveError exposes structured context; boxing it would change the public API.
+#[allow(clippy::result_large_err)]
 pub async fn resolve_until<T, F, Fut>(
     reference: ResolutionReference,
     operation: &Operation,
@@ -173,6 +175,7 @@ impl DRS {
         )))
         .await
     }
+    #[allow(clippy::result_large_err)]
     pub async fn resolve_object(
         &self,
         object_id: &str,
@@ -186,6 +189,7 @@ impl DRS {
         })
         .await
     }
+    #[allow(clippy::result_large_err)]
     pub async fn resolve_access_url(
         &self,
         object_id: &str,
