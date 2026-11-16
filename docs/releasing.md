@@ -1,8 +1,9 @@
 # Releasing
 
 A version tag `v<version>` on `main` starts the [Release workflow](../.github/workflows/release.yml).
-It publishes the Python bindings to PyPI and creates a draft GitHub release
-with the CLI binaries, which a maintainer completes and publishes.
+It publishes the Python bindings to PyPI, creates a draft GitHub release
+with the CLI binaries, and publishes the [CLI image](container-image.md) to
+the GitHub Container Registry.
 
 ## What the workflow does
 
@@ -60,7 +61,17 @@ with the CLI binaries, which a maintainer completes and publishes.
    runs, without publishing; for changes to the CLI's native dependencies or
    platform support, run CI manually on the PR branch before merging. This job
    runs in parallel with the wheels.
-4. **Publish package** waits for the wheels and the CLI binaries, so that
+4. **Release image** ([`image.yml`](../.github/workflows/image.yml)) builds
+   the [CLI image](container-image.md) natively for `linux/amd64` and
+   `linux/arm64`, checks each with `tests/run-image-tests.sh` (on
+   `linux/amd64` also against Funnel) and pushes each platform image by
+   digest, without a tag. The push rebuilds the checked image from the
+   builder's layer cache, with the source and revision labels and
+   reproducible timestamps, and runs `--version` on the pushed digest.
+   Unlike the wheel matrix, CI also runs this build and its checks on every
+   pull request (the **CLI image** job, about two minutes per platform),
+   without pushing.
+5. **Publish package** waits for the wheels, CLI binaries and image, so that
    nothing reaches PyPI unless every artefact of the release is built. It
    uploads all files with
    [trusted publishing](https://docs.pypi.org/trusted-publishers/): there is no
@@ -68,7 +79,7 @@ with the CLI binaries, which a maintainer completes and publishes.
    environment. The upload also carries
    [attestations](https://docs.pypi.org/attestations/) of where each file was
    built.
-5. **GitHub release** runs after the package is published. It writes
+6. **GitHub release** runs after the package is published. It writes
    `SHA256SUMS` for the archives, records
    [build provenance attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
    for them, and creates a **draft** release for the tag, flagged as a
@@ -77,10 +88,16 @@ with the CLI binaries, which a maintainer completes and publishes.
    stops if the release is already published or if it can't check whether a
    release exists.
 
+7. **Publish image** runs after the package is on the index. It combines the
+   two platform images into one multi-platform image, tags it with the
+   version and records a build provenance attestation for it (see
+   [CLI image](#cli-image)).
+
 If a run fails after **Publish package** has uploaded the files, use **Re-run
 failed jobs**, not **Re-run all jobs**: PyPI refuses files it already has, so
-a full re-run fails at the upload and never reaches the GitHub release. If the
-deployment to `pypi` is rejected, the run creates no GitHub release.
+a full re-run fails at the upload and never reaches the GitHub release or
+versioned image tag. If the deployment to `pypi` is rejected, the run creates
+neither.
 
 The Python version comes from the workspace version; maturin converts it to
 PEP 440, so `0.2.0-rc.1` becomes `0.2.0rc1` on PyPI. Files on PyPI can't be
@@ -106,6 +123,33 @@ the variable afterwards, or the next tag goes to TestPyPI, too. Such a run
 also creates a draft GitHub release for the rehearsal tag; check it, then
 delete it, and never publish it.
 
+## CLI image
+
+| Repository | Image |
+| --- | --- |
+| `ga4gh/ga4gh-sdk` | `ghcr.io/ga4gh/ga4gh-cli` |
+| A fork | `ghcr.io/<fork owner>/ga4gh-cli` |
+
+The workflow pushes with the job's `GITHUB_TOKEN`; it needs no secret and no
+environment. The tag is the workspace version, such as `0.2.0` or
+`0.2.0-rc.1` (a `+` of build metadata becomes `_`, which OCI tags allow).
+There is no `latest` tag. An upstream TestPyPI rehearsal (`PYPI_INDEX` set
+to `testpypi` in `ga4gh/ga4gh-sdk`) pushes the platform images by digest
+but tags no image, and **Publish image** is skipped. Unlike files on PyPI,
+a tag can be moved: a re-run of **Publish image** points the version tag at
+the images of that run, and earlier digests stay available. For a release
+to PyPI, once the package is there, use **Re-run failed jobs**, not **Re-run all jobs**:
+PyPI refuses files it already has, so a full re-run fails at **Publish
+package** and skips **Publish image**.
+
+On the first push, GitHub creates the `ga4gh-cli` package, connected to this
+repository. Check after the first release that the package is public (the
+package's settings on GitHub, **Change visibility**) and that it inherits
+access from the repository; organization settings can restrict who creates
+public packages. Then replace the sentence starting "No release
+includes the image yet" in `docs/container-image.md` with the first version
+that includes the image.
+
 ## One-time setup
 
 The `ga4gh/ga4gh-sdk` repository already has `pypi` and `testpypi`
@@ -114,8 +158,10 @@ environments limited to `v*` tags. Both require approval by
 Two tag rulesets allow only those two users to create `v*` tags and prevent
 updates or deletion. Verify these protections before each release. The CLI
 binaries and the GitHub release need no environment and no secret. The binary
-builds are read-only; only the **GitHub release** job gets `contents`,
-`attestations` and `id-token` write access, from the workflow's own token.
+builds are read-only; only **Release image** and **Publish image** get
+`packages: write` for GHCR. **Publish image** also gets `attestations` and
+`id-token` write; **GitHub release** gets `contents`, `attestations` and
+`id-token` write. They use the workflow token, without a registry secret.
 
 For the demonstrator release, the
 [`pavelnikonorov` PyPI account](https://pypi.org/user/pavelnikonorov/) will
@@ -156,18 +202,30 @@ confirmed.
    git push origin v0.2.0
    ```
 
-3. Approve the deployment to `pypi` in the workflow run once the wheels and
-   the CLI binaries are built.
-4. When the run has finished, open the draft release, add the curated notes
-   above GitHub's generated ones, check that it lists the six CLI archives and
-   `SHA256SUMS`, and publish it. A draft is visible to maintainers only and can
-   be edited or deleted; once published, its files may no longer be
-   replaceable (for example with immutable releases).
+3. Approve the deployment to `pypi` in the workflow run once the wheels,
+   CLI binaries and image are built and checked.
+4. When the run has finished, check the image tag and its attestation:
+
+   ```sh
+   docker buildx imagetools inspect ghcr.io/ga4gh/ga4gh-cli:0.2.0
+   gh attestation verify oci://ghcr.io/ga4gh/ga4gh-cli:0.2.0 --repo ga4gh/ga4gh-sdk
+   ```
+
+5. Open the draft release, add the curated notes above GitHub's generated
+   ones, check that it lists the six CLI archives and `SHA256SUMS`, and publish
+   it. A draft is visible to maintainers only and can be edited or deleted;
+   once published, its files may no longer be replaceable (for example with
+   immutable releases).
+6. After the first release that includes the image, make the `ga4gh-cli`
+   package public as described under [CLI image](#cli-image). Until then,
+   `docker pull` without a login fails for anyone without package access.
 
 ## Dry run in a fork
 
-Try changes to the workflows in a fork before tagging `ga4gh/ga4gh-sdk`. The
-fork needs GitHub Actions enabled. Use
+Try changes to the workflows in a fork before tagging `ga4gh/ga4gh-sdk`.
+The run pushes the image to `ghcr.io/<fork owner>/ga4gh-cli` and tags it;
+keep the image package for review and delete it later if no longer needed.
+The fork needs GitHub Actions enabled. Use
 a distinct, available test-only distribution name that explains its purpose,
 such as `ga4gh-sdk-release-rehearsal`. The TestPyPI publisher and the name in
 `python/pyproject.toml` must match exactly:
@@ -201,6 +259,18 @@ such as `ga4gh-sdk-release-rehearsal`. The TestPyPI publisher and the name in
    flagged as a pre-release. Download one archive, check it with
    `sha256sum --check --ignore-missing SHA256SUMS` and
    `gh attestation verify <archive> --repo <fork-owner>/ga4gh-sdk`, and run
-   `ga4gh-cli --version`.
-7. Keep the test tag and the draft release until the run and package can be
-   reviewed; delete both from the fork later if they are no longer needed.
+   `ga4gh-cli --version`. Then check the image; confirm that the index lists
+   both `linux/amd64` and `linux/arm64`. A fork's package is private unless
+   you make it public, so log in before inspecting or running it:
+
+   ```sh
+   fork_owner=YOUR_USERNAME
+   image="ghcr.io/$fork_owner/ga4gh-cli:0.1.0-dev.1"
+   gh auth token | docker login ghcr.io --username "$fork_owner" --password-stdin
+   docker buildx imagetools inspect "$image"
+   docker run --rm "$image" --version
+   gh attestation verify "oci://$image" --repo "$fork_owner/ga4gh-sdk"
+   ```
+7. Keep the test tag, draft release and image package until the run and
+   artifacts can be reviewed; delete them from the fork later if no longer
+   needed.

@@ -80,6 +80,14 @@ jobs:
     if: github.event_name != 'pull_request'
     uses: ./.github/workflows/wheels.yml
 
+  # Builds the CLI image of every supported platform and checks it, on
+  # linux/amd64 also against Funnel; nothing is pushed. Unlike the wheels,
+  # this runs on PRs: it takes about two minutes per platform and is the
+  # only check of the Dockerfile, build context and site check script.
+  image:
+    name: CLI image
+    uses: ./.github/workflows/image.yml
+
   # Builds and runs the CLI binary of every release platform, like the
   # wheels above: after merges to main and on manual dispatch; nothing is
   # published.
@@ -303,7 +311,7 @@ jobs:
 
   passed:
     name: CI passed
-    needs: [lint, test, build, python, wheels, binaries, integration, coverage, codecov, pre-commit, docs, downstream]
+    needs: [lint, test, build, python, wheels, binaries, image, integration, coverage, codecov, pre-commit, docs, downstream]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -322,7 +330,7 @@ jobs:
           for name, result in results.items():
               print(f'{name}: {result}')
           expected = {
-              'lint', 'test', 'build', 'python', 'wheels', 'binaries', 'integration',
+              'lint', 'test', 'build', 'python', 'wheels', 'binaries', 'image', 'integration',
               'coverage', 'codecov', 'pre-commit', 'docs', 'downstream',
           }
           expected_results = {name: 'success' for name in expected}

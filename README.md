@@ -136,6 +136,11 @@ cargo install --path cli --locked
 ga4gh-cli --help
 ```
 
+To run the CLI as a container, for example as a Kubernetes Job inside a
+cluster, see the [container image guide](docs/container-image.md). Releases
+publish the image as `ghcr.io/ga4gh/ga4gh-cli`; the guide says whether a
+release includes it yet.
+
 To use the Rust library in your own project, add it as a Git dependency
 (package `ga4gh-lib`, crate `ga4gh_sdk`):
 

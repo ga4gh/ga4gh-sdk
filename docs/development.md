@@ -243,6 +243,7 @@ on pushes to `main` and on manual dispatch:
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
 | `wheels` | Python wheels | Full platform wheel and sdist matrix on `main` pushes and manual runs; skipped on PRs |
 | `binaries` | CLI binaries | Builds and runs `ga4gh-cli` on the six release platforms on `main` pushes and manual runs; skipped on PRs |
+| `image` | CLI image | Builds the [CLI image](container-image.md) for `linux/amd64` and `linux/arm64` and runs `tests/run-image-tests.sh` (with Funnel on `linux/amd64`); runs on PRs too |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
@@ -255,9 +256,10 @@ on pushes to `main` and on manual dispatch:
 its `needs:` and to the list of expected jobs in its script. Ordinary PRs run
 the Python binding tests, including a local wheel build, but do not run the
 five-platform wheel and sdist matrix or the six-platform CLI binary matrix.
-Every push to `main` runs both matrices; version tags also build them as part
-of the [release workflow](releasing.md). For a PR that changes packaging,
-native dependencies, supported platforms or the wheel, binary or release
+Every pull request also builds and tests the CLI image on both supported
+platforms. Every push to `main` runs the wheel, binary and image matrices;
+version tags build them as part of the [release workflow](releasing.md).
+For a PR that changes packaging, native dependencies, supported platforms or the wheel, binary or release
 workflows, open **Actions → CI → Run workflow**, select the PR branch and run
 the full matrices before merging. Check the wheel, sdist and CLI binary jobs.
 The manual run builds artifacts but does not publish them.
