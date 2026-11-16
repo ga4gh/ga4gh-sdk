@@ -111,3 +111,49 @@ def test_package_ships_stubs_and_marker():
     package = Path(ga4gh_sdk.__file__).parent
     assert (package / "py.typed").is_file()
     assert (package / "__init__.pyi").is_file()
+
+
+def undocumented_members(node):
+    """The names of a stub class's members without a docstring.
+
+    Of an overloaded method, only the last declaration, which holds the docstring, counts.
+    Attributes and enum members count if no string literal follows them.
+    """
+    missing = []
+    body = node.body
+    for index, item in enumerate(body):
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            overloaded = any(
+                isinstance(d, ast.Name) and d.id == "overload" for d in item.decorator_list
+            )
+            redeclared = any(
+                isinstance(other, ast.FunctionDef) and other.name == item.name
+                for other in body[index + 1 :]
+            )
+            if overloaded and redeclared:
+                continue
+            if ast.get_docstring(item) is None:
+                missing.append(item.name)
+        elif isinstance(item, (ast.AnnAssign, ast.Assign)):
+            following = body[index + 1] if index + 1 < len(body) else None
+            documented = (
+                isinstance(following, ast.Expr)
+                and isinstance(following.value, ast.Constant)
+                and isinstance(following.value.value, str)
+            )
+            if not documented:
+                targets = [item.target] if isinstance(item, ast.AnnAssign) else item.targets
+                missing.extend(t.id for t in targets if isinstance(t, ast.Name))
+    return missing
+
+
+def test_stub_documents_the_module():
+    # The Python API reference (`api.md`) is generated from the stub's docstrings.
+    assert ast.get_docstring(TREE)
+
+
+@pytest.mark.parametrize("name", sorted(stub_class_nodes()))
+def test_stub_documents_every_member(name):
+    node = stub_class_nodes()[name]
+    assert ast.get_docstring(node), name
+    assert undocumented_members(node) == [], name
