@@ -10,7 +10,9 @@ The PyO3 wrappers are maintained by hand. New Rust methods and generated models
 do not appear in Python automatically. For a changed SDK client or model, check
 the [supported surface](README.md#supported-surface). Decide whether Python
 should expose the new behavior now; update the wrapper, table, and examples, or
-record that it remains Rust-only. Do not infer full Rust/Python feature parity
+record that it remains Rust-only. Give every new class and member a docstring in
+`ga4gh_sdk.pyi` (Google style), from which the Python API reference is
+generated; keep it consistent with the Rust doc comment that `help()` shows. Do not infer full Rust/Python feature parity
 from a successful build.
 
 Trace the user path through Python arguments, the PyO3 wrapper, the Rust client,

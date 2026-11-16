@@ -161,7 +161,9 @@ examples. [Read the Docs](https://ga4gh-sdk.readthedocs.io/) publishes them
 as one site, built with [MkDocs](https://www.mkdocs.org/) and the
 [Material theme](https://squidfunk.github.io/mkdocs-material/), together with
 the Rust API reference of `cargo doc` for the `ga4gh_sdk` and `ga4gh_cli`
-crates. Once the Read the Docs project is configured as described below, it
+crates and the [Python API reference](../python/api.md), which
+[mkdocstrings](https://mkdocstrings.github.io/python/) renders from the
+docstrings of the type stubs (`python/ga4gh_sdk.pyi`). Once the Read the Docs project is configured as described below, it
 serves `latest` from `main`, a version per tag, and pull request previews.
 
 - [`mkdocs.yml`](../mkdocs.yml) configures the site. Its `nav` lists the
@@ -197,7 +199,13 @@ make site
   `utils/patches/` (see
   [Autogenerate OpenAPI models](autogenerate_OAI_models.md)).
 - `mkdocs build --strict`, which fails on warnings such as links to missing
-  files or anchors.
+  files or anchors. It also fails if the Python API reference can't be
+  generated, or if a docstring of the stubs documents a parameter that the
+  signature lacks. The stubs' docstrings use the Google style (`Args:`,
+  `Returns:`, `Raises:`); Griffe reads the stubs as the stub-only package
+  `python/stubs/ga4gh_sdk/`, a link to them, so the build needs no compiled
+  bindings. `tests/test_stubs.py` of the Python tests checks that every class
+  and member has a docstring.
 
 `python3 -m pytest docs/test_hooks.py` tests the hooks; CI
 runs both. After the first `make site`, `mkdocs serve` shows the site
