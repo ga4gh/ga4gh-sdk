@@ -117,7 +117,7 @@ class Configuration:
             token: The token, without the `Bearer ` prefix.
         """
     def clear_auth(self) -> None:
-        """Removes the Basic and bearer credentials, before another source is set."""
+        """Removes every credential source, the token provider included."""
     def get_extra(self) -> _JSONObject:
         """Gives the keys of the configuration file section that the SDK doesn't use.
 
@@ -207,10 +207,6 @@ class ServiceInfo:
 
         Args:
             py_config: The service's configuration.
-
-        Raises:
-            ValueError: The configuration can't be used, for example because of
-                conflicting credentials.
         """
     def get_service_info(self) -> str:
         """Reads the service info.
@@ -219,7 +215,8 @@ class ServiceInfo:
             The service info as formatted text (`"Service: ..."`), not as a typed model.
 
         Raises:
-            RuntimeError: The request failed or the response is not a service info.
+            RuntimeError: The request failed, for example because of conflicting
+                credentials, or the response is not a service info.
         """
 
 class DrsObject:
@@ -347,7 +344,10 @@ class BulkPolicy:
         initial_delay: float = 0.2,
         max_delay: float = 10.0,
     ) -> None:
-        """Builds a policy; invalid values raise `ValueError` when a bulk call starts.
+        """Builds a policy.
+
+        Negative numbers raise `ValueError` here; other invalid values, such as a
+        `chunk_size` of 0, raise it when a bulk call starts.
 
         Args:
             chunk_size: The most IDs per request.
@@ -374,7 +374,8 @@ class BulkPolicy:
             `maxBulkRequestLength`.
 
         Raises:
-            ValueError: `service_info` is not a JSON object.
+            ValueError: `service_info` isn't JSON, or its `maxBulkRequestLength` is
+                invalid.
         """
     @property
     def chunk_size(self) -> int:
@@ -830,11 +831,10 @@ class Transport:
     def __init__(self, py_config: Configuration) -> None:
         """Builds a transport with the API root and settings of `py_config`.
 
+        Conflicting credentials raise `RuntimeError` on the first request.
+
         Args:
             py_config: The service's configuration.
-
-        Raises:
-            ValueError: The configuration can't be used.
         """
     def get(self, endpoint: str, params: _Params | None = None) -> str:
         """Sends a `GET` request.
@@ -1244,6 +1244,7 @@ class TRS:
             The next page.
 
         Raises:
+            ValueError: `next_page` is empty.
             RuntimeError: The URL is not at the client's tools endpoint (before a request),
                 or the request failed.
         """
@@ -1308,7 +1309,7 @@ class TRS:
             The file.
 
         Raises:
-            ValueError: An ID or `relative_path` is empty, `.` or `..`.
+            ValueError: An ID, `descriptor_type` or `relative_path` is empty, `.` or `..`.
             RuntimeError: The request failed.
         """
     def list_tests(self, id: str, version_id: str, descriptor_type: str) -> list[FileWrapper]:
@@ -1324,7 +1325,7 @@ class TRS:
             The test files.
 
         Raises:
-            ValueError: An ID is empty, `.` or `..`.
+            ValueError: An ID or `descriptor_type` is empty, `.` or `..`.
             RuntimeError: The request failed.
         """
     def list_files(self, id: str, version_id: str, descriptor_type: str) -> list[ToolFile]:
@@ -1339,7 +1340,7 @@ class TRS:
             The files.
 
         Raises:
-            ValueError: An ID is empty, `.` or `..`.
+            ValueError: An ID or `descriptor_type` is empty, `.` or `..`.
             RuntimeError: The request failed.
         """
     def get_files_zip(
@@ -1359,7 +1360,8 @@ class TRS:
             The archive.
 
         Raises:
-            ValueError: An ID is invalid or `limit` is below 1.
+            ValueError: An ID or `descriptor_type` is empty, `.` or `..`, or `limit` is
+                below 1.
             RuntimeError: The request failed, the archive is larger than `limit`, or the
                 response isn't a ZIP archive.
         """
@@ -1750,8 +1752,9 @@ class WES:
             The run.
 
         Raises:
-            ValueError: The request or an attachment name is invalid, or the request has a
-                `workflow_attachment` field (pass files with `attachments`).
+            ValueError: The request or an attachment name is invalid, a `str` starts with
+                `{`, or the request has a `workflow_attachment` field (pass files with
+                `attachments`).
             OSError: A request or attachment file can't be read.
             RuntimeError: The request failed or the response doesn't fit the WES models.
         """
