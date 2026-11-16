@@ -22,7 +22,7 @@ release the GIL and use the shared runtime in `src/utils/runtime.rs`.
 ## Lay out a service binding
 
 A service binding with more than one class lives in a folder under
-`src/clients/`, as `drs/` and `wes/` do:
+`src/clients/`, as `drs/`, `tes/`, `trs/` and `wes/` do:
 
 - `mod.rs` has the module docs, which list the files, and `register()`, which
   adds the classes to the Python module. It re-exports every class and every
@@ -33,17 +33,23 @@ A service binding with more than one class lives in a folder under
   for extension crates, such as `clients::wes::PyWES`.
 - `helpers.rs` holds the functions that only this binding's files share, as
   `pub(super)`; it defines no Python classes.
+- Functions that code outside the folder uses, such as the TES calls that
+  `clients::tes_async` and extension crates share, are `pub` in the file of
+  their topic (`tes/calls.rs`, `tes/wait.rs`) and re-exported from `mod.rs`.
+  A binding whose classes are split over several Rust modules, such as TES with
+  `clients::tes_async`, registers all of them in one `register()`.
 - Helpers that another binding needs in the same form go to `src/utils/`
   instead, such as `utils::json` (`field()`, `invalid_response()`,
-  `parse_body()`) and `utils::validate` (`require_id()`). Pass the API name
-  where a message names it, as in `Invalid WES response: …`.
+  `parse_body()`), `utils::validate` (`require_id()`) and
+  `utils::convert::define_class()` for classes defined in Python, such as the
+  state enums. Pass the API name where a message names it, as in
+  `Invalid WES response: …`.
 
 Moving code between these files must not change the Python API. Keep the doc
 comments word for word: PyO3 turns them into the docstrings that `help()`
 shows. Keep the order of `register()`, which is the order of the classes in the
 Python module, the `name` and `module` of each `#[pyclass]`, the type stub
-`ga4gh_sdk.pyi` and the error messages. Bindings that are still single files,
-such as `tes.rs`, move to this layout one API at a time.
+`ga4gh_sdk.pyi` and the error messages.
 
 ## Verify user behavior
 

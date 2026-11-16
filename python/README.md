@@ -1002,7 +1002,9 @@ which don't mix with those of the `ga4gh_sdk` module: a `ga4gh_sdk.Configuration
 to it. So register every base class that its users need
 (`m.add_class::<PyConfiguration>()` and so on, and `m.add("TesState",
 tes_state_type(py)?)` for the state enum) in the extension module, and import everything
-from there. The default feature `extension-module` builds the Python module; a dependent
+from there. `clients::tes::register(py, m)` registers all TES classes, the sync and the
+async ones, with the `PyTesTask` alias, the `TesState` enum and `WaitTimeoutError`. The
+default feature `extension-module` builds the Python module; a dependent
 crate can turn it off with `default-features = false` and enable it in its own features
 instead.
 
