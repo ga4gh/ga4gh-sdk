@@ -259,10 +259,18 @@ such as `ga4gh-sdk-release-rehearsal`. The TestPyPI publisher and the name in
    flagged as a pre-release. Download one archive, check it with
    `sha256sum --check --ignore-missing SHA256SUMS` and
    `gh attestation verify <archive> --repo <fork-owner>/ga4gh-sdk`, and run
-   `ga4gh-cli --version`. Check that the image is at
-   `ghcr.io/<fork owner>/ga4gh-cli:0.1.0-dev.1` and runs with `--version`.
-   The package is private in a fork unless you make it public; log in with
-   `gh auth token | docker login ghcr.io -u <user> --password-stdin` first.
+   `ga4gh-cli --version`. Then check the image; confirm that the index lists
+   both `linux/amd64` and `linux/arm64`. A fork's package is private unless
+   you make it public, so log in before inspecting or running it:
+
+   ```sh
+   fork_owner=YOUR_USERNAME
+   image="ghcr.io/$fork_owner/ga4gh-cli:0.1.0-dev.1"
+   gh auth token | docker login ghcr.io --username "$fork_owner" --password-stdin
+   docker buildx imagetools inspect "$image"
+   docker run --rm "$image" --version
+   gh attestation verify "oci://$image" --repo "$fork_owner/ga4gh-sdk"
+   ```
 7. Keep the test tag, draft release and image package until the run and
    artifacts can be reviewed; delete them from the fork later if no longer
    needed.
