@@ -4,19 +4,26 @@
 //! its checks of IDs and tags. `Tool`, `ToolVersion`, `FileWrapper` and `ToolFile` are
 //! results that keep the JSON of the Rust models, including fields that the TRS models
 //! don't know; `ToolPage` is one page of `TRS.list_tools()`.
-
+//!
+//! The modules:
 //!
 //! - `client`: `TRS`, the client.
+//! - `versions`: the version and capability selection of the client (`api_version`,
+//!   `tag_filter`, `discovery`).
 //! - `tools`: `Tool` and `ToolVersion`.
 //! - `files`: `FileWrapper` and `ToolFile`.
 //! - `page`: `ToolPage` and its response headers.
 //! - `helpers`: functions shared by this binding; no Python classes.
+//!
+//! Helpers that other service bindings can use as they are go to `crate::utils` instead,
+//! such as `utils::json` and `utils::validate`.
 
 mod client;
 mod files;
 mod helpers;
 mod page;
 mod tools;
+mod versions;
 
 pub use client::PyTRS;
 pub use files::{PyFileWrapper, PyToolFile};
