@@ -79,6 +79,8 @@ plugins:
         python:
           paths: [python/stubs]
           options:
+            # Renders methods declared only with `@overload`, such as `Task.wait`
+            extensions: [docs/griffe_overloads.py]
             docstring_style: google
             show_root_heading: true
             show_root_full_path: false
