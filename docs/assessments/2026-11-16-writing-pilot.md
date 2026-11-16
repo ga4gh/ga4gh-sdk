@@ -212,7 +212,9 @@ Findings for the procedure:
 2. The TES and DRS clients add a hint to a discovery failure, as shown above.
    The procedure did not say so. This PR adds it.
 3. The build prerequisites omit the OpenSSL development package and
-   `pkg-config`. That is outside this procedure and has a separate follow-up.
+   `pkg-config`. That is outside this procedure;
+   [#261](https://github.com/ga4gh/ga4gh-sdk/pull/261) adds them to the
+   developer guide.
 
 ## Advisory prose checks
 
@@ -254,8 +256,9 @@ detect those. A terminology check found one "base URL" against 43 uses of
 3. **Instruction refinements.** The permanent guidance no longer describes
    the guide as a pilot under evaluation, and links this record instead. The
    API-root procedure names a result that CLI users can observe.
-4. **Follow-ups.** The build prerequisites and the routing into the long
-   engineering principles file need separate issues.
+4. **Follow-ups.** [#261](https://github.com/ga4gh/ga4gh-sdk/pull/261)
+   covers the build prerequisites. Routing agents into the routed section of
+   the long engineering principles file may need separate work.
 
 ## Reproduction
 
