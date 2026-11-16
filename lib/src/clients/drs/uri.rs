@@ -1,20 +1,31 @@
-//! Hostname DRS references -> explicit access plans. Never downloads object bytes.
+//! Turns hostname-based `drs://` URIs into access plans; never downloads
+//! object bytes.
 //!
 //! [`DrsUri`] parses hostname-based `drs://<host>/<id>` URIs.
 //! [`DrsResolver`] reads the object at its host's DRS service, picks an
 //! access method by [`AccessPreferences`], and gives an [`AccessPlan`]: the
-//! URL and headers to fetch the bytes with.
+//! URL and headers to fetch the bytes with. [`DrsResolver::with_service`]
+//! sets the transport, such as one with credentials, for a host, and
+//! [`DrsResolver::access_plan_once`] gives pending answers back instead of
+//! waiting.
 //!
 //! ```no_run
+//! use ga4gh_sdk::clients::drs::models::access_method::Type;
 //! use ga4gh_sdk::clients::drs::uri::{AccessPreferences, DrsResolver};
 //! use ga4gh_sdk::utils::operation::Operation;
 //! use std::time::Duration;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let resolver = DrsResolver::default();
+//! // HTTPS access methods first, then S3 ones
+//! let preferences = AccessPreferences {
+//!     protocols: vec![Type::Https, Type::S3],
+//!     ..Default::default()
+//! };
 //! let operation = Operation::new(Duration::from_secs(60));
+//! let max_attempts = 3;
 //! let plan = resolver
-//!     .access_plan("drs://drs.example.org/object-1", &AccessPreferences::default(), &operation, 3)
+//!     .access_plan("drs://drs.example.org/object-1", &preferences, &operation, max_attempts)
 //!     .await?;
 //! println!("{:?} from {}", plan.method, plan.url.origin().ascii_serialization());
 //! # Ok(())
@@ -38,11 +49,12 @@ use url::Url;
 pub enum UriError {
     /// The URI doesn't start with `drs://`.
     UnsupportedScheme,
-    /// The URI is a compact identifier (`drs://<prefix>:<accession>`), which
-    /// needs a resolver service.
+    /// The URI has a `:` after `drs://`: a compact identifier
+    /// (`drs://<prefix>:<accession>`), which needs a resolver service, but
+    /// also a host with a port or an IPv6 address.
     UnsupportedCompactIdentifier,
-    /// The URI isn't `drs://<host>/<id>` with a host without port and a
-    /// percent-encoded ID of one path segment.
+    /// The URI isn't `drs://<host>/<id>` with a percent-encoded ID of one
+    /// path segment.
     Malformed,
 }
 impl fmt::Display for UriError {
@@ -60,7 +72,8 @@ impl Error for UriError {}
 /// A hostname-based DRS URI, `drs://<host>/<id>`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DrsUri {
-    /// The host, in lowercase.
+    /// The host as the URL parser normalizes it: lowercase, with
+    /// internationalized names in punycode.
     pub authority: String,
     /// The object ID, percent-decoded.
     pub object_id: String,
@@ -154,7 +167,8 @@ pub enum AccessChoiceError {
     /// No method matches the preferences, or the chosen one has neither an
     /// access URL nor an access ID.
     UnsupportedMethods,
-    /// The matching methods are marked unavailable.
+    /// The matching methods, or the one of `method_index`, are marked
+    /// unavailable.
     Unavailable,
     /// `method_index` is out of range.
     InvalidOverride,
@@ -290,7 +304,9 @@ impl DrsResolver {
     ///
     /// # Errors
     ///
-    /// Fails with [`UriError::Malformed`] if `authority` isn't a host.
+    /// Fails with [`UriError::UnsupportedCompactIdentifier`] if `authority`
+    /// has a `:`, such as a port, and with [`UriError::Malformed`] if it
+    /// isn't a host otherwise.
     pub fn with_service(mut self, authority: &str, transport: Transport) -> Result<Self, UriError> {
         let authority = DrsUri::parse(&format!("drs://{authority}/placeholder"))?.authority;
         self.services.insert(authority, transport);
@@ -367,16 +383,19 @@ impl DrsResolver {
             access,
         )?))
     }
-    /// Opt-in waiting uses the same deferred-resolution state machine and budget.
+    /// Like [`Self::access_plan_once`], but waits for pending answers, with up
+    /// to `max_attempts` attempts per request, as [`DRS::resolve_object`]
+    /// does.
     ///
-    /// Like [`Self::access_plan_once`], but retries pending answers up to
-    /// `max_attempts` times per request, as [`DRS::resolve_object`] does.
+    /// Opt-in waiting uses the same deferred-resolution state machine and budget.
     ///
     /// # Errors
     ///
-    /// Fails as [`Self::access_plan_once`] does, or with a
-    /// [`ResolveError`](super::resolution::ResolveError) when the retries
-    /// end.
+    /// Fails if `uri` can't be parsed, the server sends another object, or no
+    /// access method fits (see [`AccessChoiceError`]). Failures while reading
+    /// the object or access URL, an operation that ends and a
+    /// `max_attempts` outside 1 to 10 000 included, come as a
+    /// [`ResolveError`](super::resolution::ResolveError).
     pub async fn access_plan(
         &self,
         uri: &str,

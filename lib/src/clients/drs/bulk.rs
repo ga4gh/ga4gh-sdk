@@ -55,6 +55,8 @@ pub struct BulkPending {
     /// How many seconds to wait before asking again (1 to 3600).
     pub retry_after_secs: u64,
 }
+/// The result of a bulk call for one key.
+///
 /// Multiple returned values are retained rather than silently selecting a duplicate.
 /// Debug output shows counts because resolved access URLs and error text may
 /// contain credentials. Inspect the public fields only in an appropriate context.
@@ -142,7 +144,8 @@ impl<T> BulkReport<T> {
         self.dialects.extend(other.dialects);
     }
 }
-/// Limits of a bulk call. Invalid values fail the call before any request.
+/// Limits of a bulk call. Invalid values fail the call before any request;
+/// a call without keys returns an empty report without checking them.
 #[derive(Clone, Debug)]
 pub struct BulkPolicy {
     /// The most keys per request (default 100); positive.
@@ -159,9 +162,10 @@ pub struct BulkPolicy {
     /// Large` is split in halves (default 8); at most 32.
     pub max_split_depth: usize,
     /// How often a request is tried after network errors, `429` or `503`
-    /// (default: once).
+    /// (default 1 attempt); valid as [`RetryPolicy::validate`] requires.
     pub retry: RetryPolicy,
-    /// The most bytes read of each response body.
+    /// The most bytes read of each response body (default 8 MiB); see
+    /// [`BodyLimits`].
     pub limits: BodyLimits,
 }
 impl Default for BulkPolicy {
@@ -594,7 +598,8 @@ impl DRS {
     ///
     /// # Errors
     ///
-    /// Fails before any request if `policy` is invalid or an ID is empty.
+    /// Fails before any request if `policy` is invalid or an ID is empty;
+    /// without IDs, it returns an empty report.
     pub async fn get_bulk_objects(
         &self,
         ids: &[String],
@@ -623,11 +628,11 @@ impl DRS {
         self.bulk(object_keys(ids), passports, false, policy, operation)
             .await
     }
-    /// Returned access URLs and headers may be credentials. The report's Debug
-    /// output omits them; logging a raw generated `BulkAccessUrl` does not.
-    ///
     /// Looks up the access URLs of `keys` in bounded `POST /objects/access`
     /// requests, as [`DRS::get_bulk_objects`] looks up objects.
+    ///
+    /// Returned access URLs and headers may be credentials. The report's Debug
+    /// output omits them; logging a raw generated `BulkAccessUrl` does not.
     ///
     /// # Errors
     ///
