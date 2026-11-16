@@ -331,7 +331,11 @@ class PendingResolution:
         """Gives `api_root`, `endpoint` and `retry_after` as a new `dict`."""
 
 class BulkPolicy:
-    """Limits of the bulk calls of `DRS`; checked when a call starts."""
+    """Limits of the bulk calls of `DRS`.
+
+    Negative counts and negative or non-finite delays raise `ValueError` when the
+    policy is built; the other limits are checked when a call starts.
+    """
 
     def __init__(
         self,
@@ -346,8 +350,9 @@ class BulkPolicy:
     ) -> None:
         """Builds a policy.
 
-        Negative numbers raise `ValueError` here; other invalid values, such as a
-        `chunk_size` of 0, raise it when a bulk call starts.
+        Negative counts and negative or non-finite delays raise `ValueError` here;
+        other invalid values, such as a `chunk_size` of 0, raise it when a bulk
+        call starts.
 
         Args:
             chunk_size: The most IDs per request.
@@ -1227,8 +1232,9 @@ class TRS:
             The first or requested page.
 
         Raises:
-            ValueError: `limit` is out of range, a tag is empty or contains a comma, or
-                `tags` is given while `tag_filter` doesn't allow it.
+            ValueError: `limit` is out of range, `descriptor_type` is empty, `.` or `..`,
+                a tag is empty or contains a comma, or `tags` is given while
+                `tag_filter` doesn't allow it.
             RuntimeError: The request failed.
         """
     def next_tools_page(self, next_page: str) -> ToolPage:
@@ -1753,8 +1759,8 @@ class WES:
 
         Raises:
             ValueError: The request or an attachment name is invalid, a `str` starts with
-                `{`, or the request has a `workflow_attachment` field (pass files with
-                `attachments`).
+                `{` (after whitespace), or the request has a `workflow_attachment` field
+                (pass files with `attachments`).
             OSError: A request or attachment file can't be read.
             RuntimeError: The request failed or the response doesn't fit the WES models.
         """
