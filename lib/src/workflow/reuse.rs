@@ -9,9 +9,14 @@
 //! artifacts. [`ReuseReceipt::assess`] checks whether the receipt can stand
 //! in for a new run of a requested recipe and gives a [`ReuseReport`];
 //! [`ReuseReceipt::reuse_for`] runs the same checks and gives a
-//! [`ReusedResultRef`] only if the receipt is eligible. Both read every
-//! artifact again through the caller's reader and compare its size and
-//! SHA-256 with the receipt.
+//! [`ReusedResultRef`] only if the receipt is eligible. If every other
+//! check passes, both read the artifacts again through the caller's reader
+//! and compare their sizes and SHA-256 digests with the receipt.
+//!
+//! The caller supplies trust for each check as a [`ReceiptTrust`], and the
+//! reader returns an [`ArtifactRead`] or an [`AccessFailure`]. Receipts are
+//! built with [`ReuseReceipt::new`], and moved between systems with
+//! [`ReuseReceipt::export`] and [`ReuseReceipt::import`].
 use super::{
     digest,
     results::{ContractStatus, ExpectedChecksum, ResultRecord},
@@ -25,7 +30,10 @@ use std::collections::{BTreeMap, BTreeSet};
 /// writes and accepts.
 pub const REUSE_VERSION: u32 = 1;
 
-/// Declared behavior, not a sandbox. Only `None` is eligible in this exact-reuse policy.
+/// States whether a recipe uses a dependency, such as the network.
+///
+/// This is declared behavior, not a sandbox. Only `None` is eligible for
+/// exact reuse.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DependencyUse {
@@ -97,8 +105,12 @@ pub struct ReferenceIdentity {
     pub sha256: String,
 }
 
-/// All execution-relevant fields must be declared by the recipe author. Provider IDs,
-/// temporary access URLs and timestamps are deliberately outside the fingerprint.
+/// Identifies exactly what a run executes, so that two runs of the same
+/// recipe can be recognized by its [`fingerprint`](Self::fingerprint).
+///
+/// The recipe author must declare all fields that affect execution.
+/// Provider IDs, temporary access URLs and timestamps are deliberately
+/// outside the fingerprint.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecipeIdentity {
@@ -110,7 +122,8 @@ pub struct RecipeIdentity {
     pub executable_sha256: String,
     /// Immutable OCI manifest identity, e.g. `python@sha256:<64 lowercase hex>`.
     pub container_image: String,
-    /// The command and its arguments; not empty, and no argument is empty.
+    /// The command and its arguments; not empty, and no argument is empty
+    /// or contains a NUL character.
     pub command: Vec<String>,
     /// The environment variables of the command.
     pub environment: BTreeMap<String, String>,
@@ -251,8 +264,12 @@ pub struct ArtifactReference {
     pub sha256: String,
 }
 
-/// Reuses the phase-two typed result record; this is an eligibility receipt, not a
-/// replacement for a provenance package, global cache or artifact upload protocol.
+/// Records a finished run, so that its result can stand in for a new run of
+/// the same recipe.
+///
+/// It holds the run's typed [`ResultRecord`]. It is an eligibility receipt,
+/// not a replacement for a provenance package, a global cache or an artifact
+/// upload protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReuseReceipt {
@@ -272,7 +289,10 @@ pub struct ReuseReceipt {
     pub artifacts: BTreeMap<String, ArtifactReference>,
 }
 
-/// Trust is supplied for this action, never accepted from inside the receipt.
+/// Says whether the caller trusts a receipt, for one check.
+///
+/// Trust is supplied for each check and never taken from the receipt
+/// itself.
 #[derive(Clone, Debug)]
 pub enum ReceiptTrust {
     /// The caller trusts exactly this receipt, from a trusted source.
@@ -290,25 +310,28 @@ pub enum ReceiptTrust {
     Unknown,
 }
 
+/// Whether a receipt can stand in for a new run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-/// Whether a receipt can stand in for a new run.
 pub enum ReuseStatus {
     /// Every check passed.
     Eligible,
     /// A check failed.
     Ineligible,
     /// No check failed, but trust is unknown or an artifact's access
-    /// couldn't be verified.
+    /// couldn't be verified. With [`ReceiptTrust::Unknown`], no artifact is
+    /// read, so their sizes and digests are unchecked too.
     Unverified,
 }
+/// Why a check of a receipt failed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Why a check of a receipt failed.
 pub enum ReasonCode {
-    /// The receipt's or requested recipe lacks a complete immutable identity:
-    /// executable, image digest, command, inputs, outputs, runtime, or safe
-    /// relative paths.
+    /// The receipt's or requested recipe lacks a complete, valid immutable
+    /// identity, for example: its version, the determinism author or
+    /// revision, executable, image digest, command, inputs, reference
+    /// versions, decimal parameters, output schema, outputs, runtime, or
+    /// safe and unique relative paths.
     InvalidIdentity,
     /// The author hasn't opted a recipe into reuse.
     RecipeNotOptedIn,
@@ -326,7 +349,8 @@ pub enum ReasonCode {
     /// The result doesn't conform to the recipe's output schema.
     InvalidOutputs,
     /// The artifacts or the original run's references are incomplete or
-    /// don't match the recipe and the result.
+    /// don't match the recipe and the result, or the receipt's
+    /// `provenance_source` or run ID is blank.
     ArtifactManifestMismatch,
     /// [`ReceiptTrust::Unknown`] was given.
     TrustUnknown,
@@ -356,17 +380,19 @@ pub struct ReuseReason {
     pub code: ReasonCode,
     /// A description of the failure.
     pub detail: String,
-    /// The output JSON pointer of the artifact, for artifact checks.
+    /// The output JSON pointer of the artifact, for checks of a single
+    /// artifact read; `None` otherwise.
     pub artifact_pointer: Option<String>,
 }
 /// The bytes that the artifact checks read.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ReuseMeasurements {
-    /// The bytes of all artifacts that were read.
+    /// The bytes of all artifacts that were read, including the read that
+    /// went over the byte limit.
     pub bytes_read: u64,
     /// The bytes of the artifacts that passed their checks.
     pub bytes_revalidated: u64,
-    /// Actual transport bytes reported by the access adapter; local reads are zero.
+    /// The bytes that the reader reports it transferred; 0 for local reads.
     pub bytes_transferred: u64,
 }
 /// The result of checking a receipt against a requested recipe.
@@ -387,8 +413,11 @@ pub struct ReuseReport {
     pub measurements: ReuseMeasurements,
 }
 
-/// A fresh authorized read, measured by the caller's access adapter. Do not return
-/// stale cached bytes as evidence of current authorization or availability.
+/// Holds the bytes of one artifact read, as the caller's reader returns them.
+///
+/// Each read must be fresh and authorized for the current principal, and
+/// the reader must bound its size before allocating. Don't return stale
+/// cached bytes as evidence of current authorization or availability.
 pub struct ArtifactRead {
     /// The artifact's bytes.
     pub bytes: Vec<u8>,
@@ -408,13 +437,16 @@ pub enum AccessFailure {
     Unverified,
 }
 
-/// Original execution identity is retained. There is intentionally no new run ID.
-/// This value cannot be deserialized as a substitute for performing current checks.
+/// Refers to a reused result, which [`ReuseReceipt::reuse_for`] returns.
+///
+/// It keeps the original run's identity; there is intentionally no new
+/// run ID. It can't be deserialized, so it can't stand in for running the
+/// checks again.
 #[derive(Debug, Serialize)]
 pub struct ReusedResultRef {
     /// The original run, whose result is reused.
     pub original: ExecutionOrigin,
-    /// The service that the result stands in for a run at.
+    /// The service that the reused result was prepared for.
     pub prepared_for_service: String,
     /// The receipt's [`ReuseReceipt::content_digest`].
     pub receipt_sha256: String,
@@ -469,7 +501,9 @@ impl ReuseReceipt {
     pub fn export(&self) -> Result<Vec<u8>, ContractError> {
         Ok(serde_json::to_vec_pretty(self)?)
     }
-    /// Canonical content hash, independent of whitespace/object order in an export.
+    /// Returns the SHA-256 of the receipt's canonical JSON (keys sorted at
+    /// every level), which doesn't depend on whitespace or key order in an
+    /// export.
     ///
     /// # Errors
     ///
@@ -482,8 +516,12 @@ impl ReuseReceipt {
     /// The receipt must be valid and trusted by `trust`, both recipes must be
     /// eligible and have the same fingerprint, and the original run must
     /// have completed with conformant outputs. Only then are the artifacts
-    /// read with `read`, at most `max_bytes` in total, and checked against
-    /// the receipt's sizes and SHA-256 digests. Sends no request itself.
+    /// read with `read` and checked against the receipt's sizes and SHA-256
+    /// digests. Sends no request itself.
+    ///
+    /// `max_bytes` bounds the declared total and the bytes accepted. The
+    /// SDK doesn't pass it to `read`, so the reader must bound each read
+    /// itself, before allocating.
     pub fn assess(
         &self,
         requested: &RecipeIdentity,
@@ -496,12 +534,14 @@ impl ReuseReceipt {
     /// Gives the result of the receipt as the result of a run of `requested`
     /// at `prepared_for_service`, if [`Self::assess`] finds it eligible.
     ///
-    /// Explicit action: all current checks run again, even after an ELIGIBLE assessment.
-    /// No TES/WES client is accepted and no submission occurs here.
+    /// All checks run again, even after an assessment that returned
+    /// [`ReuseStatus::Eligible`]. It takes no TES or WES client and submits
+    /// nothing.
     ///
     /// # Errors
     ///
-    /// Gives the report if the status isn't [`ReuseStatus::Eligible`].
+    /// Returns `Err` with the boxed [`ReuseReport`] if the status isn't
+    /// [`ReuseStatus::Eligible`].
     pub fn reuse_for(
         &self,
         prepared_for_service: &str,

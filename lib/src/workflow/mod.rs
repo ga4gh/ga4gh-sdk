@@ -1,7 +1,8 @@
 //! Optional, revisioned workflow contracts. Preparation and comparison never execute jobs.
 pub mod compare;
 pub mod results;
-// Documented (#269), unlike the rest of the module until #270
+// This warn overrides the allow on `workflow` in lib.rs, so that the
+// documented module stays checked; #270 removes both.
 #[warn(missing_docs)]
 pub mod reuse;
 use crate::clients::wes::{models::RunRequest, Run, WorkflowAttachment, WES};
