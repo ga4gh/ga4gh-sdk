@@ -21,8 +21,8 @@ Example:
 """
 
 # Type stubs of the module. `tests/test_stubs.py` checks that they declare every class
-# and member of it and document them; `docs/python-api.md` renders them as the Python API
-# reference.
+# and member of it and document them; `api.md` renders them as the Python API reference
+# (see `mkdocs.yml`).
 
 import asyncio
 import enum
@@ -44,15 +44,15 @@ class ServiceType:
     """
 
     TES: ServiceType
-    """The `TES` section."""
+    """The `TES` section, for `TES` and `AsyncTES`."""
     DRS: ServiceType
-    """The `DRS` section."""
+    """The `DRS` section, for `DRS`."""
     TRS: ServiceType
-    """The `TRS` section."""
+    """The `TRS` section, for `TRS`."""
     AAI: ServiceType
-    """The `AAI` section."""
+    """The `AAI` section (authentication and authorization infrastructure)."""
     WES: ServiceType
-    """The `WES` section."""
+    """The `WES` section, for `WES`."""
     REGISTRY: ServiceType
     """The `REGISTRY` section (Service Registry)."""
 
@@ -1411,7 +1411,14 @@ class WesState(str, enum.Enum):
     def __str__(self) -> str:
         """Gives the state's name."""
     def __format__(self, format_spec: str) -> str:
-        """Formats the state's name, as `str.__format__` does."""
+        """Formats the state's name, as `str.__format__` does.
+
+        Args:
+            format_spec: The format specification, such as `">10"`.
+
+        Returns:
+            The formatted name.
+        """
 
 class RunRequest:
     """A WES run request: a workflow to run, with its parameters.
@@ -1812,7 +1819,14 @@ class TesState(str, enum.Enum):
     def __str__(self) -> str:
         """Gives the state's name."""
     def __format__(self, format_spec: str) -> str:
-        """Formats the state's name, as `str.__format__` does."""
+        """Formats the state's name, as `str.__format__` does.
+
+        Args:
+            format_spec: The format specification, such as `">10"`.
+
+        Returns:
+            The formatted name.
+        """
 
 class TesTask:
     """A TES task: one to create, or one as returned by the server.
