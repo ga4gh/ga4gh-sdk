@@ -234,6 +234,63 @@ To update TRS-Filer, pin `trs_filer_image` in the script to a release or a
 digest, e.g. from `docker buildx imagetools inspect
 elixircloud/trs-filer:sha-<commit>`.
 
+## Keycloak/CLI login
+
+This suite runs `ga4gh-cli login` with the OpenID Connect device flow against
+a real provider: [Keycloak](https://www.keycloak.org/) 26.8.2, pinned by tag
+and digest. It needs a running Docker daemon, `curl` and network access to
+pull the image.
+
+```sh
+tests/run-keycloak-integration.sh
+```
+
+The script builds the test, starts Keycloak in development mode (plain HTTP,
+which the CLI accepts on loopback addresses only) on a free loopback port,
+imports the test realm [`keycloak/realm.json`](keycloak/realm.json), waits up
+to 180 seconds for the realm's discovery document (set
+`KEYCLOAK_STARTUP_TIMEOUT_SECONDS` to change the limit), runs
+[`keycloak_login.rs`](../cli/tests/keycloak_login.rs) with the
+`keycloak_integration_tests` feature and the issuer in `KEYCLOAK_ISSUER`, and
+removes the container. On failure it prints the Keycloak logs.
+
+The realm is for this test only: it has a public client `ga4gh-cli-test`
+with the device grant enabled, and a user `test-user` with the password
+`test-only-password` and the `offline_access` role, which the CLI's default
+scope `openid offline_access` needs. No admin user is created. Access tokens
+are valid for 40 seconds, and refresh tokens are rotated: each refresh
+returns a new one, and Keycloak ends the session when an old one is used
+again. Keycloak has no API to approve a device code, so
+[`keycloak/approve-device.sh`](keycloak/approve-device.sh) does what the user
+does in the browser: it opens the verification URL with the code, signs in
+through the login form and answers the consent page, which Keycloak always
+shows for the device grant. It relies on the HTML forms of Keycloak's default
+login theme, so a Keycloak update may need changes there.
+
+The tests run the `ga4gh-cli` binary with a temporary home directory whose
+configuration has a `REGISTRY` section with `oidc` settings for the realm,
+pointing to a local service that records the `Authorization` header:
+
+- `login registry` shows the verification URL; after the scripted approval
+  it stores the tokens with mode `0600` and prints none of them;
+- `registry list` sends the stored access token, and Keycloak's userinfo
+  endpoint accepts it for the test user;
+- once the token expires within 30 seconds, `registry list` refreshes it
+  first and stores the new access and refresh tokens; a second refresh, which
+  succeeds only with the stored rotated refresh token, follows. The test
+  waits about 20 seconds for both;
+- `logout registry` deletes the login, and `registry list` then fails with
+  "Not logged in" without a request to the service;
+- a login that the user denies on the consent page fails with "The login was
+  denied" and stores no tokens.
+
+The refresh after a `401` and the provider's `slow_down` answer are checked
+only against the fake provider of the default CLI tests.
+
+The [CI workflow](../.github/workflows/ci.yml) runs this suite as the job
+`Integration (keycloak)` when the CLI, the shared library utilities, the
+dependencies or the suite's own files change, and on manual dispatch.
+
 ## Verified TRS CWL bundle with Toil WES
 
 The bundle unit tests use a local TRS fixture and a capturing mock WES to compare

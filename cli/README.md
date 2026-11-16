@@ -212,6 +212,37 @@ and don't store it again.
 
 `--profile` selects the profile whose section `login` and `logout` read.
 
+#### Example: Keycloak
+
+The CLI's tests log in to a [Keycloak](https://www.keycloak.org/) realm
+(version 26.8.2) with the device flow; see the
+[integration test guide](../tests/README.md#keycloakcli-login) and the test
+realm in [`tests/keycloak/realm.json`](../tests/keycloak/realm.json). With
+Keycloak, the issuer is the realm's URL:
+
+```json
+{
+    "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oidc": {
+            "issuer": "https://keycloak.example.org/realms/example",
+            "client_id": "ga4gh-cli"
+        }
+    }
+}
+```
+
+The client must be public ("Client authentication" off) and have the
+"OAuth 2.0 Device Authorization Grant" enabled. For the default scope
+`openid offline_access`, users need the realm role `offline_access`, which
+Keycloak's default roles include. Without it, Keycloak refuses the login
+with its own error code `not_allowed`, which isn't an OAuth error code, so
+`login` reports `unrecognized_error`. In the browser, Keycloak asks the user
+to sign in and then to grant the client access. If the realm rotates refresh
+tokens ("Revoke Refresh Token"), each refresh stores the new refresh token;
+Keycloak ends the login if an older one is used again, for example from a
+copy of the token store, and the CLI then asks you to log in again.
+
 ## Usage
 
 ### Basic local setup
