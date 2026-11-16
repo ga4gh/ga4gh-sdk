@@ -379,7 +379,7 @@ impl DRS {
         let path = if access { "objects/access" } else { "objects" };
         for attempt in 1..=policy.retry.max_attempts {
             if count
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                     (n < policy.max_requests).then_some(n + 1)
                 })
                 .is_err()
