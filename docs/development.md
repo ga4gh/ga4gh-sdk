@@ -187,9 +187,23 @@ python3 -m pip install --group python/pyproject.toml:docs
 make site
 ```
 
-`make site` runs `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` and
-`mkdocs build --strict`, which fails on warnings such as links to missing
-files or anchors. `python3 -m pytest docs/test_hooks.py` tests the hooks; CI
+`make site` runs two strict builds:
+
+- `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` with
+  `RUSTDOCFLAGS="-D warnings"`, so that any unsuppressed rustdoc warning fails it, such as
+  a bare URL (write `<https://...>` or `[text](https://...)`) or an
+  unresolved link. `make docs` builds the whole workspace and stays lenient.
+  Fixes in the docs of generated models go into their patch in
+  `utils/patches/` (see
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). Until the
+  docs of the DRS models are fixed, only their generated `models` module
+  is exempt from the bare-URL and broken-link checks (an `#[allow]` on
+  `pub mod models` in `lib/src/clients/drs/mod.rs`). Hand-written DRS code
+  remains subject to both checks.
+- `mkdocs build --strict`, which fails on warnings such as links to missing
+  files or anchors.
+
+`python3 -m pytest docs/test_hooks.py` tests the hooks; CI
 runs both. After the first `make site`, `mkdocs serve` shows the site
 at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
 
@@ -228,23 +242,27 @@ on pushes to `main` and on manual dispatch:
 | `build` | Build | Lockfile check, standalone library and CLI builds |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
 | `wheels` | Python wheels | Full platform wheel and sdist matrix on `main` pushes and manual runs; skipped on PRs |
+| `binaries` | CLI binaries | Builds and runs `ga4gh-cli` on the six release platforms on `main` pushes and manual runs; skipped on PRs |
+| `image` | CLI image | Builds the [CLI image](container-image.md) for `linux/amd64` and `linux/arm64` and runs `tests/run-image-tests.sh` (with Funnel on `linux/amd64`); runs on PRs too |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
 | `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
-| `docs` | Docs | `make site`: the Rust API reference and the strict MkDocs build |
+| `docs` | Docs | `make site`: the Rust API reference, without rustdoc warnings, and the strict MkDocs build |
 | `downstream` | Downstream example | `make downstream`: builds and tests [`examples/downstream-sdk/`](downstream.md) |
-| `passed` | CI passed | Requires all applicable jobs to succeed; accepts the intentionally skipped wheel matrix on PRs |
+| `passed` | CI passed | Requires all applicable jobs to succeed; accepts the intentionally skipped wheel and CLI binary matrices on PRs |
 
 `CI passed` is the check to require for merges. A new job must be added to
 its `needs:` and to the list of expected jobs in its script. Ordinary PRs run
 the Python binding tests, including a local wheel build, but do not run the
-five-platform wheel and sdist matrix. Every push to `main` runs that matrix;
-version tags also build it as part of the [release workflow](releasing.md).
-For a PR that changes packaging, native dependencies, supported platforms or
-the wheel/release workflows, open **Actions → CI → Run workflow**, select the
-PR branch and run the full matrix before merging. Check the wheel and sdist
-jobs. The manual run builds artifacts but does not publish them.
+five-platform wheel and sdist matrix or the six-platform CLI binary matrix.
+Every pull request also builds and tests the CLI image on both supported
+platforms. Every push to `main` runs the wheel, binary and image matrices;
+version tags build them as part of the [release workflow](releasing.md).
+For a PR that changes packaging, native dependencies, supported platforms or the wheel, binary or release
+workflows, open **Actions → CI → Run workflow**, select the PR branch and run
+the full matrices before merging. Check the wheel, sdist and CLI binary jobs.
+The manual run builds artifacts but does not publish them.
 
 ## Issue and pull request templates
 

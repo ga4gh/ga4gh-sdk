@@ -1,7 +1,9 @@
 pub mod bulk;
 // Generated models (utils/build_models.sh): the generator writes `Default`
-// for enums by hand.
+// for enums by hand. Their docs still have bare URLs and AsciiDoc links;
+// remove the rustdoc exception once utils/patches/drs.patch fixes them.
 #[allow(clippy::derivable_impls)]
+#[allow(rustdoc::bare_urls, rustdoc::broken_intra_doc_links)]
 pub mod models;
 pub mod resolution;
 pub mod uri;

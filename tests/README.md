@@ -17,9 +17,9 @@ bash run-integration-tests.sh
 
 The script starts Funnel if its `/healthz` endpoint is not healthy, waits for
 that endpoint, then runs the `integration_tests` feature suites of the library
-and of the CLI.
-It waits up to 60 seconds by default; set `FUNNEL_STARTUP_TIMEOUT_SECONDS`
-to change the limit. It does not stop a Funnel process that it starts.
+and of the CLI. It waits up to 60 seconds by default; set
+`FUNNEL_STARTUP_TIMEOUT_SECONDS` to change the limit. It does not stop a Funnel
+process that it starts.
 
 The CLI suite, [`funnel_cli.rs`](../cli/tests/funnel_cli.rs), runs the
 `ga4gh-cli` binary with a temporary home directory whose config points to
@@ -28,6 +28,11 @@ Funnel. It runs a task without inputs or outputs to completion with
 matching and nonmatching tag filters. The suite also cancels a running task
 with `tes cancel` and checks that an unknown task returns a non-zero exit
 status, empty stdout, and HTTP 404 on stderr.
+
+The [`funnel_tes_files.rs`](../cli/tests/funnel_tes_files.rs) CLI suite runs a
+task and checks its stdout through `tes files`, `tes log` and `tes save`.
+Downloads of output files from HTTP and S3 storage are checked against mock
+servers in the default CLI tests.
 
 Funnel needs network access to pull `alpine:3.22` for these tasks. Each state
 polling loop has a 180-second deadline; an in-flight CLI request can extend
@@ -109,6 +114,48 @@ script; the Docker CLI image of Funnel is `DOCKER_CLI_IMAGE` in the script.
 The [CI workflow](../.github/workflows/ci.yml) installs Funnel as for the
 Funnel suite and runs this suite (`Integration (protes)`) when TES, CLI,
 shared library, dependency or its own files change.
+
+## CLI image
+
+This suite needs bash 4.4 or later, a running Docker daemon with
+[Buildx](https://docs.docker.com/build/concepts/overview/#buildx), and for
+its last part `curl` and the `funnel` executable (see above;
+`tests/install-funnel.sh DIRECTORY` installs the pinned version on Linux
+x86-64).
+
+```sh
+tests/run-image-tests.sh
+```
+
+The script builds the [CLI image](../docs/container-image.md) from the
+working tree and checks that:
+
+1. the build context holds every tracked file of the workspace manifests and
+   the `lib/`, `cli/` and `python/` crates, and leaves out probe files that
+   look like environment files, keys, credential stores, build output and
+   other directories, while keeping `lib/.env.example` (the probe files are
+   created in the working tree and removed again, together with directories
+   created for them); the Rust image of the `Dockerfile` matches
+   `rust-toolchain.toml`;
+2. the image's entrypoint is `ga4gh-cli`, `--help` and the default command
+   print the help, `--version` prints the workspace version, it runs as UID
+   10001 with `HOME=/home/ga4gh` and contains no sources;
+3. if `funnel` is on `PATH`, the
+   [site check script](../examples/kubernetes/tes-site-check.sh) runs in the
+   image against Funnel on `localhost:8000`, with the configuration mounted
+   read-only and a read-only root file system. It exits 0 with
+   `result=COMPLETE` for the example task; 1 with `result=EXECUTOR_ERROR` for
+   a task whose command fails; 1 with `result=TIMEOUT` for a task that runs
+   too long, which it cancels; and 1 without submitting a task for an
+   unreachable TES and for an invalid `TIMEOUT_SECONDS`.
+
+The script starts Funnel if nothing answers at `localhost:8000/healthz`, and
+stops it at the end; otherwise it uses the service already there. Set
+`IMAGE` to choose the tag of the built image (default `ga4gh-cli:test`),
+`PLATFORM` to build for another platform, such as `linux/arm64`, and
+`FUNNEL_CHECK` to `true` or `false` to require or skip the third part
+(default `auto`). The [`CLI image` workflow](../.github/workflows/image.yml)
+runs it for `linux/amd64` with Funnel and for `linux/arm64` without.
 
 ## Starter Kit WES
 
@@ -250,6 +297,14 @@ they build with the other tests but only run on request:
 
 ```sh
 cargo test -p ga4gh-lib --test trs_public_registries -- --ignored
+```
+
+The Python bindings have the same smoke tests. They are skipped unless
+`GA4GH_TRS_PUBLIC_TESTS=1` is set; run them from `python/` after building the
+bindings as described in the [Python guide](../python/README.md):
+
+```sh
+GA4GH_TRS_PUBLIC_TESTS=1 python -m pytest tests/test_trs_public.py
 ```
 
 ## Public Service Registry

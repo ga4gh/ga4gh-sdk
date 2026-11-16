@@ -8,7 +8,7 @@ description = "Python bindings for GA4GH API service clients"
 readme = { text = """
 # GA4GH SDK for Python
 
-Python clients for GA4GH TES, WES, DRS, and Service Info APIs.
+Python clients for GA4GH TES, WES, DRS, TRS, and Service Info APIs.
 
 Install with `pip install ga4gh-sdk` and import classes from `ga4gh_sdk`.
 For examples, supported Python APIs, and configuration, see the
@@ -46,8 +46,8 @@ tests = [
 # later). Exact versions of the packages that `mkdocs.yml` uses, as for the
 # other tools of CI, so that their upgrades, which may add warnings that
 # fail the strict build, are deliberate (their own dependencies are not
-# pinned). Dependabot doesn't bump them; update them by hand. pytest runs
-# the tests of the build's hooks (`docs/test_hooks.py`)
+# pinned). Review each pinned-tool update explicitly. Pytest runs the
+# tests of the build's hooks (`docs/test_hooks.py`)
 [dependency-groups]
 docs = [
     "mkdocs==1.6.1",
