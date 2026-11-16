@@ -1,4 +1,11 @@
 //! Output interpretation and opt-in artifact evidence, independent of execution state.
+//!
+//! [`Profile::project_results`] checks each named output of a run against
+//! the profile's output contract and gives a [`ResultRecord`]. HTTP(S) URLs
+//! in it lose their credentials, query and fragment, so the record can be
+//! stored. The `verify_` methods of [`ResultRecord`] then add
+//! [`ArtifactEvidence`] for selected output artifacts: whether they could
+//! be read, and whether their SHA-256 matches an expected checksum.
 use super::{digest, pointer_segment, ContractError, Diagnostic, Profile};
 use crate::{
     clients::drs::uri::{AccessPlan, AccessPreferences, DrsResolver},
@@ -7,65 +14,119 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+/// Whether an output conforms to its schema in the output contract.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractStatus {
+    /// The output conforms to its schema, or is optional and absent.
     Conformant,
+    /// The output is required but absent.
     Missing,
+    /// The output doesn't conform to its schema.
     Invalid,
 }
+/// Whether an output artifact could be read.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AccessStatus {
+    /// The output has a value, but its bytes weren't read.
     NotChecked,
+    /// The bytes were read.
     Available,
+    /// Resolving or reading the artifact failed or was interrupted.
     Inaccessible,
+    /// The result has no value at the pointer.
     Missing,
 }
+/// Whether an output artifact's bytes match the expected checksum.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum IntegrityStatus {
+    /// No bytes were read, or no expected checksum was given.
     Unverified,
+    /// The SHA-256 of the bytes matches the expected checksum.
     Verified,
+    /// The SHA-256 of the bytes differs from the expected checksum.
     Mismatch,
 }
+/// A checksum that an artifact is expected to have, and where it comes
+/// from.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExpectedChecksum {
+    /// The checksum algorithm; only SHA-256 (`sha256` or `SHA-256`, in any
+    /// case) is supported.
     pub algorithm: String,
+    /// The expected checksum, as 64 hex digits.
     pub digest: String,
+    /// Where the expected checksum comes from, such as a DRS object's
+    /// checksums; not blank.
     pub evidence_source: String,
 }
+/// What a check found out about one output artifact.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArtifactEvidence {
+    /// The JSON pointer of the artifact in the outputs; its first segment
+    /// names the output.
     pub pointer: String,
+    /// The output value, if it is a `drs://` URI.
     pub stable_identity: Option<String>,
+    /// Whether the artifact could be read.
     pub access_status: AccessStatus,
+    /// Whether its bytes match `expected`.
     pub integrity_status: IntegrityStatus,
+    /// The checksum that the artifact is expected to have.
     pub expected: Option<ExpectedChecksum>,
+    /// The SHA-256 of the bytes that were read, as 64 lowercase hex digits.
     pub computed_sha256: Option<String>,
+    /// Why the artifact is inaccessible. Holds no URL, header or provider
+    /// detail.
     pub detail: Option<String>,
 }
+/// One named output of a run, checked against its schema.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypedOutput {
+    /// Whether credentials, a query or a fragment were removed from HTTP(S)
+    /// URLs in the value.
     #[serde(default)]
     pub access_details_redacted: bool,
+    /// The output value, with credentials, query and fragment removed from
+    /// HTTP(S) URLs; `None` if the run didn't give it.
     pub value: Option<Value>,
+    /// Whether the value conforms to the output's schema.
     pub contract_status: ContractStatus,
+    /// The output's schema from the profile, with the same URL redaction.
     pub annotations: Value,
+    /// The errors of validating the value against the output's schema.
     pub diagnostics: Vec<Diagnostic>,
 }
+/// The outputs of one run, interpreted under a profile's output contract,
+/// with optional evidence about artifacts.
+///
+/// It is meant to be stored: it doesn't depend on the run still existing,
+/// and holds no access credentials.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResultRecord {
+    /// The format version; 1.
     pub format_version: u32,
+    /// The caller's reference to the run, such as its WES run ID.
     pub run_reference: String,
+    /// The run's state, as the caller passed it; not interpreted.
     pub execution_state: String,
+    /// The [`Profile::schema_digest`] of the profile.
     pub schema_digest: String,
     /// Root scope for retained schema references and scientific/viewer annotations.
     #[serde(default)]
     pub contract_document: Value,
+    /// The errors of validating all outputs against the output contract.
     pub contract_diagnostics: Vec<Diagnostic>,
+    /// The outputs that the contract names, by name.
     pub outputs: BTreeMap<String, TypedOutput>,
+    /// Evidence about output artifacts, by JSON pointer; filled by the
+    /// `verify_` methods.
     pub artifacts: BTreeMap<String, ArtifactEvidence>,
+    /// Context of the run, such as engine or reference versions, that the
+    /// caller adds; [`ComparisonPolicy`](super::compare::ComparisonPolicy)
+    /// compares it.
     pub context: BTreeMap<String, String>,
 }
 /// Strip access capabilities from URI values before durable serialization.
@@ -89,6 +150,17 @@ fn durable(value: &Value) -> Value {
     }
 }
 impl Profile {
+    /// Checks a run's outputs against the output contract and returns them
+    /// as a [`ResultRecord`], with empty `artifacts` and `context`.
+    ///
+    /// Each output named in the contract's `properties` gets a
+    /// [`TypedOutput`]; other outputs appear only in
+    /// `contract_diagnostics`. Reads no artifact.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the profile has no output contract, if the contract has no
+    /// named `properties`, or if an output's schema can't be compiled.
     pub fn project_results(
         &self,
         run_reference: &str,
@@ -149,6 +221,8 @@ impl Profile {
     }
 }
 impl ResultRecord {
+    /// Returns the value at a JSON pointer into the outputs, whose first
+    /// segment names an output; `None` if there is none.
     pub fn value_at(&self, pointer: &str) -> Option<&Value> {
         let path = pointer.strip_prefix('/')?;
         let (key, rest) = path
@@ -181,7 +255,19 @@ impl ResultRecord {
             detail: None,
         }
     }
-    /// Verify caller-selected bytes. A digest with no expected evidence remains unverified.
+    /// Records evidence for bytes that the caller read for the artifact at
+    /// `pointer`, under that pointer in `artifacts`.
+    ///
+    /// The SHA-256 of `bytes` is compared with `expected`; without it, the
+    /// integrity stays [`IntegrityStatus::Unverified`]. If the result has
+    /// no value at `pointer`, the access is [`AccessStatus::Missing`] and
+    /// `bytes` and `expected` are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Fails, and records nothing, if `expected` names an algorithm other
+    /// than SHA-256, its digest isn't 64 hex digits, or its evidence source
+    /// is blank.
     pub fn verify_bytes(
         &mut self,
         pointer: &str,
@@ -217,7 +303,19 @@ impl ResultRecord {
         self.artifacts.insert(pointer.into(), evidence);
         Ok(())
     }
-    /// The access plan is ephemeral and is never stored in the result. No redirects or SDK auth reuse.
+    /// Reads the artifact at `pointer` with a DRS access plan and records
+    /// its evidence, as [`Self::verify_bytes`] does.
+    ///
+    /// The plan's URL and headers are used once and never stored. The
+    /// request uses a fresh client: it follows no redirects and sends no
+    /// SDK credentials. At most `max_bytes` are read, within the bounds of
+    /// `operation`. If the request fails, returns no success status or
+    /// goes over `max_bytes`, the access is [`AccessStatus::Inaccessible`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if the HTTP client can't be built, or as
+    /// [`Self::verify_bytes`] does.
     pub async fn verify_access_plan(
         &mut self,
         pointer: &str,
@@ -260,6 +358,17 @@ impl ResultRecord {
             }
         }
     }
+    /// Resolves the DRS URI at `pointer` with `resolver` and reads the
+    /// artifact, as [`Self::verify_access_plan`] does.
+    ///
+    /// Resolution takes at most `max_attempts` attempts, as
+    /// [`DrsResolver::access_plan`] does. If it fails, the access is
+    /// [`AccessStatus::Inaccessible`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if the value at `pointer` is missing or isn't a string, or as
+    /// [`Self::verify_access_plan`] does.
     #[allow(clippy::too_many_arguments)] // Explicit resolver, evidence and operation bounds stay caller-owned.
     pub async fn verify_drs(
         &mut self,
@@ -293,7 +402,10 @@ impl ResultRecord {
             }
         }
     }
-    /// Metadata for an existing HTML viewer. Consumers decide authorization and presentation.
+    /// Returns the outputs that the profile marks for an HTML viewer
+    /// (`x-ga4gh-ui-widget: html-viewer`), with their key, media type,
+    /// value and contract status. Consumers decide authorization and
+    /// presentation.
     pub fn html_viewer_metadata(&self) -> Vec<Value> {
         self.outputs.iter().filter(|(_,v)|v.annotations.get("x-ga4gh-ui-widget").and_then(Value::as_str)==Some("html-viewer")).map(|(key,v)|json!({"key":key,"widget":"html-viewer","contentMediaType":v.annotations.get("contentMediaType"),"value":v.value,"contract_status":v.contract_status})).collect()
     }
