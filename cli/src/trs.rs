@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// The largest ZIP archive that `trs files --zip` downloads.
 const ZIP_LIMIT: usize = 64 * 1024 * 1024;
 
-/// Build the TRS commands for browsing tools and fetching their descriptors.
+/// Builds the TRS commands for browsing tools and fetching their descriptors.
 pub fn command() -> Command {
     Command::new("trs")
         .about("Tool Registry Service commands")

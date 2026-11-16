@@ -83,14 +83,19 @@ pub enum ReplaySafety {
 }
 
 /// How often, and how far apart, a read-only request is tried.
+///
+/// The delays between attempts are randomized below a cap; see
+/// [`Self::delay`]. A `Retry-After` header on `429` or `503` can lengthen a
+/// delay up to the operation's deadline. A request with a token provider is
+/// sent once more after `401 Unauthorized`, even with one attempt.
 #[derive(Clone, Debug)]
 pub struct RetryPolicy {
     /// The most attempts, the first included (1 to 32; default 1: no retries).
     pub max_attempts: usize,
-    /// The longest delay before the first retry (default 200 ms); it doubles
-    /// with each retry.
+    /// The cap of the delay before the first retry (default 200 ms); it
+    /// doubles with each retry.
     pub initial_delay: Duration,
-    /// The longest delay before any retry (default 10 s).
+    /// The largest cap of a delay (default 10 s).
     pub max_delay: Duration,
 }
 impl Default for RetryPolicy {

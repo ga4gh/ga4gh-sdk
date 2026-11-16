@@ -23,8 +23,8 @@ pub enum AttachmentSource {
     },
 }
 
-/// A workflow attachment of a WES run request, whose content is streamed
-/// rather than buffered.
+/// A workflow attachment of a WES run request, whose content can be streamed
+/// from a file or reader instead of buffered in memory.
 pub struct StreamingAttachment {
     /// The path of the file relative to the attachment root, with `/`
     /// separators; see [`validate_filename`].

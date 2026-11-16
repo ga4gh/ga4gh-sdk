@@ -10,7 +10,7 @@ use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::HttpError;
 use std::error::Error;
 
-/// Build the Service Registry command and its subcommands.
+/// Builds the Service Registry command and its subcommands.
 pub fn command() -> Command {
     Command::new("registry")
         .about("Service Registry subcommands")

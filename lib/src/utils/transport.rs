@@ -242,7 +242,8 @@ pub use HttpError as HttpStatusError;
 pub enum EndpointError {
     /// `base_path` is not a hierarchical URL, or has a query or fragment.
     InvalidBase,
-    /// The endpoint is not a relative path, or has dot segments or backslashes.
+    /// The endpoint is an absolute or scheme-relative URL, or has dot segments
+    /// or backslashes.
     InvalidPath,
     /// The endpoint resolves to a URL outside `base_path`.
     OutsideApiRoot,

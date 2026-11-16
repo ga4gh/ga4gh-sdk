@@ -1,6 +1,7 @@
-//! This module provides a client for interacting with the TES (Task Execution Service) API.
+//! A client for the Task Execution Service (TES) 1.1 API.
 //!
-//! The `TES` struct represents a TES client and provides methods for creating tasks, retrieving task status, canceling tasks, and listing tasks.
+//! [`TES`] creates, reads, lists and cancels tasks; [`Task`] reads the state
+//! of one task and cancels it.
 //!
 //! # Examples
 //!
@@ -88,9 +89,9 @@
 //! ```
 
 mod list_tasks_params;
+/// The TES 1.1 models, generated from its OpenAPI specification.
 // Generated models (utils/build_models.sh): the generator writes `Default`
 // for enums by hand.
-/// The TES 1.1 models, generated from its OpenAPI specification.
 #[allow(clippy::derivable_impls, missing_docs)]
 pub mod models;
 mod view;

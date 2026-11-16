@@ -22,7 +22,8 @@
 //! ```
 //!
 //! The feature `workflow-contracts` adds the module `workflow`: revisioned
-//! workflow contracts, which prepare and compare runs without executing jobs.
+//! workflow contracts, which prepare, submit and compare WES runs;
+//! preparation and comparison never execute jobs.
 #![warn(missing_docs)]
 
 #[allow(unused_imports)]

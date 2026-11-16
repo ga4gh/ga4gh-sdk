@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
-/// Build the WES command and its subcommands.
+/// Builds the WES command and its subcommands.
 pub fn command() -> Command {
     Command::new("wes")
         .about("WES subcommands")
