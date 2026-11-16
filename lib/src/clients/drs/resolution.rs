@@ -1,4 +1,5 @@
-//! DRS deferred resolution preserves pending state instead of parsing an empty 202.
+//! Reads DRS answers that a server prepares later, keeping their pending
+//! state instead of parsing an empty `202`.
 //!
 //! A DRS server can answer `202 Accepted` with a `Retry-After` header while
 //! it prepares an object or access URL. The `_once` methods of [`DRS`] send
@@ -87,11 +88,11 @@ impl fmt::Display for ResolveError {
 }
 impl Error for ResolveError {}
 
-/// Opt-in bounded state machine. Local cancellation stops observation only.
-/// Zero seconds is clamped to one; missing/malformed/overflow/>1h delays fail.
-///
 /// Calls `attempt` up to `max_attempts` times (1 to 10 000), waiting the
 /// server's `Retry-After` between pending answers, until it gives a value.
+///
+/// Opt-in bounded state machine. Local cancellation stops observation only.
+/// Zero seconds is clamped to one; missing/malformed/overflow/>1h delays fail.
 ///
 /// # Errors
 ///
@@ -277,10 +278,10 @@ impl DRS {
     }
 }
 
-/// Shared DRS 1.4 deferred-response interpretation for singular and bulk reads.
-///
 /// Gives the delay in seconds (at least 1) of a `202 Accepted` response, and
 /// `None` for any other status.
+///
+/// Shared DRS 1.4 deferred-response interpretation for singular and bulk reads.
 ///
 /// # Errors
 ///
