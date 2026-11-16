@@ -70,14 +70,14 @@ markdown_extensions:
 plugins:
   - search
   # The Python API reference (`python/api.md`), from the type stubs: Griffe
-  # finds them as the stub-only package `python/stubs/ga4gh_sdk/`, whose
-  # `__init__.pyi` links to `python/ga4gh_sdk.pyi`, so that the build needs
-  # no compiled bindings. Its warnings, such as a module that isn't found or a
+  # finds them as the stub-only package `target/python-stubs/ga4gh_sdk/`,
+  # into which `docs/hooks.py` copies `python/ga4gh_sdk.pyi`, so that the
+  # build needs no compiled bindings. Its warnings, such as a module that isn't found or a
   # documented parameter that the signature lacks, fail the strict build
   - mkdocstrings:
       handlers:
         python:
-          paths: [python/stubs]
+          paths: [target/python-stubs]
           options:
             # Renders methods declared only with `@overload`, such as `Task.wait`
             extensions: [docs/griffe_overloads.py]

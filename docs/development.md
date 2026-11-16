@@ -203,11 +203,10 @@ make site
   files or anchors. It also fails if the Python API reference can't be
   generated or Griffe warns about a docstring of the stubs, for example one
   that documents a parameter that the signature lacks. The stubs' docstrings
-  use the Google style (`Args:`, `Returns:`, `Raises:`). Griffe reads the
-  stubs as the stub-only package `python/stubs/ga4gh_sdk/`, whose
-  `__init__.pyi` is a symbolic link to `python/ga4gh_sdk.pyi` (on Windows,
-  check it out with `core.symlinks`), so the build needs no compiled
-  bindings.
+  use the Google style (`Args:`, `Returns:`, `Raises:`). The hooks copy
+  `python/ga4gh_sdk.pyi` into the stub-only package
+  `target/python-stubs/ga4gh_sdk/`, where Griffe reads it, so the build
+  needs no compiled bindings.
 
 `python/tests/test_stubs.py`, which the `Python tests` job runs, checks that
 every class and member of the stubs has a docstring and that the `Args:`
