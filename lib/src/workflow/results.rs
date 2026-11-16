@@ -162,8 +162,8 @@ impl Profile {
     /// as a [`ResultRecord`], with empty `artifacts` and `context`.
     ///
     /// Each output named in the contract's `properties` gets a
-    /// [`TypedOutput`]. Other outputs aren't kept; the output schema
-    /// decides whether they give `contract_diagnostics`. Reads no artifact.
+    /// [`TypedOutput`]. Other outputs aren't kept; they give a diagnostic
+    /// only if the output schema disallows them. Reads no artifact.
     ///
     /// # Errors
     ///
@@ -373,7 +373,8 @@ impl ResultRecord {
     ///
     /// Resolution takes at most `max_attempts` attempts, as
     /// [`DrsResolver::access_plan`] does. If it fails, the access is
-    /// [`AccessStatus::Inaccessible`].
+    /// [`AccessStatus::Inaccessible`] and `expected` is recorded as given,
+    /// without checks.
     ///
     /// # Errors
     ///
