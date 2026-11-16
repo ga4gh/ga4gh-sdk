@@ -52,11 +52,18 @@ When a client successfully retrieves `service-info`, it has reached that
 endpoint under the configured root. If the response includes service identity
 fields, check that they identify the intended deployment.
 
+The CLI does not print `service-info`. Its TES, WES, DRS, and TRS commands
+create a client first, so a command such as `ga4gh-cli tes list` succeeds only
+after discovery succeeds. To read the identity fields, use `ServiceInfo` from
+Rust or Python.
+
 A host-only root such as `https://example.org` resolves `service-info` to
 `https://example.org/service-info`. If the service uses a path prefix, that
 request targets the wrong location and can return `404 Not Found`.
 If discovery returns 404, verify the API root against the deployment's
-documented URL. A 404 response alone does not identify the cause.
+documented URL. For TES and DRS, the error message then ends with
+`Check that base_path is the TES API root` or the DRS equivalent.
+A 404 response alone does not identify the cause.
 
 ## Configuration file
 
