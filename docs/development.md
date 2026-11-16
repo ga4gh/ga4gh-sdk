@@ -198,7 +198,11 @@ make site
   unresolved link. `make docs` builds the whole workspace and stays lenient.
   Fixes in the docs of generated models go into their patch in
   `utils/patches/` (see
-  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)).
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). Both crates
+  also warn on public items without doc comments (`missing_docs`), which
+  Clippy's `-D warnings` turns into errors in CI; the generated models are
+  exempt, and modules not yet documented carry a temporary
+  `#[allow(missing_docs)]`.
 - `mkdocs build --strict`, which fails on warnings such as links to missing
   files or anchors. It also fails if the Python API reference can't be
   generated or Griffe warns about a docstring of the stubs, for example one

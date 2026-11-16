@@ -1,3 +1,6 @@
+//! The `trs` command: browses the tools of a TRS and fetches their versions,
+//! descriptors and files.
+
 use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};

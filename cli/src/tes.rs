@@ -1,3 +1,5 @@
+//! The `tes` command: creates, lists, reads, cancels and exports TES tasks.
+
 use crate::render::{json_printable, printable};
 use crate::tes_files;
 use crate::CommandOutput;

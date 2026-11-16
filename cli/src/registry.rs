@@ -1,3 +1,6 @@
+//! The `registry` command: lists and reads the services of a GA4GH Service
+//! Registry.
+
 use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgMatches, Command};

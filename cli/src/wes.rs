@@ -1,3 +1,5 @@
+//! The `wes` command: starts, lists, reads, cancels and exports WES runs.
+
 use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};

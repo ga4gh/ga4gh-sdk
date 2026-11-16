@@ -10,13 +10,24 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::error::Error;
 
+/// One page of tools, with the response headers that carry the TRS paging
+/// links (`next_page`, `last_page`, `self_link`, `current_offset`,
+/// `current_limit`).
 #[derive(Debug)]
 pub struct ToolPage {
+    /// The tools of the page.
     pub tools: Vec<Tool>,
+    /// All response headers. They can hold cookies, so don't log them.
     pub headers: HeaderMap,
 }
 
 impl ToolPage {
+    /// The URL of the next page, from the `next_page` header; `None` on the
+    /// last page, or if the header is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the header value isn't visible ASCII text.
     pub fn next_page(&self) -> Result<Option<&str>, reqwest::header::ToStrError> {
         self.headers
             .get("next_page")

@@ -1,3 +1,5 @@
+//! The `drs` command: reads DRS object metadata and access URLs.
+
 use crate::CommandOutput;
 use clap::{arg, ArgMatches, Command};
 use ga4gh_sdk::clients::drs::DRS;

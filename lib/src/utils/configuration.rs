@@ -1,3 +1,6 @@
+//! The API root, credentials and time limits of a service, set in code or read
+//! from the configuration file (`~/.ga4gh-cli/config.json`).
+
 use crate::clients::ServiceType;
 use crate::utils::auth::{TokenProvider, TokenSource};
 use crate::utils::timeouts::Timeouts;
@@ -269,15 +272,28 @@ pub struct ApiKey {
 #[non_exhaustive]
 pub enum AuthError {
     /// More than one credential source was configured.
-    Conflicting { sources: Vec<&'static str> },
+    Conflicting {
+        /// The configured sources, such as `"basic_auth"` and
+        /// `"oauth_access_token"`.
+        sources: Vec<&'static str>,
+    },
     /// The SDK has no request-header contract for this source.
-    Unsupported { source: &'static str },
+    Unsupported {
+        /// The source, such as `"api_key"`.
+        source: &'static str,
+    },
     /// The bearer value cannot be sent as an HTTP bearer token.
-    InvalidBearer { source: &'static str },
+    InvalidBearer {
+        /// The source of the value, such as `"bearer_access_token"`.
+        source: &'static str,
+    },
     /// A Basic username cannot contain the separator used by Basic auth.
     InvalidBasicUsername,
     /// A Basic username or password contains an HTTP control character.
-    InvalidBasicControlCharacter { field: &'static str },
+    InvalidBasicControlCharacter {
+        /// The field: `"username"` or `"password"`.
+        field: &'static str,
+    },
     /// A caller-owned client and configured credentials require explicit opt-in.
     CallerOwnedClient,
     /// A token provider requires the asynchronous request builder.
