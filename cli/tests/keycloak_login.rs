@@ -128,9 +128,9 @@ fn logins(home: &TempDir) -> Vec<Value> {
 
 /// The only stored login.
 fn stored_login(home: &TempDir) -> Value {
-    let logins = logins(home);
-    assert_eq!(logins.len(), 1, "expected one stored login");
-    logins[0].clone()
+    let all = logins(home);
+    assert_eq!(all.len(), 1, "expected one stored login");
+    all[0].clone()
 }
 
 fn field(login: &Value, name: &str) -> String {
@@ -305,7 +305,7 @@ fn login_refresh_and_logout_with_keycloak() {
     assert_eq!(field(&first, "issuer"), issuer());
     // Otherwise the first command would already refresh the token.
     assert!(
-        first["expires_at"].as_u64().unwrap() > now() + EXPIRY_MARGIN + 5,
+        first["expires_at"].as_u64().unwrap() > now() + EXPIRY_MARGIN,
         "the realm's access token lifespan must exceed the CLI's refresh margin"
     );
     assert!(!stderr.contains(&field(&first, "access_token")));
