@@ -45,11 +45,13 @@ pub enum Comparator {
     /// Numbers are read as exact decimals, without floating-point rounding,
     /// and are equal if they are within either tolerance. Objects must have
     /// the same keys, and arrays the same length, except under ignored
-    /// pointers. Object keys are compared in sorted order, and the first
-    /// difference or `null` decides: a `null` makes the outcome
-    /// inconclusive. A value that is missing at the pointer or larger than
-    /// the bounds, or a JSON pointer inside it longer than 2048 bytes,
-    /// makes the outcome inconclusive too.
+    /// pointers. The values are walked with object keys in sorted order. A
+    /// key present on only one side of an object, or arrays of different
+    /// lengths, make that object or array differ without comparing the rest
+    /// of it. Any `null` that is compared makes the whole outcome
+    /// inconclusive, even if other values differ. Also inconclusive: a
+    /// value that is missing at the pointer or larger than the bounds, or a
+    /// path inside it whose JSON pointer is longer than 2048 bytes.
     JsonMetrics {
         /// The comparator version; must be 1.
         version: u32,
