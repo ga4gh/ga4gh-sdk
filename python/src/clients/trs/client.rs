@@ -1,14 +1,16 @@
 //! The TRS client and its Python methods.
 
 use super::files::{PyFileWrapper, PyToolFile};
-use super::helpers::{bounded_int, parse_descriptor_type, request, require_ids, to_raw};
+use super::helpers::{bounded_int, parse_descriptor_type, require_ids, to_raw};
 use super::page::PyToolPage;
 use super::tools::{PyTool, PyToolVersion};
 use super::versions::{
-    capability_override, connect, filter_tags, source_name, support_name, version_policy,
+    build_client, capability_override, require_tag_filter, source_name, support_name,
+    version_policy,
 };
 use super::DEFAULT_ZIP_LIMIT;
 use crate::utils::convert::{check_extra_args, to_python};
+use crate::utils::runtime::request;
 use crate::utils::validate::require_id;
 use crate::{PyConfiguration, PyTransport};
 use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain};
@@ -44,7 +46,9 @@ impl PyTRS {
         options: TrsOptions,
         discovery: bool,
     ) -> PyResult<Self> {
-        Python::attach(|py| connect(py, config, options, discovery).map(|inner| Self { inner }))
+        Python::attach(|py| {
+            build_client(py, config, options, discovery).map(|inner| Self { inner })
+        })
     }
 }
 
@@ -71,7 +75,7 @@ impl PyTRS {
         let options = TrsOptions::default()
             .with_version(version_policy(api_version)?)
             .with_tag_filter(capability_override(tag_filter)?);
-        connect(cls.py(), config, options, discovery).map(|inner| Self { inner })
+        build_client(cls.py(), config, options, discovery).map(|inner| Self { inner })
     }
 
     /// The client's configuration.
@@ -207,7 +211,7 @@ impl PyTRS {
         let params = filter
             .query()
             .map_err(|error| PyValueError::new_err(format!("Invalid filter: {error}")))?;
-        filter_tags(&self.inner, &filter.tags)?;
+        require_tag_filter(&self.inner, &filter.tags)?;
         let page = request(py, "list tools", || {
             list_tools_page(&self.inner, params, BodyLimits::default())
         })?;

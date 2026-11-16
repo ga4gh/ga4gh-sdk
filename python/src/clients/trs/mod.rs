@@ -9,7 +9,7 @@
 //!
 //! - `client`: `TRS`, the client.
 //! - `versions`: the version and capability selection of the client (`api_version`,
-//!   `tag_filter`, `discovery`).
+//!   `tag_filter`, `discovery`) and building the client with it.
 //! - `tools`: `Tool` and `ToolVersion`.
 //! - `files`: `FileWrapper` and `ToolFile`.
 //! - `page`: `ToolPage` and its response headers.

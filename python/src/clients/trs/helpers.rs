@@ -1,33 +1,16 @@
 //! Argument and model helpers shared by the TRS binding; no Python classes.
 
 use crate::utils::json;
-use crate::utils::runtime::io;
 use crate::utils::validate::require_id;
 use pyo3::exceptions::{PyOverflowError, PyValueError};
 use pyo3::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
-use std::future::Future;
 
 /// A model as JSON. The models serialize their unknown fields too.
 pub(super) fn to_raw(value: &impl Serialize) -> PyResult<Value> {
     serde_json::to_value(value).map_err(|error| json::invalid_response("TRS", error))
-}
-
-/// Runs a call of the Rust client without the GIL. Its errors raise `RuntimeError` with
-/// `Failed to <what>: <error>`.
-pub(super) fn request<T, F, Fut, E>(py: Python<'_>, what: &str, call: F) -> PyResult<T>
-where
-    T: Send,
-    F: FnOnce() -> Fut + Send,
-    Fut: Future<Output = Result<T, E>>,
-    E: std::fmt::Display,
-{
-    io(py, |rt| {
-        rt.block_on(call())
-            .map_err(|error| format!("Failed to {what}: {error}"))
-    })
 }
 
 /// A descriptor type, such as `CWL` (`DescriptorType`) or `PLAIN_CWL`
@@ -56,11 +39,10 @@ pub(super) fn bounded_int(
     }
 }
 
-/// Checks a tool ID and a version ID with [`require_id`], which rejects IDs and paths that
-/// can't be one URL path segment: empty, `.` or `..`.
+/// Checks a tool ID and a version ID with [`require_id`].
 ///
-/// The Rust client rejects them too, but as a request failure; this raises `ValueError`
-/// before any request. Other values are sent unchanged, as one percent-encoded segment.
+/// The Rust client rejects such IDs too, but as a request failure; this raises
+/// `ValueError` before any request.
 pub(super) fn require_ids(id: &str, version_id: &str) -> PyResult<()> {
     require_id(id, "tool ID")?;
     require_id(version_id, "version ID")

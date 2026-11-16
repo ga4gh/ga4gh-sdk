@@ -1,5 +1,5 @@
 //! Version and capability selection of the TRS client: the `api_version` and `tag_filter`
-//! arguments, how the client connects with them, and the names of the selection's results.
+//! arguments, building the client with them, and the names of the selection's results.
 
 use crate::utils::runtime::io;
 use crate::PyConfiguration;
@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 
 /// Builds the Rust client with `options`; with `discovery`, it reads the service info first,
 /// releasing the GIL. Without discovery, `options.version` must be explicit.
-pub(super) fn connect(
+pub(super) fn build_client(
     py: Python<'_>,
     config: &PyConfiguration,
     options: TrsOptions,
@@ -37,7 +37,7 @@ pub(super) fn connect(
 }
 
 /// Checks that the client may send the `tags` filter, if `tags` isn't empty.
-pub(super) fn filter_tags(trs: &TRS, tags: &[String]) -> PyResult<()> {
+pub(super) fn require_tag_filter(trs: &TRS, tags: &[String]) -> PyResult<()> {
     if tags.is_empty() {
         return Ok(());
     }
@@ -47,6 +47,7 @@ pub(super) fn filter_tags(trs: &TRS, tags: &[String]) -> PyResult<()> {
         .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
+/// The version policy for the `api_version` argument; `"strict"` is `RequireKnown`.
 pub(super) fn version_policy(api_version: &str) -> PyResult<VersionPolicy<TrsVersion>> {
     match api_version {
         "auto" => Ok(VersionPolicy::Auto),
@@ -59,6 +60,7 @@ pub(super) fn version_policy(api_version: &str) -> PyResult<VersionPolicy<TrsVer
     }
 }
 
+/// The override of the `tags` filter support for the `tag_filter` argument.
 pub(super) fn capability_override(tag_filter: &str) -> PyResult<CapabilityOverride> {
     match tag_filter {
         "auto" => Ok(CapabilityOverride::Auto),
@@ -70,6 +72,7 @@ pub(super) fn capability_override(tag_filter: &str) -> PyResult<CapabilityOverri
     }
 }
 
+/// The name of where the selected version comes from, for `TRS.version_source`.
 pub(super) fn source_name(source: SelectionSource) -> &'static str {
     match source {
         SelectionSource::DeclaredVersion => "declared",
@@ -79,6 +82,7 @@ pub(super) fn source_name(source: SelectionSource) -> &'static str {
     }
 }
 
+/// The name of the `tags` filter support, for `TRS.tag_filter`.
 pub(super) fn support_name(support: CapabilitySupport) -> &'static str {
     match support {
         CapabilitySupport::Specified => "specified",
