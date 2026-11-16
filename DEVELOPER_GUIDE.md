@@ -92,7 +92,8 @@ Other top-level folders:
 2. On Linux, install the OpenSSL development files and `pkg-config`, which
    the default TLS backend needs. On Debian and Ubuntu, run
    `sudo apt-get install libssl-dev pkg-config`; on Fedora and RHEL, install
-   `openssl-devel` and `pkgconf-pkg-config`.
+   `openssl-devel` and `pkgconf-pkg-config`. A build of only the Python
+   bindings with maturin doesn't need them, because the bindings use rustls.
 3. Clone the repository and install the pinned toolchain:
 
    ```sh
