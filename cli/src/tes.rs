@@ -15,7 +15,7 @@ use log::debug;
 use std::path::Path;
 use tokio::io::AsyncReadExt;
 
-/// Build the TES command and its subcommands.
+/// Builds the TES command and its subcommands.
 pub fn command() -> Command {
     Command::new("tes")
         .about("TES subcommands")

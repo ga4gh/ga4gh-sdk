@@ -5,7 +5,7 @@ use clap::{arg, ArgMatches, Command};
 use ga4gh_sdk::clients::drs::DRS;
 use ga4gh_sdk::utils::configuration::Configuration;
 
-/// Build the DRS commands for reading object metadata and access URLs.
+/// Builds the DRS commands for reading object metadata and access URLs.
 pub fn command() -> Command {
     Command::new("drs")
         .about("Data Repository Service commands")

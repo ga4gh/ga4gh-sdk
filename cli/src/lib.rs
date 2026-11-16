@@ -570,7 +570,7 @@ fn built_in_service(matches: &ArgMatches) -> Option<ServiceType> {
     }
 }
 
-/// Build the root command of `ga4gh-cli`. Downstream CLIs can append their own
+/// Builds the root command of `ga4gh-cli`. Downstream CLIs can append their own
 /// subcommands, or use [`CliContext::command`] for their own name and version.
 pub fn command() -> Command {
     CliContext::default().command()
