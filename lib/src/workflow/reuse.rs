@@ -318,8 +318,8 @@ pub enum ReuseStatus {
     Eligible,
     /// A check failed.
     Ineligible,
-    /// No check failed, but trust is unknown or an artifact's access
-    /// couldn't be verified. With [`ReceiptTrust::Unknown`], no artifact is
+    /// No check definitively failed, but trust is unknown or an artifact's
+    /// access couldn't be verified. With [`ReceiptTrust::Unknown`], no artifact is
     /// read, so their sizes and digests are unchecked too.
     Unverified,
 }
@@ -387,8 +387,8 @@ pub struct ReuseReason {
 /// The bytes that the artifact checks read.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ReuseMeasurements {
-    /// The bytes of all artifacts that were read, including the read that
-    /// went over the byte limit.
+    /// The bytes of all artifacts that were read, including a read that
+    /// exceeded `max_bytes`.
     pub bytes_read: u64,
     /// The bytes of the artifacts that passed their checks.
     pub bytes_revalidated: u64,
@@ -515,13 +515,18 @@ impl ReuseReceipt {
     ///
     /// The receipt must be valid and trusted by `trust`, both recipes must be
     /// eligible and have the same fingerprint, and the original run must
-    /// have completed with conformant outputs. Only then are the artifacts
+    /// have completed with conformant outputs, and the declared artifact
+    /// sizes must total at most `max_bytes`. Only then are the artifacts
     /// read with `read` and checked against the receipt's sizes and SHA-256
     /// digests. Sends no request itself.
     ///
-    /// `max_bytes` bounds the declared total and the bytes accepted. The
-    /// SDK doesn't pass it to `read`, so the reader must bound each read
-    /// itself, before allocating.
+    /// If the receipt's declared artifact sizes add up to more than
+    /// `max_bytes`, or the bytes read so far exceed it, the report gets
+    /// [`ReasonCode::ArtifactTooLarge`] and no further artifact is read. The
+    /// SDK doesn't pass `max_bytes` to `read`, so the reader must bound each
+    /// read itself, before allocating.
+    ///
+    /// Returns the [`ReuseReport`]; failed checks appear in its `reasons`.
     pub fn assess(
         &self,
         requested: &RecipeIdentity,
