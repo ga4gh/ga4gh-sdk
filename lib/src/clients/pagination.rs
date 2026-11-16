@@ -81,8 +81,8 @@ pub struct PageCheckpoint {
     pub api_root: String,
     /// The query of the listing, without `page_token`.
     pub query: Value,
-    /// The token of the next page; `None` for the first page or after the
-    /// last one.
+    /// The token of the next page; `None` when the listing starts at the
+    /// service's first page, or after the last page.
     pub next_token: Option<String>,
     /// Whether the last page has been fetched.
     pub finished: bool,
@@ -193,7 +193,10 @@ impl Pager {
         })
     }
     /// Continues a listing from `checkpoint`, for the same `service`, API
-    /// root and `query` (whose `page_token` is ignored). Sends no request.
+    /// root and `query`. Sends no request.
+    ///
+    /// Pass `query` without `page_token`: the checkpoint's token replaces it,
+    /// but a page that leads back to it still counts as a token cycle.
     ///
     /// # Errors
     ///
