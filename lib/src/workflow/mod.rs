@@ -1,6 +1,8 @@
 //! Optional, revisioned workflow contracts. Preparation and comparison never execute jobs.
 pub mod compare;
 pub mod results;
+// Documented (#269), unlike the rest of the module until #270
+#[warn(missing_docs)]
 pub mod reuse;
 use crate::clients::wes::{models::RunRequest, Run, WorkflowAttachment, WES};
 use jsonschema::{Draft, Retrieve, Uri, Validator};

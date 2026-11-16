@@ -37,7 +37,7 @@ pub mod utils;
 /// HTTP types used by the public transport API.
 pub use reqwest;
 
-// Documented in #269 (`reuse`) and #270 (the rest)
+// Documented in #270; `workflow::reuse` is checked already (#269)
 #[allow(missing_docs)]
 #[cfg(feature = "workflow-contracts")]
 pub mod workflow;
