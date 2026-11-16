@@ -14,7 +14,8 @@
 //! - `state`: `TesState`, a `str` enum defined in Python, and the parsing of state and view
 //!   names.
 //! - `wait`: the waits of `Task.wait()` and `AsyncTask.wait()`, and `WaitTimeoutError`.
-//! - `calls`: the other TES calls that the sync and the async classes share.
+//! - `calls`: the other TES calls that the sync and the async classes share (connect,
+//!   create, get, status, cancel).
 //! - `helpers`: the functions that only these modules share; they define no Python classes.
 //!
 //! The calls and functions that `clients::tes_async` and Rust extension crates use are

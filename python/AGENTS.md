@@ -31,11 +31,14 @@ A service binding with more than one class lives in a folder under
   one file for each group of result classes. These submodules are private
   (`mod`, not `pub mod`), so the re-exports in `mod.rs` stay the only Rust paths
   for extension crates, such as `clients::wes::PyWES`.
-- `helpers.rs` holds the functions that only this binding's files share, as
-  `pub(super)`; it defines no Python classes.
-- Functions that code outside the folder uses, such as the TES calls that
-  `clients::tes_async` and extension crates share, are `pub` in the file of
-  their topic (`tes/calls.rs`, `tes/wait.rs`) and re-exported from `mod.rs`.
+- `helpers.rs` holds the general functions that only this binding's files
+  share, as `pub(super)`; it defines no Python classes. A shared function that
+  belongs to one topic may stay `pub(super)` in that topic's file instead, such
+  as `parse_state()` in `tes/state.rs`.
+- `helpers.rs` holds nothing `pub`. Functions that code outside the folder
+  uses, such as the TES calls that `clients::tes_async` and extension crates
+  share, are `pub` in the file of their topic (as in `tes/calls.rs`,
+  `tes/list.rs` and `tes/wait.rs`) and re-exported from `mod.rs`.
   A binding whose classes are split over several Rust modules, such as TES with
   `clients::tes_async`, registers all of them in one `register()`.
 - Helpers that another binding needs in the same form go to `src/utils/`
