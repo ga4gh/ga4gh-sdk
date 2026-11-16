@@ -33,6 +33,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from mkdocs.config.defaults import MkDocsConfig
+from mkdocs.plugins import event_priority
 from mkdocs.structure.files import File, Files
 from mkdocs.structure.nav import Link, Navigation
 
@@ -77,6 +78,8 @@ def stage_stubs(target: Path = STUBS_DIR) -> Path:
     return Path(shutil.copyfile(STUBS, package / "__init__.pyi"))
 
 
+# Before mkdocstrings, which drops `paths` that don't exist yet
+@event_priority(100)
 def on_config(config: MkDocsConfig) -> MkDocsConfig:
     """Stages the type stubs for the Python API reference.
 
