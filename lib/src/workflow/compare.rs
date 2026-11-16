@@ -42,9 +42,14 @@ pub enum Comparator {
     },
     /// Compares the JSON values at the pointer, numbers within tolerances.
     ///
-    /// Numbers are compared exactly as decimals. Objects must have the same
-    /// keys, and arrays the same length. A `null` on either side, or a
-    /// value larger than the bounds, makes the outcome inconclusive.
+    /// Numbers are read as exact decimals, without floating-point rounding,
+    /// and are equal if they are within either tolerance. Objects must have
+    /// the same keys, and arrays the same length, except under ignored
+    /// pointers. Object keys are compared in sorted order, and the first
+    /// difference or `null` decides: a `null` makes the outcome
+    /// inconclusive. A value that is missing at the pointer or larger than
+    /// the bounds, or a JSON pointer inside it longer than 2048 bytes,
+    /// makes the outcome inconclusive too.
     JsonMetrics {
         /// The comparator version; must be 1.
         version: u32,
@@ -75,8 +80,8 @@ pub struct ComparisonPolicy {
     /// The comparator for each output, by JSON pointer into the outputs;
     /// not empty.
     pub outputs: BTreeMap<String, Comparator>,
-    /// The context keys that must be set, not empty and equal in both
-    /// results. `schema_digest` is part of the context.
+    /// The context keys whose values must be non-empty and equal in both
+    /// results; may be empty. `schema_digest` is part of the context.
     pub required_context: Vec<String>,
 }
 /// The result of comparing two results under a policy.

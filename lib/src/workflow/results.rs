@@ -1,9 +1,10 @@
 //! Output interpretation and opt-in artifact evidence, independent of execution state.
 //!
 //! [`Profile::project_results`] checks each named output of a run against
-//! the profile's output contract and gives a [`ResultRecord`]. HTTP(S) URLs
-//! in it lose their credentials, query and fragment, so the record can be
-//! stored. The `verify_` methods of [`ResultRecord`] then add
+//! the profile's output contract and gives a [`ResultRecord`]. Output values
+//! and annotations that are whole HTTP(S) URLs lose their credentials,
+//! query and fragment; the profile document and the context are stored as
+//! given. The `verify_` methods of [`ResultRecord`] then add
 //! [`ArtifactEvidence`] for selected output artifacts: whether they could
 //! be read, and whether their SHA-256 matches an expected checksum.
 use super::{digest, pointer_segment, ContractError, Diagnostic, Profile};
@@ -85,12 +86,15 @@ pub struct ArtifactEvidence {
 /// One named output of a run, checked against its schema.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypedOutput {
-    /// Whether credentials, a query or a fragment were removed from HTTP(S)
-    /// URLs in the value.
+    /// Whether the stored value differs from the run's: true if
+    /// credentials, a query or a fragment were removed, but also if an
+    /// HTTP(S) URL was only normalized, such as `https://example.com`
+    /// to `https://example.com/`.
     #[serde(default)]
     pub access_details_redacted: bool,
-    /// The output value, with credentials, query and fragment removed from
-    /// HTTP(S) URLs; `None` if the run didn't give it.
+    /// The output value. Strings that are whole HTTP(S) URLs are
+    /// normalized and lose their credentials, query and fragment. `None`
+    /// if the run didn't give it.
     pub value: Option<Value>,
     /// Whether the value conforms to the output's schema.
     pub contract_status: ContractStatus,
@@ -102,8 +106,10 @@ pub struct TypedOutput {
 /// The outputs of one run, interpreted under a profile's output contract,
 /// with optional evidence about artifacts.
 ///
-/// It is meant to be stored: it doesn't depend on the run still existing,
-/// and holds no access credentials.
+/// It is meant to be stored: it doesn't depend on the run still existing.
+/// Output values and annotations that are whole HTTP(S) URLs lose their
+/// credentials, query and fragment; URLs elsewhere, in
+/// `contract_document` and in `context` are stored as given.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResultRecord {
     /// The format version; 1.
@@ -114,7 +120,8 @@ pub struct ResultRecord {
     pub execution_state: String,
     /// The [`Profile::schema_digest`] of the profile.
     pub schema_digest: String,
-    /// Root scope for retained schema references and scientific/viewer annotations.
+    /// The profile's JSON document, which the schema references and
+    /// annotations of the outputs resolve against.
     #[serde(default)]
     pub contract_document: Value,
     /// The errors of validating all outputs against the output contract.
@@ -129,7 +136,8 @@ pub struct ResultRecord {
     /// compares it.
     pub context: BTreeMap<String, String>,
 }
-/// Strip access capabilities from URI values before durable serialization.
+// Removes credentials, query and fragment from HTTP(S) URLs in a value, so
+// that it can be stored.
 fn durable(value: &Value) -> Value {
     match value {
         Value::String(s) => {
@@ -154,8 +162,8 @@ impl Profile {
     /// as a [`ResultRecord`], with empty `artifacts` and `context`.
     ///
     /// Each output named in the contract's `properties` gets a
-    /// [`TypedOutput`]; other outputs appear only in
-    /// `contract_diagnostics`. Reads no artifact.
+    /// [`TypedOutput`]. Other outputs aren't kept; the output schema
+    /// decides whether they give `contract_diagnostics`. Reads no artifact.
     ///
     /// # Errors
     ///
@@ -260,14 +268,15 @@ impl ResultRecord {
     ///
     /// The SHA-256 of `bytes` is compared with `expected`; without it, the
     /// integrity stays [`IntegrityStatus::Unverified`]. If the result has
-    /// no value at `pointer`, the access is [`AccessStatus::Missing`] and
-    /// `bytes` and `expected` are ignored.
+    /// no value at `pointer`, the access is [`AccessStatus::Missing`],
+    /// `bytes` are ignored, and `expected` is recorded as given, without
+    /// checks.
     ///
     /// # Errors
     ///
-    /// Fails, and records nothing, if `expected` names an algorithm other
-    /// than SHA-256, its digest isn't 64 hex digits, or its evidence source
-    /// is blank.
+    /// Fails, and records nothing, if there is a value at `pointer` and
+    /// `expected` names an algorithm other than SHA-256, its digest isn't
+    /// 64 hex digits, or its evidence source is blank.
     pub fn verify_bytes(
         &mut self,
         pointer: &str,
@@ -310,12 +319,13 @@ impl ResultRecord {
     /// request uses a fresh client: it follows no redirects and sends no
     /// SDK credentials. At most `max_bytes` are read, within the bounds of
     /// `operation`. If the request fails, returns no success status or
-    /// goes over `max_bytes`, the access is [`AccessStatus::Inaccessible`].
+    /// goes over `max_bytes`, the access is [`AccessStatus::Inaccessible`]
+    /// and `expected` is recorded as given, without checks.
     ///
     /// # Errors
     ///
-    /// Fails if the HTTP client can't be built, or as
-    /// [`Self::verify_bytes`] does.
+    /// Fails if the HTTP client can't be built, or, once the bytes are
+    /// read, as [`Self::verify_bytes`] does.
     pub async fn verify_access_plan(
         &mut self,
         pointer: &str,
