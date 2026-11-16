@@ -47,8 +47,8 @@ tests = [
 # other tools of CI, so that their upgrades, which may add warnings that
 # fail the strict build, are deliberate (their own dependencies are not
 # pinned). Review each pinned-tool update explicitly. Pytest runs the
-# tests of the build's hooks (`docs/test_hooks.py`); mkdocstrings formats
-# the signatures of the Python API reference with Ruff
+# tests in `docs/` (the build's hooks and the Python API reference);
+# mkdocstrings formats the signatures of the Python API reference with Ruff
 [dependency-groups]
 docs = [
     "mkdocs==1.6.1",

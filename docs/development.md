@@ -213,9 +213,12 @@ make site
 every class and member of the stubs has a docstring and that the `Args:`
 section of each method names all of its parameters.
 
-`python3 -m pytest docs/test_hooks.py` tests the hooks; CI
-runs both. After the first `make site`, `mkdocs serve` shows the site
-at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
+The Griffe extension `docs/griffe_overloads.py` renders methods that the
+stubs declare only with `@overload`, such as `Task.wait`.
+`python3 -m pytest docs` tests the hooks and checks that the reference loads
+every class and member of the stubs; CI runs both. After the first
+`make site`, `mkdocs serve` shows the site at <http://127.0.0.1:8000/> and
+rebuilds it when a guide changes.
 
 ### Read the Docs project
 
