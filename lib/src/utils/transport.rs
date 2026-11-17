@@ -436,6 +436,9 @@ impl Transport {
 
     /// Sends a GET request within `timeout`, in place of the request timeout,
     /// including reading the response. The connect timeout still applies.
+    /// Unlike [`response_text`], a body that isn't valid UTF-8 is an error:
+    /// the service-info discovery that uses this reads JSON, which must not
+    /// be repaired with replacement characters.
     pub(crate) async fn get_within(
         &self,
         endpoint: &str,
@@ -453,7 +456,10 @@ impl Transport {
                         None,
                     )
                     .await?;
-                response_text(response, BodyLimits::default()).await
+                let body = checked_response(response, BodyLimits::default())
+                    .await?
+                    .body;
+                Ok(String::from_utf8(body).map_err(|error| error.utf8_error())?)
             })
             .await?
     }

@@ -26,6 +26,31 @@ def test_get_service_info_failure(server):
     assert (request["method"], request["path"]) == ("GET", "/missing/service-info")
 
 
+def test_get_service_info_keeps_custom_types_and_extensions(server):
+    result = ServiceInfo(Configuration(f"{server.root}/si-extended")).get_service_info()
+
+    assert 'artifact: "custom-api", version: "99.0"' in result
+    assert "description: None" in result
+    assert '"x-provider": Object {"features": Array [String("gpu")]}' in result
+
+
+@pytest.mark.parametrize(
+    "case, message",
+    [
+        ("missing", "missing field `version`"),
+        ("wrong-type", "invalid type: integer"),
+        ("malformed", "EOF while parsing"),
+        ("bad-utf8", "invalid utf-8"),
+        ("unauthorized", "401"),
+    ],
+)
+def test_get_service_info_rejects_invalid_responses(server, case, message):
+    service_info = ServiceInfo(Configuration(f"{server.root}/si-{case}"))
+
+    with pytest.raises(RuntimeError, match=rf"Failed to get service info: .*{message}"):
+        service_info.get_service_info()
+
+
 @pytest.mark.parametrize(
     "method, args, path, body, expected",
     [

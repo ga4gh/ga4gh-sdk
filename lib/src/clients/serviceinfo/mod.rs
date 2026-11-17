@@ -33,16 +33,31 @@ impl ServiceInfo {
 
     /// Retrieves the service information.
     ///
+    /// Any service type is returned as declared, including custom ones and
+    /// unknown API versions; fields that the schema doesn't define stay in
+    /// `extra`. See the [Service Info contract] for the full behavior.
+    ///
     /// # Returns
     ///
     /// A `Result` containing the service information or an error.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Http`](crate::Error::Http) for a non-2xx status,
+    /// [`Error::Parse`](crate::Error::Parse) for malformed JSON or a document
+    /// that isn't a valid [`models::Service`], for example one without a
+    /// required field, and an error with a [`std::str::Utf8Error`] for a body
+    /// that isn't valid UTF-8. A failed decoding isn't retried.
+    ///
+    /// [Service Info contract]: https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/api_compatibility.md#service-info
     pub async fn get(&self) -> crate::Result<models::Service> {
         self.get_at("service-info").await
     }
 
     /// Retrieves service information from a path relative to the configured API root,
     /// within the `discovery` limit of the configuration's
-    /// [`Timeouts`](crate::utils::timeouts::Timeouts).
+    /// [`Timeouts`](crate::utils::timeouts::Timeouts). It decodes and fails as
+    /// [`Self::get`] does.
     pub async fn get_at(&self, endpoint: &str) -> crate::Result<models::Service> {
         fetch(&self.transport, endpoint).await
     }
