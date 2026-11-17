@@ -399,6 +399,117 @@ fn digest_comparison_requires_consistent_expected_evidence() {
         Outcome::Inconclusive
     );
 }
+#[tokio::test]
+async fn malformed_expected_checksums_fail_before_any_read() {
+    use ga4gh_sdk::{
+        clients::drs::{
+            models::access_method::Type,
+            uri::{AccessPlan, AccessPreferences, DrsResolver},
+        },
+        utils::{configuration::Configuration, operation::Operation, transport::Transport},
+    };
+    let checksum = |algorithm: &str, digest: &str, source: &str| ExpectedChecksum {
+        algorithm: algorithm.into(),
+        digest: digest.into(),
+        evidence_source: source.into(),
+    };
+    let valid = "0".repeat(64);
+    let malformed = [
+        checksum("md5", &valid, "manifest"),
+        checksum("sha256", "not-hex", "manifest"),
+        checksum("sha256", &valid, " "),
+    ];
+    // Nothing listens on the discard port, so the read fails
+    let plan = AccessPlan {
+        object_id: "report".into(),
+        method: Type::Https,
+        region: None,
+        url: url::Url::parse("http://127.0.0.1:9/report").unwrap(),
+        headers: Default::default(),
+    };
+    // Nothing listens on the discard port, so resolution fails too
+    let resolver = DrsResolver::default()
+        .with_service(
+            "drs.example",
+            Transport::new(&Configuration::new(
+                url::Url::parse("http://127.0.0.1:9/ga4gh/drs/v1").unwrap(),
+            )),
+        )
+        .unwrap();
+    let operation = Operation::new(std::time::Duration::from_secs(2));
+    let p = profile(schema());
+    let mut r = p
+        .project_results(
+            "run",
+            "COMPLETE",
+            &json!({"count":1,"report":"drs://drs.example/report"}),
+        )
+        .unwrap();
+    // Fails because of the checksum, not for another reason
+    let rejected = |result: Result<(), ga4gh_sdk::workflow::ContractError>, case: &str| {
+        let message = result.expect_err(case).to_string();
+        assert!(
+            message.contains("checksum") || message.contains("SHA-256"),
+            "{case}: {message}"
+        );
+    };
+    for expected in malformed {
+        let some = || Some(expected.clone());
+        let case = |method: &str, pointer: &str| format!("{method} {pointer} {expected:?}");
+        for pointer in ["/missing", "/report"] {
+            rejected(
+                r.verify_bytes(pointer, b"report", some()),
+                &case("verify_bytes", pointer),
+            );
+            rejected(
+                r.verify_access_plan(pointer, &plan, some(), &operation, 1024)
+                    .await,
+                &case("verify_access_plan", pointer),
+            );
+            rejected(
+                r.verify_drs(
+                    pointer,
+                    &resolver,
+                    &AccessPreferences::default(),
+                    some(),
+                    &operation,
+                    1,
+                    1024,
+                )
+                .await,
+                &case("verify_drs", pointer),
+            );
+        }
+        assert!(r.artifacts.is_empty());
+    }
+    // A valid expected checksum is still recorded when the read or the
+    // resolution fails
+    let valid_checksum = || Some(checksum("SHA-256", &valid, "manifest"));
+    r.verify_access_plan("/report", &plan, valid_checksum(), &operation, 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        r.artifacts["/report"].access_status,
+        AccessStatus::Inaccessible
+    );
+    r.artifacts.clear();
+    r.verify_drs(
+        "/report",
+        &resolver,
+        &AccessPreferences::default(),
+        valid_checksum(),
+        &operation,
+        1,
+        1024,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r.artifacts["/report"].access_status,
+        AccessStatus::Inaccessible
+    );
+    assert!(r.artifacts["/report"].expected.is_some());
+}
 
 #[tokio::test]
 async fn selected_drs_verification_uses_owning_resolver_and_only_object_headers() {
