@@ -119,7 +119,7 @@ async fn canceled_task_ends_canceled() {
 }
 
 /// Asserts that a request failed with HTTP 401.
-fn assert_unauthorized(error: &(dyn std::error::Error + 'static)) {
+fn assert_unauthorized(error: &ga4gh_sdk::Error) {
     let status = error.downcast_ref::<HttpError>().map(|error| error.status);
     assert_eq!(status, Some(StatusCode::UNAUTHORIZED), "{error}");
 }
@@ -132,11 +132,11 @@ async fn requests_without_valid_access_token_are_unauthorized() {
 
     for tes in [anonymous, invalid] {
         let error = tes.list_tasks(None).await.expect_err("list");
-        assert_unauthorized(error.as_ref());
+        assert_unauthorized(&error);
         let error = tes
             .create_value(task("unauthorized", &["true"]))
             .await
             .expect_err("creation");
-        assert_unauthorized(error.as_ref());
+        assert_unauthorized(&error);
     }
 }

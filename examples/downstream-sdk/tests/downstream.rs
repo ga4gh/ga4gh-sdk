@@ -138,8 +138,10 @@ async fn usage_errors_keep_the_http_status() {
         .await
         .unwrap_err();
 
-    let error = error.downcast_ref::<HttpError>().expect("an HTTP error");
-    assert_eq!(error.status.as_u16(), 404);
+    match error {
+        ga4gh_sdk::Error::Http(HttpError { status, .. }) => assert_eq!(status.as_u16(), 404),
+        other => panic!("expected an HTTP error, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -154,7 +156,7 @@ async fn usage_rejects_invalid_bodies() {
         .await
         .unwrap_err();
 
-    assert!(error.is::<serde_json::Error>(), "{error}");
+    assert!(matches!(error, ga4gh_sdk::Error::Parse(_)), "{error}");
 }
 
 #[tokio::test]
@@ -193,6 +195,42 @@ async fn prioritized_task_sends_and_reads_the_extra_field() {
         fetched.task.extra,
         *json!({"x-other": true}).as_object().unwrap()
     );
+}
+
+#[tokio::test]
+async fn tes_client_accepts_the_artifact_of_the_extended_service() {
+    let _info = mock("GET", "/artifact/ga4gh/tes/v1/service-info")
+        .with_status(200)
+        .with_body(
+            json!({
+                "id": "org.example.prioritized",
+                "name": "Example TES with priorities",
+                "type": {"group": "org.example", "artifact": "prioritized-tes", "version": "1.1.0"},
+                "organization": {"name": "Example", "url": "https://example.org"},
+                "version": "1.0.0"
+            })
+            .to_string(),
+        )
+        .create();
+    let created = mock("POST", "/artifact/ga4gh/tes/v1/tasks")
+        .match_body(Matcher::PartialJson(json!({"priority": 2})))
+        .with_status(200)
+        .with_body(r#"{"id":"task-2"}"#)
+        .create();
+    let config = config("artifact");
+
+    let error = TES::new(&config).await.unwrap_err();
+    assert!(
+        matches!(error, ga4gh_sdk::Error::UnexpectedService(_)),
+        "{error:?}"
+    );
+
+    let tes = TES::with_artifact(Transport::new(&config), "prioritized-tes")
+        .await
+        .unwrap();
+    let task = PrioritizedTask::new(example_task()).with_priority(2);
+    assert_eq!(task.submit(&tes).await.unwrap().id, "task-2");
+    created.assert();
 }
 
 #[test]

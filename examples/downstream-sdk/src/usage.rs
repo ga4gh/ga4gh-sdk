@@ -4,7 +4,6 @@ use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::{urlencode, Transport};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::error::Error;
 
 /// Resource usage of a task, as returned by `GET /tasks/{id}/usage`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -54,9 +53,9 @@ impl UsageClient {
     /// # Errors
     ///
     /// Fails if the request fails, if the service responds with an error
-    /// status (as [`ga4gh_sdk::utils::transport::HttpError`]), or if the
+    /// status ([`ga4gh_sdk::Error::Http`]), or if the
     /// response isn't a valid [`TaskUsage`].
-    pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
+    pub async fn task_usage(&self, id: &str) -> ga4gh_sdk::Result<TaskUsage> {
         let path = format!("tasks/{}/usage", urlencode(id));
         let body = self.transport.get(&path, None).await?;
         Ok(serde_json::from_str(&body)?)

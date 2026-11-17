@@ -30,9 +30,9 @@ use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
 };
-/// The error type of the workflow contract functions: a boxed error whose
-/// message says which check failed.
-pub type ContractError = Box<dyn Error>;
+/// The error type of the workflow contract functions: [`crate::Error`],
+/// whose message says which check failed.
+pub type ContractError = crate::Error;
 /// The revision of the GA4GH I/O profile and widget vocabulary schemas that
 /// this crate embeds; [`Pins::reference`] pins both to it.
 pub const PROFILE_REVISION: &str = "45d41324353cb4900fdd999c307c2e36a3f2a410";
