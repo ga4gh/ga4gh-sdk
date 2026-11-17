@@ -150,7 +150,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
 
         let tes = match TES::new(config).await {
             Ok(tes) => tes,
-            Err(error) => return Ok(service_failure(error.as_ref())),
+            Err(error) => return Ok(service_failure(&error)),
         };
         match tes.create_value(task).await {
             Ok(task) => {
@@ -217,7 +217,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
 
         let tes = match TES::new(config).await {
             Ok(tes) => tes,
-            Err(error) => return Ok(service_failure(error.as_ref())),
+            Err(error) => return Ok(service_failure(&error)),
         };
         match tes.list_tasks(Some(parameters)).await {
             Ok(task_response) => {
@@ -241,7 +241,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
 
         let tes = match TES::new(config).await {
             Ok(tes) => tes,
-            Err(error) => return Ok(service_failure(error.as_ref())),
+            Err(error) => return Ok(service_failure(&error)),
         };
         match tes.get_raw(view, id).await {
             Ok(task) => return Ok(CommandOutput::json(task)),
@@ -313,7 +313,7 @@ async fn run_files(
     }
     let tes = match TES::new(config).await {
         Ok(tes) => tes,
-        Err(error) => return Ok(service_failure(error.as_ref())),
+        Err(error) => return Ok(service_failure(&error)),
     };
     let body = match tes.get_raw(TesView::Full, id).await {
         Ok(body) => body,
@@ -373,7 +373,7 @@ fn parse_task(task_json: &str) -> anyhow::Result<serde_json::Value> {
     Ok(task)
 }
 
-fn service_failure(error: &(dyn std::error::Error + 'static)) -> CommandOutput {
+fn service_failure(error: &ga4gh_sdk::Error) -> CommandOutput {
     let message = if error
         .downcast_ref::<HttpError>()
         .is_some_and(|http| http.status == 404)

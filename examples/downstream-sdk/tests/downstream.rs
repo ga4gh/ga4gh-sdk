@@ -138,8 +138,10 @@ async fn usage_errors_keep_the_http_status() {
         .await
         .unwrap_err();
 
-    let error = error.downcast_ref::<HttpError>().expect("an HTTP error");
-    assert_eq!(error.status.as_u16(), 404);
+    match error {
+        ga4gh_sdk::Error::Http(HttpError { status, .. }) => assert_eq!(status.as_u16(), 404),
+        other => panic!("expected an HTTP error, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -154,7 +156,7 @@ async fn usage_rejects_invalid_bodies() {
         .await
         .unwrap_err();
 
-    assert!(error.is::<serde_json::Error>(), "{error}");
+    assert!(matches!(error, ga4gh_sdk::Error::Parse(_)), "{error}");
 }
 
 #[tokio::test]

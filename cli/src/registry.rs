@@ -5,7 +5,6 @@ use ga4gh_sdk::clients::registry::models::{ExternalService, ServiceType};
 use ga4gh_sdk::clients::registry::ServiceRegistry;
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::HttpError;
-use std::error::Error;
 
 /// Build the Service Registry command and its subcommands.
 pub fn command() -> Command {
@@ -51,7 +50,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                         .collect();
                     CommandOutput::success(format_services(&services))
                 }
-                Err(error) => service_failure(error.as_ref()),
+                Err(error) => service_failure(&error),
             }
         }
         Some(("get", sub)) => {
@@ -74,14 +73,14 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                     .map(|service_type| format!("{}\n", type_label(service_type)))
                     .collect(),
             ),
-            Err(error) => service_failure(error.as_ref()),
+            Err(error) => service_failure(&error),
         },
         _ => CommandOutput::success(String::new()),
     };
     Ok(output)
 }
 
-fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
+fn service_failure(error: &ga4gh_sdk::Error) -> CommandOutput {
     if error
         .downcast_ref::<HttpError>()
         .is_some_and(|http| http.status == 404)

@@ -165,7 +165,7 @@ fn token_field(
     direct: &'static str,
     env_field: &'static str,
     section: &str,
-) -> Result<Option<String>, Box<dyn std::error::Error>> {
+) -> Result<Option<String>, crate::error::BoxError> {
     let token = match fields.get(direct) {
         None | Some(Value::Null) => None,
         Some(Value::String(token)) => Some(token.clone()),
@@ -524,12 +524,12 @@ impl Configuration {
     ///
     /// # Errors
     ///
-    /// Returns an error naming the variable if it isn't set or isn't valid Unicode.
-    pub fn with_oauth_access_token_from_env(
-        self,
-        name: &str,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(self.with_oauth_access_token(token_from_env(name)?))
+    /// Returns an [`Error::Configuration`](crate::Error::Configuration) naming
+    /// the variable if it isn't set or isn't valid Unicode.
+    pub fn with_oauth_access_token_from_env(self, name: &str) -> crate::Result<Self> {
+        let token =
+            token_from_env(name).map_err(|error| crate::Error::Configuration(error.into()))?;
+        Ok(self.with_oauth_access_token(token))
     }
 
     /// Gets bearer tokens from `provider` for each request, in place of a static
@@ -612,11 +612,15 @@ impl Configuration {
     }
 
     /// Sets a generic bearer token from an explicitly named environment variable.
-    pub fn with_bearer_access_token_from_env(
-        self,
-        name: &str,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(self.with_bearer_access_token(token_from_env(name)?))
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error::Configuration`](crate::Error::Configuration) naming
+    /// the variable if it isn't set or isn't valid Unicode.
+    pub fn with_bearer_access_token_from_env(self, name: &str) -> crate::Result<Self> {
+        let token =
+            token_from_env(name).map_err(|error| crate::Error::Configuration(error.into()))?;
+        Ok(self.with_bearer_access_token(token))
     }
 
     /// Sets the time limits of requests; see [`Timeouts`].
@@ -643,10 +647,11 @@ impl Configuration {
     ///
     /// # Errors
     ///
-    /// This function will return an error if the configuration file is missing or malformed.
-    pub fn from_file(service_type: ServiceType) -> Result<Self, Box<dyn std::error::Error>> {
+    /// An [`Error::Configuration`](crate::Error::Configuration) if the
+    /// configuration file is missing or malformed.
+    pub fn from_file(service_type: ServiceType) -> crate::Result<Self> {
         let path = dirs::home_dir()
-            .ok_or("Home directory not found")?
+            .ok_or_else(|| crate::Error::Configuration("Home directory not found".into()))?
             .join(".ga4gh-cli/config.json");
         Self::from_path(path, service_type.as_str())
     }
@@ -659,10 +664,15 @@ impl Configuration {
     /// `api_key` and URL userinfo are rejected. `timeouts` is an object with
     /// `connect`, `request`, `discovery` and `submission` in seconds; missing
     /// ones keep their defaults (see [`Timeouts`]). Other keys of the section go
-    /// into `extra`. A missing file is an I/O error; malformed content is an
-    /// input error.
+    /// into `extra`.
     /// In a file with profiles, the section comes from the default profile;
     /// see [`Configuration::from_path_with_profile`].
+    ///
+    /// # Errors
+    ///
+    /// An [`Error::Configuration`](crate::Error::Configuration). For a file that
+    /// can't be read, it holds the [`std::io::Error`], which
+    /// [`Error::downcast_ref`](crate::Error::downcast_ref) returns.
     ///
     /// # Example
     ///
@@ -674,10 +684,7 @@ impl Configuration {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_path(
-        path: impl AsRef<Path>,
-        section: &str,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_path(path: impl AsRef<Path>, section: &str) -> crate::Result<Self> {
         Self::from_path_with_profile(path, None, section)
     }
 
@@ -721,8 +728,16 @@ impl Configuration {
         path: impl AsRef<Path>,
         profile: Option<&str>,
         section: &str,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let path = path.as_ref();
+    ) -> crate::Result<Self> {
+        Self::load(path.as_ref(), profile, section).map_err(crate::Error::Configuration)
+    }
+
+    // Reads a section as `from_path_with_profile` does.
+    fn load(
+        path: &Path,
+        profile: Option<&str>,
+        section: &str,
+    ) -> Result<Self, crate::error::BoxError> {
         let contents = std::fs::read_to_string(path).map_err(|error| {
             std::io::Error::new(
                 error.kind(),

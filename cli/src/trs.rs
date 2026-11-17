@@ -135,7 +135,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     };
     let trs = match connection {
         Ok(trs) => trs,
-        Err(error) => return Ok(service_failure(error.as_ref())),
+        Err(error) => return Ok(service_failure(&error)),
     };
     Ok(match execute(&trs, request).await {
         Ok(stdout) => CommandOutput::success(stdout),
@@ -466,7 +466,7 @@ fn parse_descriptor_type(value: &str) -> anyhow::Result<DescriptorType> {
         })
 }
 
-fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
+fn service_failure(error: &ga4gh_sdk::Error) -> CommandOutput {
     let message = if error
         .downcast_ref::<HttpError>()
         .is_some_and(|http| http.status == 404)

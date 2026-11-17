@@ -2,7 +2,7 @@
 use super::{models::RunRequest, Run, WES};
 use crate::utils::{operation::Operation, transport::BodyLimits};
 use reqwest::multipart::{Form, Part};
-use std::{collections::HashSet, error::Error, path::PathBuf, pin::Pin};
+use std::{collections::HashSet, path::PathBuf, pin::Pin};
 use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
 
@@ -34,7 +34,7 @@ impl StreamingAttachment {
     }
 }
 /// WES paths are relative to the attachment root, with '/' separators.
-pub fn validate_filename(filename: &str) -> Result<(), Box<dyn Error>> {
+pub fn validate_filename(filename: &str) -> crate::Result<()> {
     if filename.is_empty()
         || filename.starts_with('/')
         || filename.contains('\\')
@@ -48,10 +48,10 @@ pub fn validate_filename(filename: &str) -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
-fn workflow_form(mut request: RunRequest) -> Result<Form, Box<dyn Error>> {
+fn workflow_form(mut request: RunRequest) -> crate::Result<Form> {
     let extra = std::mem::take(&mut request.extra);
     let value = serde_json::to_value(request)?;
-    let required = |field: &str| -> Result<String, Box<dyn Error>> {
+    let required = |field: &str| -> crate::Result<String> {
         value
             .get(field)
             .and_then(serde_json::Value::as_str)
@@ -123,7 +123,7 @@ impl WES {
         request: RunRequest,
         attachments: Vec<StreamingAttachment>,
         operation: &Operation,
-    ) -> Result<Run, Box<dyn Error>> {
+    ) -> crate::Result<Run> {
         self.check()?;
         let mut names = HashSet::new();
         for attachment in &attachments {
@@ -156,7 +156,7 @@ impl WES {
                     };
                     form = form.part("workflow_attachment", part.file_name(attachment.filename));
                 }
-                Ok::<_, Box<dyn Error>>(form)
+                Ok::<_, crate::Error>(form)
             })
             .await??;
         // The token provider runs within the operation; running out of time

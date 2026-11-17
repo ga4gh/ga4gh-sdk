@@ -11,45 +11,17 @@ pub mod uri;
 use crate::clients::drs::models::AccessUrl;
 use crate::clients::drs::models::DrsObject;
 use crate::clients::serviceinfo::models::Service;
+use crate::clients::serviceinfo::DiscoveryError;
 use crate::utils::configuration::Configuration;
-use crate::utils::transport::{urlencode, HttpStatusError, Transport};
-use std::error::Error;
-use std::fmt;
-
-// Describes a failed service-info request, with a hint if the API root seems wrong.
-fn access_error(error: &(dyn std::error::Error + 'static)) -> String {
-    let mut message = format!("Error accessing DRS service: {error}");
-    if error
-        .downcast_ref::<HttpStatusError>()
-        .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
-    {
-        message.push_str(". Check that base_path is the DRS API root");
-    }
-    message
-}
-
-/// Keeps the original discovery failure inspectable while adding the API-root hint.
-#[derive(Debug)]
-struct DiscoveryError(Box<dyn Error>);
-
-impl fmt::Display for DiscoveryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&access_error(self.0.as_ref()))
-    }
-}
-
-impl Error for DiscoveryError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
+use crate::utils::transport::{urlencode, Transport};
 
 /// The main struct for interacting with a DRS service.
 #[derive(Debug)]
 pub struct DRS {
     #[allow(dead_code)]
     pub config: Configuration,
-    pub service: Result<Service, Box<dyn std::error::Error + Send + Sync>>,
+    /// The service info fetched when the client was created.
+    pub service: Service,
     pub transport: Transport,
 }
 
@@ -62,7 +34,7 @@ impl DRS {
     ///
     /// # Returns
     /// - A new `DRS` instance, or an error if the initialization fails.
-    pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(config: &Configuration) -> crate::Result<Self> {
         Self::with_transport(Transport::new(config)).await
     }
 
@@ -72,37 +44,34 @@ impl DRS {
     ///
     /// # Returns
     /// - A new `DRS` instance, or an error if the initialization fails.
-    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
         let service = crate::clients::serviceinfo::fetch(&transport, "service-info")
             .await
-            .map_err(|error| Box::new(DiscoveryError(error)) as Box<dyn Error>)?;
+            .map_err(|source| DiscoveryError { api: "DRS", source })?;
 
         let instance = DRS {
             config: transport.config.clone(),
             transport,
-            service: Ok(service),
+            service,
         };
 
         instance.check()?;
         Ok(instance)
     }
 
-    /// Checks if the service is of DRS class.
+    /// Checks that the service is a DRS.
     ///
-    /// # Returns
-    /// - Ok(()) if the service is valid.
-    /// - Err(String) if the service is invalid or an error occurs.
-    fn check(&self) -> Result<(), String> {
-        let resp = &self.service;
-        match resp.as_ref() {
-            Ok(service)
-                if service.r#type.group == "org.ga4gh" && service.r#type.artifact == "drs" =>
-            {
-                Ok(())
-            }
-            Ok(_) => Err("The endpoint is not an instance of DRS".into()),
-            // `DRS::new` stores only `Ok`; an `Err` comes from a client built by hand.
-            Err(error) => Err(access_error(error.as_ref())),
+    /// # Errors
+    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if its service info names
+    /// another group or artifact.
+    fn check(&self) -> crate::Result<()> {
+        let kind = &self.service.r#type;
+        if kind.group == "org.ga4gh" && kind.artifact == "drs" {
+            Ok(())
+        } else {
+            Err(crate::Error::UnexpectedService(
+                "The endpoint is not an instance of DRS".to_owned(),
+            ))
         }
     }
 
@@ -114,25 +83,19 @@ impl DRS {
     /// # Returns
     /// - On success, returns a `DrsObject` containing the object details.
     /// - On failure, returns an error.
-    pub async fn get_object(
-        &self,
-        object_id: &str,
-    ) -> Result<DrsObject, Box<dyn std::error::Error>> {
+    pub async fn get_object(&self, object_id: &str) -> crate::Result<DrsObject> {
         match self.get_object_once(object_id).await? {
             resolution::Resolution::Ready(value) => Ok(value),
-            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+            resolution::Resolution::Pending(pending) => Err(crate::Error::other(pending)),
         }
     }
 
     /// Retrieves an object's JSON without discarding fields unknown to the SDK model.
-    pub async fn get_object_raw(
-        &self,
-        object_id: &str,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    pub async fn get_object_raw(&self, object_id: &str) -> crate::Result<String> {
         let reference = self.resolution_reference(format!("objects/{}", urlencode(object_id)));
         match self.resolve_reference_raw(&reference).await? {
             resolution::Resolution::Ready(body) => Ok(body),
-            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+            resolution::Resolution::Pending(pending) => Err(crate::Error::other(pending)),
         }
     }
 
@@ -149,10 +112,10 @@ impl DRS {
         &self,
         object_id: &str,
         access_id: &str,
-    ) -> Result<AccessUrl, Box<dyn std::error::Error>> {
+    ) -> crate::Result<AccessUrl> {
         match self.get_access_url_once(object_id, access_id).await? {
             resolution::Resolution::Ready(value) => Ok(value),
-            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+            resolution::Resolution::Pending(pending) => Err(crate::Error::other(pending)),
         }
     }
 
@@ -161,7 +124,7 @@ impl DRS {
         &self,
         object_id: &str,
         access_id: &str,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    ) -> crate::Result<String> {
         let reference = self.resolution_reference(format!(
             "objects/{}/access/{}",
             urlencode(object_id),
@@ -169,7 +132,7 @@ impl DRS {
         ));
         match self.resolve_reference_raw(&reference).await? {
             resolution::Resolution::Ready(body) => Ok(body),
-            resolution::Resolution::Pending(pending) => Err(Box::new(pending)),
+            resolution::Resolution::Pending(pending) => Err(crate::Error::other(pending)),
         }
     }
 }
@@ -193,7 +156,7 @@ mod tests {
         let transport = Transport::new(&config);
         let drs = DRS {
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
             transport,
         };
         let output = format!("{:?}", drs);
@@ -219,7 +182,7 @@ mod tests {
         let config =
             Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
         let drs = DRS::new(&config).await.unwrap();
-        assert_eq!(drs.service.unwrap().r#type.artifact, "drs");
+        assert_eq!(drs.service.r#type.artifact, "drs");
     }
 
     #[tokio::test]
@@ -234,9 +197,8 @@ mod tests {
         assert!(error
             .to_string()
             .contains("Check that base_path is the DRS API root"));
-        let cause = error
-            .source()
-            .and_then(|source| source.downcast_ref::<HttpStatusError>())
+        let cause = std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<crate::utils::transport::HttpError>())
             .expect("HTTP error remains available as the source");
         assert_eq!(cause.status, reqwest::StatusCode::NOT_FOUND);
     }
@@ -264,13 +226,13 @@ mod tests {
 
         let drs = DRS {
             config,
-            service: Ok(Service {
+            service: Service {
                 r#type: Box::new(ServiceType {
                     artifact: "drs".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
-            }),
+            },
             transport,
         };
 
@@ -302,13 +264,13 @@ mod tests {
 
         let drs = DRS {
             config,
-            service: Ok(Service {
+            service: Service {
                 r#type: Box::new(ServiceType {
                     artifact: "drs".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
-            }),
+            },
             transport,
         };
 
@@ -352,7 +314,7 @@ mod tests {
         let drs = DRS {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
         };
         assert_eq!(drs.get_object(object_id).await.unwrap().id, object_id);
         assert_eq!(

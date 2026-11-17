@@ -7,7 +7,7 @@ use crate::utils::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{error::Error, future::Future, time::Duration};
+use std::{future::Future, time::Duration};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum ServiceKind {
@@ -32,15 +32,15 @@ fn api_root(config: &Configuration) -> String {
     root.into()
 }
 impl RemoteHandle {
-    pub fn task(&self, config: &Configuration) -> Result<Task, Box<dyn Error>> {
+    pub fn task(&self, config: &Configuration) -> crate::Result<Task> {
         self.validate(config, ServiceKind::Tes)?;
         Ok(Task::new(self.id.clone(), Transport::new(config)))
     }
-    pub fn run(&self, config: &Configuration) -> Result<Run, Box<dyn Error>> {
+    pub fn run(&self, config: &Configuration) -> crate::Result<Run> {
         self.validate(config, ServiceKind::Wes)?;
         Ok(Run::new(self.id.clone(), Transport::new(config)))
     }
-    fn validate(&self, config: &Configuration, kind: ServiceKind) -> Result<(), Box<dyn Error>> {
+    fn validate(&self, config: &Configuration, kind: ServiceKind) -> crate::Result<()> {
         if self.service != kind || self.api_root != api_root(config) || self.id.is_empty() {
             return Err("remote handle does not match service/API root or has an empty ID".into());
         }
@@ -103,7 +103,7 @@ fn terminal(kind: ServiceKind, state: &str) -> Option<WaitOutcome> {
 pub async fn observe<F, Fut>(handle: RemoteHandle, options: &WaitOptions, mut poll: F) -> WaitResult
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Result<Value, Box<dyn Error>>>,
+    Fut: Future<Output = crate::Result<Value>>,
 {
     let mut result = WaitResult {
         handle,
@@ -173,7 +173,7 @@ async fn poll(
     path: &str,
     params: Option<Value>,
     options: &WaitOptions,
-) -> Result<Value, Box<dyn Error>> {
+) -> crate::Result<Value> {
     let request = RequestOptions {
         operation: options.operation.clone(),
         retry: options.retry.clone(),
@@ -238,10 +238,7 @@ impl Task {
         .await;
         result
     }
-    pub async fn cancel_and_wait(
-        &self,
-        options: &WaitOptions,
-    ) -> Result<WaitResult, Box<dyn Error>> {
+    pub async fn cancel_and_wait(&self, options: &WaitOptions) -> crate::Result<WaitResult> {
         options.operation.run(self.cancel()).await??;
         Ok(self.wait(options).await)
     }
@@ -270,10 +267,7 @@ impl Run {
         .await;
         result
     }
-    pub async fn cancel_and_wait(
-        &self,
-        options: &WaitOptions,
-    ) -> Result<WaitResult, Box<dyn Error>> {
+    pub async fn cancel_and_wait(&self, options: &WaitOptions) -> crate::Result<WaitResult> {
         options.operation.run(self.cancel()).await??;
         Ok(self.wait(options).await)
     }

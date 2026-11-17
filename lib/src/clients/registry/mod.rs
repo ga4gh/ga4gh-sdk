@@ -26,7 +26,6 @@ pub mod models;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::{urlencode, Transport};
 use serde::de::DeserializeOwned;
-use std::error::Error;
 
 /// A client for a GA4GH Service Registry.
 #[derive(Clone, Debug)]
@@ -46,7 +45,7 @@ impl ServiceRegistry {
     }
 
     /// Lists the services in the registry (`GET /services`).
-    pub async fn list_services(&self) -> Result<Vec<models::ExternalService>, Box<dyn Error>> {
+    pub async fn list_services(&self) -> crate::Result<Vec<models::ExternalService>> {
         self.get_json("services").await
     }
 
@@ -54,10 +53,7 @@ impl ServiceRegistry {
     ///
     /// The ID is percent-encoded as a single path segment. An empty ID is an
     /// error, sent to no server.
-    pub async fn get_service(
-        &self,
-        service_id: &str,
-    ) -> Result<models::ExternalService, Box<dyn Error>> {
+    pub async fn get_service(&self, service_id: &str) -> crate::Result<models::ExternalService> {
         if service_id.is_empty() {
             return Err("service ID must not be empty".into());
         }
@@ -66,16 +62,16 @@ impl ServiceRegistry {
     }
 
     /// Lists the distinct types of the services in the registry (`GET /services/types`).
-    pub async fn list_service_types(&self) -> Result<Vec<models::ServiceType>, Box<dyn Error>> {
+    pub async fn list_service_types(&self) -> crate::Result<Vec<models::ServiceType>> {
         self.get_json("services/types").await
     }
 
     /// Gets information about the registry itself (`GET /service-info`).
-    pub async fn service_info(&self) -> Result<models::Service, Box<dyn Error>> {
+    pub async fn service_info(&self) -> crate::Result<models::Service> {
         self.get_json("service-info").await
     }
 
-    async fn get_json<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T, Box<dyn Error>> {
+    async fn get_json<T: DeserializeOwned>(&self, endpoint: &str) -> crate::Result<T> {
         let body = self.transport.get(endpoint, None).await?;
         serde_json::from_str(&body).map_err(|error| {
             format!("Invalid response from the service registry ({endpoint}): {error}").into()

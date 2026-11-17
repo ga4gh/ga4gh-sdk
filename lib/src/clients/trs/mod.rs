@@ -60,7 +60,6 @@ use crate::utils::transport::{read_bounded, urlencode, Transport};
 use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
 use serde_json::Value;
-use std::error::Error;
 
 impl ToolVersion {
     /// String description when supplied by a registry. TRS 2.0.2 defines it;
@@ -75,14 +74,14 @@ impl ToolVersion {
 // Encodes a path parameter as one URL path segment. Empty values and dot
 // segments would change the path that the URL resolves to, so they are
 // rejected before any request.
-fn segment(name: &str, value: &str) -> Result<String, Box<dyn Error>> {
+fn segment(name: &str, value: &str) -> crate::Result<String> {
     if value.is_empty() || value == "." || value == ".." {
         return Err(format!("TRS {name} must not be empty, '.' or '..'").into());
     }
     Ok(urlencode(value))
 }
 
-fn version_path(id: &str, version_id: &str) -> Result<String, Box<dyn Error>> {
+fn version_path(id: &str, version_id: &str) -> crate::Result<String> {
     Ok(format!(
         "tools/{}/versions/{}",
         segment("tool ID", id)?,
@@ -200,7 +199,7 @@ impl ToolFilter {
     ///
     /// # Errors
     /// If a tag is empty or contains a comma, which `tags` can't send.
-    pub fn query(&self) -> Result<Option<Value>, Box<dyn Error>> {
+    pub fn query(&self) -> crate::Result<Option<Value>> {
         if self
             .tags
             .iter()
@@ -229,21 +228,18 @@ impl TRS {
     /// Discover a TRS and select its profile. Unknown declarations use the
     /// 2.0.1 read contract with unverified compatibility; tags need an override.
     /// Use [`TrsOptions`] for strict or explicit version selection.
-    pub async fn new(config: &Configuration) -> Result<Self, Box<dyn Error>> {
+    pub async fn new(config: &Configuration) -> crate::Result<Self> {
         Self::with_options(config, TrsOptions::default()).await
     }
 
     /// Discover a TRS with explicit version/capability policy.
-    pub async fn with_options(
-        config: &Configuration,
-        options: TrsOptions,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub async fn with_options(config: &Configuration, options: TrsOptions) -> crate::Result<Self> {
         Self::with_transport_and_options(Transport::new(config), options).await
     }
 
     /// Discover a TRS using the supplied transport, retaining its configuration
     /// and authentication policy for discovery and subsequent operations.
-    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn Error>> {
+    pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
         Self::with_transport_and_options(transport, TrsOptions::default()).await
     }
 
@@ -251,10 +247,12 @@ impl TRS {
     pub async fn with_transport_and_options(
         transport: Transport,
         options: TrsOptions,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> crate::Result<Self> {
         let service = Self::fetch_service_info(&transport).await?;
         if !is_trs(&service) {
-            return Err("The endpoint is not an instance of TRS".into());
+            return Err(crate::Error::UnexpectedService(
+                "The endpoint is not an instance of TRS".to_owned(),
+            ));
         }
         let compatibility = TrsCompatibility::select(Some(&service.r#type.version), options)?;
         Ok(Self {
@@ -303,7 +301,7 @@ impl TRS {
 
     // `path` is relative to the API root; `Transport` resolves it below
     // `base_path`, with or without a trailing slash.
-    async fn get_text(&self, path: &str, params: Option<Value>) -> Result<String, Box<dyn Error>> {
+    async fn get_text(&self, path: &str, params: Option<Value>) -> crate::Result<String> {
         self.transport.get(path, params).await
     }
 
@@ -311,7 +309,7 @@ impl TRS {
         &self,
         path: &str,
         params: Option<Value>,
-    ) -> Result<T, Box<dyn Error>> {
+    ) -> crate::Result<T> {
         let (_, value) = responses::json(&self.transport, path, params, Default::default()).await?;
         Ok(value)
     }
@@ -322,11 +320,11 @@ impl TRS {
     /// Dockstore sends `createdAt` and `updatedAt` as numbers, while
     /// service-info defines them as strings; such non-string values are
     /// dropped instead of failing the whole response.
-    pub async fn service_info(&self) -> Result<Service, Box<dyn Error>> {
+    pub async fn service_info(&self) -> crate::Result<Service> {
         Self::fetch_service_info(&self.transport).await
     }
 
-    async fn fetch_service_info(transport: &Transport) -> Result<Service, Box<dyn Error>> {
+    async fn fetch_service_info(transport: &Transport) -> crate::Result<Service> {
         let mut value: Value = transport
             .get_json_within("service-info", transport.config.timeouts.discovery)
             .await?;
@@ -342,7 +340,7 @@ impl TRS {
     }
 
     /// Lists the tool classes of the registry (`GET /toolClasses`).
-    pub async fn list_tool_classes(&self) -> Result<Vec<ToolClass>, Box<dyn Error>> {
+    pub async fn list_tool_classes(&self) -> crate::Result<Vec<ToolClass>> {
         self.get_json("toolClasses", None).await
     }
 
@@ -351,7 +349,7 @@ impl TRS {
     /// Returns one page; use `filter.offset` and `filter.limit` to page.
     /// Fails before sending a request if a tag can't be sent (see
     /// [`ToolFilter::query`]).
-    pub async fn list_tools(&self, filter: &ToolFilter) -> Result<Vec<Tool>, Box<dyn Error>> {
+    pub async fn list_tools(&self, filter: &ToolFilter) -> crate::Result<Vec<Tool>> {
         let params = filter.query()?;
         if !filter.tags.is_empty() {
             self.compatibility.tag_filter().require("TRS", "tags")?;
@@ -360,23 +358,19 @@ impl TRS {
     }
 
     /// Fetches one tool, including its versions (`GET /tools/{id}`).
-    pub async fn get_tool(&self, id: &str) -> Result<Tool, Box<dyn Error>> {
+    pub async fn get_tool(&self, id: &str) -> crate::Result<Tool> {
         let path = format!("tools/{}", segment("tool ID", id)?);
         self.get_json(&path, None).await
     }
 
     /// Lists the versions of a tool (`GET /tools/{id}/versions`).
-    pub async fn list_versions(&self, id: &str) -> Result<Vec<ToolVersion>, Box<dyn Error>> {
+    pub async fn list_versions(&self, id: &str) -> crate::Result<Vec<ToolVersion>> {
         let path = format!("tools/{}/versions", segment("tool ID", id)?);
         self.get_json(&path, None).await
     }
 
     /// Fetches one version of a tool (`GET /tools/{id}/versions/{version_id}`).
-    pub async fn get_version(
-        &self,
-        id: &str,
-        version_id: &str,
-    ) -> Result<ToolVersion, Box<dyn Error>> {
+    pub async fn get_version(&self, id: &str, version_id: &str) -> crate::Result<ToolVersion> {
         let path = version_path(id, version_id)?;
         self.get_json(&path, None).await
     }
@@ -391,7 +385,7 @@ impl TRS {
         id: &str,
         version_id: &str,
         descriptor_type: DescriptorTypeWithPlain,
-    ) -> Result<FileWrapper, Box<dyn Error>> {
+    ) -> crate::Result<FileWrapper> {
         let path = format!(
             "{}/{}/descriptor",
             version_path(id, version_id)?,
@@ -412,7 +406,7 @@ impl TRS {
         version_id: &str,
         descriptor_type: DescriptorTypeWithPlain,
         relative_path: &str,
-    ) -> Result<FileWrapper, Box<dyn Error>> {
+    ) -> crate::Result<FileWrapper> {
         let path = format!(
             "{}/{}/descriptor/{}",
             version_path(id, version_id)?,
@@ -426,7 +420,7 @@ impl TRS {
         &self,
         path: &str,
         descriptor_type: DescriptorTypeWithPlain,
-    ) -> Result<FileWrapper, Box<dyn Error>> {
+    ) -> crate::Result<FileWrapper> {
         if is_plain(&descriptor_type) {
             Ok(plain_file(self.get_text(path, None).await?))
         } else {
@@ -446,7 +440,7 @@ impl TRS {
         id: &str,
         version_id: &str,
         descriptor_type: DescriptorTypeWithPlain,
-    ) -> Result<Vec<FileWrapper>, Box<dyn Error>> {
+    ) -> crate::Result<Vec<FileWrapper>> {
         let path = format!(
             "{}/{}/tests",
             version_path(id, version_id)?,
@@ -468,7 +462,7 @@ impl TRS {
         id: &str,
         version_id: &str,
         descriptor_type: DescriptorType,
-    ) -> Result<Vec<ToolFile>, Box<dyn Error>> {
+    ) -> crate::Result<Vec<ToolFile>> {
         let path = format!(
             "{}/{}/files",
             version_path(id, version_id)?,
@@ -493,7 +487,7 @@ impl TRS {
         version_id: &str,
         descriptor_type: DescriptorType,
         limit: usize,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
+    ) -> crate::Result<Vec<u8>> {
         // Validate before building the request, with the same messages as
         // the other methods (`files_zip` checks again, more generally).
         version_path(id, version_id)?;
@@ -514,7 +508,7 @@ impl TRS {
         &self,
         id: &str,
         version_id: &str,
-    ) -> Result<Vec<FileWrapper>, Box<dyn Error>> {
+    ) -> crate::Result<Vec<FileWrapper>> {
         let path = format!("{}/containerfile", version_path(id, version_id)?);
         self.get_json(&path, None).await
     }
@@ -1229,7 +1223,7 @@ mod tests {
                 .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 10)
                 .await
                 .unwrap_err();
-            assert!(error.is::<BodyLimitError>(), "{error}");
+            assert!(error.downcast_ref::<BodyLimitError>().is_some(), "{error}");
         }
         for client in clients("zip-json") {
             let error = client

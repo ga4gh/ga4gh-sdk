@@ -81,7 +81,7 @@ pub struct Pager {
     partial_page: Option<PageCheckpoint>,
     stopped: bool,
 }
-fn root(transport: &Transport) -> Result<String, Box<dyn Error>> {
+fn root(transport: &Transport) -> crate::Result<String> {
     let mut root = transport.endpoint("")?;
     let _ = root.set_username("");
     let _ = root.set_password(None);
@@ -93,7 +93,7 @@ impl Pager {
         service: ServiceKind,
         mut query: Value,
         options: PagingOptions,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> crate::Result<Self> {
         if options.max_requests == 0 {
             return Err("pagination max_requests must be positive".into());
         }
@@ -136,7 +136,7 @@ impl Pager {
         query: Value,
         checkpoint: PageCheckpoint,
         options: PagingOptions,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> crate::Result<Self> {
         let mut pager = Self::new(transport, service, query, options)?;
         if checkpoint.service != service
             || checkpoint.api_root != pager.checkpoint.api_root
@@ -296,7 +296,7 @@ impl TES {
         &self,
         params: Option<ListTasksParams>,
         options: PagingOptions,
-    ) -> Result<Pager, Box<dyn Error>> {
+    ) -> crate::Result<Pager> {
         Pager::new(
             &self.transport,
             ServiceKind::Tes,
@@ -309,11 +309,7 @@ impl TES {
     }
 }
 impl WES {
-    pub fn pages(
-        &self,
-        page_size: Option<i64>,
-        options: PagingOptions,
-    ) -> Result<Pager, Box<dyn Error>> {
+    pub fn pages(&self, page_size: Option<i64>, options: PagingOptions) -> crate::Result<Pager> {
         let query = page_size
             .map(|size| json!({"page_size":size}))
             .unwrap_or(json!({}));

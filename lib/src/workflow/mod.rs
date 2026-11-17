@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, error::Error};
-pub type ContractError = Box<dyn Error>;
+/// The error of workflow contracts: [`crate::Error`].
+pub type ContractError = crate::Error;
 pub const PROFILE_REVISION: &str = "45d41324353cb4900fdd999c307c2e36a3f2a410";
 const FRAGMENT: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
     .add(b' ')

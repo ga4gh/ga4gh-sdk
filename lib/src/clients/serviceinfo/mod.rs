@@ -18,7 +18,7 @@ impl ServiceInfo {
     /// # Returns
     ///
     /// A `Result` containing the `ServiceInfo` instance or an error.
-    pub fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(config: &Configuration) -> crate::Result<Self> {
         let transport = Transport::new(config);
         let instance = ServiceInfo {
             transport: transport.clone(),
@@ -31,37 +31,28 @@ impl ServiceInfo {
     /// # Returns
     ///
     /// A `Result` containing the service information or an error.
-    pub async fn get(&self) -> Result<models::Service, Box<dyn std::error::Error>> {
+    pub async fn get(&self) -> crate::Result<models::Service> {
         self.get_at("service-info").await
     }
 
     /// Retrieves service information from a path relative to the configured API root,
     /// within the `discovery` limit of the configuration's
     /// [`Timeouts`](crate::utils::timeouts::Timeouts).
-    pub async fn get_at(
-        &self,
-        endpoint: &str,
-    ) -> Result<models::Service, Box<dyn std::error::Error>> {
+    pub async fn get_at(&self, endpoint: &str) -> crate::Result<models::Service> {
         fetch(&self.transport, endpoint).await
     }
 }
 
 /// Fetches service info from `endpoint` within the discovery timeout of the
 /// transport's configuration, which replaces its request timeout.
-pub(crate) async fn fetch_raw(
-    transport: &Transport,
-    endpoint: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+pub(crate) async fn fetch_raw(transport: &Transport, endpoint: &str) -> crate::Result<String> {
     transport
         .get_within(endpoint, transport.config.timeouts.discovery)
         .await
 }
 
 /// Fetches and parses service info as [`fetch_raw`] does.
-pub(crate) async fn fetch(
-    transport: &Transport,
-    endpoint: &str,
-) -> Result<models::Service, Box<dyn std::error::Error>> {
+pub(crate) async fn fetch(transport: &Transport, endpoint: &str) -> crate::Result<models::Service> {
     match fetch_raw(transport, endpoint).await {
         Ok(response_body) => match serde_json::from_str::<models::Service>(&response_body) {
             Ok(service) => Ok(service),
@@ -74,6 +65,45 @@ pub(crate) async fn fetch(
             log::error!("Error getting response: {}", e);
             Err(e)
         }
+    }
+}
+
+/// A failed service-info request of a client constructor, with a hint if the
+/// API root seems wrong. The request's error stays available as the source and
+/// through [`Error::downcast_ref`](crate::Error::downcast_ref).
+#[derive(Debug)]
+pub(crate) struct DiscoveryError {
+    /// The name of the API, for example `DRS`.
+    pub(crate) api: &'static str,
+    /// The error of the request.
+    pub(crate) source: crate::Error,
+}
+
+impl std::fmt::Display for DiscoveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Error accessing {} service: {}", self.api, self.source)?;
+        if self
+            .source
+            .downcast_ref::<crate::utils::transport::HttpError>()
+            .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
+        {
+            write!(f, ". Check that base_path is the {} API root", self.api)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for DiscoveryError {
+    // The request error itself, as before the SDK error type; `Error` would
+    // only add a level that displays the same.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.inner()
+    }
+}
+
+impl From<DiscoveryError> for crate::Error {
+    fn from(error: DiscoveryError) -> Self {
+        Self::Other(Box::new(error))
     }
 }
 

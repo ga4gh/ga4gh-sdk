@@ -41,7 +41,7 @@ pub enum Resolution<T> {
 pub enum ResolveCause {
     Operation(OperationError),
     AttemptsExhausted,
-    Request(Box<dyn Error>),
+    Request(crate::Error),
 }
 #[derive(Debug)]
 pub struct ResolveError {
@@ -60,7 +60,17 @@ impl fmt::Display for ResolveError {
         }
     }
 }
-impl Error for ResolveError {}
+impl Error for ResolveError {
+    /// The error that stopped the resolution, if any, so that
+    /// [`crate::Error::downcast_ref`] finds it.
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match &self.cause {
+            ResolveCause::Operation(error) => Some(error),
+            ResolveCause::Request(error) => Some(error),
+            ResolveCause::AttemptsExhausted => None,
+        }
+    }
+}
 
 /// Opt-in bounded state machine. Local cancellation stops observation only.
 /// Zero seconds is clamped to one; missing/malformed/overflow/>1h delays fail.
@@ -74,7 +84,7 @@ pub async fn resolve_until<T, F, Fut>(
 ) -> Result<T, ResolveError>
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Result<Resolution<T>, Box<dyn Error>>>,
+    Fut: Future<Output = crate::Result<Resolution<T>>>,
 {
     let mut pending = None;
     let failure = |cause, pending| ResolveError {
@@ -125,7 +135,7 @@ impl DRS {
     pub async fn resolve_reference<T: DeserializeOwned>(
         &self,
         reference: &ResolutionReference,
-    ) -> Result<Resolution<T>, Box<dyn Error>> {
+    ) -> crate::Result<Resolution<T>> {
         match self.resolve_reference_raw(reference).await? {
             Resolution::Ready(body) => Ok(Resolution::Ready(serde_json::from_str(&body)?)),
             Resolution::Pending(pending) => Ok(Resolution::Pending(pending)),
@@ -137,7 +147,7 @@ impl DRS {
     pub async fn resolve_reference_raw(
         &self,
         reference: &ResolutionReference,
-    ) -> Result<Resolution<String>, Box<dyn Error>> {
+    ) -> crate::Result<Resolution<String>> {
         if reference.api_root != self.resolution_reference(String::new()).api_root {
             return Err("DRS resolution reference belongs to another API root".into());
         }
@@ -154,10 +164,7 @@ impl DRS {
         let body = response_text(response, BodyLimits::default()).await?;
         Ok(Resolution::Ready(body))
     }
-    pub async fn get_object_once(
-        &self,
-        object_id: &str,
-    ) -> Result<Resolution<DrsObject>, Box<dyn Error>> {
+    pub async fn get_object_once(&self, object_id: &str) -> crate::Result<Resolution<DrsObject>> {
         self.resolve_reference(
             &self.resolution_reference(format!("objects/{}", super::urlencode(object_id))),
         )
@@ -167,7 +174,7 @@ impl DRS {
         &self,
         object_id: &str,
         access_id: &str,
-    ) -> Result<Resolution<AccessUrl>, Box<dyn Error>> {
+    ) -> crate::Result<Resolution<AccessUrl>> {
         self.resolve_reference(&self.resolution_reference(format!(
             "objects/{}/access/{}",
             super::urlencode(object_id),
@@ -210,7 +217,7 @@ impl DRS {
 }
 
 /// Shared DRS 1.4 deferred-response interpretation for singular and bulk reads.
-pub fn deferred_delay(response: &reqwest::Response) -> Result<Option<u64>, Box<dyn Error>> {
+pub fn deferred_delay(response: &reqwest::Response) -> crate::Result<Option<u64>> {
     if response.status() != reqwest::StatusCode::ACCEPTED {
         return Ok(None);
     }

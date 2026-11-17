@@ -17,7 +17,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    error::Error,
     sync::Arc,
 };
 use url::Url;
@@ -81,12 +80,8 @@ pub struct BundleManifest {
 /// must enforce `limit` while reading, and should omit signed URLs from errors.
 #[async_trait(?Send)]
 pub trait DescriptorFetcher {
-    async fn fetch(
-        &self,
-        url: &Url,
-        operation: &Operation,
-        limit: usize,
-    ) -> Result<Vec<u8>, Box<dyn Error>>;
+    async fn fetch(&self, url: &Url, operation: &Operation, limit: usize)
+        -> crate::Result<Vec<u8>>;
 }
 /// Explicit anonymous allowlist. Never reuses a registry's authenticated client,
 /// never follows redirects, and never stores signed URL queries in provenance.
@@ -95,16 +90,16 @@ pub struct AnonymousFetcher {
     origins: BTreeSet<String>,
     client: reqwest::Client,
 }
-fn without_descriptor_url(error: Box<dyn Error>) -> Box<dyn Error> {
-    match error.downcast::<reqwest::Error>() {
-        Ok(error) => Box::new(error.without_url()),
-        Err(error) => error,
+fn without_descriptor_url(error: crate::Error) -> crate::Error {
+    match error {
+        crate::Error::Transport(error) => crate::Error::Transport(error.without_url()),
+        error => error,
     }
 }
 impl AnonymousFetcher {
     /// Accept only bare HTTP(S) origins; a path or query would otherwise be
     /// silently widened to the whole host when forming the allowlist.
-    pub fn new(origins: impl IntoIterator<Item = String>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(origins: impl IntoIterator<Item = String>) -> crate::Result<Self> {
         let origins = origins
             .into_iter()
             .map(|s| {
@@ -120,7 +115,7 @@ impl AnonymousFetcher {
                 }
                 Ok(url.origin().ascii_serialization())
             })
-            .collect::<Result<_, Box<dyn Error>>>()?;
+            .collect::<crate::Result<_>>()?;
         Ok(Self {
             origins,
             client: reqwest::Client::builder()
@@ -136,7 +131,7 @@ impl DescriptorFetcher for AnonymousFetcher {
         url: &Url,
         operation: &Operation,
         limit: usize,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
+    ) -> crate::Result<Vec<u8>> {
         if !matches!(url.scheme(), "http" | "https")
             || !self.origins.contains(&url.origin().ascii_serialization())
             || !url.username().is_empty()
@@ -176,7 +171,7 @@ pub struct SubmittedBundle {
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn safe_root(transport: &Transport) -> Result<String, Box<dyn Error>> {
+fn safe_root(transport: &Transport) -> crate::Result<String> {
     let mut url = transport.endpoint("")?;
     let _ = url.set_username("");
     let _ = url.set_password(None);
@@ -184,7 +179,7 @@ fn safe_root(transport: &Transport) -> Result<String, Box<dyn Error>> {
     url.set_fragment(None);
     Ok(url.into())
 }
-fn check_ids(request: &BundleRequest) -> Result<(), Box<dyn Error>> {
+fn check_ids(request: &BundleRequest) -> crate::Result<()> {
     if [&request.tool_id, &request.version_id]
         .iter()
         .any(|s| s.is_empty() || matches!(s.as_str(), "." | ".."))
@@ -197,7 +192,7 @@ fn checksums(
     bytes: &[u8],
     advertised: Vec<Checksum>,
     allow_unsupported: bool,
-) -> Result<Vec<ChecksumProof>, Box<dyn Error>> {
+) -> crate::Result<Vec<ChecksumProof>> {
     let mut proofs = Vec::new();
     for checksum in advertised {
         let verified = match checksum.r#type.to_ascii_lowercase().as_str() {
@@ -224,7 +219,7 @@ fn checksums(
     }
     Ok(proofs)
 }
-fn relative_reference(document: &str, reference: &str) -> Result<String, Box<dyn Error>> {
+fn relative_reference(document: &str, reference: &str) -> crate::Result<String> {
     if reference.is_empty() || reference.contains("$(") || reference.contains("${") {
         return Err("dynamic/empty CWL dependency is outside this MVP".into());
     }
@@ -280,7 +275,7 @@ fn references(
     document: &str,
     result: &mut Vec<(String, ParseContext)>,
     context: ParseContext,
-) -> Result<(), Box<dyn Error>> {
+) -> crate::Result<()> {
     match value {
         serde_yaml::Value::Mapping(map) => {
             if context == ParseContext::Steps {
@@ -357,13 +352,13 @@ fn references(
     Ok(())
 }
 
-fn acyclic(graph: &BTreeMap<String, BTreeSet<String>>) -> Result<(), Box<dyn Error>> {
+fn acyclic(graph: &BTreeMap<String, BTreeSet<String>>) -> crate::Result<()> {
     fn visit(
         node: &str,
         graph: &BTreeMap<String, BTreeSet<String>>,
         active: &mut BTreeSet<String>,
         done: &mut BTreeSet<String>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> crate::Result<()> {
         if done.contains(node) {
             return Ok(());
         }
@@ -404,7 +399,7 @@ impl PreparedBundle {
         options: &PreparationOptions,
         operation: &Operation,
         fetcher: Option<&dyn DescriptorFetcher>,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> crate::Result<Self> {
         check_ids(&request)?;
         if options.max_files == 0 || options.max_file_bytes == 0 || options.max_total_bytes == 0 {
             return Err("bundle bounds must be positive".into());
@@ -569,11 +564,7 @@ impl PreparedBundle {
     /// Explicit submission uploads the same immutable Arc bytes that were hashed.
     /// Each call may create a separate WES run. Reconcile an ambiguous response
     /// before calling this method again.
-    pub async fn submit(
-        &self,
-        wes: &WES,
-        operation: &Operation,
-    ) -> Result<SubmittedBundle, Box<dyn Error>> {
+    pub async fn submit(&self, wes: &WES, operation: &Operation) -> crate::Result<SubmittedBundle> {
         let attachments = self
             .files
             .iter()

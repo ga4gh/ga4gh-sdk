@@ -8,7 +8,6 @@ use crate::utils::transport::{response_json, response_text, urlencode, BodyLimit
 use reqwest::{header::HeaderMap, Method, Response};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::error::Error;
 
 #[derive(Debug)]
 pub struct ToolPage {
@@ -57,7 +56,7 @@ pub(super) async fn json<T: DeserializeOwned>(
     endpoint: &str,
     params: Option<Value>,
     limits: BodyLimits,
-) -> Result<(HeaderMap, T), Box<dyn Error>> {
+) -> crate::Result<(HeaderMap, T)> {
     let pairs = if let Some(params) = params {
         crate::utils::query::query_pairs(&params).map_err(std::io::Error::from)?
     } else {
@@ -87,7 +86,7 @@ async fn page(
     endpoint: &str,
     params: Option<Value>,
     limits: BodyLimits,
-) -> Result<ToolPage, Box<dyn Error>> {
+) -> crate::Result<ToolPage> {
     if let Some(params) = &params {
         // Check what will be sent: null and empty query arrays are omitted by
         // the shared encoder, so they do not request filtering.
@@ -106,7 +105,7 @@ pub async fn list_tools_page<'a>(
     context: impl Into<Context<'a>>,
     params: Option<Value>,
     limits: BodyLimits,
-) -> Result<ToolPage, Box<dyn Error>> {
+) -> crate::Result<ToolPage> {
     page(context.into(), "tools", params, limits).await
 }
 
@@ -116,7 +115,7 @@ pub async fn next_tools_page<'a>(
     context: impl Into<Context<'a>>,
     next_page: &str,
     limits: BodyLimits,
-) -> Result<ToolPage, Box<dyn Error>> {
+) -> crate::Result<ToolPage> {
     let context = context.into();
     let mut tools = context.transport.endpoint("tools")?;
     // Resolve links against a credential-free base. Relative links must not
@@ -154,7 +153,7 @@ pub async fn files_zip(
     tool: &str,
     version: &str,
     descriptor: DescriptorType,
-) -> Result<Response, Box<dyn Error>> {
+) -> crate::Result<Response> {
     if [tool, version]
         .iter()
         .any(|s| s.is_empty() || *s == "." || *s == "..")

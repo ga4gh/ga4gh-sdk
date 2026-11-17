@@ -17,7 +17,7 @@ fn client(path: &str) -> DRS {
     DRS {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service::default()),
+        service: Service::default(),
     }
 }
 fn budget() -> Operation {
@@ -222,7 +222,7 @@ async fn configured_service_limit_and_concurrency_are_enforced() {
     let client = DRS {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service::default()),
+        service: Service::default(),
     };
     let mut policy = BulkPolicy::default()
         .with_service_info(&json!({"maxBulkRequestLength":1}))
