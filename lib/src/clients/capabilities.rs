@@ -21,7 +21,7 @@
 //!     workflow_url: "https://example.org/workflow.cwl".into(),
 //!     ..Default::default()
 //! };
-//! for diagnostic in wes.capabilities.validate_wes(&request) {
+//! for diagnostic in wes.capabilities().validate_wes(&request) {
 //!     println!("{}: {:?}", diagnostic.field, diagnostic.support);
 //! }
 //! // Strict: refuse the request if a diagnostic blocks it

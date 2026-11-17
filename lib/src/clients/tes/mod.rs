@@ -215,8 +215,9 @@ pub struct TES {
     /// The transport that sends the client's requests; also returned by
     /// [`Self::transport`].
     #[deprecated(
-        note = "use `transport()`; build a client with another transport with \
-                `TES::with_transport`; this field will become private"
+        note = "use `transport()`; for another transport, build a client with \
+                `TES::with_transport`, or with `TES::without_discovery` to keep \
+                the service info; this field will become private"
     )]
     pub transport: Transport,
 }

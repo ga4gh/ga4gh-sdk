@@ -180,8 +180,9 @@ pub struct WES {
     /// The transport that sends the client's requests; also returned by
     /// [`Self::transport`].
     #[deprecated(
-        note = "use `transport()`; build a client with another transport with \
-                `WES::with_transport`; this field will become private"
+        note = "use `transport()`; for another transport, build a client with \
+                `WES::with_transport`, or with `WES::without_discovery` to keep \
+                the service info; this field will become private"
     )]
     pub transport: Transport,
 }

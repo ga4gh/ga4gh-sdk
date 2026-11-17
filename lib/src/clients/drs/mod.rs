@@ -60,8 +60,9 @@ pub struct DRS {
     /// The transport that sends the client's requests; also returned by
     /// [`Self::transport`].
     #[deprecated(
-        note = "use `transport()`; build a client with another transport with \
-                `DRS::with_transport`; this field will become private"
+        note = "use `transport()`; for another transport, build a client with \
+                `DRS::with_transport`, or with `DRS::without_discovery` to keep \
+                the service info; this field will become private"
     )]
     pub transport: Transport,
 }

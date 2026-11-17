@@ -329,7 +329,7 @@ No release contains these changes yet; the SDK has no tagged release.
 | Deprecated field | Replacement |
 | --- | --- |
 | `TES::config`, `WES::config`, `DRS::config` | `configuration()`; requests never read the field, a copy of the transport's configuration, and it goes away |
-| `TES::transport`, `WES::transport`, `DRS::transport` | `transport()`; to use another transport, build a client with `with_transport` |
+| `TES::transport`, `WES::transport`, `DRS::transport` | `transport()`; to use another transport, build a client with `with_transport`, or with `without_discovery(transport, client.discovered_service_info().clone())` to keep the service info without a request |
 | `TES::service`, `WES::service`, `DRS::service` | `discovered_service_info()` |
 | A struct literal such as `TES { config, service, transport }` | `TES::without_discovery(transport, service)` (also `WES`, `DRS`), or a constructor that discovers |
 | `Discovered::client` | `client()`, `Deref`, or `into_parts()` |
