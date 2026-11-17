@@ -41,6 +41,39 @@ fn hostname_uri_decodes_exactly_once_and_rejects_unsupported_forms() {
         DrsUri::parse("https://drs.example/id"),
         Err(UriError::UnsupportedScheme)
     );
+    // A port or an IPv6 host isn't a compact identifier
+    for uri in [
+        "drs://drs.example:8443/id",
+        "drs://drs.example:443/id",
+        "drs://[::1]:8443/id",
+    ] {
+        assert_eq!(DrsUri::parse(uri), Err(UriError::Malformed), "{uri}");
+    }
+    let uri = DrsUri::parse("drs://[2001:DB8::1]/id").unwrap();
+    assert_eq!(uri.authority, "[2001:db8::1]");
+    assert_eq!(uri.object_id, "id");
+    for uri in ["drs://dg.4503:accession", "drs://dg.4503:123456"] {
+        assert_eq!(
+            DrsUri::parse(uri),
+            Err(UriError::UnsupportedCompactIdentifier),
+            "{uri}"
+        );
+    }
+    // A resolver service can be registered for an IPv6 host, not with a port
+    let transport = || {
+        Transport::new(&Configuration::new(
+            url::Url::parse("http://127.0.0.1:9/ga4gh/drs/v1").unwrap(),
+        ))
+    };
+    assert!(DrsResolver::default()
+        .with_service("[::1]", transport())
+        .is_ok());
+    assert_eq!(
+        DrsResolver::default()
+            .with_service("drs.example:8443", transport())
+            .err(),
+        Some(UriError::Malformed)
+    );
     for uri in [
         "drs://drs.example",
         "drs://drs.example/",

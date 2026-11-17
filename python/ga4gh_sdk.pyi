@@ -624,7 +624,8 @@ class DRS:
             A report with one outcome per distinct ID, holding `DrsObject`s.
 
         Raises:
-            ValueError: An ID, the policy or `timeout` is invalid.
+            ValueError: An ID, the policy or `timeout` is invalid. An invalid
+                policy is rejected even without IDs.
         """
     def get_bulk_objects_raw(
         self,
@@ -704,15 +705,17 @@ class DrsUri:
         """Parses a DRS URI.
 
         Args:
-            uri: The URI, `drs://<host>/<object-id>`.
+            uri: The URI, `drs://<host>/<object-id>`. The host is a name, an IPv4
+                address or an IPv6 address in brackets, without a port.
 
         Raises:
-            ValueError: The URI is malformed, or a compact identifier
-                (`drs://prefix:accession`), which is not supported.
+            ValueError: The URI is malformed or its host has a port, or it is a
+                compact identifier (`drs://prefix:accession`), which is not
+                supported.
         """
     @property
     def authority(self) -> str:
-        """The host name, in lowercase."""
+        """The host, in lowercase; an IPv6 address keeps its brackets."""
     @property
     def object_id(self) -> str:
         """The object ID, decoded."""
@@ -757,14 +760,14 @@ class DrsResolver:
         Add services before sharing the resolver between threads.
 
         Args:
-            authority: The host name of the URIs.
+            authority: The host of the URIs, without a port.
             transport: A transport with the service's API root and settings.
 
         Returns:
             The resolver itself, for chaining.
 
         Raises:
-            ValueError: `authority` is not a valid host name.
+            ValueError: `authority` is not a valid host or has a port.
             RuntimeError: Another thread is planning access with the resolver.
         """
     def access_plan_once(
