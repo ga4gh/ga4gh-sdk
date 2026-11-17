@@ -25,8 +25,8 @@ RUN npm install -g @openapitools/openapi-generator-cli
 RUN curl --fail --location --silent --show-error \
     --output /tmp/rustup-init.sh https://sh.rustup.rs && \
     sh /tmp/rustup-init.sh -y --profile minimal \
-      --default-toolchain 1.97.0 && \
-    /root/.cargo/bin/rustup component add --toolchain 1.97.0 clippy rustfmt && \
+      --default-toolchain 1.100.0 && \
+    /root/.cargo/bin/rustup component add --toolchain 1.100.0 clippy rustfmt && \
     rm /tmp/rustup-init.sh
 ENV PATH=/root/.cargo/bin:$PATH
 

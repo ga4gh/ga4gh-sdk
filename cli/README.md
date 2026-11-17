@@ -212,6 +212,37 @@ and don't store it again.
 
 `--profile` selects the profile whose section `login` and `logout` read.
 
+#### Example: Keycloak
+
+With [Keycloak](https://www.keycloak.org/), the issuer is the realm's URL:
+
+```json
+{
+    "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oidc": {
+            "issuer": "https://keycloak.example.org/realms/example",
+            "client_id": "ga4gh-cli"
+        }
+    }
+}
+```
+
+The client must be public ("Client authentication" off) and have the
+"OAuth 2.0 Device Authorization Grant" enabled. For the default scope
+`openid offline_access`, users need the realm role `offline_access`, which
+Keycloak's default roles include. Without it, Keycloak refuses the login
+with its own error code `not_allowed`, which isn't an OAuth error code, so
+`login` reports `unrecognized_error`. In the browser, Keycloak asks the user
+to sign in and then to grant the client access. If the realm rotates refresh
+tokens ("Revoke Refresh Token"), each refresh stores the new refresh token;
+Keycloak ends the login if an older one is used again, for example from a
+copy of the token store, and the CLI then asks you to log in again.
+
+An integration suite checks this setup against a Keycloak container; see the
+[integration test guide](../tests/README.md#keycloakcli-login) and the test
+realm in [`tests/keycloak/realm.json`](../tests/keycloak/realm.json).
+
 ## Usage
 
 ### Basic local setup
@@ -445,7 +476,10 @@ example `RUST_LOG=debug,reqwest=debug`.
 
 Other schemes, such as `file`, `gs` or `ftp`, are refused with an error, and
 so are declared outputs of type `DIRECTORY` or with a wildcard: save the files
-that the server reports under `file:` instead.
+that the server reports under `file:` instead. A declared output counts as a
+wildcard when its `path` contains `*`, `?` or `[`, or when it has a non-empty
+`path_prefix`; an empty `path_prefix`, which some servers send for single
+files, leaves a `FILE` output a file.
 
 The three commands exit with code 0 on success and code 1 on request, server,
 selection or download errors; missing arguments, such as `--dir`, use exit

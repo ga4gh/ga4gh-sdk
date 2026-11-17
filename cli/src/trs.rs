@@ -1,3 +1,6 @@
+//! The `trs` command: browses the tools of a TRS and fetches their versions,
+//! descriptors and files.
+
 use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};
@@ -13,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// The largest ZIP archive that `trs files --zip` downloads.
 const ZIP_LIMIT: usize = 64 * 1024 * 1024;
 
-/// Build the TRS commands for browsing tools and fetching their descriptors.
+/// Builds the TRS commands for browsing tools and fetching their descriptors.
 pub fn command() -> Command {
     Command::new("trs")
         .about("Tool Registry Service commands")

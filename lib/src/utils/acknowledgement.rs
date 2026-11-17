@@ -6,6 +6,7 @@ use std::{error::Error, fmt};
 /// The remote operation may already have succeeded; reconcile before resubmitting.
 #[derive(Debug)]
 pub struct AcknowledgementError {
+    /// The operation, such as `"WES cancellation"`.
     pub operation: &'static str,
 }
 

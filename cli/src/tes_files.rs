@@ -100,8 +100,12 @@ impl Catalog {
                 continue;
             };
             let path = output.get("path").and_then(Value::as_str);
+            // Some servers send an empty `path_prefix` for single-file
+            // outputs, so only a non-empty one marks a pattern.
             let is_directory = output.get("type").and_then(Value::as_str) == Some("DIRECTORY")
-                || output.get("path_prefix").is_some_and(|v| !v.is_null())
+                || output
+                    .get("path_prefix")
+                    .is_some_and(|v| !v.is_null() && v.as_str() != Some(""))
                 || path.is_some_and(|path| path.chars().any(|ch| matches!(ch, '*' | '?' | '[')));
             let kind = if is_directory {
                 "declared output directory"
@@ -817,6 +821,44 @@ mod tests {
             assert!(
                 error.0.contains("directory or a pattern"),
                 "{path}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_path_prefix_keeps_a_file_output_a_file() {
+        // Some servers, such as Funnel, send `path_prefix: ""` for
+        // single-file outputs.
+        let dir = tempfile::tempdir().unwrap();
+        let task = json!({"state": "COMPLETE", "outputs": [
+            {"url": "https://storage.example.org/result.txt", "path": "/outputs/result.txt", "type": "FILE", "path_prefix": ""},
+            {"url": "s3://bucket/result.txt", "path": "/outputs/result.txt", "path_prefix": ""},
+            {"url": "s3://bucket/dir", "path": "/outputs/dir", "type": "DIRECTORY", "path_prefix": ""},
+            {"url": "s3://bucket/glob", "path": "/outputs/*.txt", "type": "FILE", "path_prefix": ""},
+            {"url": "s3://bucket/prefixed", "path": "/outputs/x", "type": "FILE", "path_prefix": "/outputs/"}
+        ]});
+        let catalog = Catalog::from_task(&task);
+        let classify = |selector: &str| {
+            let item = catalog.find(selector).unwrap();
+            let Content::File { is_directory, .. } = &item.content else {
+                panic!("file reference expected");
+            };
+            (*is_directory, item.description.clone())
+        };
+        for selector in ["output:0", "output:1"] {
+            assert_eq!(
+                classify(selector),
+                (false, "declared output file".into()),
+                "{selector}"
+            );
+            let planned = plan(&catalog, &[selector.into()], None, dir.path(), false).unwrap();
+            assert_eq!(planned.len(), 1, "{selector}");
+        }
+        for selector in ["output:2", "output:3", "output:4"] {
+            assert_eq!(
+                classify(selector),
+                (true, "declared output directory".into()),
+                "{selector}"
             );
         }
     }

@@ -148,10 +148,15 @@ hand-written:
   [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). A new client
   whose models trigger these lints needs the same attribute.
 
-Documentation lint enforcement remains in
-[#87](https://github.com/ga4gh/ga4gh-sdk/issues/87); it needs a policy for
-generated models and the existing undocumented public API before it can become
-a useful gate.
+`ga4gh-lib` and `ga4gh-cli` deny public items without a doc comment
+(`#![deny(missing_docs)]`), so every build fails on them, not only
+`make clippy` and CI. Document every new public item. Items behind the
+`workflow-contracts` feature are checked only in builds that enable it,
+such as workspace builds (the CLI enables it). The generated `models`
+modules are exempt, as the generator writes their docs from the OpenAPI
+specifications: the `models` module of every client carries
+`#[allow(missing_docs)]`, together with the Clippy allows above where
+those apply.
 
 ## Documentation
 
@@ -163,8 +168,11 @@ examples. [Read the Docs](https://ga4gh-sdk.readthedocs.io/) publishes them
 as one site, built with [MkDocs](https://www.mkdocs.org/) and the
 [Material theme](https://squidfunk.github.io/mkdocs-material/), together with
 the Rust API reference of `cargo doc` for the `ga4gh_sdk` and `ga4gh_cli`
-crates. Once the Read the Docs project is configured as described below, it
-serves `latest` from `main`, a version per tag, and pull request previews.
+crates and the [Python API reference](../python/api.md), which
+[mkdocstrings](https://mkdocstrings.github.io/python/) renders from the
+docstrings of the type stubs (`python/ga4gh_sdk.pyi`). Once the Read the
+Docs project is configured as described below, it serves `latest` from
+`main`, a version per tag, and pull request previews.
 
 - [`mkdocs.yml`](../mkdocs.yml) configures the site. Its `nav` lists the
   pages by their paths in the repository; Markdown files that it doesn't
@@ -197,17 +205,26 @@ make site
   unresolved link. `make docs` builds the whole workspace and stays lenient.
   Fixes in the docs of generated models go into their patch in
   `utils/patches/` (see
-  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). Until the
-  docs of the DRS models are fixed, only their generated `models` module
-  is exempt from the bare-URL and broken-link checks (an `#[allow]` on
-  `pub mod models` in `lib/src/clients/drs/mod.rs`). Hand-written DRS code
-  remains subject to both checks.
+  [Autogenerate OpenAPI models](autogenerate_OAI_models.md)).
 - `mkdocs build --strict`, which fails on warnings such as links to missing
-  files or anchors.
+  files or anchors. It also fails if the Python API reference can't be
+  generated or Griffe warns about a docstring of the stubs, for example one
+  that documents a parameter that the signature lacks. The stubs' docstrings
+  use the Google style (`Args:`, `Returns:`, `Raises:`). The hooks copy
+  `python/ga4gh_sdk.pyi` into the stub-only package
+  `target/python-stubs/ga4gh_sdk/`, where Griffe reads it, so the build
+  needs no compiled bindings.
 
-`python3 -m pytest docs/test_hooks.py` tests the hooks; CI
-runs both. After the first `make site`, `mkdocs serve` shows the site
-at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
+`python/tests/test_stubs.py`, which the `Python tests` job runs, checks that
+every class and member of the stubs has a docstring and that the `Args:`
+section of each method names all of its parameters.
+
+The Griffe extension `docs/griffe_overloads.py` renders methods that the
+stubs declare only with `@overload`, such as `Task.wait`.
+`python3 -m pytest docs` tests the hooks and checks that the reference loads
+every class and member of the stubs; CI runs both. After the first
+`make site`, `mkdocs serve` shows the site at <http://127.0.0.1:8000/> and
+rebuilds it when a guide changes.
 
 ### Read the Docs project
 
