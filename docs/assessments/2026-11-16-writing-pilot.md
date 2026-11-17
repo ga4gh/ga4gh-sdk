@@ -146,10 +146,10 @@ shared one rate limit, so they do not compare the arms.
 
 ### Observations
 
-- **Rules that do not apply.** All four T2 runs found the raw-response
+- **Rules that do not apply.** Both T2 runs found the raw-response
   contract in the code's documentation and its callers. None proposed the
-  requested behavior change without a decision. No T4 run changed code or
-  text outside the section. Neither arm over-applied a rule.
+  requested behavior change without a decision. No T4 plan proposed code
+  changes or text outside the section. Neither arm over-applied a rule.
 - **T4, arm A.** Both runs proposed new behavioral claims for the user
   procedure that they had not checked, for example that a `base_path` ending
   in `/tasks` produces `…/tasks/tasks`. Arm B kept the claims of the revised
@@ -272,12 +272,25 @@ git archive "$base" | tar -x -C eval/snap-1
 git archive "$base" | tar -x -C eval/snap-2
 git diff 6c7dae2^1 6c7dae2 > eval/pr232.diff
 (cd eval/snap-2 && patch -R -p1 < ../pr232.diff)
-for s in eval/snap-1 eval/snap-2; do
-  sed -i 's/^            executors: Some(executors),$/            executors: None,/' \
-    "$s/lib/src/clients/tes/models/tes_task.rs"
-  sed -i 's/^+            executors: Some(executors),$/+            executors: None,/' \
-    "$s/utils/patches/tes.patch"
-done
+python3 - <<'PY'
+from pathlib import Path
+
+replacements = (
+    ("lib/src/clients/tes/models/tes_task.rs",
+     "            executors: Some(executors),",
+     "            executors: None,"),
+    ("utils/patches/tes.patch",
+     "+            executors: Some(executors),",
+     "+            executors: None,"),
+)
+for snapshot in ("snap-1", "snap-2"):
+    for relative, old, new in replacements:
+        path = Path("eval") / snapshot / relative
+        source = path.read_text()
+        if source.count(old) != 1:
+            raise RuntimeError(f"expected one constructor line in {path}")
+        path.write_text(source.replace(old, new, 1))
+PY
 ```
 
 `snap-1` is arm B and `snap-2` is arm A. Give each run the protocol above
