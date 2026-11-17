@@ -70,7 +70,8 @@ pub(crate) async fn fetch(transport: &Transport, endpoint: &str) -> crate::Resul
 
 /// A service-info request of a client constructor that the service answered
 /// with an error status, with a hint if the API root seems wrong. The request's
-/// error stays available as the source and through [`Error::downcast_ref`](crate::Error::downcast_ref).
+/// error stays available as the source and through
+/// [`Error::downcast_ref`](crate::Error::downcast_ref).
 #[derive(Debug)]
 pub(crate) struct DiscoveryError {
     /// The name of the API, for example `DRS`.

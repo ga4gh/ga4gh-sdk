@@ -623,10 +623,10 @@ match tes.create(task).await {
 between threads, for example into `tokio::spawn`. The exception is
 `PreparedBundle::prepare` with a `DescriptorFetcher`, whose futures aren't
 `Send`. If the service answers the service-info request of `DRS::new` or
-`WES::new` with an error status, the error is `Other` with a hint on the API
-root, not `Http`; `downcast_ref::<HttpError>()` still returns the HTTP error.
-Other failures of that request, such as a failed connection, keep their own
-variant, as for `TES::new` and `TRS::new`.
+`WES::new` with an error status, the error is `Other`, with a hint on the API
+root for a 404, not `Http`; `downcast_ref::<HttpError>()` still returns the
+HTTP error. Other failures of that request, such as a failed connection, keep
+their own variant, as for `TES::new` and `TRS::new`.
 
 A `Box<dyn Error>` made from the SDK error holds a `ga4gh_sdk::Error`, so its
 own `downcast_ref::<HttpError>()` returns `None`. The same holds for an
