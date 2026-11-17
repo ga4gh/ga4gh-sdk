@@ -42,9 +42,9 @@ fn bounded_text(value: &str, limit: usize) -> String {
     value[..end].to_owned()
 }
 
-fn submission_diagnostic(error: &(dyn std::error::Error + 'static)) -> Value {
-    use ga4gh_sdk::utils::{operation::AmbiguousSubmissionError, transport::HttpStatusError};
-    if let Some(error) = error.downcast_ref::<HttpStatusError>() {
+fn submission_diagnostic(error: &ga4gh_sdk::Error) -> Value {
+    use ga4gh_sdk::utils::{operation::AmbiguousSubmissionError, transport::HttpError};
+    if let Some(error) = error.downcast_ref::<HttpError>() {
         let body = bounded_text(&error.body, PRIVATE_BODY_LIMIT);
         // Transport exposes status/body only. Do not invent a header request ID.
         let parsed = serde_json::from_str::<Value>(&error.body).ok();
@@ -210,7 +210,7 @@ async fn profile(checks: &mut Vec<Value>) -> Result<(), Error> {
     let wes = WES {
         config,
         transport,
-        service: Ok(service),
+        service,
     };
     let ledger_path = required("SEQERA_PROFILE_LEDGER")?;
     let ledger_path = Path::new(&ledger_path);
@@ -240,7 +240,7 @@ async fn profile(checks: &mut Vec<Value>) -> Result<(), Error> {
     {
         Ok(run) => run,
         Err(error) => {
-            let diagnostic = submission_diagnostic(error.as_ref());
+            let diagnostic = submission_diagnostic(&error);
             // Only status leaves the private ledger. Bodies and request IDs can
             // contain account context, signed URLs or other sensitive values.
             let http_status = diagnostic["http_status"].clone();

@@ -43,12 +43,11 @@ pub(super) fn model_error(error: &serde_json::Error) -> String {
 
 /// Describes an error of the library's typed DRS calls, as used by `DrsResolver`,
 /// without the response values that their model errors quote.
-pub(super) fn plan_error(error: &(dyn std::error::Error + 'static)) -> String {
+pub(super) fn plan_error(error: &ga4gh_sdk::Error) -> String {
     let invalid =
         |error: &serde_json::Error| format!("Invalid DRS response: {}", model_error(error));
-    if let Some(error) = error.downcast_ref::<serde_json::Error>() {
-        return invalid(error);
-    }
+    // `downcast_ref` also searches the sources, which include the cause of a
+    // `ResolveError`: check that first to keep its prefix.
     if let Some(ResolveError {
         cause: ResolveCause::Request(cause),
         ..
@@ -57,6 +56,9 @@ pub(super) fn plan_error(error: &(dyn std::error::Error + 'static)) -> String {
         if let Some(cause) = cause.downcast_ref::<serde_json::Error>() {
             return format!("DRS resolution request failed: {}", invalid(cause));
         }
+    }
+    if let Some(error) = error.downcast_ref::<serde_json::Error>() {
+        return invalid(error);
     }
     error.to_string()
 }

@@ -17,6 +17,8 @@ use serde_json::Value;
 fn file_arg(name: &'static str) -> Arg {
     Arg::new(name).required(true)
 }
+/// Builds the `workflow` command and its subcommands, such as `prepare`,
+/// `submit`, `results` and `verify`.
 pub fn command() -> Command {
     let pins = |c: Command| {
         c.arg(
@@ -147,7 +149,8 @@ pub(crate) async fn run_with_context(
                     let config = match service_config {
                         Some(config) => config.clone(),
                         None => context
-                            .load_config(ServiceType::WES)
+                            .load_config_fresh(ServiceType::WES)
+                            .await
                             .map_err(|error| error.to_string())?,
                     };
                     let wes = WES::new(&config).await?;

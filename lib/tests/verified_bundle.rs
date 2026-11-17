@@ -75,13 +75,13 @@ fn wes(base: &str) -> WES {
     WES {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service {
+        service: Service {
             r#type: Box::new(ServiceType {
                 artifact: "wes".into(),
                 ..Default::default()
             }),
             ..Default::default()
-        }),
+        },
     }
 }
 

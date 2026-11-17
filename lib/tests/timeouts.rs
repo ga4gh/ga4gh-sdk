@@ -266,14 +266,14 @@ async fn native_wes_service_info_uses_discovery_timeout_and_ready_transport() {
     );
 
     let wes = WES::new(&config).await.unwrap();
-    assert_eq!(wes.service.as_ref().unwrap().r#type.version, "1.0.0");
+    assert_eq!(wes.service.r#type.version, "1.0.0");
 
     let discovered = WES::discover(&config, LONG).await.unwrap();
     assert_eq!(discovered.capabilities.raw["version"], "9.3.0");
 
     let transport = Transport::with_client(&config, ga4gh_sdk::reqwest::Client::new());
     let wes = WES::from_transport(transport).await.unwrap();
-    assert_eq!(wes.service.as_ref().unwrap().r#type.version, "1.0.0");
+    assert_eq!(wes.service.r#type.version, "1.0.0");
     assert_eq!(server.requests.load(Ordering::SeqCst), 3);
 }
 

@@ -1,4 +1,43 @@
 //! Verified CWL descriptor staging from TRS, with explicit WES submission.
+//!
+//! [`PreparedBundle::prepare`] fetches the CWL descriptors of a TRS tool
+//! version, follows their references, checks their advertised checksums and
+//! records a [`BundleManifest`] with the SHA-256 of every file. It sends no
+//! WES request. [`PreparedBundle::submit`] then starts a WES run with the
+//! staged bytes as attachments.
+//!
+//! ```no_run
+//! use ga4gh_sdk::clients::bundle::{BundleRequest, PreparationOptions, PreparedBundle};
+//! use ga4gh_sdk::clients::wes::WES;
+//! use ga4gh_sdk::utils::{configuration::Configuration, operation::Operation, transport::Transport};
+//! use std::time::Duration;
+//!
+//! # async fn example() -> ga4gh_sdk::Result<()> {
+//! let trs = Configuration::new(url::Url::parse("https://example.org/ga4gh/trs/v2")?);
+//! let operation = Operation::new(Duration::from_secs(120));
+//! let bundle = PreparedBundle::prepare(
+//!     &Transport::new(&trs),
+//!     BundleRequest {
+//!         tool_id: "#workflow/example".into(),
+//!         version_id: "1.0".into(),
+//!         workflow_params: serde_json::json!({"input": "data.txt"}),
+//!     },
+//!     &PreparationOptions::default(),
+//!     &operation,
+//!     None,
+//! )
+//! .await?;
+//! println!("bundle {}", bundle.manifest().bundle_sha256);
+//! for (path, bytes) in bundle.staged_files() {
+//!     println!("{path}: {} bytes", bytes.len());
+//! }
+//! let wes_root = url::Url::parse("https://example.org/ga4gh/wes/v1")?;
+//! let wes = WES::new(&Configuration::new(wes_root)).await?;
+//! let submitted = bundle.submit(&wes, &operation).await?;
+//! println!("{}", serde_json::to_string(&submitted.manifest)?);
+//! # Ok(())
+//! # }
+//! ```
 use super::{
     trs::models::{tool_file::FileType, Checksum, FileWrapper, ToolFile},
     wes::{
@@ -17,16 +56,20 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    error::Error,
     sync::Arc,
 };
 use url::Url;
 
+/// The TRS tool version to stage, and the parameters of the run.
 pub struct BundleRequest {
+    /// The TRS tool ID; not empty, `.` or `..`.
     pub tool_id: String,
+    /// The TRS version ID; not empty, `.` or `..`.
     pub version_id: String,
+    /// The `workflow_params` of the WES run request.
     pub workflow_params: Value,
 }
+/// Limits and checksum policy of [`PreparedBundle::prepare`].
 #[derive(Clone, Debug)]
 pub struct PreparationOptions {
     /// Maximum number of entries in the TRS file listing.
@@ -36,6 +79,9 @@ pub struct PreparationOptions {
     pub max_file_bytes: usize,
     /// Maximum sum of decoded bytes staged across files.
     pub max_total_bytes: usize,
+    /// Whether advertised checksums of algorithms other than SHA-256 are
+    /// recorded as unverified instead of failing the preparation (default
+    /// `false`).
     pub allow_unsupported_checksums: bool,
 }
 impl Default for PreparationOptions {
@@ -48,32 +94,55 @@ impl Default for PreparationOptions {
         }
     }
 }
+/// A checksum that TRS advertised for a descriptor.
 #[derive(Clone, Debug, Serialize)]
 pub struct ChecksumProof {
+    /// The algorithm, as TRS names it.
     pub algorithm: String,
+    /// The advertised value.
     pub expected: String,
+    /// Whether the value was checked: `true` for SHA-256, which must match;
+    /// `false` for other algorithms, with
+    /// [`PreparationOptions::allow_unsupported_checksums`].
     pub verified: bool,
 }
+/// A staged file and its digests.
 #[derive(Clone, Debug, Serialize)]
 pub struct FileDigest {
+    /// The file's path relative to the bundle root, as TRS lists it.
     pub path: String,
+    /// The hex SHA-256 of the staged bytes.
     pub sha256: String,
+    /// The checksums that TRS advertised for the file.
     pub advertised: Vec<ChecksumProof>,
 }
+/// Where a bundle was submitted.
 #[derive(Clone, Debug, Serialize)]
 pub struct ExecutionRecord {
+    /// The WES API root, without credentials, query or fragment.
     pub api_root: String,
+    /// The ID of the WES run.
     pub run_id: String,
 }
+/// The provenance of a bundle: its TRS source and the digests of its files.
 #[derive(Clone, Debug, Serialize)]
 pub struct BundleManifest {
+    /// The TRS API root, without credentials, query or fragment.
     pub registry: String,
+    /// The TRS tool ID.
     pub tool_id: String,
+    /// The TRS version ID.
     pub version_id: String,
+    /// The version's `is_production` flag, if TRS gives one.
     pub is_production: Option<bool>,
+    /// The version's `meta_version`, if TRS gives one.
     pub meta_version: Option<String>,
+    /// The staged files, sorted by path.
     pub files: Vec<FileDigest>,
+    /// The hex SHA-256 of the compact JSON object of the fields above, with
+    /// the keys sorted at every level, which identifies the bundle.
     pub bundle_sha256: String,
+    /// Where the bundle was submitted; set by [`PreparedBundle::submit`].
     pub execution: Option<ExecutionRecord>,
 }
 
@@ -81,12 +150,15 @@ pub struct BundleManifest {
 /// must enforce `limit` while reading, and should omit signed URLs from errors.
 #[async_trait(?Send)]
 pub trait DescriptorFetcher {
-    async fn fetch(
-        &self,
-        url: &Url,
-        operation: &Operation,
-        limit: usize,
-    ) -> Result<Vec<u8>, Box<dyn Error>>;
+    /// Fetches the descriptor at `url` within `operation`, reading at most
+    /// `limit` bytes.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the URL isn't allowed, the request fails, or the body
+    /// exceeds `limit`.
+    async fn fetch(&self, url: &Url, operation: &Operation, limit: usize)
+        -> crate::Result<Vec<u8>>;
 }
 /// Explicit anonymous allowlist. Never reuses a registry's authenticated client,
 /// never follows redirects, and never stores signed URL queries in provenance.
@@ -95,16 +167,25 @@ pub struct AnonymousFetcher {
     origins: BTreeSet<String>,
     client: reqwest::Client,
 }
-fn without_descriptor_url(error: Box<dyn Error>) -> Box<dyn Error> {
-    match error.downcast::<reqwest::Error>() {
-        Ok(error) => Box::new(error.without_url()),
-        Err(error) => error,
+fn without_descriptor_url(error: crate::Error) -> crate::Error {
+    match error {
+        crate::Error::Transport(error) => crate::Error::Transport(error.without_url()),
+        error => error,
     }
 }
 impl AnonymousFetcher {
-    /// Accept only bare HTTP(S) origins; a path or query would otherwise be
+    /// Builds a fetcher for the HTTP(S) `origins`, such as
+    /// `https://example.org`.
+    ///
+    /// Accepts only bare HTTP(S) origins; a path or query would otherwise be
     /// silently widened to the whole host when forming the allowlist.
-    pub fn new(origins: impl IntoIterator<Item = String>) -> Result<Self, Box<dyn Error>> {
+    ///
+    /// # Errors
+    ///
+    /// Fails if an origin isn't a URL, isn't HTTP(S), or has a path other
+    /// than `/`, a query, a fragment or credentials, or if the HTTP client
+    /// can't be built.
+    pub fn new(origins: impl IntoIterator<Item = String>) -> crate::Result<Self> {
         let origins = origins
             .into_iter()
             .map(|s| {
@@ -120,7 +201,7 @@ impl AnonymousFetcher {
                 }
                 Ok(url.origin().ascii_serialization())
             })
-            .collect::<Result<_, Box<dyn Error>>>()?;
+            .collect::<crate::Result<_>>()?;
         Ok(Self {
             origins,
             client: reqwest::Client::builder()
@@ -136,7 +217,7 @@ impl DescriptorFetcher for AnonymousFetcher {
         url: &Url,
         operation: &Operation,
         limit: usize,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
+    ) -> crate::Result<Vec<u8>> {
         if !matches!(url.scheme(), "http" | "https")
             || !self.origins.contains(&url.origin().ascii_serialization())
             || !url.username().is_empty()
@@ -164,19 +245,24 @@ impl DescriptorFetcher for AnonymousFetcher {
     }
 }
 
+/// The CWL descriptors of a TRS tool version, staged and verified, and the
+/// WES run request that submits them.
 pub struct PreparedBundle {
     files: BTreeMap<String, Arc<[u8]>>,
     manifest: BundleManifest,
     request: RunRequest,
 }
+/// A bundle submitted to WES.
 pub struct SubmittedBundle {
+    /// The new WES run.
     pub run: Run,
+    /// The bundle's manifest, with its [`BundleManifest::execution`] set.
     pub manifest: BundleManifest,
 }
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn safe_root(transport: &Transport) -> Result<String, Box<dyn Error>> {
+fn safe_root(transport: &Transport) -> crate::Result<String> {
     let mut url = transport.endpoint("")?;
     let _ = url.set_username("");
     let _ = url.set_password(None);
@@ -184,7 +270,7 @@ fn safe_root(transport: &Transport) -> Result<String, Box<dyn Error>> {
     url.set_fragment(None);
     Ok(url.into())
 }
-fn check_ids(request: &BundleRequest) -> Result<(), Box<dyn Error>> {
+fn check_ids(request: &BundleRequest) -> crate::Result<()> {
     if [&request.tool_id, &request.version_id]
         .iter()
         .any(|s| s.is_empty() || matches!(s.as_str(), "." | ".."))
@@ -197,7 +283,7 @@ fn checksums(
     bytes: &[u8],
     advertised: Vec<Checksum>,
     allow_unsupported: bool,
-) -> Result<Vec<ChecksumProof>, Box<dyn Error>> {
+) -> crate::Result<Vec<ChecksumProof>> {
     let mut proofs = Vec::new();
     for checksum in advertised {
         let verified = match checksum.r#type.to_ascii_lowercase().as_str() {
@@ -224,7 +310,7 @@ fn checksums(
     }
     Ok(proofs)
 }
-fn relative_reference(document: &str, reference: &str) -> Result<String, Box<dyn Error>> {
+fn relative_reference(document: &str, reference: &str) -> crate::Result<String> {
     if reference.is_empty() || reference.contains("$(") || reference.contains("${") {
         return Err("dynamic/empty CWL dependency is outside this MVP".into());
     }
@@ -280,7 +366,7 @@ fn references(
     document: &str,
     result: &mut Vec<(String, ParseContext)>,
     context: ParseContext,
-) -> Result<(), Box<dyn Error>> {
+) -> crate::Result<()> {
     match value {
         serde_yaml::Value::Mapping(map) => {
             if context == ParseContext::Steps {
@@ -357,13 +443,13 @@ fn references(
     Ok(())
 }
 
-fn acyclic(graph: &BTreeMap<String, BTreeSet<String>>) -> Result<(), Box<dyn Error>> {
+fn acyclic(graph: &BTreeMap<String, BTreeSet<String>>) -> crate::Result<()> {
     fn visit(
         node: &str,
         graph: &BTreeMap<String, BTreeSet<String>>,
         active: &mut BTreeSet<String>,
         done: &mut BTreeSet<String>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> crate::Result<()> {
         if done.contains(node) {
             return Ok(());
         }
@@ -387,24 +473,46 @@ fn acyclic(graph: &BTreeMap<String, BTreeSet<String>>) -> Result<(), Box<dyn Err
     Ok(())
 }
 impl PreparedBundle {
+    /// The bundle's manifest; its `execution` is `None`.
     pub fn manifest(&self) -> &BundleManifest {
         &self.manifest
     }
+    /// The run request that [`Self::submit`] sends: workflow type `CWL`, the
+    /// primary descriptor's `cwlVersion` and path, and the request's
+    /// `workflow_params`.
     pub fn request_plan(&self) -> RunRequest {
         self.request.clone()
     }
+    /// The staged files as paths and bytes, sorted by path.
     pub fn staged_files(&self) -> impl Iterator<Item = (&str, &[u8])> {
         self.files
             .iter()
             .map(|(path, bytes)| (path.as_str(), bytes.as_ref()))
     }
+    /// Fetches and verifies the CWL descriptors of `request`'s tool version
+    /// from `registry`, within `operation`. Sends no WES request.
+    ///
+    /// The version's CWL file listing must declare exactly one primary
+    /// descriptor, a CWL `Workflow` of version `v1.0`, `v1.1` or `v1.2`. All
+    /// declared descriptors are staged, and the references of `$import`,
+    /// `$include` and the steps' `run` must be relative paths in the listing.
+    /// Advertised SHA-256 checksums must match. Descriptors that TRS gives by
+    /// URL are fetched with `fetcher`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if an ID or a bound of `options` is invalid, a request fails, a
+    /// bound is exceeded, the listing or a reference breaks the rules above,
+    /// the references form a cycle, a checksum doesn't match or its
+    /// algorithm isn't allowed, or a descriptor is given by URL without
+    /// `fetcher`.
     pub async fn prepare(
         registry: &Transport,
         request: BundleRequest,
         options: &PreparationOptions,
         operation: &Operation,
         fetcher: Option<&dyn DescriptorFetcher>,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> crate::Result<Self> {
         check_ids(&request)?;
         if options.max_files == 0 || options.max_file_bytes == 0 || options.max_total_bytes == 0 {
             return Err("bundle bounds must be positive".into());
@@ -566,14 +674,17 @@ impl PreparedBundle {
             request,
         })
     }
+    /// Starts a WES run of the bundle, with the staged files as attachments.
+    ///
     /// Explicit submission uploads the same immutable Arc bytes that were hashed.
     /// Each call may create a separate WES run. Reconcile an ambiguous response
     /// before calling this method again.
-    pub async fn submit(
-        &self,
-        wes: &WES,
-        operation: &Operation,
-    ) -> Result<SubmittedBundle, Box<dyn Error>> {
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`WES::run_workflow_streaming`] does, or if the WES API root
+    /// can't be recorded.
+    pub async fn submit(&self, wes: &WES, operation: &Operation) -> crate::Result<SubmittedBundle> {
         let attachments = self
             .files
             .iter()
