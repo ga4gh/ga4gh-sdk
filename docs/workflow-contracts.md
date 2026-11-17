@@ -106,10 +106,25 @@ no automatic bulk download or new credential store.
 Durable HTTP(S) references have userinfo, query and fragment removed and mark
 `access_details_redacted`; they must not be treated as refreshed usable access
 URLs or guaranteed object identities. DRS references retain stable object identity.
-AccessPlan headers and URLs are never serialized into artifact evidence. Do not
-put credentials into scientific scalars, schema annotations, checksum source labels
-or caller-owned context. The result format is evidence transport, not a generic
-secret-discovery or redaction system.
+AccessPlan headers and URLs are never serialized into artifact evidence.
+
+The same redaction applies to the stored `contract_document` and to the output
+annotations, so a URL never appears redacted in one place and in clear in another.
+It covers HTTP(S) URLs that make up a whole string and URLs embedded in longer
+strings, such as descriptions or log lines. An embedded URL starts at `http://` or
+`https://` (in any case) and ends before whitespace, a quote, `<`, `>` or a
+backtick; trailing punctuation is not part of it. URLs that don't parse lose
+everything up to the last `@` of their authority and everything from the first
+`?` or `#`. In the profile document and annotations, only URLs with such access
+details are rewritten, and the values of `$ref`, `$dynamicRef`, `$id` and `$schema`
+keep their fragment so that references still resolve. Whole-string output values
+are also normalized, as before. `schema_digest` still identifies the profile as
+given.
+
+Not redacted: other URL schemes (for example presigned `s3://` URLs), object keys,
+checksum source labels and caller-owned context. Do not put credentials there. The
+result format is evidence transport, not a generic secret-discovery or redaction
+system.
 
 `html_viewer_metadata` exposes declared HTML viewer metadata. The small adapter
 in `examples/sequence-qc/view_report.py` feeds the **known public demo reports** to

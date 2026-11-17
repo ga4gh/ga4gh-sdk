@@ -144,6 +144,54 @@ fn durable_metadata_excludes_signed_urls_and_nested_preserves_values() {
         Some(&json!("https://example.org/report"))
     );
 }
+#[test]
+fn contract_document_and_embedded_urls_are_redacted_like_outputs() {
+    let mut s = schema();
+    s["properties"]["outputs"]["properties"]["note"] = json!({
+        "type": "string",
+        "description": "Mirror: https://user:password@example.org/data?token=secret#cap."
+    });
+    s["properties"]["outputs"]["properties"]["report"]["examples"] =
+        json!(["https://user:password@example.org/report?token=secret"]);
+    let p = profile(s);
+    let r = p
+        .project_results(
+            "one",
+            "COMPLETE",
+            &json!({
+                "count": 1,
+                "report": "https://example.org/report",
+                "note": "Read https://user:password@example.org/a?token=secret#cap, then https://example.org/b."
+            }),
+        )
+        .unwrap();
+    let durable = serde_json::to_string(&r).unwrap();
+    for secret in ["user", "password", "token", "secret", "cap"] {
+        assert!(!durable.contains(secret), "{secret} in {durable}");
+    }
+    // Embedded URLs lose only their access details; the text stays
+    assert_eq!(
+        r.value_at("/note"),
+        Some(&json!(
+            "Read https://example.org/a, then https://example.org/b."
+        ))
+    );
+    assert!(r.outputs["note"].access_details_redacted);
+    assert!(!r.outputs["report"].access_details_redacted);
+    assert_eq!(
+        r.contract_document["properties"]["outputs"]["properties"]["note"]["description"],
+        "Mirror: https://example.org/data."
+    );
+    assert_eq!(
+        r.outputs["note"].annotations["description"],
+        "Mirror: https://example.org/data."
+    );
+    // Text without access details stays as it is
+    assert_eq!(
+        r.contract_document["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+}
 fn policy(abs: f64, rel: f64) -> ComparisonPolicy {
     ComparisonPolicy {
         id: "qc-v1".into(),

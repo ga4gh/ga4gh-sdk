@@ -1,10 +1,10 @@
 //! Output interpretation and opt-in artifact evidence, independent of execution state.
 //!
 //! [`Profile::project_results`] checks each named output of a run against
-//! the profile's output contract and gives a [`ResultRecord`]. Output values
-//! and annotations that are whole HTTP(S) URLs lose their credentials,
-//! query and fragment; the profile document and the context are stored as
-//! given. The `verify_` methods of [`ResultRecord`] then add
+//! the profile's output contract and gives a [`ResultRecord`]. HTTP(S) URLs
+//! in output values, annotations and the profile document lose their
+//! credentials, query and fragment, also where they are embedded in longer
+//! strings; the context is stored as given. The `verify_` methods of [`ResultRecord`] then add
 //! [`ArtifactEvidence`] for selected output artifacts: whether they could
 //! be read, and whether their SHA-256 matches an expected checksum.
 use super::{digest, pointer_segment, ContractError, Diagnostic, Profile};
@@ -93,12 +93,14 @@ pub struct TypedOutput {
     #[serde(default)]
     pub access_details_redacted: bool,
     /// The output value. Strings that are whole HTTP(S) URLs are
-    /// normalized and lose their credentials, query and fragment. `None`
-    /// if the run didn't give it.
+    /// normalized and lose their credentials, query and fragment; HTTP(S)
+    /// URLs embedded in longer strings lose them too. `None` if the run
+    /// didn't give it.
     pub value: Option<Value>,
     /// Whether the value conforms to the output's schema.
     pub contract_status: ContractStatus,
-    /// The output's schema from the profile, with the same URL redaction.
+    /// The output's schema from the profile, with the URL redaction of
+    /// [`ResultRecord::contract_document`].
     pub annotations: Value,
     /// The errors of validating the value against the output's schema.
     pub diagnostics: Vec<Diagnostic>,
@@ -107,9 +109,10 @@ pub struct TypedOutput {
 /// with optional evidence about artifacts.
 ///
 /// It is meant to be stored: it doesn't depend on the run still existing.
-/// Output values and annotations that are whole HTTP(S) URLs lose their
-/// credentials, query and fragment; URLs elsewhere, in
-/// `contract_document` and in `context` are stored as given.
+/// HTTP(S) URLs in output values, annotations and `contract_document` lose
+/// their credentials, query and fragment, also where they are embedded in
+/// longer strings. Other URL schemes, object keys and `context` are stored
+/// as given, so they must hold no credentials.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResultRecord {
     /// The format version; 1.
@@ -121,7 +124,12 @@ pub struct ResultRecord {
     /// The [`Profile::schema_digest`] of the profile.
     pub schema_digest: String,
     /// The profile's JSON document, which the schema references and
-    /// annotations of the outputs resolve against.
+    /// annotations of the outputs resolve against. HTTP(S) URLs in its
+    /// strings lose their credentials, query and fragment; only URLs with
+    /// such access details are rewritten, and the values of `$ref`,
+    /// `$dynamicRef`, `$id` and `$schema` keep their fragment, so that
+    /// references still resolve. [`Self::schema_digest`] is computed over
+    /// the profile as given.
     #[serde(default)]
     pub contract_document: Value,
     /// The errors of validating all outputs against the output contract.
@@ -136,24 +144,114 @@ pub struct ResultRecord {
     /// compares it.
     pub context: BTreeMap<String, String>,
 }
-// Removes credentials, query and fragment from HTTP(S) URLs in a value, so
-// that it can be stored.
+// Parses `text` as an HTTP(S) URL and removes its credentials, query and,
+// unless `keep_fragment`, its fragment. `None` if it isn't an HTTP(S) URL.
+fn strip_url(text: &str, keep_fragment: bool) -> Option<url::Url> {
+    let mut u = url::Url::parse(text).ok()?;
+    if !["http", "https"].contains(&u.scheme()) {
+        return None;
+    }
+    let _ = u.set_username("");
+    let _ = u.set_password(None);
+    u.set_query(None);
+    if !keep_fragment {
+        u.set_fragment(None);
+    }
+    Some(u)
+}
+// Whether an HTTP(S) URL carries credentials, a query or (unless
+// `keep_fragment`) a fragment.
+fn has_access_details(u: &url::Url, keep_fragment: bool) -> bool {
+    !u.username().is_empty()
+        || u.password().is_some()
+        || u.query().is_some()
+        || (!keep_fragment && u.fragment().is_some())
+}
+// Removes what looks like credentials, a query or a fragment from a URL
+// that doesn't parse, by its text: everything up to the last `@` of the
+// authority, and everything from the first `?` or `#`. `None` if there is
+// nothing to remove.
+fn strip_unparsed(token: &str) -> Option<String> {
+    let (scheme, rest) = token.split_once("://")?;
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let host_start = rest[..authority_end].rfind('@').map_or(0, |i| i + 1);
+    let rest = &rest[host_start..];
+    let rest = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
+    let stripped = format!("{scheme}://{rest}");
+    (stripped != token).then_some(stripped)
+}
+// Removes credentials, query and fragment from the HTTP(S) URLs embedded in
+// `text`. A URL starts at `http://` or `https://`, in any case, and ends
+// before whitespace, a quote, `<`, `>` or a backtick; trailing punctuation
+// isn't part of it. Only URLs with access details are rewritten, so other
+// text stays exactly as it is.
+fn redact_text(text: &str, keep_fragment: bool) -> String {
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut done = 0;
+    let mut from = 0;
+    while let Some(start) = ["http://", "https://"]
+        .iter()
+        .filter_map(|scheme| lower[from..].find(scheme).map(|i| from + i))
+        .min()
+    {
+        let rest = &text[start..];
+        let end = rest
+            .find(|c: char| c.is_whitespace() || "\"'<>`".contains(c))
+            .unwrap_or(rest.len());
+        let token = rest[..end].trim_end_matches(|c: char| ".,;:!?)]}".contains(c));
+        from = start + token.len().max(1);
+        let redacted = match url::Url::parse(token) {
+            Ok(u) if has_access_details(&u, keep_fragment) => {
+                strip_url(token, keep_fragment).map(String::from)
+            }
+            Ok(_) => None,
+            Err(_) => strip_unparsed(token),
+        };
+        if let Some(redacted) = redacted {
+            out.push_str(&text[done..start]);
+            out.push_str(&redacted);
+            done = start + token.len();
+        }
+    }
+    out.push_str(&text[done..]);
+    out
+}
+// Removes credentials, query and fragment from HTTP(S) URLs in an output
+// value, so that it can be stored. A string that is a whole HTTP(S) URL is
+// also normalized; URLs embedded in longer strings are rewritten only if
+// they have access details.
 fn durable(value: &Value) -> Value {
     match value {
-        Value::String(s) => {
-            if let Ok(mut u) = url::Url::parse(s) {
-                if ["http", "https"].contains(&u.scheme()) {
-                    let _ = u.set_username("");
-                    let _ = u.set_password(None);
-                    u.set_query(None);
-                    u.set_fragment(None);
-                    return json!(u.as_str());
-                }
-            }
-            value.clone()
-        }
+        Value::String(s) => match strip_url(s, false) {
+            Some(u) => json!(u.as_str()),
+            None => json!(redact_text(s, false)),
+        },
         Value::Array(a) => Value::Array(a.iter().map(durable).collect()),
         Value::Object(o) => Value::Object(o.iter().map(|(k, v)| (k.clone(), durable(v))).collect()),
+        _ => value.clone(),
+    }
+}
+// JSON Schema keywords whose URL fragment is a JSON pointer or an anchor
+// that references depend on, not an access detail.
+const REFERENCE_KEYWORDS: [&str; 4] = ["$ref", "$dynamicRef", "$id", "$schema"];
+// Removes credentials, query and fragment from the HTTP(S) URLs in a
+// profile document or one of its schemas, whole or embedded in longer
+// strings, rewriting only URLs with access details. The values of
+// [`REFERENCE_KEYWORDS`] keep their fragment, so that references still
+// resolve. Object keys stay as they are.
+fn durable_schema(value: &Value, keyword: Option<&str>) -> Value {
+    match value {
+        Value::String(s) => json!(redact_text(
+            s,
+            keyword.is_some_and(|k| REFERENCE_KEYWORDS.contains(&k))
+        )),
+        Value::Array(a) => Value::Array(a.iter().map(|v| durable_schema(v, None)).collect()),
+        Value::Object(o) => Value::Object(
+            o.iter()
+                .map(|(k, v)| (k.clone(), durable_schema(v, Some(k))))
+                .collect(),
+        ),
         _ => value.clone(),
     }
 }
@@ -190,7 +288,7 @@ impl Profile {
             run_reference: run_reference.into(),
             execution_state: execution_state.into(),
             schema_digest: self.schema_digest.clone(),
-            contract_document: self.document().clone(),
+            contract_document: durable_schema(self.document(), None),
             contract_diagnostics: all,
             outputs: BTreeMap::new(),
             artifacts: BTreeMap::new(),
@@ -220,7 +318,7 @@ impl Profile {
                     access_details_redacted: value.is_some_and(|v| durable(v) != *v),
                     value: value.map(durable),
                     contract_status: status,
-                    annotations: durable(annotation),
+                    annotations: durable_schema(annotation, None),
                     diagnostics: errors,
                 },
             );
@@ -419,5 +517,61 @@ impl ResultRecord {
     /// presentation.
     pub fn html_viewer_metadata(&self) -> Vec<Value> {
         self.outputs.iter().filter(|(_,v)|v.annotations.get("x-ga4gh-ui-widget").and_then(Value::as_str)==Some("html-viewer")).map(|(key,v)|json!({"key":key,"widget":"html-viewer","contentMediaType":v.annotations.get("contentMediaType"),"value":v.value,"contract_status":v.contract_status})).collect()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn redact_text_rewrites_only_urls_with_access_details() {
+        assert_eq!(
+            redact_text("x https://u:p@h.example/a?q=1#f) y", false),
+            "x https://h.example/a) y"
+        );
+        assert_eq!(
+            redact_text("HTTPS://h.example/?token=1", false),
+            "https://h.example/"
+        );
+        assert_eq!(
+            redact_text("<http://h.example/a#f>, http://h.example", false),
+            "<http://h.example/a>, http://h.example"
+        );
+        for unchanged in [
+            "see https://h.example",
+            "s3://bucket/key?sig=1",
+            "http:// nothing",
+            "no URL at all",
+        ] {
+            assert_eq!(redact_text(unchanged, false), unchanged);
+        }
+        // URLs that don't parse lose the same parts by their text
+        assert_eq!(
+            redact_text("https://u:p@h.example:99999/a?token=1#f", false),
+            "https://h.example:99999/a"
+        );
+        assert_eq!(
+            redact_text("https://h.example/a#/defs/x", true),
+            "https://h.example/a#/defs/x"
+        );
+    }
+    #[test]
+    fn durable_schema_keeps_reference_fragments() {
+        let schema = json!({
+            "$id": "https://h.example/s.json#",
+            "$ref": "https://u:p@h.example/s.json?token=1#/$defs/a",
+            "description": "https://h.example/s.json#frag",
+            "enum": ["https://h.example/e?token=1"],
+            "properties": {"$ref": {"type": "string", "default": "https://h.example/d?token=1"}}
+        });
+        assert_eq!(
+            durable_schema(&schema, None),
+            json!({
+                "$id": "https://h.example/s.json#",
+                "$ref": "https://h.example/s.json#/$defs/a",
+                "description": "https://h.example/s.json",
+                "enum": ["https://h.example/e"],
+                "properties": {"$ref": {"type": "string", "default": "https://h.example/d"}}
+            })
+        );
     }
 }
