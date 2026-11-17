@@ -29,12 +29,12 @@ pub struct PyTesTask {
 view_accessors!(PyTesTask, TesTask);
 
 impl PyTesTask {
+    #[allow(deprecated)] // Builds the fields that the accessors read.
     pub(super) fn parse(raw: Value) -> Result<Self, String> {
         if !raw.is_object() {
             return Err("not a JSON object".to_owned());
         }
         let inner = serde_json::from_value(raw.clone()).map_err(|e| e.to_string())?;
-        #[allow(deprecated)] // Builds the fields that the accessors read.
         Ok(PyTesTask { inner, raw })
     }
 

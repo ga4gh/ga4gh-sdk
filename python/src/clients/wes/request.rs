@@ -35,6 +35,7 @@ pub struct PyRunRequest {
 view_accessors!(PyRunRequest, RunRequest);
 
 impl PyRunRequest {
+    #[allow(deprecated)] // Builds the fields that the accessors read.
     pub(super) fn parse(raw: Value) -> Result<Self, String> {
         if !raw.is_object() {
             return Err("not a JSON object".to_owned());
@@ -46,7 +47,6 @@ impl PyRunRequest {
             return Err("workflow_params must be a JSON object".to_owned());
         }
         let inner = serde_json::from_value(raw.clone()).map_err(|e| e.to_string())?;
-        #[allow(deprecated)] // Builds the fields that the accessors read.
         Ok(PyRunRequest { inner, raw })
     }
 
