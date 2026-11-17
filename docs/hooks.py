@@ -10,6 +10,9 @@ repository instead of from the files of `docs_dir`:
   repository; `docs/` is dropped from their URLs), the images of `images/`
   and the Rust API reference of `cargo doc` (`target/doc/<crate>/`, served
   as `rust/<crate>/`).
+- `on_config` copies the type stubs (`python/ga4gh_sdk.pyi`) into the
+  stub-only package `target/python-stubs/ga4gh_sdk/`, where Griffe finds
+  them for the Python API reference without compiled bindings.
 - `on_page_markdown` points relative links to other files of the repository,
   such as source files or guides that are not in `nav`, to the files on
   GitHub, at the commit that Read the Docs builds (`main` elsewhere). Links
@@ -24,11 +27,13 @@ import os
 from pathlib import Path
 import posixpath
 import re
+import shutil
 import subprocess
 from typing import Any
 from urllib.parse import urlsplit
 
 from mkdocs.config.defaults import MkDocsConfig
+from mkdocs.plugins import event_priority
 from mkdocs.structure.files import File, Files
 from mkdocs.structure.nav import Link, Navigation
 
@@ -39,6 +44,10 @@ ASSETS = ("images",)
 # Crates of the Rust API reference (`cargo doc --no-deps -p ...`)
 CRATES = ("ga4gh_sdk", "ga4gh_cli")
 RUSTDOC_PREFIX = "rust"
+# The type stubs, and the directory of the stub-only package made from them
+# (`paths` of the mkdocstrings handler in `mkdocs.yml`)
+STUBS = ROOT / "python" / "ga4gh_sdk.pyi"
+STUBS_DIR = ROOT / "target" / "python-stubs"
 # Loggers below `mkdocs` count towards the warnings of `--strict`
 log = logging.getLogger("mkdocs.hooks.repo_pages")
 
@@ -50,6 +59,38 @@ REFERENCE = re.compile(r"^(?P<head> {0,3}\[(?!\^)[^\]]+\]:\s*)(?P<target><[^>]*>
 # wraps keeps its links, and the strict build reports them)
 CODE_SPAN = re.compile(r"(?<!\\)(`+).*?\1")
 FENCE = re.compile(r"^\s*(```+|~~~+)")
+
+
+def stage_stubs(target: Path = STUBS_DIR) -> Path:
+    """Copies the type stubs into the stub-only package `ga4gh_sdk` in `target`.
+
+    Griffe finds a stubs-only module only as a package (`__init__.pyi`), not
+    as a single `.pyi` file.
+
+    Args:
+        target: The directory to put the package in.
+
+    Returns:
+        The path of the copied `__init__.pyi`.
+    """
+    package = target / "ga4gh_sdk"
+    package.mkdir(parents=True, exist_ok=True)
+    return Path(shutil.copyfile(STUBS, package / "__init__.pyi"))
+
+
+# Before mkdocstrings, which drops `paths` that don't exist yet
+@event_priority(100)
+def on_config(config: MkDocsConfig) -> MkDocsConfig:
+    """Stages the type stubs for the Python API reference.
+
+    Args:
+        config: The site configuration.
+
+    Returns:
+        The configuration, unchanged.
+    """
+    stage_stubs()
+    return config
 
 
 def _nav_paths(nav: Any) -> list[str]:

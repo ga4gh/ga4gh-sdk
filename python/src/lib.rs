@@ -58,11 +58,6 @@ use pyo3::prelude::*;
 pub mod clients;
 pub mod utils;
 use crate::clients::serviceinfo::PyServiceInfo;
-use crate::clients::tes::{
-    tes_state_type, wait_timeout_error_type, PyListTasksParams, PyTES, PyTask,
-    PyTesListTasksResponse, PyTesTask,
-};
-use crate::clients::tes_async::{PyAsyncTES, PyAsyncTask};
 use crate::utils::configuration::PyConfiguration;
 use crate::utils::transport::PyTransport;
 
@@ -142,17 +137,7 @@ fn ga4gh_sdk(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyServiceInfo>()?;
     m.add_class::<PyTransport>()?;
     clients::wes::register(py, m)?;
-    m.add_class::<PyTES>()?;
-    m.add_class::<PyTesTask>()?;
-    // Previous name of `TesTask`.
-    m.add("PyTesTask", m.getattr("TesTask")?)?;
-    m.add_class::<PyListTasksParams>()?;
-    m.add_class::<PyTesListTasksResponse>()?;
-    m.add_class::<PyTask>()?;
-    m.add_class::<PyAsyncTES>()?;
-    m.add_class::<PyAsyncTask>()?;
-    m.add("TesState", tes_state_type(py)?)?;
-    m.add("WaitTimeoutError", wait_timeout_error_type(py)?)?;
+    clients::tes::register(py, m)?;
     clients::drs::register(py, m)?;
     clients::trs::register(py, m)?;
     Ok(())

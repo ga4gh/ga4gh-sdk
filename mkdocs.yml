@@ -24,6 +24,8 @@ watch:
   - examples
   - images
   - python/README.md
+  - python/api.md
+  - python/ga4gh_sdk.pyi
   - tests/README.md
 
 theme:
@@ -67,6 +69,33 @@ markdown_extensions:
 
 plugins:
   - search
+  # The Python API reference (`python/api.md`), from the type stubs: Griffe
+  # finds them as the stub-only package `target/python-stubs/ga4gh_sdk/`,
+  # into which `docs/hooks.py` copies `python/ga4gh_sdk.pyi`, so that the
+  # build needs no compiled bindings. Its warnings, such as a module that isn't found or a
+  # documented parameter that the signature lacks, fail the strict build
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [target/python-stubs]
+          options:
+            # Renders methods declared only with `@overload`, such as `Task.wait`
+            extensions: [docs/griffe_overloads.py]
+            docstring_style: google
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 2
+            members_order: source
+            group_by_category: false
+            merge_init_into_class: true
+            separate_signature: true
+            show_signature_annotations: true
+            show_source: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            # Private aliases such as `_JSONObject` stay out; dunder methods with
+            # docstrings, such as `__len__`, stay in
+            filters: ["!^_[^_]"]
 
 validation:
   omitted_files: warn
@@ -94,9 +123,10 @@ nav:
       # Built by `cargo doc` before the site (see `docs/development.md`)
       - Rust library: rust/ga4gh_sdk/index.html
       - Rust CLI library: rust/ga4gh_cli/index.html
-      # Signatures and class docstrings; few methods have docstrings yet
-      - Python type stubs: https://github.com/ga4gh/ga4gh-sdk/blob/main/python/ga4gh_sdk.pyi
+      # Rendered from the type stubs by mkdocstrings (see `plugins`)
+      - Python bindings: python/api.md
   - Development:
+      - Developer guide: DEVELOPER_GUIDE.md
       - Overview: docs/development.md
       - Testing: tests/README.md
       - Generated models: docs/autogenerate_OAI_models.md

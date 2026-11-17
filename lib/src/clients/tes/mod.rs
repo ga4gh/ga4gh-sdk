@@ -1,95 +1,98 @@
+//! A client for the Task Execution Service (TES) 1.1 API.
+//!
+//! [`TES`] creates, reads, lists and cancels tasks; [`Task`] reads the state
+//! of one task and cancels it.
+//!
+//! # Examples
+//!
+//! Creating a TES client:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::TES;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//!
+//! # async fn test_tes_new() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let tes_result = TES::new(&config).await;
+//! // Check if the client was created successfully
+//! assert!(tes_result.is_ok());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Creating a task:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::TES;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use ga4gh_sdk::clients::tes::models::TesTask;
+//!
+//! # async fn test_tes() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let tes = TES::new(&config).await?;
+//! let task = TesTask::default();
+//! let result = tes.create(task).await?;
+//! assert_eq!(result.id, "123");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Retrieving task status:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::Task;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use ga4gh_sdk::clients::tes::models::TesState;
+//! use ga4gh_sdk::utils::transport::Transport;
+//!
+//! # async fn test_task_status() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let transport = Transport::new(&config);
+//! let task = Task::new("123".to_string(), transport);
+//! let result = task.status().await?;
+//! assert_eq!(result, TesState::Complete);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Canceling a task:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::Task;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use ga4gh_sdk::utils::transport::Transport;
+//!
+//! # async fn test_task_cancel() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let transport = Transport::new(&config);
+//! let task = Task::new("123".to_string(), transport);
+//! let result = task.cancel().await?;
+//! assert_eq!(result["status"], "CANCELLED");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Listing tasks:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::TES;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use ga4gh_sdk::clients::tes::models::ListTasksParams;
+//!
+//! # async fn test_tes_list_tasks() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let tes = TES::new(&config).await?;
+//! let result = tes.list_tasks(None).await?;
+//! assert!(result.tasks.is_empty());
+//! # Ok(())
+//! # }
+//! ```
+
 mod list_tasks_params;
-/// This module provides a client for interacting with the TES (Task Execution Service) API.
-///
-/// The `TES` struct represents a TES client and provides methods for creating tasks, retrieving task status, canceling tasks, and listing tasks.
-///
-/// # Examples
-///
-/// Creating a TES client:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::TES;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-///
-/// # async fn test_tes_new() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let tes_result = TES::new(&config).await;
-/// // Check if the client was created successfully
-/// assert!(tes_result.is_ok());
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Creating a task:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::TES;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-/// use ga4gh_sdk::clients::tes::models::TesTask;
-///
-/// # async fn test_tes() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let tes = TES::new(&config).await?;
-/// let task = TesTask::default();
-/// let result = tes.create(task).await?;
-/// assert_eq!(result.id, "123");
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Retrieving task status:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::Task;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-/// use ga4gh_sdk::clients::tes::models::TesState;
-/// use ga4gh_sdk::utils::transport::Transport;
-///
-/// # async fn test_task_status() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let transport = Transport::new(&config);
-/// let task = Task::new("123".to_string(), transport);
-/// let result = task.status().await?;
-/// assert_eq!(result, TesState::Complete);
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Canceling a task:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::Task;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-/// use ga4gh_sdk::utils::transport::Transport;
-///
-/// # async fn test_task_cancel() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let transport = Transport::new(&config);
-/// let task = Task::new("123".to_string(), transport);
-/// let result = task.cancel().await?;
-/// assert_eq!(result["status"], "CANCELLED");
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Listing tasks:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::TES;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-/// use ga4gh_sdk::clients::tes::models::ListTasksParams;
-///
-/// # async fn test_tes_list_tasks() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let tes = TES::new(&config).await?;
-/// let result = tes.list_tasks(None).await?;
-/// assert!(result.tasks.is_empty());
-/// # Ok(())
-/// # }
-/// ```
+/// The TES 1.1 models, generated from its OpenAPI specification.
 // Generated models (utils/build_models.sh): the generator writes `Default`
 // for enums by hand.
-#[allow(clippy::derivable_impls)]
+#[allow(clippy::derivable_impls, missing_docs)]
 pub mod models;
 mod view;
 use crate::clients::serviceinfo::models::Service;
@@ -122,6 +125,9 @@ fn serialize_to_json<T: Serialize>(item: T) -> Value {
     serde_json::to_value(&item).unwrap()
 }
 
+/// A task on a TES server, addressed by its ID.
+///
+/// [`TES::create`] returns one; [`Task::new`] addresses an existing task.
 #[derive(Debug, Clone)]
 pub struct Task {
     /// The unique ID of the task.
@@ -174,9 +180,12 @@ impl Task {
 /// The main struct for interacting with a TES service.
 #[derive(Debug)]
 pub struct TES {
+    /// The configuration that the client was built with.
     #[allow(dead_code)]
     pub config: Configuration, // not used yet
+    /// The service info that the client read when it was built.
     pub service: Result<Service, Box<dyn std::error::Error + Send + Sync>>,
+    /// The transport that sends the client's requests.
     pub transport: Transport,
 }
 

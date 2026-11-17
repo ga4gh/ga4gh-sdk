@@ -40,6 +40,8 @@ protes_integration_tests = []
 integration_tests = []
 # Runs the CLI against TRS-Filer; see tests/README.md.
 trs_filer_integration_tests = []
+# Runs `login`, refreshes and `logout` against Keycloak; see tests/README.md.
+keycloak_integration_tests = []
 
 [dev-dependencies]
 mockito = "0.31"

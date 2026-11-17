@@ -3,6 +3,7 @@
 import ast
 import enum
 import inspect
+import re
 from pathlib import Path
 
 import pytest
@@ -111,3 +112,83 @@ def test_package_ships_stubs_and_marker():
     package = Path(ga4gh_sdk.__file__).parent
     assert (package / "py.typed").is_file()
     assert (package / "__init__.pyi").is_file()
+
+
+
+def documented_functions(node):
+    """The methods of a stub class that carry their docstring.
+
+    Of an overloaded method, that is the last declaration; the others end in `...`.
+    """
+    last = {}
+    for item in node.body:
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            last[item.name] = item
+    return list(last.values())
+
+
+def documented_attribute(body, index):
+    """Whether a string literal follows the attribute or enum member at `body[index]`."""
+    following = body[index + 1] if index + 1 < len(body) else None
+    return (
+        isinstance(following, ast.Expr)
+        and isinstance(following.value, ast.Constant)
+        and isinstance(following.value.value, str)
+    )
+
+
+def undocumented_members(node):
+    """The names of a stub class's members without a docstring."""
+    missing = [f.name for f in documented_functions(node) if ast.get_docstring(f) is None]
+    for index, item in enumerate(node.body):
+        if isinstance(item, (ast.AnnAssign, ast.Assign)) and not documented_attribute(
+            node.body, index
+        ):
+            targets = [item.target] if isinstance(item, ast.AnnAssign) else item.targets
+            missing.extend(t.id for t in targets if isinstance(t, ast.Name))
+    return missing
+
+
+ARGS_ENTRY = re.compile(r"^    (\*{0,2}\w+)(?: \(.*\))?:", re.MULTILINE)
+
+
+def documented_parameters(function):
+    """The parameter names in the `Args:` section of a function's docstring."""
+    docstring = ast.get_docstring(function) or ""
+    _, found, rest = docstring.partition("Args:\n")
+    if not found:
+        return []
+    section = rest.split("\n\n", 1)[0]
+    return ARGS_ENTRY.findall(section)
+
+
+def signature_parameters(function):
+    """A function's parameter names, without `self` and `cls`; `*args` and `**kwargs` starred."""
+    args = function.args
+    names = [arg.arg for arg in args.posonlyargs + args.args + args.kwonlyargs]
+    if args.vararg:
+        names.append(f"*{args.vararg.arg}")
+    if args.kwarg:
+        names.append(f"**{args.kwarg.arg}")
+    return sorted(name for name in names if name not in ("self", "cls"))
+
+
+def test_stub_documents_the_module():
+    # The Python API reference (`api.md`) is generated from the stub's docstrings.
+    assert ast.get_docstring(TREE)
+
+
+@pytest.mark.parametrize("name", sorted(stub_class_nodes()))
+def test_stub_documents_every_member(name):
+    node = stub_class_nodes()[name]
+    assert ast.get_docstring(node), name
+    assert undocumented_members(node) == [], name
+
+
+@pytest.mark.parametrize("name", sorted(stub_class_nodes()))
+def test_stub_documents_every_parameter(name):
+    # Griffe fails the docs build on documented parameters that the signature lacks;
+    # this checks the reverse: every parameter is documented.
+    for function in documented_functions(stub_class_nodes()[name]):
+        documented = sorted(documented_parameters(function))
+        assert documented == signature_parameters(function), f"{name}.{function.name}"
