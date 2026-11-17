@@ -323,29 +323,37 @@ async fn invalid_utf8_is_an_error_not_replaced_text() {
 
 #[tokio::test]
 async fn service_client_discovery_rejects_invalid_utf8_too() {
+    use ga4gh_sdk::clients::{drs::DRS, tes::TES, wes::WES};
     // TES, WES and DRS, and capability discovery, read their service info with
     // the same request.
-    for api in ["tes", "wes", "drs", "capabilities"] {
+    let max_age = Duration::from_secs(60);
+    for (case, artifact) in [
+        ("tes-new", "tes"),
+        ("wes-new", "wes"),
+        ("drs-new", "drs"),
+        ("tes-discover", "tes"),
+        ("wes-discover", "wes"),
+    ] {
         let mut body = minimal();
-        body["type"]["artifact"] = json!(if api == "capabilities" { "tes" } else { api });
+        body["type"]["artifact"] = json!(artifact);
         let mut bytes = body.to_string().into_bytes();
         let at = bytes.windows(7).position(|s| s == b"Example").unwrap();
         bytes[at] = 0xff;
-        let prefix = format!("si-discovery-{api}");
+        let prefix = format!("si-discovery-{case}");
         let response = serve(&prefix, "service-info", &bytes);
         let config = config(&prefix);
-        let error = match api {
-            "tes" => ga4gh_sdk::clients::tes::TES::new(&config).await.err(),
-            "wes" => ga4gh_sdk::clients::wes::WES::new(&config).await.err(),
-            "drs" => ga4gh_sdk::clients::drs::DRS::new(&config).await.err(),
-            _ => ga4gh_sdk::clients::tes::TES::discover(&config, Duration::from_secs(60))
-                .await
-                .err(),
+        let error = match case {
+            "tes-new" => TES::new(&config).await.err(),
+            "wes-new" => WES::new(&config).await.err(),
+            "drs-new" => DRS::new(&config).await.err(),
+            "tes-discover" => TES::discover(&config, max_age).await.err(),
+            "wes-discover" => WES::discover(&config, max_age).await.err(),
+            other => unreachable!("no discovery case {other}"),
         }
         .unwrap();
         assert!(
             error.downcast_ref::<std::str::Utf8Error>().is_some(),
-            "{api}: {error:?}"
+            "{case}: {error:?}"
         );
         response.assert();
     }
@@ -378,15 +386,18 @@ async fn http_and_authentication_failures_keep_status_and_body() {
 #[tokio::test]
 async fn an_error_body_over_the_limit_keeps_its_status() {
     // For example a login page of a proxy, larger than the 16 KiB default.
-    let response = mock("GET", "/si-large-401/service-info")
-        .with_status(401)
-        .with_body("x".repeat(20 * 1024))
-        .create();
-    let error = client("si-large-401").get().await.unwrap_err();
-    let limit = error.downcast_ref::<BodyLimitError>().unwrap();
-    assert_eq!(limit.status.as_u16(), 401);
-    assert!(error.downcast_ref::<HttpError>().is_none());
-    response.assert();
+    for status in [401, 403, 404] {
+        let prefix = format!("si-large-{status}");
+        let response = mock("GET", format!("/{prefix}/service-info").as_str())
+            .with_status(status)
+            .with_body("x".repeat(20 * 1024))
+            .create();
+        let error = client(&prefix).get().await.unwrap_err();
+        let limit = error.downcast_ref::<BodyLimitError>().unwrap();
+        assert_eq!(limit.status.as_u16(), status as u16);
+        assert!(error.downcast_ref::<HttpError>().is_none());
+        response.assert();
+    }
 }
 
 #[tokio::test]

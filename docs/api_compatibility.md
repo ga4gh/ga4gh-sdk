@@ -268,7 +268,7 @@ keeps no byte-for-byte copy of the response.
 
 | Response | Result |
 | --- | --- |
-| A body over the transport's limit (by default 8 MiB for success, 16 KiB for an error status) | An error whose `downcast_ref::<BodyLimitError>()` returns the limit and the status, also for a `401`, `403` or `404`; the body isn't truncated. |
+| A body over the fixed discovery limits (8 MiB for success, 16 KiB for an error status) | An error whose `downcast_ref::<BodyLimitError>()` returns the limit and the status, also for a `401`, `403` or `404`; the body isn't truncated. |
 | A non-2xx status within the limit, including `401` and `403` | `Error::Http` with the status and the body; the error's `Display` and `Debug` output omit the body and the credential. With a [token provider](usage.md#token-providers), a `401` is retried once with a new token, as for every `GET` of the transport. |
 | A body that isn't valid UTF-8 | An error whose `downcast_ref::<std::str::Utf8Error>()` returns the decoding error. The text isn't repaired with replacement characters, also not in the discovery requests above. |
 | Malformed JSON, including an empty body, trailing data and a byte order mark | `Error::Parse`. |
