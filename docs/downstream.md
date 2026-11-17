@@ -107,11 +107,31 @@ The JSON stays one flat object. When reading, `priority` goes to the outer
 field, the specification's fields to `task`, and any other fields to
 `task.extra`, which the SDK's models keep and write back (see
 [Models](usage.md#models)). To send and read such a model, the example uses
-the TES client's JSON methods, which don't drop unknown fields:
+the TES client's generic methods:
 
-- `TES::create_value` submits a task as a `serde_json::Value`, with the same
-  checks as `TES::create`.
-- `TES::get_raw` returns the task as the service sent it.
+```rust
+pub async fn submit(&self, tes: &TES) -> ga4gh_sdk::Result<Task> {
+    tes.create_as(self).await
+}
+
+pub async fn fetch(tes: &TES, view: TesView, id: &str) -> ga4gh_sdk::Result<Self> {
+    tes.get_as(view, id).await
+}
+```
+
+- `TES::create_as` submits any type that serializes to a TES task, with the
+  same checks as `TES::create`; `TES::create_value` does the same for a
+  `serde_json::Value`.
+- `TES::get_as` reads the task into any type that deserializes from it;
+  `TES::get_raw` returns the task as the service sent it.
+- `WES::get_run_as`, `Run::log_as` and `DRS::get_object_as` do the same for
+  WES run logs and DRS objects.
+
+If the service's service info names its own artifact rather than `tes`,
+create the client with `TES::with_artifact(transport, "my-artifact")`;
+`WES::with_artifact` and `DRS::with_artifact` work the same way (the latter
+also accepts a group other than `org.ga4gh`). The constructors check the
+artifact once; the methods then don't check it again.
 
 For a single extra field, `TesTask::extra` alone is enough; a typed wrapper
 like this one is worth it when the downstream code reads or writes the field
