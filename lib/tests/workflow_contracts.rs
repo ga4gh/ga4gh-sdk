@@ -212,6 +212,113 @@ fn durable_metadata_excludes_signed_urls_and_nested_preserves_values() {
         Some(&json!("https://example.org/report"))
     );
 }
+#[test]
+fn contract_document_and_embedded_urls_are_redacted_like_outputs() {
+    let mut s = schema();
+    s["properties"]["outputs"]["properties"]["note"] = json!({
+        "type": "string",
+        "description": "Mirror: https://user:password@example.org/data?token=secret#cap."
+    });
+    s["properties"]["outputs"]["properties"]["report"]["examples"] =
+        json!(["https://user:password@example.org/report?token=secret"]);
+    let p = profile(s);
+    let r = p
+        .project_results(
+            "one",
+            "COMPLETE",
+            &json!({
+                "count": 1,
+                "report": "https://example.org/report",
+                "note": "Read https://user:password@example.org/a?token=secret#cap, then https://example.org/b."
+            }),
+        )
+        .unwrap();
+    let durable = serde_json::to_string(&r).unwrap();
+    for secret in ["user", "password", "token", "secret", "cap"] {
+        assert!(!durable.contains(secret), "{secret} in {durable}");
+    }
+    // Embedded URLs lose only their access details; the text stays
+    assert_eq!(
+        r.value_at("/note"),
+        Some(&json!(
+            "Read https://example.org/a, then https://example.org/b."
+        ))
+    );
+    assert!(r.outputs["note"].access_details_redacted);
+    assert!(!r.outputs["report"].access_details_redacted);
+    assert_eq!(
+        r.contract_document["properties"]["outputs"]["properties"]["note"]["description"],
+        "Mirror: https://example.org/data."
+    );
+    assert_eq!(
+        r.outputs["note"].annotations["description"],
+        "Mirror: https://example.org/data."
+    );
+    // Text without access details stays as it is
+    assert_eq!(
+        r.contract_document["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+    // The digest still identifies the profile as given
+    assert_eq!(r.schema_digest, p.schema_digest());
+}
+
+#[test]
+fn embedded_query_delimiters_are_redacted_in_stored_results() {
+    for (kind, url) in [
+        ("angle", "https://example.org/report?token=<secret>"),
+        ("quote", "https://example.org/report?token=\"secret\""),
+        (
+            "backtick",
+            "https://example.org/report?token=\u{60}secret\u{60}",
+        ),
+        ("fragment", "https://example.org/report#token=<secret>"),
+    ] {
+        assert!(url::Url::parse(url).is_ok(), "{kind}");
+        let mut s = schema();
+        s["properties"]["outputs"]["properties"]["report"]["description"] =
+            json!(format!("Mirror: {url} then continue"));
+        let p = profile(s);
+        let r = p
+            .project_results(
+                "one",
+                "COMPLETE",
+                &json!({"count": 1, "report": "https://example.org/report"}),
+            )
+            .unwrap();
+        let stored = serde_json::to_string(&r).unwrap();
+        assert!(!stored.contains("secret"), "{kind}: {stored}");
+        assert!(
+            !r.outputs["report"].annotations["description"]
+                .as_str()
+                .unwrap()
+                .contains("secret"),
+            "{kind}"
+        );
+    }
+
+    // JSON escapes can hide the URL scheme in a string that itself holds JSON.
+    let mut s = schema();
+    s["properties"]["outputs"]["properties"]["report"]["description"] =
+        json!(r#"{"url":"\u0068ttps://example.org/report?token=\u003Csecret\u003E","n":2}"#);
+    let p = profile(s);
+    let r = p
+        .project_results(
+            "one",
+            "COMPLETE",
+            &json!({"count": 1, "report": "https://example.org/report"}),
+        )
+        .unwrap();
+    assert_eq!(
+        r.contract_document["properties"]["outputs"]["properties"]["report"]["description"],
+        r#"{"url":"https://example.org/report","n":2}"#
+    );
+    assert_eq!(
+        r.outputs["report"].annotations["description"],
+        r#"{"url":"https://example.org/report","n":2}"#
+    );
+}
+
 fn policy(abs: f64, rel: f64) -> ComparisonPolicy {
     ComparisonPolicy {
         id: "qc-v1".into(),

@@ -114,10 +114,46 @@ no automatic bulk download or new credential store.
 Durable HTTP(S) references have userinfo, query and fragment removed and mark
 `access_details_redacted`; they must not be treated as refreshed usable access
 URLs or guaranteed object identities. DRS references retain stable object identity.
-AccessPlan headers and URLs are never serialized into artifact evidence. Do not
-put credentials into scientific scalars, schema annotations, checksum source labels
-or caller-owned context. The result format is evidence transport, not a generic
-secret-discovery or redaction system.
+AccessPlan headers and URLs are never serialized into artifact evidence.
+
+The same redaction pass applies to the stored `contract_document` and output
+annotations. The exceptions and limits below define what remains in a record:
+
+- **Scope:** HTTP(S) URLs that make up a whole string, URLs embedded in longer
+  strings, such as descriptions or log lines, and URLs inside other URLs. URLs are
+  found and redacted by their text, so URLs that don't parse are covered too.
+- **Where a URL starts:** at `http:` or `https:`, in any case, followed by any
+  number of `/` or `\`, none included, as URL parsers accept them. This includes
+  JSON-escaped `https:\/\/`.
+- **Credentials:** userinfo through the last `@` before the next `/`,
+  `\\`, `?`, `#` or whitespace is removed; the scheme and leading slashes remain.
+  If the apparent authority has a password rather than a numeric port,
+  a raw separator in the password is included up to the last `@` before
+  whitespace.
+- **Query and fragment:** everything from the first `?` or `#` after the
+  scheme up to the next whitespace, except a trailing run of `.`, `,`, `;`,
+  `:`, `)`, `]` or `}`, and a closing quote, angle bracket or backtick
+  paired with one immediately before the URL.
+  Parsers can accept those characters inside queries, so an unpaired one is
+  removed with the query. Unspaced prose after a URL can be removed too.
+  Credentials or queries with whitespace in them are only partly removed.
+- **References:** the values of `$ref`, `$dynamicRef`, `$id` and `$schema` keep a
+  fragment that is a JSON pointer or an anchor, so that references still resolve.
+  Pointers with `?`, `@`, `=` or `:` aren't kept.
+- **Patterns:** `pattern` values are regular expressions and stay as they are.
+- **Instance data:** in the values of `default`, `const`, `examples`, `enum` and
+  extension keywords (`x-...`), keys aren't keywords, so the two exceptions above
+  don't apply there.
+- **Output values:** a whole-string URL is also normalized, as before.
+  Strings that are valid serialized JSON are processed string by string:
+  object keys and unrelated values stay in place, while a changed string
+  value may use normalized JSON escapes. Other unchanged text stays as given.
+- **Digest:** `schema_digest` still identifies the profile as given.
+
+Not redacted: other URL schemes (for example presigned `s3://` URLs), object keys,
+checksum source labels and caller-owned context. Do not put credentials there. The
+result format is evidence transport, not a generic secret-discovery or redaction
+system.
 
 `html_viewer_metadata` exposes declared HTML viewer metadata. The small adapter
 in `examples/sequence-qc/view_report.py` feeds the **known public demo reports** to
