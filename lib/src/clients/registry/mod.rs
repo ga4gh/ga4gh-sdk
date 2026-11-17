@@ -75,9 +75,7 @@ impl ServiceRegistry {
 
     async fn get_json<T: DeserializeOwned>(&self, endpoint: &str) -> crate::Result<T> {
         let body = self.transport.get(endpoint, None).await?;
-        serde_json::from_str(&body).map_err(|error| {
-            format!("Invalid response from the service registry ({endpoint}): {error}").into()
-        })
+        Ok(serde_json::from_str(&body)?)
     }
 }
 
@@ -239,12 +237,8 @@ mod tests {
                 .with_body(body)
                 .create();
             let error = registry(prefix).list_services().await.unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .starts_with("Invalid response from the service registry (services): "),
-                "{prefix}: {error}"
-            );
+            assert!(matches!(error, crate::Error::Parse(_)), "{prefix}: {error}");
+            assert!(error.downcast_ref::<serde_json::Error>().is_some());
         }
     }
 }

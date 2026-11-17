@@ -59,6 +59,10 @@ clients and their futures can move between threads. This breaks some code:
 - Implementations of `DescriptorFetcher` and the attempts passed to
   `drs::resolution::resolve_until` return `ga4gh_sdk::Error`; `?` or
   `Error::other(error)` converts other errors.
+- An invalid Service Registry response is now `Error::Parse` with the
+  `serde_json` diagnostic, instead of a string prefixed with the registry
+  endpoint. Match the variant to handle it without parsing the message. The
+  CLI still includes the endpoint in its error output.
 - The `service` field of `TES`, `WES` and `DRS` is now a `Service`
   instead of a `Result`; the constructors return the errors. Struct literals of
   the clients set `service: Service::default()` or the service info itself.
