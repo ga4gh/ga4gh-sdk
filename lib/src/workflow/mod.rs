@@ -19,12 +19,17 @@
 pub mod compare;
 pub mod results;
 pub mod reuse;
-use crate::clients::wes::{models::RunRequest, Run, WorkflowAttachment, WES};
+use crate::clients::wes::{
+    attachments::RESERVED_PARTS, models::RunRequest, Run, WorkflowAttachment, WES,
+};
 use jsonschema::{Draft, Retrieve, Uri, Validator};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, error::Error};
+use std::{
+    collections::{BTreeMap, HashMap},
+    error::Error,
+};
 /// The error type of the workflow contract functions: [`crate::Error`],
 /// whose message says which check failed.
 pub type ContractError = crate::Error;
@@ -86,6 +91,25 @@ impl Retrieve for LocalResources {
 /// Returns the SHA-256 of `bytes` as 64 lowercase hex digits.
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+// Explicit recursive sorting also remains stable if a consumer enables serde_json's
+// preserve_order feature through Cargo feature unification.
+fn canonical(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let sorted: BTreeMap<_, _> = map.into_iter().collect();
+            Value::Object(sorted.into_iter().map(|(k, v)| (k, canonical(v))).collect())
+        }
+        Value::Array(values) => Value::Array(values.into_iter().map(canonical).collect()),
+        value => value,
+    }
+}
+/// Returns the SHA-256 of `value`'s canonical JSON: compact, with the keys
+/// of every object sorted, so map iteration order doesn't change it.
+fn content_digest(value: &impl Serialize) -> Result<String, ContractError> {
+    Ok(digest(&serde_json::to_vec(&canonical(
+        serde_json::to_value(value)?,
+    ))?))
 }
 fn vocabulary_check(value: &Value) -> Result<(), ContractError> {
     let Some(object) = value.as_object() else {
@@ -306,9 +330,11 @@ impl Profile {
     ///
     /// Fails if `identity.workflow` is blank; if `workflow_url`,
     /// `workflow_type` or `workflow_type_version` of the request is blank;
-    /// if the request has no `workflow_params`; or if they don't conform
-    /// to the input schema, with the [`Diagnostic`]s as JSON in the
-    /// message.
+    /// if a key of the request's `extra` names a RunWorkflow part, such as
+    /// `workflow_params`, `tags` or `workflow_attachment`, which submitting
+    /// would reject too; if the request has no
+    /// `workflow_params`; or if they don't conform to the input schema,
+    /// with the [`Diagnostic`]s as JSON in the message.
     pub fn prepare(
         &self,
         request: RunRequest,
@@ -327,6 +353,15 @@ impl Profile {
                     "request requires workflow_url, workflow_type and workflow_type_version".into(),
                 );
             }
+        }
+        // A flattened `extra` key could stand in for, or duplicate, a request
+        // field in the fingerprinted JSON; submitting rejects these keys too
+        if let Some(key) = request
+            .extra
+            .keys()
+            .find(|k| RESERVED_PARTS.contains(&k.as_str()))
+        {
+            return Err(format!("request extra field {key} is a reserved request part").into());
         }
         let errors = self.validate_inputs(
             request
@@ -347,7 +382,7 @@ impl Profile {
             profile_document: self.document.clone(),
             fingerprint: String::new(),
         };
-        prepared.fingerprint = digest(&serde_json::to_vec(&prepared)?);
+        prepared.fingerprint = content_digest(&prepared)?;
         Ok(prepared)
     }
     pub(crate) fn validate_at(
@@ -406,12 +441,11 @@ impl PreparedInvocation {
     pub fn request(&self) -> &RunRequest {
         &self.request
     }
-    /// Returns the SHA-256 of the prepared invocation's JSON, computed with
-    /// the fingerprint itself empty.
-    ///
-    /// The JSON keeps the iteration order of the request's `tags` and
-    /// `workflow_engine_parameters` maps, so the fingerprint is stable
-    /// only if each has at most one entry.
+    /// Returns the SHA-256 of the prepared invocation's canonical JSON
+    /// (compact, keys sorted at every level), computed with the fingerprint
+    /// itself empty. The same request, identity, pins and profile always
+    /// give the same fingerprint, whatever the order of the entries in the
+    /// request's `tags` and `workflow_engine_parameters` maps.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
     }

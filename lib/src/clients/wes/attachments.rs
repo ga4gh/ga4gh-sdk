@@ -117,7 +117,7 @@ fn workflow_form(mut request: RunRequest) -> crate::Result<Form> {
 /// The parts of a RunWorkflow request that `RunRequest.extra` must not
 /// replace: the `RunRequest` fields and the attachments. Keep in step with
 /// `workflow_form` and the attachment parts.
-pub(super) const RESERVED_PARTS: [&str; 9] = [
+pub(crate) const RESERVED_PARTS: [&str; 9] = [
     "workflow_params",
     "workflow_type",
     "workflow_type_version",
