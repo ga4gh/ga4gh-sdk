@@ -262,6 +262,63 @@ fn contract_document_and_embedded_urls_are_redacted_like_outputs() {
     // The digest still identifies the profile as given
     assert_eq!(r.schema_digest, p.schema_digest());
 }
+
+#[test]
+fn embedded_query_delimiters_are_redacted_in_stored_results() {
+    for (kind, url) in [
+        ("angle", "https://example.org/report?token=<secret>"),
+        ("quote", "https://example.org/report?token=\"secret\""),
+        (
+            "backtick",
+            "https://example.org/report?token=\u{60}secret\u{60}",
+        ),
+        ("fragment", "https://example.org/report#token=<secret>"),
+    ] {
+        assert!(url::Url::parse(url).is_ok(), "{kind}");
+        let mut s = schema();
+        s["properties"]["outputs"]["properties"]["report"]["description"] =
+            json!(format!("Mirror: {url} then continue"));
+        let p = profile(s);
+        let r = p
+            .project_results(
+                "one",
+                "COMPLETE",
+                &json!({"count": 1, "report": "https://example.org/report"}),
+            )
+            .unwrap();
+        let stored = serde_json::to_string(&r).unwrap();
+        assert!(!stored.contains("secret"), "{kind}: {stored}");
+        assert!(
+            !r.outputs["report"].annotations["description"]
+                .as_str()
+                .unwrap()
+                .contains("secret"),
+            "{kind}"
+        );
+    }
+
+    // JSON escapes can hide the URL scheme in a string that itself holds JSON.
+    let mut s = schema();
+    s["properties"]["outputs"]["properties"]["report"]["description"] =
+        json!(r#"{"url":"\u0068ttps://example.org/report?token=\u003Csecret\u003E","n":2}"#);
+    let p = profile(s);
+    let r = p
+        .project_results(
+            "one",
+            "COMPLETE",
+            &json!({"count": 1, "report": "https://example.org/report"}),
+        )
+        .unwrap();
+    assert_eq!(
+        r.contract_document["properties"]["outputs"]["properties"]["report"]["description"],
+        r#"{"url":"https://example.org/report","n":2}"#
+    );
+    assert_eq!(
+        r.outputs["report"].annotations["description"],
+        r#"{"url":"https://example.org/report","n":2}"#
+    );
+}
+
 fn policy(abs: f64, rel: f64) -> ComparisonPolicy {
     ComparisonPolicy {
         id: "qc-v1".into(),

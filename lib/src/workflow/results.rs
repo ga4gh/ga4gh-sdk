@@ -159,10 +159,10 @@ fn strip_url(text: &str) -> Option<url::Url> {
     u.set_fragment(None);
     Some(u)
 }
-// Whether `c` ends a URL in text: whitespace, or a character that a URL
-// can't hold unencoded.
+// Only whitespace unambiguously ends an embedded URL. URL parsers also
+// accept raw quotes, angle brackets and backticks in queries.
 fn url_end(c: char) -> bool {
-    c.is_whitespace() || "\"<>`".contains(c)
+    c.is_whitespace()
 }
 // The length of the scheme at the start of `text`: `http:` or `https:`, in
 // any case, with any `/` or `\` after it; URL parsers accept any number of
@@ -219,16 +219,23 @@ fn credentials_len(after: &str, authority: &str) -> usize {
 //
 // A URL starts at its scheme (see `scheme_len`). Its credentials (see
 // `credentials_len`) go. From the first `?` or `#` after the scheme on,
-// everything up to the next `url_end` character goes, except a trailing
-// run of `.,;:)]}`, and, if `keep_fragment`, a `reference_fragment`. Other
-// text stays exactly as it is. Runs in linear time.
-fn redact_text(text: &str, keep_fragment: bool) -> String {
+// everything up to whitespace goes, except trailing punctuation, a matched
+// wrapper, and, if `keep_fragment`, a `reference_fragment`. Runs in
+// linear time.
+fn redact_plain_text(text: &str, keep_fragment: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_url = false;
+    let mut wrapper = None;
     let mut i = 0;
     while let Some(c) = text[i..].chars().next() {
         let rest = &text[i..];
         if let Some(scheme) = scheme_len(rest) {
+            wrapper = match out.chars().last() {
+                Some('<') => Some('>'),
+                Some('"') => Some('"'),
+                Some('\u{60}') => Some('\u{60}'),
+                _ => None,
+            };
             let after = &rest[scheme..];
             let end = after
                 .find(|c: char| url_end(c) || "/\\?#".contains(c))
@@ -247,7 +254,13 @@ fn redact_text(text: &str, keep_fragment: bool) -> String {
             in_url = true;
         } else if in_url && (c == '?' || c == '#') {
             let tail = &rest[..rest.find(url_end).unwrap_or(rest.len())];
-            let core = tail.trim_end_matches(|c: char| ".,;:)]}".contains(c));
+            let trimmed = tail.trim_end_matches(|c: char| ".,;:)]}".contains(c));
+            let (core, closing) = match wrapper {
+                Some(close) if trimmed.ends_with(close) => {
+                    (&trimmed[..trimmed.len() - close.len_utf8()], Some(close))
+                }
+                _ => (trimmed, None),
+            };
             if keep_fragment {
                 if let Some(fragment) = core.find('#').map(|at| &core[at + 1..]) {
                     if reference_fragment(fragment) {
@@ -256,16 +269,68 @@ fn redact_text(text: &str, keep_fragment: bool) -> String {
                     }
                 }
             }
-            out.push_str(&tail[core.len()..]);
+            if let Some(close) = closing {
+                out.push(close);
+            }
+            out.push_str(&tail[trimmed.len()..]);
             i += tail.len();
             in_url = false;
+            wrapper = None;
         } else {
-            in_url &= !url_end(c);
+            if url_end(c) {
+                in_url = false;
+                wrapper = None;
+            }
             out.push(c);
             i += c.len_utf8();
         }
     }
     out
+}
+// A string can itself hold serialized JSON. Redact its string values while
+// keeping object keys and unrelated JSON text in place. Decode each changed
+// value first so JSON escapes cannot hide a URL scheme or access detail.
+fn redact_json_text(text: &str, keep_fragment: bool) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while let Some(offset) = text[i..].find('"') {
+        let start = i + offset;
+        out.push_str(&text[i..start]);
+        let mut end = start + 1;
+        while end < bytes.len() {
+            match bytes[end] {
+                b'\\' => end += 2,
+                b'"' => break,
+                _ => end += 1,
+            }
+        }
+        let after = end + 1;
+        if text[after..].trim_start().starts_with(':') {
+            out.push_str(&text[start..after]);
+        } else {
+            let decoded: String = serde_json::from_str(&text[start..after])
+                .expect("a string token in valid JSON must decode");
+            let redacted = redact_plain_text(&decoded, keep_fragment);
+            if redacted == decoded {
+                out.push_str(&text[start..after]);
+            } else {
+                out.push_str(
+                    &serde_json::to_string(&redacted).expect("a redacted string must serialize"),
+                );
+            }
+        }
+        i = after;
+    }
+    out.push_str(&text[i..]);
+    out
+}
+fn redact_text(text: &str, keep_fragment: bool) -> String {
+    if serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok() {
+        redact_json_text(text, keep_fragment)
+    } else {
+        redact_plain_text(text, keep_fragment)
+    }
 }
 // Removes credentials, query and fragment from HTTP(S) URLs in an output
 // value, so that it can be stored. A string that is a whole HTTP(S) URL is
@@ -616,6 +681,14 @@ mod tests {
                 "<http://h.example/a#f>, http://h.example",
                 "<http://h.example/a>, http://h.example",
             ),
+            (
+                "\"https://h.example/a?token=1\" and next",
+                "\"https://h.example/a\" and next",
+            ),
+            (
+                "\u{60}https://h.example/a?token=1\u{60} and next",
+                "\u{60}https://h.example/a\u{60} and next",
+            ),
             // URLs that don't parse
             (
                 "https://u:p@h.example:99999/a?token=1#f",
@@ -652,6 +725,10 @@ mod tests {
             (r"https:\/\/user:pw@h.example\/b", r"https:\/\/h.example\/b"),
             (
                 r#"{"url":"https://u:p@h.example/x?t=1","n":2}"#,
+                r#"{"url":"https://h.example/x","n":2}"#,
+            ),
+            (
+                r#"{"url":"\u0068ttps://u:p@h.example/x?token=\"secret\"","n":2}"#,
                 r#"{"url":"https://h.example/x","n":2}"#,
             ),
             // Whitespace ends a URL, so a password with a space is cut there

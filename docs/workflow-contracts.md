@@ -116,8 +116,8 @@ Durable HTTP(S) references have userinfo, query and fragment removed and mark
 URLs or guaranteed object identities. DRS references retain stable object identity.
 AccessPlan headers and URLs are never serialized into artifact evidence.
 
-The same redaction applies to the stored `contract_document` and to the output
-annotations, so a URL never appears redacted in one place and in clear in another:
+The same redaction pass applies to the stored `contract_document` and output
+annotations. The exceptions and limits below define what remains in a record:
 
 - **Scope:** HTTP(S) URLs that make up a whole string, URLs embedded in longer
   strings, such as descriptions or log lines, and URLs inside other URLs. URLs are
@@ -125,16 +125,18 @@ annotations, so a URL never appears redacted in one place and in clear in anothe
 - **Where a URL starts:** at `http:` or `https:`, in any case, followed by any
   number of `/` or `\`, none included, as URL parsers accept them. This includes
   JSON-escaped `https:\/\/`.
-- **Credentials:** everything from the scheme up to the last `@` before the next
-  `/`, `\`, `?`, `#`, whitespace, `"`, `<`, `>` or backtick. If there is no `@`
-  there, but a `:` that doesn't start a port, everything up to the last `@` before
-  the next whitespace, `"`, `<`, `>` or backtick, for passwords with an unencoded
-  `/`, `?` or `#`.
-- **Query and fragment:** everything from the first `?` or `#` after the scheme up
-  to the next whitespace, `"`, `<`, `>` or backtick, except a trailing run of `.`,
-  `,`, `;`, `:`, `)`, `]` and `}`. Credentials or queries with whitespace in them
-  are therefore only partly removed, and a `?` or `#` in prose right after a URL
-  goes too.
+- **Credentials:** userinfo through the last `@` before the next `/`,
+  `\\`, `?`, `#` or whitespace is removed; the scheme and leading slashes remain.
+  If the apparent authority has a password rather than a numeric port,
+  a raw separator in the password is included up to the last `@` before
+  whitespace.
+- **Query and fragment:** everything from the first `?` or `#` after the
+  scheme up to the next whitespace, except a trailing run of `.`, `,`, `;`,
+  `:`, `)`, `]` or `}`, and a closing quote, angle bracket or backtick
+  paired with one immediately before the URL.
+  Parsers can accept those characters inside queries, so an unpaired one is
+  removed with the query. Unspaced prose after a URL can be removed too.
+  Credentials or queries with whitespace in them are only partly removed.
 - **References:** the values of `$ref`, `$dynamicRef`, `$id` and `$schema` keep a
   fragment that is a JSON pointer or an anchor, so that references still resolve.
   Pointers with `?`, `@`, `=` or `:` aren't kept.
@@ -142,8 +144,10 @@ annotations, so a URL never appears redacted in one place and in clear in anothe
 - **Instance data:** in the values of `default`, `const`, `examples`, `enum` and
   extension keywords (`x-...`), keys aren't keywords, so the two exceptions above
   don't apply there.
-- **Output values:** a whole-string URL is also normalized, as before. Other text,
-  and URLs without credentials, a query or a fragment, stay exactly as they are.
+- **Output values:** a whole-string URL is also normalized, as before.
+  Strings that are valid serialized JSON are processed string by string:
+  object keys and unrelated values stay in place, while a changed string
+  value may use normalized JSON escapes. Other unchanged text stays as given.
 - **Digest:** `schema_digest` still identifies the profile as given.
 
 Not redacted: other URL schemes (for example presigned `s3://` URLs), object keys,
