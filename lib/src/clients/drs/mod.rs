@@ -50,7 +50,8 @@ pub struct DRS {
     #[allow(dead_code)]
     #[deprecated(
         note = "use `configuration()`, which reads the transport's configuration; \
-                requests never read this copy, and it will be removed"
+                requests don't read this copy (resolution references still take \
+                their API root from it, until #292), and it will be removed"
     )]
     pub config: Configuration,
     /// The service info that the client read when it was built; also
