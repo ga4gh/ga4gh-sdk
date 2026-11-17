@@ -7,8 +7,8 @@
 //! is called, results when the request is done, with the same functions as the sync classes.
 
 use crate::clients::tes::{
-    cancel_task, create_task, get_task, list_endpoint, list_tasks, parse_view, state_to_python,
-    task_path, task_status, task_to_create, wait_end, wait_result, wait_settings,
+    cancel_task, connect_with, create_task, get_task, list_endpoint, list_tasks, parse_view,
+    state_to_python, task_path, task_status, task_to_create, wait_end, wait_result, wait_settings,
     PyListTasksParams, WaitEnd, WaitSettings,
 };
 use crate::utils::convert::check_extra_args;
@@ -49,7 +49,9 @@ pub struct Connection {
 /// Like `TES(config)`, connecting reads the service info and checks that it is a TES. The
 /// client sends that request and all later ones with `transport`. One call connects at a
 /// time. If an attempt fails, the calls that waited for it fail with its error, and a later
-/// call tries again.
+/// call tries again. `transport` only takes effect on the attempt that connects: once
+/// connected, the client keeps its transport, so pass the transport that
+/// [`PyAsyncTES::connection`] gives with the `LazyTES`.
 pub async fn connected(tes: &LazyTES, transport: &Transport) -> Result<Arc<TES>, String> {
     if let Some(client) = tes.client.get() {
         return Ok(client.clone());
@@ -62,8 +64,7 @@ pub async fn connected(tes: &LazyTES, transport: &Transport) -> Result<Arc<TES>,
     if tes.failures.load(Ordering::Acquire) != failures {
         return Err(last_error.clone()); // An attempt failed while this call waited.
     }
-    let attempt = TES::with_transport(transport.clone()).await;
-    match attempt.map_err(|error| format!("Failed to create TES instance: {error}")) {
+    match connect_with(transport.clone()).await {
         Ok(client) => Ok(tes.client.get_or_init(|| Arc::new(client)).clone()),
         Err(error) => {
             last_error.clone_from(&error);
@@ -402,18 +403,14 @@ mod tests {
         Configuration::new(Url::parse(&root).unwrap())
     }
 
-    /// A client whose transport has the user agent [`OWNED_AGENT`], unlike the
-    /// configuration it was built with, as a Rust extension can set it.
+    /// A client built with a transport whose user agent is [`OWNED_AGENT`].
     fn client_with_owned_transport(root: &str) -> PyAsyncTES {
-        let config = config(root);
-        let mut client = PyAsyncTES::new(&PyConfiguration {
-            inner: config.clone(),
-        });
-        client.transport = Transport::new(&config.with_user_agent(OWNED_AGENT.to_owned()));
-        client
+        let config = config(root).with_user_agent(OWNED_AGENT.to_owned());
+        PyAsyncTES::with_transport(Transport::new(&config))
     }
 
-    /// The service info of a TES beneath `root`, for one request with [`OWNED_AGENT`], to create.
+    /// A mock of the service info of a TES beneath `root` that expects one request with
+    /// [`OWNED_AGENT`]; call `create()` on it to serve it.
     fn service_info(root: &str, status: usize) -> Mock {
         mock("GET", format!("/{root}/ga4gh/tes/v1/service-info").as_str())
             .match_header("user-agent", OWNED_AGENT)
@@ -441,21 +438,49 @@ mod tests {
             .with_body(r#"{"id":"task-1"}"#)
             .expect(1)
             .create();
-        let client = client_with_owned_transport("shared-transport");
+        let fetched = mock(
+            "GET",
+            "/shared-transport/ga4gh/tes/v1/tasks/task-1?view=MINIMAL",
+        )
+        .match_header("user-agent", OWNED_AGENT)
+        .with_status(200)
+        .with_body(r#"{"id":"task-1","state":"QUEUED"}"#)
+        .expect(1)
+        .create();
+        let mut client = client_with_owned_transport("shared-transport");
+        // A Rust extension can still change the public copy; the client doesn't read it.
+        client.config = config("shared-transport");
         let (tes, transport) = client.connection();
 
         let connected_client = connected(&tes, &transport).await.unwrap();
         let task = create_task(&connected_client, serde_json::json!({"executors": []}))
             .await
             .unwrap();
+        get_task(&connected_client, TesView::Minimal, "task-1")
+            .await
+            .unwrap();
 
         info.assert();
         created.assert();
+        fetched.assert();
         assert_eq!(task.id, "task-1");
         assert_eq!(
             client.config().inner.user_agent.as_deref(),
             Some(OWNED_AGENT)
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_first_calls_connect_once_with_the_transport() {
+        let info = service_info("concurrent-transport", 200).create();
+        let client = client_with_owned_transport("concurrent-transport");
+        let (tes, transport) = client.connection();
+
+        let (first, second) =
+            tokio::join!(connected(&tes, &transport), connected(&tes, &transport));
+
+        info.assert();
+        assert!(Arc::ptr_eq(&first.unwrap(), &second.unwrap()));
     }
 
     #[tokio::test]

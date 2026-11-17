@@ -32,7 +32,8 @@ mod tes_task;
 mod wait;
 
 pub use calls::{
-    cancel_task, connect, create_task, get_task, task_path, task_status, task_to_create,
+    cancel_task, connect, connect_with, create_task, get_task, task_path, task_status,
+    task_to_create,
 };
 pub use client::PyTES;
 pub use list::{list_endpoint, list_tasks, PyListTasksParams, PyTesListTasksResponse};

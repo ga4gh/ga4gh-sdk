@@ -1002,17 +1002,6 @@ that the sync and the async classes share are public functions in `clients::tes`
 `get_task()` and `task_status()`; an async extension method can run them with
 `clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
 `clients::tes_async` does.
-`PyAsyncTES` keeps its state in its `transport` field: the first call connects the
-`LazyTES` with it, so the service check and all built-in calls use that transport, and the
-`config` getter gives `transport.config`. The `config` field is a copy of the configuration
-that the client was built with; the SDK no longer reads it, so changing it has no effect.
-To give a client another configuration or HTTP client, build it with
-`PyAsyncTES::with_transport(transport)`, for example with a transport from
-`Transport::with_client`; a connected client keeps the transport it connected with, so
-don't replace `transport` afterwards. `PyAsyncTES::connection()` gives the `LazyTES` and the
-transport for a call to move to `spawn_io`, and `clients::tes_async::connected(tes,
-transport)` gives the connected client. Earlier versions connected a new `TES` from the
-`config` field, and `connected()` took a `Configuration`: pass the transport instead.
 The extension module gets its own copies of the base classes,
 which don't mix with those of the `ga4gh_sdk` module: a `ga4gh_sdk.Configuration` can't be passed
 to it. So register every base class that its users need
@@ -1035,6 +1024,22 @@ The TRS classes (`PyTRS`, `PyTool` and so on, in `clients::trs`) follow it too;
 builds a client with the default options and `PyTRS::with_options(config, options,
 discovery)` one with `TrsOptions`; its `inner` field holds the library's `TRS`.
 `PyToolPage` keeps the response's `HeaderMap` in `headers`.
+
+`PyAsyncTES` keeps its state in its `transport` field:
+
+- The first call connects the `LazyTES` with that transport, so the service check and all
+  built-in calls use it. The `config` getter gives `transport.config`.
+- `PyAsyncTES::with_transport(transport)` builds a client with a given transport, for
+  example one from `Transport::with_client`. Don't replace `transport` on a client that
+  may be connected: a connected client keeps the transport it connected with.
+- `PyAsyncTES::connection()` gives the `LazyTES` and the transport, for a call to move to
+  `spawn_io`; `clients::tes_async::connected(tes, transport)` gives the connected client.
+- The public `config` field is a copy of the configuration that the client was built
+  with. The SDK doesn't read it, so changing it has no effect.
+
+Migration: earlier versions connected a new `TES` from the `config` field, and
+`connected()` took a `Configuration`. Pass the transport to `connected()`, and change the
+client's configuration or HTTP client through `with_transport` instead of `config`.
 
 ## Documentation
 
