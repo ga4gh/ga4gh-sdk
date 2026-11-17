@@ -996,8 +996,9 @@ their direct `pyo3` dependency to `0.30.1` (and `pyo3-async-runtimes` to `0.30.0
 used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
 `Python::with_gil`, and `Bound::downcast` to `Py<PyAny>`, `Python::attach`, and
 `Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
-The `inner` field of each class holds the
-library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES calls
+The `inner` field of each client and handle class holds the
+library type (for `PyAsyncTES`, a `LazyTES` that connects on first use); result classes
+have accessors instead (see [Result classes](#result-classes)). The TES calls
 that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
 `clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
@@ -1023,6 +1024,35 @@ The TRS classes (`PyTRS`, `PyTool` and so on, in `clients::trs`) follow it too;
 builds a client with the default options and `PyTRS::with_options(config, options,
 discovery)` one with `TrsOptions`; its `inner` field holds the library's `TRS`.
 `PyToolPage` keeps the response's `HeaderMap` in `headers`.
+
+#### Result classes
+
+The result classes that keep JSON describe one JSON value: `PyTesTask`,
+`PyTesListTasksResponse`, `PyRunRequest`, `PyRunLog`, `PyTaskLog`, `PyRunSummary`,
+`PyRunListResponse`, `PyTaskListResponse`, `PyDrsObject`, `PyAccessURL`,
+`PyBulkAccessURL`, `PyTool`, `PyToolVersion`, `PyFileWrapper` and `PyToolFile`. Read the
+value with `raw()` and its model with `inner()`; the list responses also return their
+items with `tasks()`, `runs()` and `task_logs()`. The typed getters, `json()`,
+`to_dict()`, pickling and the request that `TES.create()` or `WES.run()` sends describe
+that value, including fields that the models don't know.
+
+The classes have no setters. To change a value, change a copy of `raw()` and build a new
+instance: with `from_value` for `PyTesTask` and `PyRunRequest`, and with `from_json` for
+the other classes that keep a server's JSON. The TRS classes keep the JSON of their model,
+so build them from a changed model with `new`.
+
+```rust
+let mut raw = task.raw().clone();
+raw["name"] = json!("changed");
+let task = PyTesTask::from_value(raw)?;
+```
+
+**Deprecated:** the public `inner` and `raw` fields of these classes, and the `tasks`,
+`runs` and `task_logs` fields of the list responses. A change to one field doesn't change
+the others, so the getters, `json()` and the request sent could disagree. The fields still
+work, with a deprecation warning; a later release makes them private. Replace
+`task.inner` with `task.inner()`, `task.raw` with `task.raw()`, and `page.tasks` with
+`page.tasks()`, which returns a copy.
 
 ## Documentation
 
