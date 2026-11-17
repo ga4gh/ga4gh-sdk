@@ -20,6 +20,7 @@ use crate::clients::serviceinfo::models::Service;
 use crate::clients::serviceinfo::DiscoveryError;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::{urlencode, Transport};
+use serde::de::DeserializeOwned;
 
 /// The main struct for interacting with a DRS service.
 #[derive(Debug)]
@@ -63,34 +64,34 @@ impl DRS {
     /// request keep their variant, such as
     /// [`Error::Transport`](crate::Error::Transport).
     pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
-        let service = crate::clients::serviceinfo::fetch(&transport, "service-info")
-            .await
-            .map_err(|source| DiscoveryError { api: "DRS", source })?;
-
-        let instance = DRS {
-            config: transport.config.clone(),
-            transport,
-            service,
-        };
-
-        instance.check()?;
+        let instance = Self::with_artifact(transport, "drs").await?;
+        if instance.service.r#type.group != "org.ga4gh" {
+            return Err(crate::Error::UnexpectedService(
+                "The endpoint is not an instance of DRS".to_owned(),
+            ));
+        }
         Ok(instance)
     }
 
-    /// Checks that the service is a DRS.
+    /// Creates a new `DRS` instance, as [`Self::with_transport`] does, for a
+    /// service whose service info names `artifact` in place of `drs`, for
+    /// example a downstream service with a DRS API. Unlike
+    /// [`Self::with_transport`], it accepts any `group`.
     ///
     /// # Errors
-    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if its service info names
-    /// another group or artifact.
-    fn check(&self) -> crate::Result<()> {
-        let kind = &self.service.r#type;
-        if kind.group == "org.ga4gh" && kind.artifact == "drs" {
-            Ok(())
-        } else {
-            Err(crate::Error::UnexpectedService(
-                "The endpoint is not an instance of DRS".to_owned(),
-            ))
-        }
+    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if the
+    /// service info names another artifact; the errors of the service-info
+    /// request otherwise.
+    pub async fn with_artifact(transport: Transport, artifact: &str) -> crate::Result<Self> {
+        let service = crate::clients::serviceinfo::fetch(&transport, "service-info")
+            .await
+            .map_err(|source| DiscoveryError { api: "DRS", source })?;
+        crate::clients::serviceinfo::check_artifact(&service, artifact, "DRS")?;
+        Ok(DRS {
+            config: transport.config.clone(),
+            transport,
+            service,
+        })
     }
 
     /// Retrieves the details of a specific DRS object.
@@ -102,7 +103,17 @@ impl DRS {
     /// - On success, returns a `DrsObject` containing the object details.
     /// - On failure, returns an error.
     pub async fn get_object(&self, object_id: &str) -> crate::Result<DrsObject> {
-        match self.get_object_once(object_id).await? {
+        self.get_object_as(object_id).await
+    }
+
+    /// Retrieves an object as any type that deserializes from the server's
+    /// object JSON, for example a downstream type that reads fields of its own.
+    /// A pending answer (`202 Accepted`) is a
+    /// [`PendingResolution`](resolution::PendingResolution) error, as for
+    /// [`Self::get_object`].
+    pub async fn get_object_as<T: DeserializeOwned>(&self, object_id: &str) -> crate::Result<T> {
+        let reference = self.resolution_reference(format!("objects/{}", urlencode(object_id)));
+        match self.resolve_reference(&reference).await? {
             resolution::Resolution::Ready(value) => Ok(value),
             resolution::Resolution::Pending(pending) => Err(crate::Error::other(pending)),
         }

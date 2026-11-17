@@ -41,17 +41,18 @@ impl PrioritizedTask {
     ///
     /// # Errors
     ///
-    /// Fails as [`TES::create_value`] does.
+    /// Fails as [`TES::create_as`] does.
     pub async fn submit(&self, tes: &TES) -> ga4gh_sdk::Result<Task> {
-        tes.create_value(serde_json::to_value(self)?).await
+        tes.create_as(self).await
     }
 
     /// Fetches a task, including `priority`, with the SDK's TES client.
     ///
     /// # Errors
     ///
-    /// Fails as [`TES::get_raw`] does, or if the response isn't a valid task.
+    /// Fails as [`TES::get_as`] does, for example if the response isn't a
+    /// valid task.
     pub async fn fetch(tes: &TES, view: TesView, id: &str) -> ga4gh_sdk::Result<Self> {
-        Ok(serde_json::from_str(&tes.get_raw(view, id).await?)?)
+        tes.get_as(view, id).await
     }
 }

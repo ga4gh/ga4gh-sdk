@@ -1,0 +1,191 @@
+//! Client methods that take and return downstream types, and clients for
+//! services whose service info names another artifact.
+
+use ga4gh_sdk::clients::drs::DRS;
+use ga4gh_sdk::clients::tes::models::{TesExecutor, TesTask};
+use ga4gh_sdk::clients::tes::{TesView, TES};
+use ga4gh_sdk::clients::wes::WES;
+use ga4gh_sdk::utils::configuration::Configuration;
+use ga4gh_sdk::utils::transport::Transport;
+use ga4gh_sdk::Error;
+use mockito::{mock, server_url, Matcher, Mock};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+fn service_info(path: &str, group: &str, artifact: &str) -> Mock {
+    mock("GET", format!("{path}/service-info").as_str())
+        .with_body(
+            json!({
+                "id": "org.example.service",
+                "name": "Example",
+                "type": {"group": group, "artifact": artifact, "version": "1.1.0"},
+                "organization": {"name": "Example", "url": "https://example.org"},
+                "version": "1.0.0"
+            })
+            .to_string(),
+        )
+        .create()
+}
+
+fn transport(path: &str) -> Transport {
+    Transport::new(&Configuration::new(
+        url::Url::parse(&format!("{}{path}", server_url())).unwrap(),
+    ))
+}
+
+/// A TES task with a field of a downstream service.
+#[derive(Debug, Serialize, Deserialize)]
+struct LabelledTask {
+    #[serde(flatten)]
+    task: TesTask,
+    label: Option<String>,
+}
+
+/// Reads only the fields that a downstream caller needs.
+#[derive(Debug, Deserialize)]
+struct Labelled {
+    id: String,
+    label: String,
+}
+
+#[tokio::test]
+async fn tes_sends_and_reads_downstream_types() {
+    let _info = service_info("/generic/tes", "org.ga4gh", "tes");
+    let created = mock("POST", "/generic/tes/tasks")
+        .match_body(Matcher::PartialJson(json!({"label": "blue"})))
+        .with_body(r#"{"id":"task-1"}"#)
+        .create();
+    let _fetched = mock("GET", "/generic/tes/tasks/task-1?view=BASIC")
+        .with_body(r#"{"id":"task-1","executors":[],"label":"blue"}"#)
+        .create();
+    let tes = TES::with_transport(transport("/generic/tes"))
+        .await
+        .unwrap();
+    let task = LabelledTask {
+        task: TesTask::new(vec![TesExecutor::new(
+            "alpine".to_owned(),
+            vec!["true".to_owned()],
+        )]),
+        label: Some("blue".to_owned()),
+    };
+
+    assert_eq!(tes.create_as(&task).await.unwrap().id, "task-1");
+    created.assert();
+    let fetched: LabelledTask = tes.get_as(TesView::Basic, "task-1").await.unwrap();
+    assert_eq!(fetched.label.as_deref(), Some("blue"));
+    let labelled: Labelled = tes.get_as(TesView::Basic, "task-1").await.unwrap();
+    assert_eq!(
+        (labelled.id.as_str(), labelled.label.as_str()),
+        ("task-1", "blue")
+    );
+}
+
+#[tokio::test]
+async fn tes_create_as_rejects_values_that_are_not_tasks() {
+    let _info = service_info("/generic/invalid", "org.ga4gh", "tes");
+    let tes = TES::with_transport(transport("/generic/invalid"))
+        .await
+        .unwrap();
+    let error = tes.create_as(&json!({"name": 1})).await.unwrap_err();
+    assert!(matches!(error, Error::Parse(_)), "{error:?}");
+}
+
+#[tokio::test]
+async fn wes_and_drs_read_downstream_types() {
+    let _wes_info = service_info("/generic/wes", "org.ga4gh", "wes");
+    let _run = mock("GET", "/generic/wes/runs/run-1")
+        .with_body(r#"{"run_id":"run-1","state":"QUEUED","label":"green"}"#)
+        .create();
+    let _drs_info = service_info("/generic/drs", "org.ga4gh", "drs");
+    let _object = mock("GET", "/generic/drs/objects/object-1")
+        .with_body(r#"{"id":"object-1","label":"red"}"#)
+        .create();
+
+    #[derive(Deserialize)]
+    struct Run {
+        run_id: String,
+        label: String,
+    }
+    let wes = WES::with_transport(transport("/generic/wes"))
+        .await
+        .unwrap();
+    let run: Run = wes.get_run_as("run-1").await.unwrap();
+    assert_eq!(
+        (run.run_id.as_str(), run.label.as_str()),
+        ("run-1", "green")
+    );
+    let drs = DRS::with_transport(transport("/generic/drs"))
+        .await
+        .unwrap();
+    let object: Labelled = drs.get_object_as("object-1").await.unwrap();
+    assert_eq!(
+        (object.id.as_str(), object.label.as_str()),
+        ("object-1", "red")
+    );
+}
+
+#[tokio::test]
+async fn clients_accept_the_artifact_they_are_given() {
+    let _tes = service_info("/artifact/tes", "org.example", "labelled-tes");
+    let _wes = service_info("/artifact/wes", "org.example", "labelled-wes");
+    let _drs = service_info("/artifact/drs", "org.example", "labelled-drs");
+    let created = mock("POST", "/artifact/tes/tasks")
+        .with_body(r#"{"id":"task-2"}"#)
+        .create();
+
+    let tes = TES::with_artifact(transport("/artifact/tes"), "labelled-tes")
+        .await
+        .unwrap();
+    assert_eq!(tes.service.r#type.artifact, "labelled-tes");
+    // Methods no longer check the artifact again.
+    let task = TesTask::new(vec![TesExecutor::new(
+        "alpine".to_owned(),
+        vec!["true".to_owned()],
+    )]);
+    assert_eq!(tes.create(task).await.unwrap().id, "task-2");
+    created.assert();
+    WES::with_artifact(transport("/artifact/wes"), "labelled-wes")
+        .await
+        .unwrap();
+    // `with_artifact` accepts any group; `with_transport` needs `org.ga4gh`.
+    DRS::with_artifact(transport("/artifact/drs"), "labelled-drs")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn clients_reject_other_artifacts() {
+    let _tes = service_info("/other/tes", "org.ga4gh", "tes");
+    let _drs = service_info("/other/drs", "org.example", "drs");
+
+    let errors = [
+        TES::with_artifact(transport("/other/tes"), "labelled-tes")
+            .await
+            .unwrap_err(),
+        WES::with_artifact(transport("/other/tes"), "labelled-wes")
+            .await
+            .unwrap_err(),
+        DRS::with_artifact(transport("/other/tes"), "labelled-drs")
+            .await
+            .unwrap_err(),
+    ];
+    for (error, artifact) in errors
+        .iter()
+        .zip(["labelled-tes", "labelled-wes", "labelled-drs"])
+    {
+        assert!(matches!(error, Error::UnexpectedService(_)), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            format!("The endpoint is not an instance of '{artifact}'")
+        );
+    }
+    // The default artifacts keep their messages, and DRS keeps its group.
+    let error = TES::with_artifact(transport("/other/drs"), "tes")
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "The endpoint is not an instance of TES");
+    let error = DRS::with_transport(transport("/other/drs"))
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "The endpoint is not an instance of DRS");
+}
