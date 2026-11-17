@@ -45,6 +45,21 @@ pub fn io<T: Send>(
         .map_err(PyRuntimeError::new_err)
 }
 
+/// Runs a call of a Rust client with [`io`]: `call` builds the request's future without the
+/// GIL. Its errors raise `RuntimeError` with `Failed to <what>: <error>`.
+pub fn request<T, F, Fut, E>(py: Python<'_>, what: &str, call: F) -> PyResult<T>
+where
+    T: Send,
+    F: FnOnce() -> Fut + Send,
+    Fut: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    io(py, |rt| {
+        rt.block_on(call())
+            .map_err(|error| format!("Failed to {what}: {error}"))
+    })
+}
+
 /// How many async calls run at once; further calls wait for a slot.
 pub const ASYNC_CALL_THREADS: usize = 256;
 

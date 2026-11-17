@@ -30,6 +30,9 @@ To build the bindings from source:
 - CPython 3.11 or newer (PyPy and free-threaded builds are not supported)
 - The [Rust toolchain](../README.md#installation)
 
+The bindings use rustls, so unlike the library's default build, building them
+with maturin needs no OpenSSL development files or `pkg-config` on Linux.
+
 ## Installation
 
 From the repository root, create an environment, build the bindings, and check
@@ -1007,6 +1010,10 @@ from there. The default feature `extension-module` builds the Python module; a d
 crate can turn it off with `default-features = false` and enable it in its own features
 instead.
 
+`clients::tes::register(py, m)` registers all TES classes at once: the sync and the async
+ones, the `PyTesTask` alias, the `TesState` enum and `WaitTimeoutError`. Use it instead of
+adding these one by one; `m.add_class` and `tes_state_type` remain for an extension module
+that needs only some of them.
 The DRS classes (`PyDRS`, `PyDrsResolver` and so on, in `clients::drs`) follow the same
 pattern; `clients::drs::register(py, m)` registers all of them.
 The WES classes (`PyWES`, `PyRun` and so on, in `clients::wes`) follow the same pattern;
