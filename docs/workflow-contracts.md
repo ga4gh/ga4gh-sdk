@@ -34,8 +34,10 @@ The immutable library `PreparedInvocation` records exact request parameters,
 workflow/descriptor identity, exact schema-byte digest, pins, the complete profile,
 expected outputs and a fingerprint. Private fields and the absence of Deserialize
 prevent submitting an edited serialized plan as a validated object. Prepare again
-for changed parameters, identities or schemas. JSON object key order is normalized
-by serde; parameter values are retained. A caller supplies workflow identity;
+for changed parameters, identities or schemas. The fingerprint is the SHA-256 of
+the plan's canonical JSON (compact, keys sorted at every level), so it doesn't
+depend on the order of map entries such as the request's `tags` and
+`workflow_engine_parameters`; parameter values are retained. A caller supplies workflow identity;
 preparation is not an independent attestation that a remote workflow URL is immutable.
 
 `PreparedInvocation::submit` composes the existing WES API. For local descriptors,

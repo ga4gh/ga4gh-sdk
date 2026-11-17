@@ -18,7 +18,7 @@
 //! built with [`ReuseReceipt::new`], and moved between systems with
 //! [`ReuseReceipt::export`] and [`ReuseReceipt::import`].
 use super::{
-    digest,
+    content_digest, digest,
     results::{ContractStatus, ExpectedChecksum, ResultRecord},
     ContractError,
 };
@@ -167,23 +167,6 @@ fn stable_reference(value: &str) -> bool {
             && u.query().is_none()
             && u.fragment().is_none()
     })
-}
-// Explicit recursive sorting also remains stable if a consumer enables serde_json's
-// preserve_order feature through Cargo feature unification.
-fn canonical(value: Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let sorted: BTreeMap<_, _> = map.into_iter().collect();
-            Value::Object(sorted.into_iter().map(|(k, v)| (k, canonical(v))).collect())
-        }
-        Value::Array(values) => Value::Array(values.into_iter().map(canonical).collect()),
-        value => value,
-    }
-}
-fn content_digest(value: &impl Serialize) -> Result<String, ContractError> {
-    Ok(digest(&serde_json::to_vec(&canonical(
-        serde_json::to_value(value)?,
-    ))?))
 }
 impl RecipeIdentity {
     /// The SHA-256 of the recipe's canonical JSON (keys sorted at every

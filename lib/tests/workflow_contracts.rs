@@ -46,6 +46,46 @@ fn validates_root_refs_and_preserves_values_without_defaults() {
         .any(|e| e.message.contains("required")));
 }
 #[test]
+fn fingerprint_ignores_map_iteration_order() {
+    // Each fresh `HashMap` gets its own random hasher, so the maps below
+    // iterate in different orders; the fingerprint must not depend on it.
+    let p = profile(schema());
+    let prepare = |reverse: bool| {
+        let mut keys: Vec<String> = (0..32).map(|i| format!("key-{i:02}")).collect();
+        if reverse {
+            keys.reverse();
+        }
+        let map = || {
+            keys.iter()
+                .map(|k| (k.clone(), format!("value of {k}")))
+                .collect::<std::collections::HashMap<_, _>>()
+        };
+        let req = RunRequest {
+            workflow_url: "workflow.cwl".into(),
+            workflow_type: "CWL".into(),
+            workflow_type_version: "v1.2".into(),
+            workflow_params: Some(json!({"mode":"fast","nested":{"n":4}})),
+            tags: Some(map()),
+            workflow_engine_parameters: Some(map()),
+            ..Default::default()
+        };
+        p.prepare(
+            req,
+            InvocationIdentity {
+                workflow: "qc@sha256:abc".into(),
+                descriptor_digest: None,
+            },
+        )
+        .unwrap()
+        .fingerprint()
+        .to_owned()
+    };
+    let expected = prepare(false);
+    for reverse in [false, true].into_iter().cycle().take(16) {
+        assert_eq!(prepare(reverse), expected);
+    }
+}
+#[test]
 fn rejects_unresolved_refs_unknown_required_vocab_and_invalid_schema() {
     let mut s = schema();
     s["properties"]["inputs"]["properties"]["mode"] =

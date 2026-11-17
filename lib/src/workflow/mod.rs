@@ -24,7 +24,10 @@ use jsonschema::{Draft, Retrieve, Uri, Validator};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, error::Error};
+use std::{
+    collections::{BTreeMap, HashMap},
+    error::Error,
+};
 /// The error type of the workflow contract functions: a boxed error whose
 /// message says which check failed.
 pub type ContractError = Box<dyn Error>;
@@ -86,6 +89,25 @@ impl Retrieve for LocalResources {
 /// Returns the SHA-256 of `bytes` as 64 lowercase hex digits.
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+// Explicit recursive sorting also remains stable if a consumer enables serde_json's
+// preserve_order feature through Cargo feature unification.
+fn canonical(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let sorted: BTreeMap<_, _> = map.into_iter().collect();
+            Value::Object(sorted.into_iter().map(|(k, v)| (k, canonical(v))).collect())
+        }
+        Value::Array(values) => Value::Array(values.into_iter().map(canonical).collect()),
+        value => value,
+    }
+}
+/// Returns the SHA-256 of `value`'s canonical JSON: compact, with the keys
+/// of every object sorted, so map iteration order doesn't change it.
+fn content_digest(value: &impl Serialize) -> Result<String, ContractError> {
+    Ok(digest(&serde_json::to_vec(&canonical(
+        serde_json::to_value(value)?,
+    ))?))
 }
 fn vocabulary_check(value: &Value) -> Result<(), ContractError> {
     let Some(object) = value.as_object() else {
@@ -347,7 +369,7 @@ impl Profile {
             profile_document: self.document.clone(),
             fingerprint: String::new(),
         };
-        prepared.fingerprint = digest(&serde_json::to_vec(&prepared)?);
+        prepared.fingerprint = content_digest(&prepared)?;
         Ok(prepared)
     }
     pub(crate) fn validate_at(
@@ -406,12 +428,11 @@ impl PreparedInvocation {
     pub fn request(&self) -> &RunRequest {
         &self.request
     }
-    /// Returns the SHA-256 of the prepared invocation's JSON, computed with
-    /// the fingerprint itself empty.
-    ///
-    /// The JSON keeps the iteration order of the request's `tags` and
-    /// `workflow_engine_parameters` maps, so the fingerprint is stable
-    /// only if each has at most one entry.
+    /// Returns the SHA-256 of the prepared invocation's canonical JSON
+    /// (compact, keys sorted at every level), computed with the fingerprint
+    /// itself empty. The same request, identity, pins and profile always
+    /// give the same fingerprint, whatever the order of the entries in the
+    /// request's `tags` and `workflow_engine_parameters` maps.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
     }
