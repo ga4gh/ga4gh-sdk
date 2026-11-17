@@ -399,6 +399,99 @@ fn digest_comparison_requires_consistent_expected_evidence() {
         Outcome::Inconclusive
     );
 }
+#[tokio::test]
+async fn malformed_expected_checksums_fail_before_any_read() {
+    use ga4gh_sdk::{
+        clients::drs::{
+            models::access_method::Type,
+            uri::{AccessPlan, AccessPreferences, DrsResolver},
+        },
+        utils::operation::Operation,
+    };
+    let checksum = |algorithm: &str, digest: &str, source: &str| ExpectedChecksum {
+        algorithm: algorithm.into(),
+        digest: digest.into(),
+        evidence_source: source.into(),
+    };
+    let valid = "0".repeat(64);
+    let malformed = [
+        checksum("md5", &valid, "manifest"),
+        checksum("sha256", "not-hex", "manifest"),
+        checksum("sha256", &valid, " "),
+    ];
+    // Nothing listens on the discard port, so the read fails
+    let plan = AccessPlan {
+        object_id: "report".into(),
+        method: Type::Https,
+        region: None,
+        url: url::Url::parse("http://127.0.0.1:9/report").unwrap(),
+        headers: Default::default(),
+    };
+    // A resolver without services can't resolve the URI
+    let resolver = DrsResolver::default();
+    let operation = Operation::new(std::time::Duration::from_secs(2));
+    let p = profile(schema());
+    let mut r = p
+        .project_results(
+            "run",
+            "COMPLETE",
+            &json!({"count":1,"report":"drs://drs.example/report"}),
+        )
+        .unwrap();
+    for expected in malformed {
+        let some = || Some(expected.clone());
+        // A missing pointer
+        assert!(r.verify_bytes("/missing", b"report", some()).is_err());
+        assert!(r
+            .verify_access_plan("/missing", &plan, some(), &operation, 1024)
+            .await
+            .is_err());
+        assert!(r
+            .verify_drs(
+                "/missing",
+                &resolver,
+                &AccessPreferences::default(),
+                some(),
+                &operation,
+                1,
+                1024
+            )
+            .await
+            .is_err());
+        // A failing read or resolution
+        assert!(r
+            .verify_access_plan("/report", &plan, some(), &operation, 1024)
+            .await
+            .is_err());
+        assert!(r
+            .verify_drs(
+                "/report",
+                &resolver,
+                &AccessPreferences::default(),
+                some(),
+                &operation,
+                1,
+                1024
+            )
+            .await
+            .is_err());
+        assert!(r.artifacts.is_empty());
+    }
+    // A valid expected checksum is still recorded when the read fails
+    r.verify_access_plan(
+        "/report",
+        &plan,
+        Some(checksum("SHA-256", &valid, "manifest")),
+        &operation,
+        1024,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r.artifacts["/report"].access_status,
+        AccessStatus::Inaccessible
+    );
+}
 
 #[tokio::test]
 async fn selected_drs_verification_uses_owning_resolver_and_only_object_headers() {

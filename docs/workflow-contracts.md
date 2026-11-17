@@ -91,7 +91,10 @@ delivery. The report is JSON serializable and has no presentation dependency.
 The result separates execution state, contract status, access status and integrity.
 Only explicitly selected bytes are verified. An expected SHA-256 with an evidence
 source can produce `verified` or `mismatch`; computing a new digest alone remains
-`unverified`. No expected checksum is inferred from size, filename or ETag.
+`unverified`. No expected checksum is inferred from size, filename or ETag. A
+malformed expected checksum (another algorithm, a digest that isn't 64 hex digits
+or a blank evidence source) fails before anything is read, resolved or recorded,
+also when the output is missing or the read fails.
 Expected evidence is supplied by the caller and is not itself cryptographically
 attested by this API.
 
