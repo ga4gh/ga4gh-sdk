@@ -39,8 +39,9 @@ def test_get_service_info_keeps_custom_types_and_extensions(server):
     [
         ("missing", "missing field `version`"),
         ("wrong-type", "invalid type: integer"),
-        ("malformed", "EOF while parsing"),
-        ("bad-utf8", "invalid utf-8"),
+        # Loose matches of the parsers' messages, which their libraries word.
+        ("malformed", "(?i:eof)"),
+        ("bad-utf8", "(?i:utf-?8)"),
         ("unauthorized", "401"),
     ],
 )

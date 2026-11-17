@@ -47,7 +47,9 @@ impl ServiceInfo {
     /// [`Error::Parse`](crate::Error::Parse) for malformed JSON or a document
     /// that isn't a valid [`models::Service`], for example one without a
     /// required field, and an error with a [`std::str::Utf8Error`] for a body
-    /// that isn't valid UTF-8. A failed decoding isn't retried.
+    /// that isn't valid UTF-8, among the other errors of a request, such as a
+    /// [`BodyLimitError`](crate::utils::transport::BodyLimitError) for a body
+    /// over the limit or a timeout. A failed decoding isn't retried.
     ///
     /// [Service Info contract]: https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/api_compatibility.md#service-info
     pub async fn get(&self) -> crate::Result<models::Service> {

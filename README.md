@@ -110,8 +110,8 @@ All models now keep what their spec doesn't define (see
 - `TesTask::new(executors)` now sets `executors`; it used to ignore them.
 
 A service-info response that isn't valid UTF-8 is now an error of
-`ServiceInfo::get`, `get_at` and the discovery of `TES::new`, `WES::new` and
-`DRS::new`, as it already was for `TRS::new`; such text used to be repaired
+`ServiceInfo::get`, `get_at`, the discovery of `TES::new`, `WES::new` and
+`DRS::new`, and capability discovery, as it already was for `TRS::new`; such text used to be repaired
 with replacement characters. See
 [Service Info](docs/api_compatibility.md#service-info).
 

@@ -156,6 +156,16 @@ pub async fn response_text(
     Ok(String::from_utf8_lossy(&response.body).into_owned())
 }
 
+/// Strict text decoding with the bounds of [`response_text`]: a body that isn't
+/// valid UTF-8 is an error that holds the [`std::str::Utf8Error`].
+async fn response_text_strict(
+    response: reqwest::Response,
+    limits: BodyLimits,
+) -> crate::Result<String> {
+    let response = checked_response(response, limits).await?;
+    Ok(std::str::from_utf8(&response.body)?.to_owned())
+}
+
 /// Decode bounded JSON from the original bytes. Invalid UTF-8 and malformed JSON
 /// return a decoding error. Non-success responses retain the existing HttpError.
 pub async fn response_json<T: serde::de::DeserializeOwned>(
@@ -456,10 +466,7 @@ impl Transport {
                         None,
                     )
                     .await?;
-                let body = checked_response(response, BodyLimits::default())
-                    .await?
-                    .body;
-                Ok(String::from_utf8(body).map_err(|error| error.utf8_error())?)
+                response_text_strict(response, BodyLimits::default()).await
             })
             .await?
     }

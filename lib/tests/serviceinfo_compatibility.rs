@@ -3,10 +3,14 @@
 //! `docs/api_compatibility.md#service-info`.
 
 use ga4gh_sdk::clients::serviceinfo::{models::Service, ServiceInfo};
-use ga4gh_sdk::utils::{configuration::Configuration, transport::HttpError};
+use ga4gh_sdk::utils::{
+    configuration::Configuration,
+    transport::{BodyLimitError, HttpError},
+};
 use ga4gh_sdk::Error;
 use mockito::mock;
 use serde_json::{json, Value};
+use std::time::Duration;
 use url::Url;
 
 fn config(prefix: &str) -> Configuration {
@@ -28,6 +32,8 @@ fn minimal() -> Value {
     })
 }
 
+/// Serves `body` at `path` below `/prefix`. Mockito's server is shared by all
+/// tests, so each case needs a prefix of its own.
 fn serve(prefix: &str, path: &str, body: impl AsRef<[u8]>) -> mockito::Mock {
     mock("GET", format!("/{prefix}/{path}").as_str())
         .with_status(200)
@@ -209,48 +215,41 @@ async fn omitted_and_null_optional_fields_both_read_as_none() {
 
 #[tokio::test]
 async fn missing_or_null_required_fields_are_parse_errors() {
-    let cases: [(&str, Change); 12] = [
-        ("id", |b| drop(b.as_object_mut().unwrap().remove("id"))),
-        ("name", |b| drop(b.as_object_mut().unwrap().remove("name"))),
-        ("type", |b| drop(b.as_object_mut().unwrap().remove("type"))),
-        ("organization", |b| {
-            drop(b.as_object_mut().unwrap().remove("organization"))
-        }),
-        ("version", |b| {
-            drop(b.as_object_mut().unwrap().remove("version"))
-        }),
-        ("group", |b| {
-            drop(b["type"].as_object_mut().unwrap().remove("group"))
-        }),
-        ("artifact", |b| {
-            drop(b["type"].as_object_mut().unwrap().remove("artifact"))
-        }),
-        ("version", |b| {
-            drop(b["type"].as_object_mut().unwrap().remove("version"))
-        }),
-        ("name", |b| {
-            drop(b["organization"].as_object_mut().unwrap().remove("name"))
-        }),
-        ("url", |b| {
-            drop(b["organization"].as_object_mut().unwrap().remove("url"))
-        }),
-        // `null` is not a value of a required field.
-        ("null", |b| b["version"] = Value::Null),
-        ("null", |b| b["type"]["version"] = Value::Null),
+    // The JSON pointer of the object, its required field, and whether the
+    // field is set to `null` (which isn't a value of a required field)
+    // instead of being removed.
+    let cases = [
+        ("", "id", false),
+        ("", "name", false),
+        ("", "type", false),
+        ("", "organization", false),
+        ("", "version", false),
+        ("/type", "group", false),
+        ("/type", "artifact", false),
+        ("/type", "version", false),
+        ("/organization", "name", false),
+        ("/organization", "url", false),
+        ("", "version", true),
+        ("/type", "version", true),
     ];
-    for (index, (field, change)) in cases.into_iter().enumerate() {
+    for (index, (parent, field, null)) in cases.into_iter().enumerate() {
         let mut body = minimal();
-        change(&mut body);
+        let object = body.pointer_mut(parent).unwrap().as_object_mut().unwrap();
+        let expected = if null {
+            object.insert(field.to_owned(), Value::Null);
+            "invalid type: null".to_owned()
+        } else {
+            object.remove(field);
+            format!("missing field `{field}`")
+        };
         let error = get(&format!("si-missing-{index}"), body.to_string())
             .await
             .unwrap_err();
         let message = parse_error(&error).to_string();
-        let expected = if field == "null" {
-            "invalid type: null".to_owned()
-        } else {
-            format!("missing field `{field}`")
-        };
-        assert!(message.contains(&expected), "case {index}: {message}");
+        assert!(
+            message.contains(&expected),
+            "{parent}/{field} (null: {null}): {message}"
+        );
     }
 }
 
@@ -324,10 +323,11 @@ async fn invalid_utf8_is_an_error_not_replaced_text() {
 
 #[tokio::test]
 async fn service_client_discovery_rejects_invalid_utf8_too() {
-    // TES, WES and DRS read their service info with the same request.
-    for api in ["tes", "wes", "drs"] {
+    // TES, WES and DRS, and capability discovery, read their service info with
+    // the same request.
+    for api in ["tes", "wes", "drs", "capabilities"] {
         let mut body = minimal();
-        body["type"]["artifact"] = json!(api);
+        body["type"]["artifact"] = json!(if api == "capabilities" { "tes" } else { api });
         let mut bytes = body.to_string().into_bytes();
         let at = bytes.windows(7).position(|s| s == b"Example").unwrap();
         bytes[at] = 0xff;
@@ -337,7 +337,10 @@ async fn service_client_discovery_rejects_invalid_utf8_too() {
         let error = match api {
             "tes" => ga4gh_sdk::clients::tes::TES::new(&config).await.err(),
             "wes" => ga4gh_sdk::clients::wes::WES::new(&config).await.err(),
-            _ => ga4gh_sdk::clients::drs::DRS::new(&config).await.err(),
+            "drs" => ga4gh_sdk::clients::drs::DRS::new(&config).await.err(),
+            _ => ga4gh_sdk::clients::tes::TES::discover(&config, Duration::from_secs(60))
+                .await
+                .err(),
         }
         .unwrap();
         assert!(
@@ -370,6 +373,20 @@ async fn http_and_authentication_failures_keep_status_and_body() {
         assert!(!format!("{error} {error:?}").contains("service-token"));
         response.assert();
     }
+}
+
+#[tokio::test]
+async fn an_error_body_over_the_limit_keeps_its_status() {
+    // For example a login page of a proxy, larger than the 16 KiB default.
+    let response = mock("GET", "/si-large-401/service-info")
+        .with_status(401)
+        .with_body("x".repeat(20 * 1024))
+        .create();
+    let error = client("si-large-401").get().await.unwrap_err();
+    let limit = error.downcast_ref::<BodyLimitError>().unwrap();
+    assert_eq!(limit.status.as_u16(), 401);
+    assert!(error.downcast_ref::<HttpError>().is_none());
+    response.assert();
 }
 
 #[tokio::test]

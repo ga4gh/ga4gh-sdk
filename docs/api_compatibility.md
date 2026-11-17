@@ -221,8 +221,9 @@ generic `serviceinfo::models::Service`, generated from the pinned
 [Service Info 1.0.0](https://github.com/ga4gh-discovery/ga4gh-service-info/tree/v1.0.0)
 schema. The SDK has no second Service Info contract and selects no decoder:
 1.0.0 is the only schema version it pins, and no demonstrated contract
-difference needs another one. The TES, WES and DRS constructors read their discovery
-document with the same request.
+difference needs another one. `TES::new`, `WES::new`, `DRS::new` and
+capability discovery (`TES::discover`, `WES::discover`) read their
+service info with the same request.
 
 ### Version fields
 
@@ -241,7 +242,9 @@ example an empty `id`, a `name` that suggests another API, or equal software
 and API versions.
 
 That decision belongs to the service-specific clients: `TES::new`, `WES::new`
-and `DRS::new` check `type.artifact` (`with_artifact` accepts another one), and
+and `DRS::new` check `type.artifact` (`with_artifact` accepts another one);
+`DRS::new` also requires the group `org.ga4gh`, and capability discovery
+requires that group and compares the artifact case-insensitively.
 `TRS::new` selects its profile from `type.version` as described in
 [Selection and capabilities](#selection-and-capabilities). The generic
 client stays usable for any service, including one that a service-specific
@@ -265,8 +268,9 @@ keeps no byte-for-byte copy of the response.
 
 | Response | Result |
 | --- | --- |
-| A non-2xx status, including `401` and `403` | `Error::Http` with the status and the bounded body; the error's `Display` and `Debug` output omit the body and the credential. With a token provider, a `401` is retried once with a new token, as for every `GET`. |
-| A body that isn't valid UTF-8 | An error whose `downcast_ref::<std::str::Utf8Error>()` returns the decoding error. The text isn't repaired with replacement characters. This also applies to the discovery of `TES::new`, `WES::new` and `DRS::new`, and to capability discovery. |
+| A body over the transport's limit (by default 8 MiB for success, 16 KiB for an error status) | An error whose `downcast_ref::<BodyLimitError>()` returns the limit and the status, also for a `401`, `403` or `404`; the body isn't truncated. |
+| A non-2xx status within the limit, including `401` and `403` | `Error::Http` with the status and the body; the error's `Display` and `Debug` output omit the body and the credential. With a [token provider](usage.md#token-providers), a `401` is retried once with a new token, as for every `GET` of the transport. |
+| A body that isn't valid UTF-8 | An error whose `downcast_ref::<std::str::Utf8Error>()` returns the decoding error. The text isn't repaired with replacement characters, also not in the discovery requests above. |
 | Malformed JSON, including an empty body, trailing data and a byte order mark | `Error::Parse`. |
 | JSON that isn't a valid `Service` | `Error::Parse` with the `serde_json` diagnostic, for example ``missing field `version` ``. |
 
@@ -274,9 +278,11 @@ A failed decoding isn't retried, neither with another schema nor with a
 second request, and the client doesn't fall back to a more permissive model.
 The two provider adaptations of the SDK are scoped to their clients: the
 TRS client drops non-string `createdAt` and `updatedAt` values of one
-registry (see [Models and failures](#models-and-failures)), and the WES client
-accepts the native service info of WES 1.0 servers. The generic client applies
-neither.
+registry (see [Models and failures](#models-and-failures)), and `WES::new` and
+WES capability discovery fall back to the native service info of WES 1.0.1
+servers when a document isn't a valid `Service` (see the
+[model generation guide](autogenerate_OAI_models.md#pinned-specs)). The
+generic client applies neither.
 
 The Python `ServiceInfo.get_service_info()` uses the same client. It returns the
 `Service` as a formatted string, and raises `RuntimeError` with
@@ -284,6 +290,7 @@ The Python `ServiceInfo.get_service_info()` uses the same client. It returns the
 has no direct Service Info command yet.
 
 Regression tests live in `lib/tests/serviceinfo_compatibility.rs` and the
-`ServiceInfo` tests of `python/tests/test_all.py`; `lib/tests/model_unknown_values.rs`
-covers the model's round trip. They use local HTTP fixtures and don't
-establish that any particular deployment conforms to the schema.
+`ServiceInfo` tests of `python/tests/test_all.py`. The model's round trip is
+also covered by `lib/tests/model_unknown_values.rs`, and the token
+provider's retry by the transport's unit tests. They use local HTTP fixtures
+and don't establish that any particular deployment conforms to the schema.
