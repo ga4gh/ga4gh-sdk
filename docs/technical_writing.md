@@ -3,8 +3,9 @@
 This guide offers advisory help when you write or review English documentation
 and repository instructions. It applies to maintainers and coding agents,
 including Claude and Codex. Apply it to the text affected by the task. Keep
-unrelated rewrites separate. [#185](https://github.com/ga4gh/ga4gh-sdk/issues/185)
-will evaluate whether to adopt a stronger requirement.
+unrelated rewrites separate. The
+[pilot evaluation](assessments/2026-11-16-writing-pilot.md) found no reason
+for a stronger requirement.
 
 This guide adapts selected rules from
 [ASD-STE100 Issue 9](https://www.asd-ste100.org/about_STE.html).
@@ -119,8 +120,9 @@ directory. Explain the expected result after the action. Show representative
 output only when it helps the reader recognize success; identify variable IDs
 and states.
 
-The [API-root revision](usage.md#api-root-base_path) is the user-procedure
-pilot. This shortened example shows a real change made during its review:
+The [API-root procedure](usage.md#api-root-base_path) was the first user
+procedure revised with this guide. This shortened example shows a real change
+made during its review:
 
 > Before: “Omit embedded credentials, query strings, and fragments from the
 > API root.”
@@ -194,31 +196,24 @@ For a documentation or instruction update, check the affected paragraph, list,
 or procedure as a coherent unit. Include existing prose needed to understand
 the change. Preserve technical meaning, conditions, exceptions, and requirement
 strength. You may use the adapted STE rules in this guide to improve the
-affected text. Their use is advisory during the #185 pilot. Do not rewrite the
-whole file or unrelated pages for this purpose.
+affected text. Their use is advisory. Do not rewrite the whole file or
+unrelated pages for this purpose.
 
 Existing documentation is not presumed to satisfy this guide. Plan broader
 rewrites as separate work, and check technical behavior as well as wording.
 
-The initial publication applies the guide to the
-[actionable-failures rule](engineering_principles.md#preserve-actionable-failures),
-the [configuration-precedence rule](engineering_principles.md#give-state-and-policy-a-clear-owner),
-and the API-root procedure. These are the fixed pilot excerpts for #185. This
-is not a completed rewrite of all documentation.
-Evaluate both audiences before adding automated enforcement. Track publication in
-[#178](https://github.com/ga4gh/ga4gh-sdk/issues/178) and the evaluation in
-[#185](https://github.com/ga4gh/ga4gh-sdk/issues/185), under the rollout in
-[#176](https://github.com/ga4gh/ga4gh-sdk/issues/176).
+The [2026-11-16 pilot evaluation](assessments/2026-11-16-writing-pilot.md)
+compared agent plans with and without this guidance and followed the
+API-root procedure. It keeps the guide advisory and adds no prose checker.
+Keep evaluation results in dated records like that one, not in this guide.
 
-The evaluation task defines fixed cases, controls, repeated runs, and reporting
-criteria. Keep its results separate from this guide. Include situations where a
-rule does not apply, such as a raw-response API or a documentation-only request.
 Static inspection of a revised instruction establishes clarity and consistency;
 it does not establish improved agent performance. Likewise, a prose review does
 not replace a required installation or live-service check of a user procedure.
+Evaluate both audiences again before you add automated enforcement.
 
-No prose linter or new CI gate is introduced by this guide. After the pilot,
-consider a small set of checks with useful, low-noise feedback. A tool such as
+This guide adds no prose linter or CI gate. If you propose a check, choose a
+small set with useful, low-noise feedback. A tool such as
 [Vale](https://vale.sh/features/markup) can restrict checks to prose and exclude
 code and link destinations. Start new checks as advisory. Evaluate false
 positives before making any check required.

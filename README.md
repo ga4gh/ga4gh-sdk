@@ -59,6 +59,10 @@ clients and their futures can move between threads. This breaks some code:
 - Implementations of `DescriptorFetcher` and the attempts passed to
   `drs::resolution::resolve_until` return `ga4gh_sdk::Error`; `?` or
   `Error::other(error)` converts other errors.
+- An invalid Service Registry response is now `Error::Parse` with the
+  `serde_json` diagnostic, instead of a string prefixed with the registry
+  endpoint. Match the variant to handle it without parsing the message. The
+  CLI still includes the endpoint in its error output.
 - The `service` field of `TES`, `WES` and `DRS` is now a `Service`
   instead of a `Result`; the constructors return the errors. Struct literals of
   the clients set `service: Service::default()` or the service info itself.
@@ -152,7 +156,9 @@ These instructions install the SDK from this source repository.
 **Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) via
 `rustup` and Git. The repository pins its toolchain in
 [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs that version
-on the first build.
+on the first build. On Linux, the library and CLI also need the OpenSSL
+development files and `pkg-config` (for example `libssl-dev pkg-config` on
+Debian and Ubuntu).
 
 Install the command-line tool `ga4gh-cli` into `~/.cargo/bin`:
 
@@ -511,6 +517,8 @@ code changes. Please read [these guidelines][contributing] if you want to
 contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
 
+New developers start with the [developer guide](DEVELOPER_GUIDE.md): the
+repository layout, setup, tests, documentation and how to add a client.
 For local checks, coverage, and hooks, see the [development guide](docs/development.md).
 
 ## License

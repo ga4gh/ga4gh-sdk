@@ -126,10 +126,12 @@ nav:
       # Rendered from the type stubs by mkdocstrings (see `plugins`)
       - Python bindings: python/api.md
   - Development:
+      - Developer guide: DEVELOPER_GUIDE.md
       - Overview: docs/development.md
       - Testing: tests/README.md
       - Generated models: docs/autogenerate_OAI_models.md
       - Reviewing pull requests: docs/reviewer_framework.md
+      - Client state ownership: docs/state_ownership.md
       - Releasing: docs/releasing.md
       - Downstream example: examples/downstream-sdk/README.md
       - Provider contract proposals:
