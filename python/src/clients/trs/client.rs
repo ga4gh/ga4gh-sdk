@@ -1,21 +1,22 @@
 //! The TRS client and its Python methods.
 
 use super::files::{PyFileWrapper, PyToolFile};
-use super::helpers::{
-    bounded_int, capability_override, parse_descriptor_type, require_ids, require_segment,
-    source_name, support_name, to_raw, version_policy,
-};
+use super::helpers::{bounded_int, parse_descriptor_type, require_ids, to_raw};
 use super::page::PyToolPage;
 use super::tools::{PyTool, PyToolVersion};
+use super::versions::{
+    build_client, capability_override, require_tag_filter, source_name, support_name,
+    version_policy,
+};
 use super::DEFAULT_ZIP_LIMIT;
 use crate::utils::convert::{check_extra_args, to_python};
-use crate::utils::runtime::io;
+use crate::utils::runtime::request;
+use crate::utils::validate::require_id;
 use crate::{PyConfiguration, PyTransport};
 use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain};
 use ga4gh_sdk::clients::trs::responses::{list_tools_page, next_tools_page};
 use ga4gh_sdk::clients::trs::{ToolFilter, TrsOptions, TRS};
-use ga4gh_sdk::compatibility::VersionPolicy;
-use ga4gh_sdk::utils::transport::{BodyLimits, Transport};
+use ga4gh_sdk::utils::transport::BodyLimits;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple, PyType};
@@ -34,7 +35,7 @@ impl PyTRS {
     /// Builds a TRS client for Rust extension crates, with the default options, while
     /// releasing the GIL during discovery.
     pub fn new(config: &PyConfiguration) -> PyResult<Self> {
-        Python::attach(|py| Self::connect(py, config, TrsOptions::default(), true))
+        Self::with_options(config, TrsOptions::default(), true)
     }
 
     /// Builds a TRS client with `options` for Rust extension crates, as `TRS(config,
@@ -45,41 +46,9 @@ impl PyTRS {
         options: TrsOptions,
         discovery: bool,
     ) -> PyResult<Self> {
-        Python::attach(|py| Self::connect(py, config, options, discovery))
-    }
-
-    fn connect(
-        py: Python<'_>,
-        config: &PyConfiguration,
-        options: TrsOptions,
-        discovery: bool,
-    ) -> PyResult<Self> {
-        if !discovery {
-            let VersionPolicy::Explicit(version) = options.version else {
-                return Err(PyValueError::new_err(
-                    "discovery=False needs an explicit api_version, '2.0.1' or '2.0.2'",
-                ));
-            };
-            let inner = TRS::without_discovery(Transport::new(&config.inner), version)
-                .with_tag_filter_override(options.tag_filter);
-            return Ok(Self { inner });
-        }
-        io(py, |rt| {
-            rt.block_on(TRS::with_options(&config.inner, options))
-                .map(|inner| Self { inner })
-                .map_err(|error| format!("Failed to create TRS instance: {error}"))
+        Python::attach(|py| {
+            build_client(py, config, options, discovery).map(|inner| Self { inner })
         })
-    }
-
-    fn filter_tags(&self, tags: &[String]) -> PyResult<()> {
-        if tags.is_empty() {
-            return Ok(());
-        }
-        self.inner
-            .compatibility()
-            .tag_filter()
-            .require("TRS", "tags")
-            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 }
 
@@ -106,7 +75,7 @@ impl PyTRS {
         let options = TrsOptions::default()
             .with_version(version_policy(api_version)?)
             .with_tag_filter(capability_override(tag_filter)?);
-        Self::connect(cls.py(), config, options, discovery)
+        build_client(cls.py(), config, options, discovery).map(|inner| Self { inner })
     }
 
     /// The client's configuration.
@@ -167,19 +136,13 @@ impl PyTRS {
 
     /// Reads the service info again, as a `dict`.
     pub fn service_info(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let service = io(py, |rt| {
-            rt.block_on(self.inner.service_info())
-                .map_err(|error| format!("Failed to get service info: {error}"))
-        })?;
+        let service = request(py, "get service info", || self.inner.service_info())?;
         to_python(py, &to_raw(&service)?)
     }
 
     /// Lists the tool classes of the registry, as `dict`s.
     pub fn list_tool_classes(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
-        let classes = io(py, |rt| {
-            rt.block_on(self.inner.list_tool_classes())
-                .map_err(|error| format!("Failed to list tool classes: {error}"))
-        })?;
+        let classes = request(py, "list tool classes", || self.inner.list_tool_classes())?;
         classes
             .iter()
             .map(|class| to_python(py, &to_raw(class)?))
@@ -248,10 +211,9 @@ impl PyTRS {
         let params = filter
             .query()
             .map_err(|error| PyValueError::new_err(format!("Invalid filter: {error}")))?;
-        self.filter_tags(&filter.tags)?;
-        let page = io(py, |rt| {
-            rt.block_on(list_tools_page(&self.inner, params, BodyLimits::default()))
-                .map_err(|error| format!("Failed to list tools: {error}"))
+        require_tag_filter(&self.inner, &filter.tags)?;
+        let page = request(py, "list tools", || {
+            list_tools_page(&self.inner, params, BodyLimits::default())
         })?;
         PyToolPage::new(page)
     }
@@ -264,34 +226,23 @@ impl PyTRS {
         if next_page.is_empty() {
             return Err(PyValueError::new_err("next_page must not be empty"));
         }
-        let page = io(py, |rt| {
-            rt.block_on(next_tools_page(
-                &self.inner,
-                next_page,
-                BodyLimits::default(),
-            ))
-            .map_err(|error| format!("Failed to list tools: {error}"))
+        let page = request(py, "list tools", || {
+            next_tools_page(&self.inner, next_page, BodyLimits::default())
         })?;
         PyToolPage::new(page)
     }
 
     /// Gets a tool, with its versions.
     pub fn get_tool(&self, py: Python<'_>, id: &str) -> PyResult<PyTool> {
-        require_segment(id, "tool ID")?;
-        let tool = io(py, |rt| {
-            rt.block_on(self.inner.get_tool(id))
-                .map_err(|error| format!("Failed to get tool: {error}"))
-        })?;
+        require_id(id, "tool ID")?;
+        let tool = request(py, "get tool", || self.inner.get_tool(id))?;
         PyTool::new(tool)
     }
 
     /// Lists the versions of a tool.
     pub fn list_versions(&self, py: Python<'_>, id: &str) -> PyResult<Vec<PyToolVersion>> {
-        require_segment(id, "tool ID")?;
-        let versions = io(py, |rt| {
-            rt.block_on(self.inner.list_versions(id))
-                .map_err(|error| format!("Failed to list tool versions: {error}"))
-        })?;
+        require_id(id, "tool ID")?;
+        let versions = request(py, "list tool versions", || self.inner.list_versions(id))?;
         versions.into_iter().map(PyToolVersion::new).collect()
     }
 
@@ -303,9 +254,8 @@ impl PyTRS {
         version_id: &str,
     ) -> PyResult<PyToolVersion> {
         require_ids(id, version_id)?;
-        let version = io(py, |rt| {
-            rt.block_on(self.inner.get_version(id, version_id))
-                .map_err(|error| format!("Failed to get tool version: {error}"))
+        let version = request(py, "get tool version", || {
+            self.inner.get_version(id, version_id)
         })?;
         PyToolVersion::new(version)
     }
@@ -327,24 +277,21 @@ impl PyTRS {
         require_ids(id, version_id)?;
         let descriptor_type: DescriptorTypeWithPlain = parse_descriptor_type(descriptor_type)?;
         if let Some(path) = relative_path {
-            require_segment(path, "relative path")?;
+            require_id(path, "relative path")?;
         }
-        let file = io(py, |rt| {
-            rt.block_on(async {
-                match relative_path {
-                    Some(path) => {
-                        self.inner
-                            .get_descriptor_file(id, version_id, descriptor_type, path)
-                            .await
-                    }
-                    None => {
-                        self.inner
-                            .get_descriptor(id, version_id, descriptor_type)
-                            .await
-                    }
+        let file = request(py, "get descriptor", || async move {
+            match relative_path {
+                Some(path) => {
+                    self.inner
+                        .get_descriptor_file(id, version_id, descriptor_type, path)
+                        .await
                 }
-            })
-            .map_err(|error| format!("Failed to get descriptor: {error}"))
+                None => {
+                    self.inner
+                        .get_descriptor(id, version_id, descriptor_type)
+                        .await
+                }
+            }
         })?;
         PyFileWrapper::new(file)
     }
@@ -361,9 +308,8 @@ impl PyTRS {
     ) -> PyResult<Vec<PyFileWrapper>> {
         require_ids(id, version_id)?;
         let descriptor_type: DescriptorTypeWithPlain = parse_descriptor_type(descriptor_type)?;
-        let files = io(py, |rt| {
-            rt.block_on(self.inner.list_tests(id, version_id, descriptor_type))
-                .map_err(|error| format!("Failed to list tests: {error}"))
+        let files = request(py, "list tests", || {
+            self.inner.list_tests(id, version_id, descriptor_type)
         })?;
         files.into_iter().map(PyFileWrapper::new).collect()
     }
@@ -378,9 +324,8 @@ impl PyTRS {
     ) -> PyResult<Vec<PyToolFile>> {
         require_ids(id, version_id)?;
         let descriptor_type: DescriptorType = parse_descriptor_type(descriptor_type)?;
-        let files = io(py, |rt| {
-            rt.block_on(self.inner.list_files(id, version_id, descriptor_type))
-                .map_err(|error| format!("Failed to list files: {error}"))
+        let files = request(py, "list files", || {
+            self.inner.list_files(id, version_id, descriptor_type)
         })?;
         files.into_iter().map(PyToolFile::new).collect()
     }
@@ -405,12 +350,9 @@ impl PyTRS {
             None => DEFAULT_ZIP_LIMIT,
         };
         let limit = usize::try_from(limit).unwrap_or(usize::MAX);
-        let archive = io(py, |rt| {
-            rt.block_on(
-                self.inner
-                    .get_files_zip(id, version_id, descriptor_type, limit),
-            )
-            .map_err(|error| format!("Failed to get files as ZIP: {error}"))
+        let archive = request(py, "get files as ZIP", || {
+            self.inner
+                .get_files_zip(id, version_id, descriptor_type, limit)
         })?;
         Ok(PyBytes::new(py, &archive))
     }
@@ -424,9 +366,8 @@ impl PyTRS {
         version_id: &str,
     ) -> PyResult<Vec<PyFileWrapper>> {
         require_ids(id, version_id)?;
-        let files = io(py, |rt| {
-            rt.block_on(self.inner.get_containerfiles(id, version_id))
-                .map_err(|error| format!("Failed to get container files: {error}"))
+        let files = request(py, "get container files", || {
+            self.inner.get_containerfiles(id, version_id)
         })?;
         files.into_iter().map(PyFileWrapper::new).collect()
     }
