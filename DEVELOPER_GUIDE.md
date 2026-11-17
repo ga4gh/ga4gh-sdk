@@ -63,12 +63,12 @@ The code of each member is organized by service: one module per GA4GH API.
     the text and JSON output and the TES file downloads.
 - **Python bindings** ([`python/src/`](python/src/)):
   - `lib.rs` registers the classes of the Python module `ga4gh_sdk`.
-  - `clients/` holds one binding per service. A binding with several classes
-    is a folder, as `drs/`, `trs/` and `wes/` are: `mod.rs` with the module
-    docs and `register()`, one file per topic such as `client.rs`, and
-    `helpers.rs` for helpers that only this binding uses. Bindings that are
-    still single files (`tes.rs`, `tes_async.rs`, `serviceinfo.rs`) move to
-    this layout one API at a time. The
+  - `clients/` holds one binding per service. Bindings with several classes
+    live in `drs/`, `tes/`, `trs/` and `wes/`: `mod.rs` has the module docs
+    and `register()`, with one file per topic such as `client.rs` and
+    `helpers.rs` for binding-specific helpers. `tes_async.rs` and
+    `serviceinfo.rs` remain single files; `clients::tes::register()` also
+    registers the async TES classes. The
     [Python agent guide](python/AGENTS.md#lay-out-a-service-binding)
     describes the layout in detail.
   - `utils/` holds the helpers that several bindings share, such as
@@ -142,8 +142,8 @@ to try the CLI against.
 ## Tests
 
 The tests have four levels. CI runs the first three on every pull request.
-It runs the Funnel, proTES, WES Starter Kit and TRS-Filer suites only when
-their files change; the other service suites run only by hand.
+Its integration matrix runs Funnel, proTES, WES Starter Kit, TRS-Filer and
+Keycloak when their relevant files change; manual dispatch runs all five.
 
 | Level | Where | Run with |
 | --- | --- | --- |
