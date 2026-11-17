@@ -1,7 +1,14 @@
+//! Client for the GA4GH Workflow Execution Service (WES) 1.1 API.
+//!
+//! [`WES`] starts runs, with workflow attachments ([`attachments`]), and lists
+//! and reads them; [`Run`] addresses one run by its ID, to poll, cancel or read
+//! its log and tasks.
+
 pub mod attachments;
+/// The WES 1.1 models, generated from its OpenAPI specification.
 // Generated models (utils/build_models.sh): the generator writes `Default`
 // for enums by hand, and `new` takes one argument per required field.
-#[allow(clippy::derivable_impls, clippy::too_many_arguments)]
+#[allow(clippy::derivable_impls, clippy::too_many_arguments, missing_docs)]
 pub mod models;
 
 use crate::clients::serviceinfo::models::Service;
@@ -24,10 +31,16 @@ use serde_json::json;
 /// A file included in a WES RunWorkflow multipart request.
 #[derive(Debug, Clone)]
 pub struct WorkflowAttachment {
+    /// The path of the file relative to the attachment root, with `/`
+    /// separators, such as `tools/echo.cwl`.
     pub filename: String,
+    /// The file's content.
     pub content: Vec<u8>,
 }
 
+/// A run on a WES server, addressed by its ID.
+///
+/// [`WES::run_workflow`] returns one; [`Run::new`] addresses an existing run.
 #[derive(Debug, Clone)]
 pub struct Run {
     /// The unique ID of the run.
@@ -132,10 +145,12 @@ fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<s
 /// The main struct for interacting with a WES service.
 #[derive(Debug)]
 pub struct WES {
+    /// The configuration that the client was built with.
     #[allow(dead_code)]
     pub config: Configuration,
-    /// The service info fetched when the client was created.
+    /// The service info that the client read when it was built.
     pub service: Service,
+    /// The transport that sends the client's requests.
     pub transport: Transport,
 }
 

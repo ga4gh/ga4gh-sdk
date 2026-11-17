@@ -1,3 +1,6 @@
+//! The `registry` command: lists and reads the services of a GA4GH Service
+//! Registry.
+
 use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgMatches, Command};
@@ -6,7 +9,7 @@ use ga4gh_sdk::clients::registry::ServiceRegistry;
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::HttpError;
 
-/// Build the Service Registry command and its subcommands.
+/// Builds the Service Registry command and its subcommands.
 pub fn command() -> Command {
     Command::new("registry")
         .about("Service Registry subcommands")

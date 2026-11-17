@@ -1,4 +1,35 @@
 //! Cached service discovery and advisory submission diagnostics.
+//!
+//! [`TES::discover`] and [`WES::discover`] build a client from one
+//! service-info request and keep the response as a [`CapabilitySnapshot`].
+//! The snapshot checks a task or run request against what the service
+//! advertises and gives a [`Diagnostic`] per checked field. The checks are
+//! advisory: services may advertise too little, and a stale snapshot only
+//! gives [`Support::Unknown`].
+//!
+//! ```no_run
+//! use ga4gh_sdk::clients::wes::{models::RunRequest, WES};
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use std::time::Duration;
+//!
+//! # async fn example() -> ga4gh_sdk::Result<()> {
+//! let config = Configuration::new(url::Url::parse("https://example.org/ga4gh/wes/v1")?);
+//! let wes = WES::discover(&config, Duration::from_secs(300)).await?;
+//! let request = RunRequest {
+//!     workflow_type: "CWL".into(),
+//!     workflow_type_version: "v1.2".into(),
+//!     workflow_url: "https://example.org/workflow.cwl".into(),
+//!     ..Default::default()
+//! };
+//! for diagnostic in wes.capabilities.validate_wes(&request) {
+//!     println!("{}: {:?}", diagnostic.field, diagnostic.support);
+//! }
+//! // Strict: refuse the request if a diagnostic blocks it
+//! let run = wes.run_validated(request, true).await?;
+//! println!("{}", run.id);
+//! # Ok(())
+//! # }
+//! ```
 use super::{
     serviceinfo::models::Service,
     tes::{
@@ -16,26 +47,43 @@ use serde_json::Value;
 use std::{ops::Deref, time::Duration};
 use tokio::time::Instant;
 
+/// Whether the service advertises a requested value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum Support {
+    /// The service advertises the value.
     Supported,
+    /// The service advertises a list of values without it.
     Unsupported,
+    /// The service advertises nothing about it, or the snapshot is stale.
     Unknown,
 }
+/// The result of checking one field of a request against a snapshot.
 #[derive(Clone, Debug, Serialize)]
 pub struct Diagnostic {
+    /// The request field, such as `workflow_type` or
+    /// `resources.backend_parameters.<key>`.
     pub field: String,
+    /// Whether the service advertises the field's value.
     pub support: Support,
+    /// What was checked, or that the snapshot is stale.
     pub detail: String,
+    /// Whether a strict submission, such as
+    /// [`Discovered::<WES>::run_validated`] with `strict`, refuses the
+    /// request because of this field.
     pub blocks_strict: bool,
 }
+/// A service-info response and when it was fetched.
 #[derive(Clone, Debug)]
 pub struct CapabilitySnapshot {
+    /// The service-info response as JSON.
     pub raw: Value,
+    /// When the response was fetched.
     pub fetched_at: Instant,
+    /// How long the snapshot stays fresh.
     pub max_age: Duration,
 }
 impl CapabilitySnapshot {
+    /// Wraps a service-info response fetched now, fresh for `max_age`.
     pub fn from_raw(raw: Value, max_age: Duration) -> Self {
         Self {
             raw,
@@ -43,15 +91,31 @@ impl CapabilitySnapshot {
             max_age,
         }
     }
+    /// Whether the snapshot is at most `max_age` old.
     pub fn is_fresh(&self) -> bool {
         self.fetched_at.elapsed() <= self.max_age
     }
+    /// Parses the response as `T`, such as a service info model.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the response doesn't match `T`.
     pub fn typed_as<T: DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
         serde_json::from_value(self.raw.clone())
     }
+    /// Parses the response as a TES service info.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the response isn't a TES service info.
     pub fn tes_info(&self) -> Result<TesServiceInfo, serde_json::Error> {
         self.typed_as()
     }
+    /// Parses the response as a WES service info.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the response isn't a WES service info.
     pub fn wes_info(&self) -> Result<ServiceInfo, serde_json::Error> {
         self.typed_as()
     }
@@ -77,6 +141,15 @@ impl CapabilitySnapshot {
             blocks_strict: blocks && self.is_fresh(),
         }
     }
+    /// Checks a run request against the workflow types and engines that the
+    /// service advertises.
+    ///
+    /// The request's `workflow_type` and `workflow_type_version` are checked
+    /// against the advertised `workflow_type_versions`. Its `workflow_engine`,
+    /// when set, is checked against `workflow_engine_versions`, and with it
+    /// its `workflow_engine_version`, when set. Unsupported values block
+    /// strict submissions.
+    ///
     /// Missing metadata remains unknown. An explicit nonempty language map is
     /// authoritative; version/engine constraints are compared only when supplied.
     pub fn validate_wes(&self, request: &RunRequest) -> Vec<Diagnostic> {
@@ -185,6 +258,10 @@ impl CapabilitySnapshot {
         }
         result
     }
+    /// Checks each key of the task's `resources.backend_parameters` against
+    /// the advertised `tesResources_backend_parameters`, ignoring case. An
+    /// unsupported key blocks strict submissions only if the task sets
+    /// `backend_parameters_strict`. Other fields are not checked.
     pub fn validate_tes(&self, task: &TesTask) -> Vec<Diagnostic> {
         let mut result = Vec::new();
         if let Some(resources) = &task.resources {
@@ -223,7 +300,9 @@ impl CapabilitySnapshot {
 /// capabilities. Accessors never fetch; refresh is explicit and atomic on success.
 #[derive(Debug)]
 pub struct Discovered<T> {
+    /// The client, also reached through `Deref`.
     pub client: T,
+    /// The service-info response that the client was built from.
     pub capabilities: CapabilitySnapshot,
 }
 impl<T> Deref for Discovered<T> {
@@ -267,6 +346,11 @@ fn ensure_strict(diagnostics: &[Diagnostic], strict: bool) -> crate::Result<()> 
 impl TES {
     /// Creates a client and a capability snapshot from one service-info
     /// request, within the `discovery` limit of `config.timeouts`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or times out, or the response isn't a TES
+    /// service info.
     pub async fn discover(
         config: &Configuration,
         max_age: Duration,
@@ -276,6 +360,11 @@ impl TES {
 
     /// Like [`Self::discover`], with a ready `transport`, for example one from
     /// [`Transport::with_client`]. The client's configuration is the transport's.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or times out, or the response isn't a TES
+    /// service info.
     pub async fn discover_with_transport(
         transport: Transport,
         max_age: Duration,
@@ -294,6 +383,11 @@ impl TES {
 impl WES {
     /// Creates a client and a capability snapshot from one service-info
     /// request, within the `discovery` limit of `config.timeouts`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or times out, or the response isn't a WES
+    /// service info.
     pub async fn discover(
         config: &Configuration,
         max_age: Duration,
@@ -303,6 +397,11 @@ impl WES {
 
     /// Like [`Self::discover`], with a ready `transport`, for example one from
     /// [`Transport::with_client`]. The client's configuration is the transport's.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or times out, or the response isn't a WES
+    /// service info.
     pub async fn discover_with_transport(
         transport: Transport,
         max_age: Duration,
@@ -319,6 +418,12 @@ impl WES {
     }
 }
 impl Discovered<TES> {
+    /// Fetches the service info again and replaces the client's service and
+    /// the snapshot; on failure, both stay as they were.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or the response isn't a TES service info.
     pub async fn refresh(&mut self) -> crate::Result<()> {
         let (service, snapshot) =
             discover(&self.client.transport, "tes", self.capabilities.max_age).await?;
@@ -326,12 +431,25 @@ impl Discovered<TES> {
         self.capabilities = snapshot;
         Ok(())
     }
+    /// Checks `task` with [`CapabilitySnapshot::validate_tes`], then creates
+    /// it like [`TES::create`].
+    ///
+    /// # Errors
+    ///
+    /// With `strict`, fails before any request if a diagnostic blocks strict
+    /// submissions; otherwise fails as [`TES::create`] does.
     pub async fn create_validated(&self, task: TesTask, strict: bool) -> crate::Result<Task> {
         ensure_strict(&self.capabilities.validate_tes(&task), strict)?;
         self.client.create(task).await
     }
 }
 impl Discovered<WES> {
+    /// Fetches the service info again and replaces the client's service and
+    /// the snapshot; on failure, both stay as they were.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails or the response isn't a WES service info.
     pub async fn refresh(&mut self) -> crate::Result<()> {
         let (service, snapshot) =
             discover(&self.client.transport, "wes", self.capabilities.max_age).await?;
@@ -339,6 +457,13 @@ impl Discovered<WES> {
         self.capabilities = snapshot;
         Ok(())
     }
+    /// Checks `request` with [`CapabilitySnapshot::validate_wes`], then
+    /// starts the run like [`WES::run_workflow`].
+    ///
+    /// # Errors
+    ///
+    /// With `strict`, fails before any request if a diagnostic blocks strict
+    /// submissions; otherwise fails as [`WES::run_workflow`] does.
     pub async fn run_validated(&self, request: RunRequest, strict: bool) -> crate::Result<Run> {
         ensure_strict(&self.capabilities.validate_wes(&request), strict)?;
         self.client.run_workflow(request).await

@@ -21,6 +21,8 @@
 //! # }
 //! ```
 
+/// The Service Registry 1.0 models, generated from its OpenAPI specification.
+#[allow(missing_docs)]
 pub mod models;
 
 use crate::utils::configuration::Configuration;

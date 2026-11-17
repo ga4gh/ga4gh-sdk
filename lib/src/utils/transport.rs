@@ -1,38 +1,39 @@
-/// A struct representing a transport for making HTTP requests.
-///
-/// The `Transport` struct is responsible for handling HTTP requests using the `reqwest` crate.
-/// It provides methods for making GET, POST, PUT, and DELETE requests.
-///
-/// # Examples
-///
-/// ```
-/// use crate::ga4gh_sdk::utils::configuration::Configuration;
-/// use crate::ga4gh_sdk::utils::transport::Transport;
-///
-/// let config = Configuration::new(url::Url::parse("https://api.example.com").unwrap());
-/// let transport = Transport::new(&config);
-///
-/// // Make a GET request
-/// async {
-/// let response = transport.get("users", None).await;
-/// };
-///
-/// // Make a POST request
-/// async {
-///     let data = serde_json::json!({"name": "John Doe", "age": 30});
-///     let response = transport.post("users", Some(data)).await;
-/// };
-/// // Make a PUT request
-/// async {
-/// let data = serde_json::json!({"name": "John Doe", "age": 30});
-/// let response = transport.put("users/1", data).await;
-/// };
-///
-/// // Make a DELETE request
-/// async {
-/// let response = transport.delete("users/1").await;
-/// };
-/// ```
+//! HTTP requests below a service's API root, with its credentials, time
+//! limits, retries and body limits.
+//!
+//! [`Transport`] sends `GET`, `POST`, `PUT` and `DELETE` requests with JSON
+//! bodies, and multipart requests.
+//!
+//! # Examples
+//!
+//! ```
+//! use crate::ga4gh_sdk::utils::configuration::Configuration;
+//! use crate::ga4gh_sdk::utils::transport::Transport;
+//!
+//! let config = Configuration::new(url::Url::parse("https://api.example.com").unwrap());
+//! let transport = Transport::new(&config);
+//!
+//! // Make a GET request
+//! async {
+//! let response = transport.get("users", None).await;
+//! };
+//!
+//! // Make a POST request
+//! async {
+//!     let data = serde_json::json!({"name": "John Doe", "age": 30});
+//!     let response = transport.post("users", Some(data)).await;
+//! };
+//! // Make a PUT request
+//! async {
+//! let data = serde_json::json!({"name": "John Doe", "age": 30});
+//! let response = transport.put("users/1", data).await;
+//! };
+//!
+//! // Make a DELETE request
+//! async {
+//! let response = transport.delete("users/1").await;
+//! };
+//! ```
 use crate::utils::auth::{AuthConflictError, TokenProviderError};
 use crate::utils::configuration::{AuthError, Configuration, ConfiguredAuth};
 use crate::utils::query::query_pairs;
@@ -47,16 +48,23 @@ use url::Url;
 /// their own limits or consume the raw response incrementally.
 #[derive(Clone, Copy, Debug)]
 pub struct BodyLimits {
+    /// The most bytes read of a successful response's body (default 8 MiB).
     pub success: usize,
+    /// The most bytes read of an error response's body (default 16 KiB).
     pub error: usize,
 }
 
 /// Explicit absolute deadline, replay classification and bounded retry policy.
 #[derive(Clone, Debug)]
 pub struct RequestOptions {
+    /// The deadline and cancellation of the request, its retries and its body.
     pub operation: crate::utils::operation::Operation,
+    /// How often a read-only request is tried.
     pub retry: crate::utils::operation::RetryPolicy,
+    /// Whether the request may be sent again; only read-only requests are
+    /// retried.
     pub safety: crate::utils::operation::ReplaySafety,
+    /// The most bytes read of the response body.
     pub limits: BodyLimits,
 }
 
@@ -84,7 +92,9 @@ impl Default for BodyLimits {
 /// An oversized body. HTTP status remains available even on error responses.
 #[derive(Debug)]
 pub struct BodyLimitError {
+    /// The response's HTTP status.
     pub status: reqwest::StatusCode,
+    /// The limit in bytes that the body exceeded.
     pub limit: usize,
 }
 impl fmt::Display for BodyLimitError {
@@ -101,8 +111,11 @@ impl Error for BodyLimitError {}
 /// Lossless buffered response, including successful and unsuccessful HTTP status.
 #[derive(Debug)]
 pub struct BufferedResponse {
+    /// The response's HTTP status.
     pub status: reqwest::StatusCode,
+    /// The response's headers.
     pub headers: reqwest::header::HeaderMap,
+    /// The response's body, within the request's [`BodyLimits`].
     pub body: Vec<u8>,
 }
 
@@ -198,7 +211,9 @@ pub fn urlencode<T: AsRef<str>>(value: T) -> String {
 /// by the server. Access it explicitly when needed, but do not log or display
 /// it without reviewing its contents. `Display` and `Debug` omit the body.
 pub struct HttpError {
+    /// The response's HTTP status.
     pub status: reqwest::StatusCode,
+    /// The response's body, untrusted; don't log it unreviewed.
     pub body: String,
 }
 
@@ -225,9 +240,14 @@ pub use HttpError as HttpStatusError;
 /// An endpoint or API root that cannot safely be used for a request.
 #[derive(Debug)]
 pub enum EndpointError {
+    /// `base_path` is not a hierarchical URL, or has a query or fragment.
     InvalidBase,
+    /// The endpoint is an absolute or scheme-relative URL, or has dot segments
+    /// or backslashes.
     InvalidPath,
+    /// The endpoint resolves to a URL outside `base_path`.
     OutsideApiRoot,
+    /// The endpoint can't be parsed as a URL.
     Parse(url::ParseError),
 }
 
@@ -311,8 +331,16 @@ fn warn_plain_http_credential_once() {
 }
 
 // note: could implement custom certs handling, such as in-TEE generated ephemeral certs
+/// Sends requests below the API root of a [`Configuration`], with its
+/// credentials and time limits.
+///
+/// Endpoints are paths relative to the API root; requests that would leave it
+/// fail with an [`EndpointError`]. Clones share the HTTP client and its
+/// connections.
 #[derive(Clone)]
 pub struct Transport {
+    /// The configuration whose API root, credentials and time limits the
+    /// transport uses.
     pub config: Configuration,
     client: reqwest::Client,
     apply_configured_auth: bool,

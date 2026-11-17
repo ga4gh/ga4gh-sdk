@@ -3,6 +3,20 @@
 //! Receipt hashes authenticate nothing by themselves. A caller must obtain the pinned hash
 //! and original-service identity from an independently trusted, authorized source and supply
 //! a fresh access reader for the current principal. CrateGen remains the provenance converter.
+//!
+//! A [`ReuseReceipt`] records a finished run: the [`RecipeIdentity`] that it
+//! ran, where it ran ([`ExecutionOrigin`]), its typed result and its output
+//! artifacts. [`ReuseReceipt::assess`] checks whether the receipt can stand
+//! in for a new run of a requested recipe and gives a [`ReuseReport`];
+//! [`ReuseReceipt::reuse_for`] runs the same checks and gives a
+//! [`ReusedResultRef`] only if the receipt is eligible. If every other
+//! check passes, both read the artifacts again through the caller's reader
+//! and compare their sizes and SHA-256 digests with the receipt.
+//!
+//! The caller supplies trust for each check as a [`ReceiptTrust`], and the
+//! reader returns an [`ArtifactRead`] or an [`AccessFailure`]. Receipts are
+//! built with [`ReuseReceipt::new`], and moved between systems with
+//! [`ReuseReceipt::export`] and [`ReuseReceipt::import`].
 use super::{
     digest,
     results::{ContractStatus, ExpectedChecksum, ResultRecord},
@@ -12,25 +26,43 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The version of [`RecipeIdentity`] and [`ReuseReceipt`] that this module
+/// writes and accepts.
 pub const REUSE_VERSION: u32 = 1;
 
-/// Declared behavior, not a sandbox. Only `None` is eligible in this exact-reuse policy.
+/// States whether a recipe uses a dependency, such as the network.
+///
+/// This is declared behavior, not a sandbox. Only `None` is eligible for
+/// exact reuse.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DependencyUse {
+    /// The recipe doesn't use the dependency.
     None,
+    /// The recipe uses the dependency.
     Dependent,
+    /// The author hasn't said whether the recipe uses it.
     Undeclared,
 }
 
+/// The recipe author's statement that the recipe gives the same outputs for
+/// the same inputs. Only a recipe that opts in, uses no network and no
+/// secrets, and has no other nondeterminism is eligible for reuse.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeterminismContract {
+    /// Whether the author allows exact reuse of the recipe's results.
     pub opted_in: bool,
+    /// Who made the statement; not blank.
     pub author: String,
+    /// The revision of the statement; not blank.
     pub revision: String,
+    /// Whether the recipe uses the network.
     pub network: DependencyUse,
+    /// Whether the recipe uses secrets.
     pub secrets: DependencyUse,
+    /// Whether the recipe is nondeterministic in another way, for example
+    /// random without a fixed seed.
     pub other_nondeterminism: bool,
 }
 
@@ -38,47 +70,72 @@ pub struct DeterminismContract {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum TypedValue {
+    /// A string.
     String(String),
+    /// A signed integer.
     Integer(i64),
+    /// An unsigned integer.
     Unsigned(u64),
+    /// A decimal number, written as a JSON number in a string, such as
+    /// `"0.10"`.
     Decimal(String),
+    /// A boolean.
     Boolean(bool),
+    /// Any JSON value.
     Json(Value),
 }
 
+/// The content of an input file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContentIdentity {
+    /// The SHA-256 of the content, as 64 lowercase hex digits.
     pub sha256: String,
+    /// The size of the content in bytes.
     pub size_bytes: u64,
 }
 
+/// A version of reference data, such as a genome assembly.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReferenceIdentity {
+    /// The version name; not blank.
     pub version: String,
+    /// The SHA-256 of the reference content, as 64 lowercase hex digits.
     pub sha256: String,
 }
 
-/// All execution-relevant fields must be declared by the recipe author. Provider IDs,
-/// temporary access URLs and timestamps are deliberately outside the fingerprint.
+/// Identifies exactly what a run executes, so that two runs of the same
+/// recipe can be recognized by its [`fingerprint`](Self::fingerprint).
+///
+/// The recipe author must declare all fields that affect execution.
+/// Provider IDs, temporary access URLs and timestamps are deliberately
+/// outside the fingerprint.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecipeIdentity {
+    /// The format version; must be [`REUSE_VERSION`].
     pub version: u32,
+    /// The author's determinism statement.
     pub determinism: DeterminismContract,
     /// SHA-256 of the actual executable/script bytes, not a mutable URL or tag.
     pub executable_sha256: String,
     /// Immutable OCI manifest identity, e.g. `python@sha256:<64 lowercase hex>`.
     pub container_image: String,
+    /// The command and its arguments; not empty, and no argument is empty
+    /// or contains a NUL character.
     pub command: Vec<String>,
+    /// The environment variables of the command.
     pub environment: BTreeMap<String, String>,
+    /// Further configuration that affects the outputs, as JSON.
     pub configuration: Value,
+    /// The parameters, by name, with their types.
     pub parameters: BTreeMap<String, TypedValue>,
     /// Keys are portable relative logical paths, not provider staging paths.
     pub inputs: BTreeMap<String, ContentIdentity>,
     /// Keys are reference names; values are immutable version/content identities.
     pub reference_versions: BTreeMap<String, ReferenceIdentity>,
+    /// The SHA-256 of the output schema that the result must conform to.
     pub output_schema_sha256: String,
     /// Selected artifact JSON pointer -> required relative output path.
     pub output_paths: BTreeMap<String, String>,
@@ -129,6 +186,12 @@ fn content_digest(value: &impl Serialize) -> Result<String, ContractError> {
     ))?))
 }
 impl RecipeIdentity {
+    /// The SHA-256 of the recipe's canonical JSON (keys sorted at every
+    /// level), which identifies it exactly.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the recipe can't be serialized as JSON.
     pub fn fingerprint(&self) -> Result<String, ContractError> {
         content_digest(self)
     }
@@ -172,130 +235,238 @@ impl RecipeIdentity {
     }
 }
 
+/// The run that produced a receipt's result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionOrigin {
+    /// A stable URL or URN of the service that ran it, without credentials,
+    /// query or fragment.
     pub service: String,
+    /// The run ID at that service; not blank.
     pub run_id: String,
     /// Exact durable run reference recorded in the accompanying result.
     pub run_reference: String,
 }
 
+/// An output artifact of a receipt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactReference {
+    /// The output path that the recipe's `output_paths` requires for it.
     pub relative_path: String,
+    /// A stable `drs`, `https`, `http`, `file` or `urn` reference to the
+    /// bytes, without credentials, query or fragment; the result's output
+    /// value must be this reference.
     pub stable_reference: String,
+    /// The size of the artifact in bytes.
     pub size_bytes: u64,
+    /// The SHA-256 of the artifact, as 64 lowercase hex digits.
     pub sha256: String,
 }
 
-/// Reuses the phase-two typed result record; this is an eligibility receipt, not a
-/// replacement for a provenance package, global cache or artifact upload protocol.
+/// Records a finished run, so that its result can stand in for a new run of
+/// the same recipe.
+///
+/// It holds the run's typed [`ResultRecord`]. It is an eligibility receipt,
+/// not a replacement for a provenance package, a global cache or an artifact
+/// upload protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReuseReceipt {
+    /// The format version; must be [`REUSE_VERSION`].
     pub version: u32,
+    /// The recipe that the original run ran.
     pub recipe: RecipeIdentity,
+    /// The recipe's [`RecipeIdentity::fingerprint`].
     pub recipe_fingerprint: String,
+    /// The original run.
     pub original: ExecutionOrigin,
+    /// Where the provenance of the run comes from; not blank.
     pub provenance_source: String,
+    /// The typed result of the original run.
     pub result: ResultRecord,
     /// Artifact output JSON pointer -> durable manifest evidence.
     pub artifacts: BTreeMap<String, ArtifactReference>,
 }
 
-/// Trust is supplied for this action, never accepted from inside the receipt.
+/// Says whether the caller trusts a receipt, for one check.
+///
+/// Trust is supplied for each check and never taken from the receipt
+/// itself.
 #[derive(Clone, Debug)]
 pub enum ReceiptTrust {
+    /// The caller trusts exactly this receipt, from a trusted source.
     Pinned {
+        /// The receipt's [`ReuseReceipt::content_digest`].
         receipt_sha256: String,
+        /// The service that must have run the original run.
         original_service: String,
+        /// Where the caller got the hash and service from; not blank.
         evidence_source: String,
     },
+    /// The caller's policy doesn't trust the receipt's source.
     Untrusted,
+    /// The caller hasn't established trust yet.
     Unknown,
 }
 
+/// Whether a receipt can stand in for a new run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ReuseStatus {
+    /// Every check passed.
     Eligible,
+    /// A check failed.
     Ineligible,
+    /// No check definitively failed, but trust is unknown or an artifact's
+    /// access couldn't be verified. With [`ReceiptTrust::Unknown`], no artifact is
+    /// read, so their sizes and digests are unchecked too.
     Unverified,
 }
+/// Why a check of a receipt failed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasonCode {
+    /// The receipt's or requested recipe lacks a complete, valid immutable
+    /// identity, for example: its version, the determinism author or
+    /// revision, executable, image digest, command, inputs, reference
+    /// versions, decimal parameters, output schema, outputs, runtime, or
+    /// safe and unique relative paths.
     InvalidIdentity,
+    /// The author hasn't opted a recipe into reuse.
     RecipeNotOptedIn,
+    /// A recipe uses the network or secrets, or is otherwise
+    /// nondeterministic, or doesn't say.
     NondeterministicDependency,
+    /// The requested recipe's fingerprint differs from the receipt's.
     RecipeChanged,
+    /// The receipt's version isn't [`REUSE_VERSION`].
     UnsupportedReceiptVersion,
+    /// The receipt's stored fingerprint doesn't match its recipe.
     FingerprintMismatch,
+    /// The original run didn't end in `COMPLETE`.
     NotComplete,
+    /// The result doesn't conform to the recipe's output schema.
     InvalidOutputs,
+    /// The artifacts or the original run's references are incomplete or
+    /// don't match the recipe and the result, or the receipt's
+    /// `provenance_source` or run ID is blank.
     ArtifactManifestMismatch,
+    /// [`ReceiptTrust::Unknown`] was given.
     TrustUnknown,
+    /// [`ReceiptTrust::Untrusted`] was given.
     SourceUntrusted,
+    /// The pinned hash or service doesn't match the receipt, or the pin is
+    /// incomplete.
     ReceiptNotTrusted,
+    /// The reader was denied access to an artifact.
     ArtifactAccessDenied,
+    /// An artifact is missing.
     ArtifactMissing,
+    /// The reader couldn't verify access to an artifact.
     ArtifactAccessUnverified,
+    /// The artifacts are larger than the caller's byte limit.
     ArtifactTooLarge,
+    /// An artifact's size differs from the receipt.
     ArtifactSizeMismatch,
+    /// An artifact's SHA-256 differs from the receipt, or its evidence
+    /// couldn't be verified.
     ArtifactDigestMismatch,
 }
+/// One failed check of a receipt.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReuseReason {
+    /// What failed.
     pub code: ReasonCode,
+    /// A description of the failure.
     pub detail: String,
+    /// The output JSON pointer of the artifact, for checks of a single
+    /// artifact read; `None` otherwise.
     pub artifact_pointer: Option<String>,
 }
+/// The bytes that the artifact checks read.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ReuseMeasurements {
+    /// The bytes of all artifacts that were read, including a read that
+    /// exceeded `max_bytes`.
     pub bytes_read: u64,
+    /// The bytes of the artifacts that passed their checks.
     pub bytes_revalidated: u64,
-    /// Actual transport bytes reported by the access adapter; local reads are zero.
+    /// The bytes that the reader reports it transferred; 0 for local reads.
     pub bytes_transferred: u64,
 }
+/// The result of checking a receipt against a requested recipe.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReuseReport {
+    /// Whether the receipt can stand in for a new run.
     pub status: ReuseStatus,
+    /// The failed checks; empty if the receipt is eligible.
     pub reasons: Vec<ReuseReason>,
+    /// The receipt's original run.
     pub original: ExecutionOrigin,
+    /// The requested recipe's fingerprint; empty if it can't be computed.
     pub recipe_fingerprint: String,
+    /// The receipt's [`ReuseReceipt::content_digest`]; empty if it can't be
+    /// computed.
     pub receipt_sha256: String,
+    /// The bytes that the artifact checks read.
     pub measurements: ReuseMeasurements,
 }
 
-/// A fresh authorized read, measured by the caller's access adapter. Do not return
-/// stale cached bytes as evidence of current authorization or availability.
+/// Holds the bytes of one artifact read, as the caller's reader returns them.
+///
+/// Each read must be fresh and authorized for the current principal, and
+/// the reader must bound its size before allocating. Don't return stale
+/// cached bytes as evidence of current authorization or availability.
 pub struct ArtifactRead {
+    /// The artifact's bytes.
     pub bytes: Vec<u8>,
+    /// The bytes that the reader transferred over the network; 0 for local
+    /// reads.
     pub bytes_transferred: u64,
 }
+/// Why an artifact read failed.
 #[derive(Clone, Debug)]
 pub enum AccessFailure {
+    /// The current principal may not read the artifact.
     Denied,
+    /// The artifact doesn't exist anymore.
     Missing,
+    /// Access couldn't be checked, for example because the storage didn't
+    /// answer.
     Unverified,
 }
 
-/// Original execution identity is retained. There is intentionally no new run ID.
-/// This value cannot be deserialized as a substitute for performing current checks.
+/// Refers to a reused result, which [`ReuseReceipt::reuse_for`] returns.
+///
+/// It keeps the original run's identity; there is intentionally no new
+/// run ID. It can't be deserialized, so it can't stand in for running the
+/// checks again.
 #[derive(Debug, Serialize)]
 pub struct ReusedResultRef {
+    /// The original run, whose result is reused.
     pub original: ExecutionOrigin,
+    /// The service that the reused result was prepared for.
     pub prepared_for_service: String,
+    /// The receipt's [`ReuseReceipt::content_digest`].
     pub receipt_sha256: String,
+    /// The recipe's fingerprint.
     pub recipe_fingerprint: String,
+    /// The original result, with the artifact evidence of this check.
     pub result: ResultRecord,
+    /// The receipt's artifacts, by output JSON pointer.
     pub artifacts: BTreeMap<String, ArtifactReference>,
+    /// The bytes that the artifact checks read.
     pub measurements: ReuseMeasurements,
 }
 
 impl ReuseReceipt {
+    /// Builds a receipt of version [`REUSE_VERSION`] with the recipe's
+    /// fingerprint. Checks nothing else; [`Self::assess`] does.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the recipe's fingerprint can't be computed.
     pub fn new(
         recipe: RecipeIdentity,
         original: ExecutionOrigin,
@@ -313,16 +484,49 @@ impl ReuseReceipt {
             artifacts,
         })
     }
+    /// Reads a receipt from its JSON. An imported receipt is not trusted;
+    /// pass [`ReceiptTrust`] to [`Self::assess`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if `bytes` aren't the JSON of a receipt, with no unknown fields.
     pub fn import(bytes: &[u8]) -> Result<Self, ContractError> {
         Ok(serde_json::from_slice(bytes)?)
     }
+    /// Writes the receipt as pretty-printed JSON.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the receipt can't be serialized as JSON.
     pub fn export(&self) -> Result<Vec<u8>, ContractError> {
         Ok(serde_json::to_vec_pretty(self)?)
     }
-    /// Canonical content hash, independent of whitespace/object order in an export.
+    /// Returns the SHA-256 of the receipt's canonical JSON (keys sorted at
+    /// every level), which doesn't depend on whitespace or key order in an
+    /// export.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the receipt can't be serialized as JSON.
     pub fn content_digest(&self) -> Result<String, ContractError> {
         content_digest(self)
     }
+    /// Checks whether the receipt can stand in for a run of `requested`.
+    ///
+    /// The receipt must be valid and trusted by `trust`, both recipes must be
+    /// eligible and have the same fingerprint, and the original run must
+    /// have completed with conformant outputs, and the declared artifact
+    /// sizes must total at most `max_bytes`. Only then are the artifacts
+    /// read with `read` and checked against the receipt's sizes and SHA-256
+    /// digests. Sends no request itself.
+    ///
+    /// If the receipt's declared artifact sizes add up to more than
+    /// `max_bytes`, or the bytes read so far exceed it, the report gets
+    /// [`ReasonCode::ArtifactTooLarge`] and no further artifact is read. The
+    /// SDK doesn't pass `max_bytes` to `read`, so the reader must bound each
+    /// read itself, before allocating.
+    ///
+    /// Returns the [`ReuseReport`]; failed checks appear in its `reasons`.
     pub fn assess(
         &self,
         requested: &RecipeIdentity,
@@ -332,8 +536,17 @@ impl ReuseReceipt {
     ) -> ReuseReport {
         self.check(requested, trust, max_bytes, read).0
     }
-    /// Explicit action: all current checks run again, even after an ELIGIBLE assessment.
-    /// No TES/WES client is accepted and no submission occurs here.
+    /// Gives the result of the receipt as the result of a run of `requested`
+    /// at `prepared_for_service`, if [`Self::assess`] finds it eligible.
+    ///
+    /// All checks run again, even after an assessment that returned
+    /// [`ReuseStatus::Eligible`]. It takes no TES or WES client and submits
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` with the boxed [`ReuseReport`] if the status isn't
+    /// [`ReuseStatus::Eligible`].
     pub fn reuse_for(
         &self,
         prepared_for_service: &str,

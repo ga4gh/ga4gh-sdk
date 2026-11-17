@@ -1,8 +1,13 @@
-/// Represents a service information client.
+//! Client for the GA4GH Service Info API, which every GA4GH service offers at
+//! `service-info` below its API root.
+
+/// The Service Info 1.0 models, generated from its OpenAPI specification.
+#[allow(missing_docs)]
 pub mod models;
 use crate::utils::configuration::Configuration;
 use crate::utils::transport::Transport;
 
+/// A client that reads a service's service info.
 #[derive(Clone)]
 pub struct ServiceInfo {
     transport: Transport,

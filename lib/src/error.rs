@@ -228,6 +228,7 @@ from_other!(
     crate::clients::drs::resolution::ResolveError,
     crate::clients::drs::uri::AccessChoiceError,
     crate::clients::drs::uri::UriError,
+    crate::clients::pagination::PageFailure,
     crate::clients::tes::ParseTesViewError,
 );
 
