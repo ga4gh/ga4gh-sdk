@@ -48,7 +48,7 @@ pub fn task_to_create(task: &Bound<'_, PyAny>, method: &str) -> PyResult<Value> 
     } else {
         PyTesTask::from_python(task)?
     };
-    Ok(task.raw)
+    Ok(task.raw().clone())
 }
 
 /// Creates a task from its JSON, sent as given.

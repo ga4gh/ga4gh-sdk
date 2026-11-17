@@ -2,7 +2,7 @@
 //! `WES.run()`.
 
 use crate::utils::convert::{check_extra_args, os_error, read_file, to_json, to_python};
-use crate::utils::json::field;
+use crate::utils::json::{field, view_accessors};
 use ga4gh_sdk::clients::wes::attachments::{
     validate_filename, AttachmentSource, StreamingAttachment,
 };
@@ -25,11 +25,14 @@ use std::path::{Path, PathBuf};
 #[derive(Clone)]
 pub struct PyRunRequest {
     /// The request parsed into the WES model; derived from `raw`.
+    #[deprecated(note = "read `inner()`; build a changed request from JSON with `from_value`")]
     pub inner: RunRequest,
-    /// The request's JSON as given or received. Build both fields with `from_value` to keep
-    /// them in step.
+    /// The request's JSON as given or received.
+    #[deprecated(note = "read `raw()`; build a changed request from JSON with `from_value`")]
     pub raw: Value,
 }
+
+view_accessors!(PyRunRequest, RunRequest);
 
 impl PyRunRequest {
     pub(super) fn parse(raw: Value) -> Result<Self, String> {
@@ -43,6 +46,7 @@ impl PyRunRequest {
             return Err("workflow_params must be a JSON object".to_owned());
         }
         let inner = serde_json::from_value(raw.clone()).map_err(|e| e.to_string())?;
+        #[allow(deprecated)] // Builds the fields that the accessors read.
         Ok(PyRunRequest { inner, raw })
     }
 
@@ -82,7 +86,7 @@ impl PyRunRequest {
     /// Checks the fields that `WES::run_workflow` requires, and that no unknown field is
     /// named `workflow_attachment`, which only the `attachments` argument may send.
     pub(super) fn check_complete(&self) -> PyResult<()> {
-        let request = &self.inner;
+        let request = self.inner();
         for (name, value) in [
             ("workflow_type", &request.workflow_type),
             ("workflow_type_version", &request.workflow_type_version),
@@ -164,7 +168,7 @@ impl PyRunRequest {
     #[classmethod]
     fn from_file<'py>(cls: &Bound<'py, PyType>, path: PathBuf) -> PyResult<Bound<'py, PyAny>> {
         let request = Self::from_path(cls.py(), &path)?;
-        cls.call1((to_python(cls.py(), &request.raw)?,))
+        cls.call1((to_python(cls.py(), request.raw())?,))
     }
 
     /// Lets `pickle` and `copy` rebuild the request as `type(request)(request.to_dict())`,
@@ -173,59 +177,59 @@ impl PyRunRequest {
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
     ) -> PyResult<(Bound<'py, PyType>, (Py<PyAny>,), Option<Bound<'py, PyAny>>)> {
-        let raw = to_python(slf.py(), &slf.borrow().raw)?;
+        let raw = to_python(slf.py(), slf.borrow().raw())?;
         let state = slf.getattr("__dict__").ok();
         Ok((slf.get_type(), (raw,), state))
     }
 
     #[getter]
     fn workflow_type(&self) -> String {
-        self.inner.workflow_type.clone()
+        self.inner().workflow_type.clone()
     }
 
     #[getter]
     fn workflow_type_version(&self) -> String {
-        self.inner.workflow_type_version.clone()
+        self.inner().workflow_type_version.clone()
     }
 
     #[getter]
     fn workflow_url(&self) -> String {
-        self.inner.workflow_url.clone()
+        self.inner().workflow_url.clone()
     }
 
     #[getter]
     fn workflow_params(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "workflow_params")
+        field(py, self.raw(), "workflow_params")
     }
 
     #[getter]
     fn tags(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "tags")
+        field(py, self.raw(), "tags")
     }
 
     #[getter]
     fn workflow_engine(&self) -> Option<String> {
-        self.inner.workflow_engine.clone()
+        self.inner().workflow_engine.clone()
     }
 
     #[getter]
     fn workflow_engine_version(&self) -> Option<String> {
-        self.inner.workflow_engine_version.clone()
+        self.inner().workflow_engine_version.clone()
     }
 
     #[getter]
     fn workflow_engine_parameters(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "workflow_engine_parameters")
+        field(py, self.raw(), "workflow_engine_parameters")
     }
 
     /// The request as JSON text, as given or received.
     pub fn json(&self) -> String {
-        self.raw.to_string()
+        self.raw().to_string()
     }
 
     /// The request as a new `dict`, as given or received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        to_python(py, &self.raw)
+        to_python(py, self.raw())
     }
 
     fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {
@@ -310,4 +314,48 @@ pub(super) fn attachment_list(
         result.push(StreamingAttachment { filename, source });
     }
     Ok(result)
+}
+
+// The tests call `parse`, which `from_value` shares (see `utils::json::tests`).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::json::tests::assert_describes;
+    use serde_json::json;
+
+    #[test]
+    fn a_request_describes_its_json() {
+        let raw = json!({
+            "workflow_type": "CWL",
+            "workflow_type_version": "v1.2",
+            "workflow_url": "main.cwl",
+            "workflow_params": {"message": "hello"},
+            "workflow_engine": null,
+            "x_priority": {"level": "high"}
+        });
+        let request = PyRunRequest::parse(raw.clone()).unwrap();
+        assert_describes(request.inner(), request.raw(), &request.json(), &raw);
+        assert_eq!(request.inner().workflow_engine, None);
+        assert_eq!(
+            request.inner().extra["x_priority"],
+            json!({"level": "high"})
+        );
+    }
+
+    #[test]
+    fn a_changed_request_is_built_from_changed_json() {
+        let raw = json!({
+            "workflow_type": "CWL",
+            "workflow_type_version": "v1.2",
+            "workflow_url": "main.cwl",
+            "workflow_params": {}
+        });
+        let request = PyRunRequest::parse(raw).unwrap();
+        let mut raw = request.raw().clone();
+        raw["workflow_url"] = json!("other.cwl");
+        let changed = PyRunRequest::parse(raw.clone()).unwrap();
+        assert_describes(changed.inner(), changed.raw(), &changed.json(), &raw);
+        assert_eq!(changed.inner().workflow_url, "other.cwl");
+        assert_eq!(request.inner().workflow_url, "main.cwl");
+    }
 }

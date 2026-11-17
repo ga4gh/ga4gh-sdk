@@ -13,12 +13,12 @@ pub(super) fn invalid_response(error: impl std::fmt::Display) -> PyErr {
     json::invalid_response("WES", error)
 }
 
-/// Parses a server's JSON object into a WES model. Errors are `RuntimeError`s.
-pub(super) fn parse_response<T: DeserializeOwned>(raw: &Value) -> PyResult<T> {
+/// Parses a server's JSON object into a WES model.
+pub(super) fn parse_model<T: DeserializeOwned>(raw: &Value) -> Result<T, String> {
     if !raw.is_object() {
-        return Err(invalid_response("not a JSON object"));
+        return Err("not a JSON object".to_owned());
     }
-    serde_json::from_value(raw.clone()).map_err(invalid_response)
+    serde_json::from_value(raw.clone()).map_err(|error| error.to_string())
 }
 
 /// The items of a JSON array field, or none if the field is missing.
