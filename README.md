@@ -47,18 +47,8 @@ The public `config`, `service`, and `transport` fields of `TES`, `WES`, and
 `DRS`, the `client` and `capabilities` fields of `Discovered`, and the
 `config` field of `Transport` are deprecated: each use gives a compiler
 warning that names its replacement, and a later release makes them private.
-Migrate as follows (see the
-[client state ownership record](docs/state_ownership.md)):
-
-| Deprecated field | Replacement |
-| --- | --- |
-| `TES::config`, `WES::config`, `DRS::config` | `configuration()`; the field is a copy that can differ from the transport's configuration, and goes away |
-| `TES::transport`, `WES::transport`, `DRS::transport` | `transport()`; to use another transport, build a client with `with_transport` |
-| `TES::service`, `WES::service`, `DRS::service` | `discovered_service_info()` |
-| A struct literal such as `TES { config, service, transport }` | `TES::without_discovery(transport, service)` (also `WES`, `DRS`), or a constructor that discovers |
-| `Discovered::client` | `client()`, `Deref`, or `into_parts()` |
-| `Discovered::capabilities` | `capabilities()` or `into_parts()` |
-| `Transport::config` | `configuration()`; to change it, build a new transport, for example with `with_timeouts` |
+The [client state ownership record](docs/state_ownership.md#migration) lists
+the replacement of each field.
 
 ### Migration notes
 

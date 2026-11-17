@@ -281,9 +281,6 @@ async fn native_wes_service_info_uses_discovery_timeout_and_ready_transport() {
 }
 
 #[tokio::test]
-// Shortens the limit of a discovered client through the deprecated fields:
-// no supported path changes a client's configuration after construction.
-#[allow(deprecated)]
 async fn refresh_uses_the_discovery_timeout() {
     let timeouts = Timeouts {
         request: SHORT,
@@ -295,7 +292,12 @@ async fn refresh_uses_the_discovery_timeout() {
         .await
         .unwrap();
     tes.refresh().await.unwrap();
-    tes.client.transport.config.timeouts.discovery = SHORT;
+    // Shortens the limit through the deprecated fields: no supported path
+    // changes a client's configuration after construction.
+    #[allow(deprecated)]
+    {
+        tes.client.transport.config.timeouts.discovery = SHORT;
+    }
     assert!(tes.refresh().await.is_err());
 
     let server = serve(slow_service_info("wes")).await;
@@ -303,7 +305,10 @@ async fn refresh_uses_the_discovery_timeout() {
         .await
         .unwrap();
     wes.refresh().await.unwrap();
-    wes.client.transport.config.timeouts.discovery = SHORT;
+    #[allow(deprecated)]
+    {
+        wes.client.transport.config.timeouts.discovery = SHORT;
+    }
     assert!(wes.refresh().await.is_err());
 }
 

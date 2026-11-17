@@ -50,7 +50,7 @@ pub struct DRS {
     #[allow(dead_code)]
     #[deprecated(
         note = "use `configuration()`, which reads the transport's configuration; \
-                this copy can differ from what requests use and will be removed"
+                requests never read this copy, and it will be removed"
     )]
     pub config: Configuration,
     /// The service info that the client read when it was built; also

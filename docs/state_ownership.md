@@ -300,28 +300,35 @@ becomes `tes.transport()` and `task.inner` becomes `task.inner()`. The
 
 ### Status
 
-- Additive release: the accessors
+No release contains these changes yet; the SDK has no tagged release.
+
+- Done (additive): the accessors
   ([#293](https://github.com/ga4gh/ga4gh-sdk/issues/293)) and
   `TES::without_discovery`, `WES::without_discovery`, and
   `DRS::without_discovery`
   ([#294](https://github.com/ga4gh/ga4gh-sdk/issues/294)).
-- Deprecation release
-  ([#294](https://github.com/ga4gh/ga4gh-sdk/issues/294)): the client,
-  `Discovered`, and `Transport` fields below are `#[deprecated]`. The SDK's
-  code, tests, CLI, Python bindings, and the downstream example use the
-  replacements. The remaining `#[allow(deprecated)]` attributes are on the
-  constructors and accessors that own the fields, `Discovered::refresh`,
-  unit tests that compare an accessor with its field, and
+- Done (deprecation,
+  [#294](https://github.com/ga4gh/ga4gh-sdk/issues/294)): the client,
+  `Discovered`, and `Transport` fields in the table below are
+  `#[deprecated]`. The SDK's code, tests, CLI, Python bindings, and the
+  downstream example use the replacements. The remaining
+  `#[allow(deprecated)]` attributes are on the constructors and accessors
+  that own the fields, `Discovered::refresh`, unit tests that compare an
+  accessor with its field, two statements of
   `refresh_uses_the_discovery_timeout` in `lib/tests/timeouts.rs`, which
-  shortens a limit after construction.
-  `compile_fail` documentation tests on `TES`, `DRS`, `Discovered`, and
-  `Transport` check that `#![deny(deprecated)]` rejects an assignment.
-- Breaking release: not yet; the fields become private after a release
-  with the deprecations.
+  shorten a limit after construction, and `lib/tests/deprecated_fields.rs`.
+  `compile_fail` documentation tests on `TES`, `WES`, `DRS`, `Discovered`,
+  and `Transport` check that `#![deny(deprecated)]` rejects an assignment;
+  `lib/tests/deprecated_fields.rs` shows that the same assignments compile
+  without it.
+- Planned (breaking): the fields become private in a release after one
+  that contains the deprecations.
+
+### Migration
 
 | Deprecated field | Replacement |
 | --- | --- |
-| `TES::config`, `WES::config`, `DRS::config` | `configuration()`; the field is a copy that can differ from the transport's configuration, and goes away |
+| `TES::config`, `WES::config`, `DRS::config` | `configuration()`; requests never read the field, a copy of the transport's configuration, and it goes away |
 | `TES::transport`, `WES::transport`, `DRS::transport` | `transport()`; to use another transport, build a client with `with_transport` |
 | `TES::service`, `WES::service`, `DRS::service` | `discovered_service_info()` |
 | A struct literal such as `TES { config, service, transport }` | `TES::without_discovery(transport, service)` (also `WES`, `DRS`), or a constructor that discovers |

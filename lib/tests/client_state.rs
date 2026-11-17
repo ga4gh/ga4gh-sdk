@@ -81,12 +81,32 @@ fn without_discovery_keeps_the_transport_and_service() {
             "drs",
         ),
     ] {
+        // Pins that `configuration()` is the transport's own value, not a copy.
         assert!(std::ptr::eq(configuration, own), "{artifact}");
         assert_eq!(configuration.base_path, config.base_path, "{artifact}");
         assert_eq!(configuration.timeouts.request, Duration::from_secs(7));
         assert_eq!(service.id, format!("org.example.{artifact}"));
         assert_eq!(service.r#type.artifact, artifact);
     }
+}
+
+/// Checks that each client reads the transport's configuration and the
+/// service info of `config`'s root, as every constructor must.
+macro_rules! assert_constructed {
+    ($config:expr, $artifact:expr, [$($client:expr),+ $(,)?]) => {{
+        $(
+            let client = $client;
+            assert_eq!(client.configuration().base_path, $config.base_path, "{}", $artifact);
+            assert_eq!(client.configuration().user_agent, $config.user_agent, "{}", $artifact);
+            assert_eq!(
+                client.transport().configuration().base_path,
+                $config.base_path,
+                "{}",
+                $artifact
+            );
+            assert_eq!(client.discovered_service_info().id, "org.example.constructors");
+        )+
+    }};
 }
 
 #[tokio::test]
@@ -99,119 +119,112 @@ async fn every_constructor_reads_the_transports_configuration() {
             .create();
         let config = config_below(&root);
         let transport = Transport::new(&config);
-        let configurations = match artifact {
-            "tes" => vec![
-                TES::new(&config).await.unwrap(),
-                TES::with_transport(transport.clone()).await.unwrap(),
-                TES::with_artifact(transport.clone(), "tes").await.unwrap(),
-                TES::discover(&config, Duration::from_secs(60))
-                    .await
-                    .unwrap()
-                    .into_parts()
-                    .0,
-            ]
-            .into_iter()
-            .map(|c| {
-                assert!(std::ptr::eq(
-                    c.configuration(),
-                    c.transport().configuration()
-                ));
-                (
-                    c.configuration().clone(),
-                    c.discovered_service_info().id.clone(),
-                )
-            })
-            .collect::<Vec<_>>(),
-            "wes" => vec![
-                WES::new(&config).await.unwrap(),
-                WES::with_transport(transport.clone()).await.unwrap(),
-                WES::with_artifact(transport.clone(), "wes").await.unwrap(),
-                WES::discover(&config, Duration::from_secs(60))
-                    .await
-                    .unwrap()
-                    .into_parts()
-                    .0,
-            ]
-            .into_iter()
-            .map(|c| {
-                assert!(std::ptr::eq(
-                    c.configuration(),
-                    c.transport().configuration()
-                ));
-                (
-                    c.configuration().clone(),
-                    c.discovered_service_info().id.clone(),
-                )
-            })
-            .collect(),
-            _ => vec![
-                DRS::new(&config).await.unwrap(),
-                DRS::with_transport(transport.clone()).await.unwrap(),
-                DRS::with_artifact(transport.clone(), "drs").await.unwrap(),
-            ]
-            .into_iter()
-            .map(|c| {
-                assert!(std::ptr::eq(
-                    c.configuration(),
-                    c.transport().configuration()
-                ));
-                (
-                    c.configuration().clone(),
-                    c.discovered_service_info().id.clone(),
-                )
-            })
-            .collect(),
-        };
-        for (configuration, id) in configurations {
-            assert_eq!(configuration.base_path, config.base_path, "{artifact}");
-            assert_eq!(configuration.user_agent, config.user_agent, "{artifact}");
-            assert_eq!(id, "org.example.constructors", "{artifact}");
+        let max_age = Duration::from_secs(60);
+        match artifact {
+            "tes" => assert_constructed!(
+                config,
+                artifact,
+                [
+                    TES::new(&config).await.unwrap(),
+                    TES::with_transport(transport.clone()).await.unwrap(),
+                    TES::with_artifact(transport.clone(), "tes").await.unwrap(),
+                    TES::discover(&config, max_age)
+                        .await
+                        .unwrap()
+                        .into_parts()
+                        .0,
+                    TES::discover_with_transport(transport.clone(), max_age)
+                        .await
+                        .unwrap()
+                        .into_parts()
+                        .0,
+                ]
+            ),
+            "wes" => assert_constructed!(
+                config,
+                artifact,
+                [
+                    WES::new(&config).await.unwrap(),
+                    WES::with_transport(transport.clone()).await.unwrap(),
+                    WES::with_artifact(transport.clone(), "wes").await.unwrap(),
+                    WES::discover(&config, max_age)
+                        .await
+                        .unwrap()
+                        .into_parts()
+                        .0,
+                    WES::discover_with_transport(transport.clone(), max_age)
+                        .await
+                        .unwrap()
+                        .into_parts()
+                        .0,
+                ]
+            ),
+            // DRS has no `discover`.
+            "drs" => assert_constructed!(
+                config,
+                artifact,
+                [
+                    DRS::new(&config).await.unwrap(),
+                    DRS::with_transport(transport.clone()).await.unwrap(),
+                    DRS::with_artifact(transport.clone(), "drs").await.unwrap(),
+                ]
+            ),
+            _ => unreachable!(),
         }
     }
 }
 
-#[tokio::test]
-async fn tes_refresh_keeps_the_transport_and_one_response() {
-    let root = "refresh-transport/ga4gh/tes/v1";
-    let config = config_below(root);
-    // Only the injected HTTP client sends this header, so the second
-    // service-info request proves that refresh kept the transport.
+/// An HTTP client that sends `x-client: injected`, which the default
+/// client never sends: a request with it proves that the transport was kept.
+fn injected_client() -> reqwest::Client {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("x-client", "injected".parse().unwrap());
-    let client = reqwest::Client::builder()
+    reqwest::Client::builder()
         .default_headers(headers)
         .build()
+        .unwrap()
+}
+
+/// Checks that `refresh` of a discovered `$client` sends its request through
+/// the original transport and replaces service and snapshot together.
+macro_rules! assert_refresh_keeps_transport {
+    ($client:ident, $artifact:expr) => {{
+        let root = format!("refresh-transport/ga4gh/{}/v1", $artifact);
+        let config = config_below(&root);
+        let path = format!("/{root}/service-info");
+        let first = mock("GET", path.as_str())
+            .match_header("x-client", "injected")
+            .with_body(info($artifact, "first").to_string())
+            .expect(1)
+            .create();
+        let mut discovered = $client::discover_with_transport(
+            Transport::with_client(&config, injected_client()),
+            Duration::from_secs(60),
+        )
+        .await
         .unwrap();
-    let first = mock("GET", format!("/{root}/service-info").as_str())
-        .match_header("x-client", "injected")
-        .with_body(info("tes", "first").to_string())
-        .expect(1)
-        .create();
-    let mut discovered = TES::discover_with_transport(
-        Transport::with_client(&config, client),
-        Duration::from_secs(60),
-    )
-    .await
-    .unwrap();
-    first.assert();
-    drop(first);
-    assert_eq!(discovered.client().discovered_service_info().id, "first");
-    assert_eq!(discovered.capabilities().raw["id"], "first");
+        first.assert();
+        drop(first);
+        assert_eq!(discovered.client().discovered_service_info().id, "first");
+        assert_eq!(discovered.capabilities().raw["id"], "first");
 
-    let second = mock("GET", format!("/{root}/service-info").as_str())
-        .match_header("x-client", "injected")
-        .with_body(info("tes", "second").to_string())
-        .expect(1)
-        .create();
-    discovered.refresh().await.unwrap();
-    second.assert();
+        let second = mock("GET", path.as_str())
+            .match_header("x-client", "injected")
+            .with_body(info($artifact, "second").to_string())
+            .expect(1)
+            .create();
+        discovered.refresh().await.unwrap();
+        second.assert();
 
-    assert_eq!(discovered.client().discovered_service_info().id, "second");
-    assert_eq!(discovered.capabilities().raw["id"], "second");
-    assert_eq!(discovered.configuration().base_path, config.base_path);
-    assert_eq!(discovered.configuration().user_agent, config.user_agent);
-    assert!(std::ptr::eq(
-        discovered.configuration(),
-        discovered.transport().configuration()
-    ));
+        assert_eq!(discovered.client().discovered_service_info().id, "second");
+        assert_eq!(discovered.capabilities().raw["id"], "second");
+        assert_eq!(discovered.configuration().base_path, config.base_path);
+        assert_eq!(discovered.configuration().user_agent, config.user_agent);
+    }};
+}
+
+#[tokio::test]
+async fn refresh_keeps_the_transport_and_one_response() {
+    assert_refresh_keeps_transport!(TES, "tes");
+    assert_refresh_keeps_transport!(WES, "wes");
 }

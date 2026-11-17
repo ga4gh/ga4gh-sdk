@@ -152,6 +152,16 @@ fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<s
 /// and [`discovered_service_info`](Self::discovered_service_info); the public
 /// fields are deprecated and become private in a later release (see the
 /// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md)).
+///
+/// With `#![deny(deprecated)]`, assigning a field fails to compile:
+///
+/// ```compile_fail
+/// #![deny(deprecated)]
+/// use ga4gh_sdk::clients::{serviceinfo::models::Service, wes::WES};
+/// fn swap_wes(wes: &mut WES, service: Service) {
+///     wes.service = service;
+/// }
+/// ```
 #[derive(Debug)]
 pub struct WES {
     /// A copy of the transport's configuration, made when the client was
@@ -160,7 +170,7 @@ pub struct WES {
     #[allow(dead_code)]
     #[deprecated(
         note = "use `configuration()`, which reads the transport's configuration; \
-                this copy can differ from what requests use and will be removed"
+                requests never read this copy, and it will be removed"
     )]
     pub config: Configuration,
     /// The service info that the client read when it was built; also
