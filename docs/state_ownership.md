@@ -5,15 +5,16 @@ This page records the decision for
 duplicated client state is authoritative, how callers may change it, and how
 the SDK moves from public fields to controlled access. It is a design record
 for maintainers and for authors of downstream Rust crates and Python
-extension crates. Apart from the [status](#status) below, it does not
-describe completed changes. The
+extension crates. Apart from the status notes, it does not describe
+completed changes. The
 [follow-ups](#follow-ups-and-deferrals) below track the implementation under
 [#176](https://github.com/ga4gh/ga4gh-sdk/issues/176).
 
 Status: [#293](https://github.com/ga4gh/ga4gh-sdk/issues/293) added the
-accessors of rule 4 and switched the Python `config` getters to them; the
-public fields remain. The [current state](#current-state) below describes the
-analysed commit.
+accessors of rule 4 and switched the Python `config` getters to them;
+[#294](https://github.com/ga4gh/ga4gh-sdk/issues/294) deprecated the public
+fields (see [Status](#status)). The [current state](#current-state) below
+describes the analysed commit.
 
 The analysis is a static inspection of commit
 [`a5d0175`](https://github.com/ga4gh/ga4gh-sdk/tree/a5d017513fd9091619a5feb338008c6f8fb02df4),
@@ -314,7 +315,9 @@ No release contains these changes yet; the SDK has no tagged release.
   downstream example use the replacements. The remaining
   `#[allow(deprecated)]` attributes are on the constructors and accessors
   that own the fields, `Discovered::refresh`, unit tests that compare an
-  accessor with its field, two statements of
+  accessor with its field or build a stale copy, `DRS::resolution_reference`
+  (until [#292](https://github.com/ga4gh/ga4gh-sdk/issues/292) reads the
+  transport's root), two statements of
   `refresh_uses_the_discovery_timeout` in `lib/tests/timeouts.rs`, which
   shorten a limit after construction, and `lib/tests/deprecated_fields.rs`.
   `compile_fail` documentation tests on `TES`, `WES`, `DRS`, `Discovered`,

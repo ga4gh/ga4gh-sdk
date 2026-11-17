@@ -152,6 +152,7 @@ mod tests {
     /// The `config` getter returns the transport's configuration, not the
     /// client's separate `config` copy.
     #[test]
+    #[allow(deprecated)] // builds a client whose deprecated copy is stale
     fn config_is_transport_configuration() {
         let root = "https://example.org/custom/ga4gh/wes/v9/";
         let transport = Transport::new(&Configuration::new(url::Url::parse(root).unwrap()));
