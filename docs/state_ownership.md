@@ -208,7 +208,7 @@ against `a5d0175`; the others follow from the code paths cited above.
 | `CapabilitySnapshot` | Snapshot with `fetched_at` and `max_age` | It comes from the same response as the discovered service of `Discovered::client`. `is_fresh` reports its age. |
 | `Task` and `Run` handles | Snapshot of the creating client's transport | Requests for the task or run use that transport. |
 | `ResolutionReference` | Credential-free snapshot of the API root and endpoint | Invariant: its `api_root` is the root that received the request. |
-| Client identity: API root, credentials, user agent, time limits | Invariant | Every request, discovery request, reference, and `configuration()` value uses the same configuration. |
+| Client API root and SDK-owned request policy | Invariant | Requests and DRS references use the API root in `transport.config`. SDK-configured authentication (when enabled), user agent, and discovery/submission budgets use that configuration too. An injected HTTP client keeps its own connect/request timeouts, redirects, and default headers; `configuration()` does not report their effective values. |
 | Python view: `inner`, accessors, `json()`, submitted body | Invariant | All of them describe the same JSON value. |
 
 ## Decision
@@ -216,9 +216,14 @@ against `a5d0175`; the others follow from the code paths cited above.
 ### Client state
 
 1. **The transport owns the client's identity.** The configuration of a
-   client's `Transport` determines its API root, credentials, user agent, and
-   time limits. Every other read of the configuration, including DRS
-   references and the Python `config` getters, uses
+   client's `Transport` determines its API root, SDK-configured credentials
+   when enabled, user agent, and discovery/submission budgets. An injected
+   HTTP client retains its own connect/request timeouts, redirect policy,
+   and default headers; these are not inferred from `transport.config`.
+   Requests through `with_client` reject configured credentials unless the
+   caller opts in with `with_client_and_configured_auth`.
+   Every other read of the configuration, including DRS references and the
+   Python `config` getters, uses
    `transport.config`. The separate `config` field becomes a deprecated copy,
    then goes away.
 2. **A client is immutable after construction.** To change the API root,
@@ -237,9 +242,9 @@ against `a5d0175`; the others follow from the code paths cited above.
    `capabilities()`, and `into_parts()`, and keeps `Deref`. `Transport` gets
    `configuration()`.
 5. **The transport's configuration is fixed after construction.** The values
-   that the HTTP client copied must not change without the client. Callers
-   that need other limits build a transport with `with_timeouts` or
-   `with_client`.
+   that an SDK-built HTTP client copied must not change without the client.
+   Callers that need other limits build a transport with `with_timeouts`, or
+   provide and configure their own HTTP client with `with_client`.
 6. **Passive records and handles keep public fields.** `Configuration`,
    `Timeouts`, `Task`, `Run`, `ResolutionReference`, and `PendingResolution`
    have no relationship between fields that the SDK must maintain.
@@ -359,11 +364,11 @@ follow-up.
 
 | Follow-up | Area | Depends on |
 | --- | --- | --- |
-| Build DRS resolution references from the transport root | Client state; correctness fix | — |
-| Add accessors to the TES, WES, DRS, `Discovered`, and `Transport` types | Client state; additive | #100 for the discovered service type |
-| Deprecate and then make private the client, `Discovered`, and `Transport` fields | Client state; breaking | The accessors; #100; #97 |
-| Make Python typed and raw views read-only for extension crates | Python views; additive, then breaking | — |
-| Connect `AsyncTES` with its own transport | Python views; correctness fix | — |
+| [#292](https://github.com/ga4gh/ga4gh-sdk/issues/292): build DRS resolution references from the transport root | Client state; correctness fix | — |
+| [#293](https://github.com/ga4gh/ga4gh-sdk/issues/293): add accessors to the TES, WES, DRS, `Discovered`, and `Transport` types | Client state; additive | #100 for the discovered service type |
+| [#294](https://github.com/ga4gh/ga4gh-sdk/issues/294): deprecate and then make private the client, `Discovered`, and `Transport` fields | Client state; breaking | #293; #100; #97 |
+| [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295): make Python typed and raw views read-only for extension crates | Python views; additive, then breaking | — |
+| [#296](https://github.com/ga4gh/ga4gh-sdk/issues/296): connect `AsyncTES` with its own transport | Python views; correctness fix | — |
 
 Explicit deferrals and decisions without a change:
 
