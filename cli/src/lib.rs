@@ -31,7 +31,7 @@
 //! [`CliContext::token_store_path`]). [`CommandOutput`] and
 //! [`printable`] give its own commands the output and exit codes of the
 //! built-in ones.
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 
 pub mod drs;
 mod login;

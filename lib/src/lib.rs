@@ -24,7 +24,7 @@
 //! The feature `workflow-contracts` adds the module `workflow`: revisioned
 //! workflow contracts, which prepare, submit and compare WES runs;
 //! preparation and comparison never execute jobs.
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 
 #[allow(unused_imports)]
 #[macro_use]
@@ -37,8 +37,5 @@ pub mod utils;
 /// HTTP types used by the public transport API.
 pub use reqwest;
 
-// Documented in #270. `workflow::reuse` turns the lint back on below this
-// allow (#269); #270 removes both.
-#[allow(missing_docs)]
 #[cfg(feature = "workflow-contracts")]
 pub mod workflow;

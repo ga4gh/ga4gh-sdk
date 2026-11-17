@@ -146,13 +146,15 @@ hand-written:
   [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). A new client
   whose models trigger these lints needs the same attribute.
 
-`ga4gh-lib` and `ga4gh-cli` warn on public items without a doc comment
-(`missing_docs`), so `make clippy` and CI fail on them. Document every new
-public item. The generated `models` modules are exempt, as the generator
-writes their docs from the OpenAPI specifications. Modules that are still
-being documented carry a temporary `#[allow(missing_docs)]` with a comment
-that names their issue (`// Documented in #<issue>`); the pull request
-that closes the issue removes it.
+`ga4gh-lib` and `ga4gh-cli` deny public items without a doc comment
+(`#![deny(missing_docs)]`), so every build fails on them, not only
+`make clippy` and CI. Document every new public item. Items behind the
+`workflow-contracts` feature are checked only in builds that enable it,
+such as workspace builds (the CLI enables it). The generated `models`
+modules are exempt, as the generator writes their docs from the OpenAPI
+specifications: the `models` module of every client carries
+`#[allow(missing_docs)]`, together with the Clippy allows above where
+those apply.
 
 ## Documentation
 
