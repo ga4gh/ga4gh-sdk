@@ -244,6 +244,23 @@ impl ResultRecord {
             None => Some(value),
         }
     }
+    // Checked before anything is read or recorded, so a malformed checksum
+    // fails the same way whether or not the read succeeds.
+    fn check_expected(expected: Option<&ExpectedChecksum>) -> Result<(), ContractError> {
+        let Some(expected) = expected else {
+            return Ok(());
+        };
+        if expected.algorithm.to_ascii_lowercase().replace('-', "") != "sha256" {
+            return Err("unsupported checksum algorithm".into());
+        }
+        if expected.evidence_source.trim().is_empty()
+            || expected.digest.len() != 64
+            || !expected.digest.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err("expected SHA-256 needs a valid digest and evidence source".into());
+        }
+        Ok(())
+    }
     fn evidence(&self, pointer: &str, expected: Option<ExpectedChecksum>) -> ArtifactEvidence {
         let value = self.value_at(pointer);
         ArtifactEvidence {
@@ -269,20 +286,20 @@ impl ResultRecord {
     /// The SHA-256 of `bytes` is compared with `expected`; without it, the
     /// integrity stays [`IntegrityStatus::Unverified`]. If the result has
     /// no value at `pointer`, the access is [`AccessStatus::Missing`],
-    /// `bytes` are ignored, and `expected` is recorded as given, without
-    /// checks.
+    /// `bytes` are ignored, and `expected` is recorded.
     ///
     /// # Errors
     ///
-    /// Fails, and records nothing, if there is a value at `pointer` and
-    /// `expected` names an algorithm other than SHA-256, its digest isn't
-    /// 64 hex digits, or its evidence source is blank.
+    /// Fails, and records nothing, if `expected` names an algorithm other
+    /// than SHA-256, its digest isn't 64 hex digits, or its evidence source
+    /// is blank, whether or not there is a value at `pointer`.
     pub fn verify_bytes(
         &mut self,
         pointer: &str,
         bytes: &[u8],
         expected: Option<ExpectedChecksum>,
     ) -> Result<(), ContractError> {
+        Self::check_expected(expected.as_ref())?;
         let mut evidence = self.evidence(pointer, expected);
         if self.value_at(pointer).is_none() {
             self.artifacts.insert(pointer.into(), evidence);
@@ -291,15 +308,6 @@ impl ResultRecord {
         evidence.access_status = AccessStatus::Available;
         evidence.computed_sha256 = Some(digest(bytes));
         if let Some(expected) = &evidence.expected {
-            if expected.algorithm.to_ascii_lowercase().replace('-', "") != "sha256" {
-                return Err("unsupported checksum algorithm".into());
-            }
-            if expected.evidence_source.trim().is_empty()
-                || expected.digest.len() != 64
-                || !expected.digest.bytes().all(|b| b.is_ascii_hexdigit())
-            {
-                return Err("expected SHA-256 needs a valid digest and evidence source".into());
-            }
             evidence.integrity_status = if expected
                 .digest
                 .eq_ignore_ascii_case(evidence.computed_sha256.as_ref().unwrap())
@@ -320,12 +328,13 @@ impl ResultRecord {
     /// SDK credentials. At most `max_bytes` are read, within the bounds of
     /// `operation`. If the request fails, returns no success status or
     /// goes over `max_bytes`, the access is [`AccessStatus::Inaccessible`]
-    /// and `expected` is recorded as given, without checks.
+    /// and `expected` is recorded.
     ///
     /// # Errors
     ///
-    /// Fails if the HTTP client can't be built, or, once the bytes are
-    /// read, as [`Self::verify_bytes`] does.
+    /// Fails, before reading and without recording anything, if `expected`
+    /// is malformed, as [`Self::verify_bytes`] does; also fails if the HTTP
+    /// client can't be built.
     pub async fn verify_access_plan(
         &mut self,
         pointer: &str,
@@ -334,6 +343,7 @@ impl ResultRecord {
         operation: &Operation,
         max_bytes: usize,
     ) -> Result<(), ContractError> {
+        Self::check_expected(expected.as_ref())?;
         if self.value_at(pointer).is_none() {
             let evidence = self.evidence(pointer, expected);
             self.artifacts.insert(pointer.into(), evidence);
@@ -373,13 +383,13 @@ impl ResultRecord {
     ///
     /// Resolution takes at most `max_attempts` attempts, as
     /// [`DrsResolver::access_plan`] does. If it fails, the access is
-    /// [`AccessStatus::Inaccessible`] and `expected` is recorded as given,
-    /// without checks.
+    /// [`AccessStatus::Inaccessible`] and `expected` is recorded.
     ///
     /// # Errors
     ///
-    /// Fails if the value at `pointer` is missing or isn't a string, or as
-    /// [`Self::verify_access_plan`] does.
+    /// Fails, before resolving, if `expected` is malformed, as
+    /// [`Self::verify_bytes`] does, or if the value at `pointer` is missing
+    /// or isn't a string; otherwise as [`Self::verify_access_plan`] does.
     #[allow(clippy::too_many_arguments)] // Explicit resolver, evidence and operation bounds stay caller-owned.
     pub async fn verify_drs(
         &mut self,
@@ -391,6 +401,7 @@ impl ResultRecord {
         max_attempts: usize,
         max_bytes: usize,
     ) -> Result<(), ContractError> {
+        Self::check_expected(expected.as_ref())?;
         let uri = self
             .value_at(pointer)
             .and_then(Value::as_str)
