@@ -140,7 +140,7 @@ fn help_describes_the_command() {
 #[test]
 fn reads_a_custom_section_of_the_selected_profile() {
     let info = mock("GET", "/si-profile/staging/service-info")
-        .match_header("authorization", "Basic dXNlcjpTRU5USU5FTF9QQVNT")
+        .match_header("authorization", "Basic Y2xpOlNFTlRJTkVMX1BBU1M=")
         .with_body(service_info("my-service").to_string())
         .create();
     let config = json!({
@@ -149,7 +149,7 @@ fn reads_a_custom_section_of_the_selected_profile() {
             "local": {"MY_SERVICE": {"base_path": root("/si-profile/local")}},
             "staging": {"MY_SERVICE": {
                 "base_path": root("/si-profile/staging"),
-                "basic_auth": {"username": "user", "password": "SENTINEL_PASS"},
+                "basic_auth": {"username": "cli", "password": "SENTINEL_PASS"},
             }}
         }
     });
