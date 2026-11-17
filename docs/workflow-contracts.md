@@ -137,8 +137,11 @@ The numeric rule is `abs(a-b) <= max(abs_tolerance,
 relative_tolerance * max(abs(a), abs(b)))`, inclusive at the boundary and defined
 at zero. JSON decimal numbers are compared using rational arithmetic, preserving
 integers above 2^53. Negative/non-finite policy tolerances are errors. JSON cannot
-represent NaN/infinity; nulls, missing values, invalid schema values and exhausted
-node/depth bounds are inconclusive. Large input files are bounded by the CLI.
+represent NaN/infinity; missing values, invalid schema values and exhausted
+node/depth bounds are inconclusive. Within a compared value, a definite difference
+(a differing value, a key on one side only, or arrays of different lengths) makes
+the output different; otherwise any compared `null` makes it inconclusive. The
+outcome doesn't depend on key order. Large input files are bounded by the CLI.
 
 Object member order is immaterial. Array order is significant unless explicitly
 ignored. Unordered-array mode is restricted to zero tolerance and compares canonical

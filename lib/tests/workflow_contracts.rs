@@ -314,6 +314,59 @@ fn json_order_ignored_metadata_array_order_and_bounds_are_explicit() {
         Outcome::Inconclusive
     );
 }
+#[test]
+fn json_metrics_outcome_ignores_key_order_and_nulls_yield_to_differences() {
+    let mut s = schema();
+    s["properties"]["outputs"]["properties"]["count"] = json!({"type":"object"});
+    let p = profile(s);
+    let outcome = |a: Value, b: Value| {
+        let project = |run: &str, count: Value| {
+            let mut r = p
+                .project_results(
+                    run,
+                    "COMPLETE",
+                    &json!({"count":count,"report":"https://example.org/qc"}),
+                )
+                .unwrap();
+            r.context.insert("workflow_digest".into(), "abc".into());
+            r
+        };
+        policy(0., 0.)
+            .compare(&project("a", a), &project("b", b))
+            .unwrap()
+            .outcome
+    };
+    // Keys are walked in sorted order, so each case is checked with the
+    // differing key first ("a") and last ("z").
+    for (first, last) in [("a", "z"), ("z", "a")] {
+        // A missing key beats a compared null
+        assert_eq!(
+            outcome(json!({first:1,last:null}), json!({last:null})),
+            Outcome::Different
+        );
+        // A differing value beats a compared null
+        assert_eq!(
+            outcome(json!({first:1,last:null}), json!({first:2,last:null})),
+            Outcome::Different
+        );
+        assert_eq!(
+            outcome(
+                json!({first:[1,{"x":null}],last:[null]}),
+                json!({first:[2,{"x":null}],last:[null]})
+            ),
+            Outcome::Different
+        );
+        // Without a difference, a compared null makes it inconclusive
+        assert_eq!(
+            outcome(json!({first:1,last:null}), json!({first:1,last:null})),
+            Outcome::Inconclusive
+        );
+        assert_eq!(
+            outcome(json!({first:1,last:2}), json!({first:1,last:2})),
+            Outcome::EquivalentUnderPolicy
+        );
+    }
+}
 #[tokio::test]
 async fn explicit_http_artifact_access_preserves_partial_records_and_no_credentials() {
     use ga4gh_sdk::{

@@ -45,13 +45,14 @@ pub enum Comparator {
     /// Numbers are read as exact decimals, without floating-point rounding,
     /// and are equal if they are within either tolerance. Objects must have
     /// the same keys, and arrays the same length, except under ignored
-    /// pointers. The values are walked with object keys in sorted order. A
-    /// key present on only one side of an object, or arrays of different
-    /// lengths, make that object or array differ without comparing the rest
-    /// of it. Any `null` that is compared makes the whole outcome
-    /// inconclusive, even if other values differ. Also inconclusive: a
-    /// value that is missing at the pointer or larger than the bounds, or a
-    /// path inside it whose JSON pointer is longer than 2048 bytes.
+    /// pointers. A key present on only one side of an object, or arrays of
+    /// different lengths, make that object or array differ; the keys present
+    /// on both sides are still compared. The outcome is different if any
+    /// compared value differs; otherwise inconclusive if any compared value
+    /// is `null`; otherwise equivalent. It doesn't depend on the order of
+    /// keys. Also inconclusive, even if values differ: a value that is
+    /// missing at the pointer or larger than the bounds, or a path inside it
+    /// whose JSON pointer is longer than 2048 bytes.
     JsonMetrics {
         /// The comparator version; must be 1.
         version: u32,
@@ -226,13 +227,26 @@ fn canonical(value: &Value) -> Option<String> {
         }
     })
 }
+// What a walk found, in precedence order: a definite difference beats a
+// compared `null`, which beats agreement. Combining with `max` makes the
+// result independent of the order in which keys and elements are walked.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Walk {
+    Equal,
+    Null,
+    Different,
+}
+// Walks every pair of values present on both sides, without stopping at the
+// first difference, so the set of walked pairs, and with it the budget and
+// pointer-length checks, doesn't depend on the walk order. `None` means the
+// bounds were exceeded.
 fn metrics(
     a: &Value,
     b: &Value,
     pointer: &str,
     rules: &MetricRules<'_>,
     budget: &mut usize,
-) -> Option<bool> {
+) -> Option<Walk> {
     let MetricRules {
         absolute,
         relative,
@@ -244,28 +258,29 @@ fn metrics(
     }
     *budget -= 1;
     if ignored.iter().any(|p| p == pointer) {
-        return Some(true);
+        return Some(Walk::Equal);
     }
+    let same = |equal: bool| if equal { Walk::Equal } else { Walk::Different };
     match (a, b) {
-        (Value::Number(a), Value::Number(b)) => numeric(a, b, *absolute, *relative),
+        (Value::Number(a), Value::Number(b)) => numeric(a, b, *absolute, *relative).map(same),
         (Value::Object(a), Value::Object(b)) => {
-            let mut result = true;
+            let mut result = Walk::Equal;
             let keys: std::collections::BTreeSet<_> = a.keys().chain(b.keys()).collect();
             for key in keys {
                 let next = format!("{pointer}/{}", super::pointer_segment(key));
                 if ignored.contains(&next) {
                     continue;
                 }
-                match (a.get(key), b.get(key)) {
-                    (Some(a), Some(b)) => result &= metrics(a, b, &next, rules, budget)?,
-                    _ => return Some(false),
-                }
+                result = result.max(match (a.get(key), b.get(key)) {
+                    (Some(a), Some(b)) => metrics(a, b, &next, rules, budget)?,
+                    _ => Walk::Different,
+                });
             }
             Some(result)
         }
         (Value::Array(a), Value::Array(b)) => {
             if a.len() != b.len() {
-                return Some(false);
+                return Some(Walk::Different);
             }
             let mut a = a.iter().collect::<Vec<_>>();
             let mut b = b.iter().collect::<Vec<_>>();
@@ -273,14 +288,14 @@ fn metrics(
                 a.sort_by_cached_key(|v| canonical(v));
                 b.sort_by_cached_key(|v| canonical(v));
             }
-            let mut result = true;
+            let mut result = Walk::Equal;
             for (index, (a, b)) in a.iter().zip(&b).enumerate() {
-                result &= metrics(a, b, &format!("{pointer}/{index}"), rules, budget)?;
+                result = result.max(metrics(a, b, &format!("{pointer}/{index}"), rules, budget)?);
             }
             Some(result)
         }
-        (Value::Null, _) | (_, Value::Null) => None,
-        _ => Some(a == b),
+        (Value::Null, _) | (_, Value::Null) => Some(Walk::Null),
+        _ => Some(same(a == b)),
     }
 }
 impl ComparisonPolicy {
@@ -380,9 +395,9 @@ impl ComparisonPolicy {
                                 },
                                 &mut max_nodes.to_owned(),
                             ) {
-                                Some(true) => Outcome::EquivalentUnderPolicy,
-                                Some(false) => Outcome::Different,
-                                None => Outcome::Inconclusive,
+                                Some(Walk::Equal) => Outcome::EquivalentUnderPolicy,
+                                Some(Walk::Different) => Outcome::Different,
+                                Some(Walk::Null) | None => Outcome::Inconclusive,
                             }
                         }
                         _ => Outcome::Inconclusive,
