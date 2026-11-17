@@ -198,9 +198,10 @@ of the context's file, including the binary's own: the example's test runs
 `downstream-cli service-info --service QUOTA` with the `QUOTA` section's
 credential. See the [Service Info command](../cli/README.md#service-info-command).
 A binary that added its own top-level `service-info` subcommand before this
-built-in one must rename it, since Clap rejects two subcommands with the same
-name, or replace the built-in one with `mut_subcommand("service-info", ...)`
-and handle it before calling the built-in dispatcher.
+built-in one must rename it, or replace the built-in one with
+`mut_subcommand("service-info", ...)` and handle it before calling the
+built-in dispatcher. Otherwise debug builds panic on the duplicate name, and
+release builds parse the command as the built-in one and run it.
 
 The configuration file can hold [profiles](usage.md#profiles). The context's
 command tree has a global `--profile` option; its dispatch methods apply it

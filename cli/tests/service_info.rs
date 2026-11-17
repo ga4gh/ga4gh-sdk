@@ -210,7 +210,16 @@ fn a_missing_section_or_service_option_fails_before_a_request() {
         .env_remove("GA4GH_CLI_PROFILE")
         .output()
         .unwrap();
-    assert_failure(&output, "");
+    assert_failure(&output, "Cannot read configuration file");
+
+    // A token variable that the section names but that isn't set; the port
+    // is closed, so a request would give another error.
+    let config = json!({"TES": {
+        "base_path": "http://127.0.0.1:9/",
+        "oauth_access_token_env": "GA4GH_CLI_TEST_SERVICE_INFO_UNSET",
+    }});
+    let output = run(&config, &["service-info", "--service", "TES"]);
+    assert_failure(&output, "'GA4GH_CLI_TEST_SERVICE_INFO_UNSET' is not set");
 
     let output = run(&config, &["service-info"]);
     assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));

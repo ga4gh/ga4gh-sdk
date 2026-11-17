@@ -843,9 +843,9 @@ All commands treat values from a service the same way:
   told apart from a value that contains the same backslash sequence. Values
   without such characters are printed unchanged.
 - `tes get`, `wes get`, `drs get`, `drs access` and `service-info` preserve
-  the server's JSON values, field order, whitespace and number spelling. Raw control and
-  bidirectional formatting characters inside strings become equivalent JSON
-  `\u` escapes. A response that isn't valid JSON is reported as an error on
+  the server's JSON values, field order, whitespace and number spelling. Raw
+  control and bidirectional formatting characters inside strings become
+  equivalent JSON `\u` escapes. A response that isn't valid JSON is reported as an error on
   stderr, with exit code 1. JSON may still contain layout whitespace between
   values; its strings cannot contain unescaped C0 controls such as ESC.
 - `tes list --all --format jsonl` and `wes list --all --format jsonl` write
