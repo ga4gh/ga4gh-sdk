@@ -261,6 +261,9 @@ this guide in the same pull request.
   The SDK supports other credential sources described in the
   [authentication guide](authentication.md); this example does not exercise
   each one.
+- The example assigns and reads public client fields, such as
+  `tes.transport`. The [client state ownership record](state_ownership.md)
+  describes the planned move to constructors and accessors.
 - The example is Rust only. Building on the Python bindings is tracked in
   [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78), with the other
   remaining steps for downstream SDKs.

@@ -223,6 +223,9 @@ data records. See the [Rust API Guidelines on private fields](https://rust-lang.
 Represent lifecycle states deliberately: construction, discovery, and readiness
 need not be the same operation. Do not retain an impossible failure state after
 a constructor has already rejected it unless another supported path needs it.
+The [client state ownership record](state_ownership.md) applies these rules
+to the service clients, their transports and discovery results, and the
+typed and raw views of the Python bindings.
 
 Allow callers to supply transport or operation policy where a supported use case
 requires it, and carry that policy through discovery and subsequent requests.
@@ -519,7 +522,7 @@ for each procedure and link to it instead of maintaining competing copies.
 Check the documented behavior against the current implementation and intended
 contract; do not rewrite a promise solely to conceal an implementation defect.
 The [technical writing guide](technical_writing.md) offers advisory help for
-the affected prose until #185 evaluates the pilot.
+the affected prose.
 Clear wording and verified technical instructions are separate requirements;
 [Google's documentation review guidance](https://google.github.io/eng-practices/review/reviewer/looking-for.html#documentation)
 also treats documentation updates as part of a behavior change.

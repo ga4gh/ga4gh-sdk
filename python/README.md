@@ -30,6 +30,9 @@ To build the bindings from source:
 - CPython 3.11 or newer (PyPy and free-threaded builds are not supported)
 - The [Rust toolchain](../README.md#installation)
 
+The bindings use rustls, so unlike the library's default build, building them
+with maturin needs no OpenSSL development files or `pkg-config` on Linux.
+
 ## Installation
 
 From the repository root, create an environment, build the bindings, and check

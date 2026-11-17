@@ -3,7 +3,9 @@
 This guide describes the tools for working on the SDK: the `Makefile`,
 pre-commit hooks, coverage, lints, the CI checks, and the issue and pull
 request templates. The rules for changes and the standard checks are in
-[AGENTS.md](../AGENTS.md); run all commands from the repository root.
+[AGENTS.md](../AGENTS.md); run all commands from the repository root. For an
+introduction to the repository layout, setup and tests, start with the
+[developer guide](../DEVELOPER_GUIDE.md).
 
 ## Engineering and review guidance
 
