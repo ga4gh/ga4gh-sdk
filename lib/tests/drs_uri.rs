@@ -41,18 +41,28 @@ fn hostname_uri_decodes_exactly_once_and_rejects_unsupported_forms() {
         DrsUri::parse("https://drs.example/id"),
         Err(UriError::UnsupportedScheme)
     );
-    // A port or an IPv6 host isn't a compact identifier
+    // A port or an IPv6 host isn't a compact identifier. Digits after a ':'
+    // and before a '/' count as a port, also where they could be a compact
+    // accession with a slash.
     for uri in [
         "drs://drs.example:8443/id",
         "drs://drs.example:443/id",
+        "drs://dg.4503:123/456",
         "drs://[::1]:8443/id",
+        "drs://[::1]:/id",
+        "drs://[::1]x/id",
+        "drs://[::1/id",
     ] {
         assert_eq!(DrsUri::parse(uri), Err(UriError::Malformed), "{uri}");
     }
     let uri = DrsUri::parse("drs://[2001:DB8::1]/id").unwrap();
     assert_eq!(uri.authority, "[2001:db8::1]");
     assert_eq!(uri.object_id, "id");
-    for uri in ["drs://dg.4503:accession", "drs://dg.4503:123456"] {
+    for uri in [
+        "drs://dg.4503:accession",
+        "drs://dg.4503:123456",
+        "drs://dg.4503:abc/with/slash",
+    ] {
         assert_eq!(
             DrsUri::parse(uri),
             Err(UriError::UnsupportedCompactIdentifier),
