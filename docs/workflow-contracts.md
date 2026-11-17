@@ -34,7 +34,9 @@ The immutable library `PreparedInvocation` records exact request parameters,
 workflow/descriptor identity, exact schema-byte digest, pins, the complete profile,
 expected outputs and a fingerprint. Private fields and the absence of Deserialize
 prevent submitting an edited serialized plan as a validated object. Prepare again
-for changed parameters, identities or schemas. The fingerprint is the SHA-256 of
+for changed parameters, identities or schemas. Preparation rejects a request whose
+`extra` fields name a RunWorkflow part, such as `workflow_params` or `tags`, as
+submission does. The fingerprint is the SHA-256 of
 the plan's canonical JSON (compact, keys sorted at every level), so it doesn't
 depend on the order of map entries such as the request's `tags` and
 `workflow_engine_parameters`; parameter values are retained. A caller supplies
@@ -139,7 +141,8 @@ relative_tolerance * max(abs(a), abs(b)))`, inclusive at the boundary and define
 at zero. JSON decimal numbers are compared using rational arithmetic, preserving
 integers above 2^53. Negative/non-finite policy tolerances are errors. JSON cannot
 represent NaN/infinity; a value missing at the compared output pointer, invalid
-schema values and exhausted node/depth bounds are inconclusive. Within a compared value, a definite difference
+schema values, exhausted node/depth bounds and JSON pointers longer than 2048
+bytes are inconclusive. Within a compared value, a definite difference
 (a differing value, a key on one side only, or arrays of different lengths) makes
 the output different; otherwise any compared `null` makes it inconclusive. The
 outcome doesn't depend on key order. Large input files are bounded by the CLI.

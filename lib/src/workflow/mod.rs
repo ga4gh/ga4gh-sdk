@@ -19,7 +19,9 @@
 pub mod compare;
 pub mod results;
 pub mod reuse;
-use crate::clients::wes::{models::RunRequest, Run, WorkflowAttachment, WES};
+use crate::clients::wes::{
+    attachments::RESERVED_PARTS, models::RunRequest, Run, WorkflowAttachment, WES,
+};
 use jsonschema::{Draft, Retrieve, Uri, Validator};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -328,8 +330,9 @@ impl Profile {
     ///
     /// Fails if `identity.workflow` is blank; if `workflow_url`,
     /// `workflow_type` or `workflow_type_version` of the request is blank;
-    /// if a key of the request's `extra` names a field that the request
-    /// sets, such as `workflow_params`; if the request has no
+    /// if a key of the request's `extra` names a RunWorkflow part, such as
+    /// `workflow_params`, `tags` or `workflow_attachment`, which submitting
+    /// would reject too; if the request has no
     /// `workflow_params`; or if they don't conform to the input schema,
     /// with the [`Diagnostic`]s as JSON in the message.
     pub fn prepare(
@@ -351,14 +354,14 @@ impl Profile {
                 );
             }
         }
-        // A flattened `extra` key would duplicate a field in the JSON, and
-        // the fingerprint would hash only one of the two values
-        let mut fields = request.clone();
-        fields.extra.clear();
-        if let Value::Object(fields) = serde_json::to_value(&fields)? {
-            if let Some(key) = request.extra.keys().find(|k| fields.contains_key(*k)) {
-                return Err(format!("request extra field {key} duplicates a request field").into());
-            }
+        // A flattened `extra` key could stand in for, or duplicate, a request
+        // field in the fingerprinted JSON; submitting rejects these keys too
+        if let Some(key) = request
+            .extra
+            .keys()
+            .find(|k| RESERVED_PARTS.contains(&k.as_str()))
+        {
+            return Err(format!("request extra field {key} is a reserved request part").into());
         }
         let errors = self.validate_inputs(
             request

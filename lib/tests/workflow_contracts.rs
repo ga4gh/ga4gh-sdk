@@ -108,8 +108,10 @@ fn prepare_rejects_extra_fields_that_shadow_request_fields() {
     // The fingerprint would hash the extra value instead of the validated one
     assert!(prepare(json!({"workflow_params":{"mode":"slow"}})).is_err());
     assert!(prepare(json!({"workflow_url":"other.cwl"})).is_err());
-    // Fields that the request doesn't set aren't shadowed
-    assert!(prepare(json!({"tags":{"a":"b"},"vendor_option":1})).is_ok());
+    // Submitting rejects these too, even if the request leaves them unset
+    assert!(prepare(json!({"tags":{"a":"b"}})).is_err());
+    assert!(prepare(json!({"workflow_attachment":"x"})).is_err());
+    assert!(prepare(json!({"vendor_option":1})).is_ok());
 }
 #[test]
 fn rejects_unresolved_refs_unknown_required_vocab_and_invalid_schema() {
@@ -400,7 +402,16 @@ fn json_metrics_outcome_ignores_key_order_and_nulls_yield_to_differences() {
             Outcome::EquivalentUnderPolicy
         );
     }
-    // Exceeded bounds stay inconclusive, even with a difference
+    // A key whose JSON pointer is too long is inconclusive, even on one
+    // side only
+    let long = "k".repeat(2100);
+    let long = long.as_str();
+    assert_eq!(outcome(json!({long: 1}), json!({})), Outcome::Inconclusive);
+    assert_eq!(
+        outcome(json!({"a": 1, long: 1}), json!({"a": 2})),
+        Outcome::Inconclusive
+    );
+    // Values over the node bound stay inconclusive, even with a difference
     let wide = |n: i64| {
         Value::Object(
             (0..200)
