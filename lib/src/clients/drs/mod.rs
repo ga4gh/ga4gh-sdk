@@ -118,9 +118,8 @@ impl DRS {
     }
 
     /// The service info that the client read when it was built. It is a
-    /// snapshot: the client does not fetch it again. Only
-    /// `Discovered::refresh` replaces it, together with the capability
-    /// snapshot.
+    /// snapshot: the client does not fetch it again, and the SDK never
+    /// replaces it.
     pub fn discovered_service_info(&self) -> &Service {
         &self.service
     }

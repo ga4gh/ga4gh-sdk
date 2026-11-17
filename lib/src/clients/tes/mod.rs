@@ -249,7 +249,7 @@ impl TES {
     }
 
     /// The service info that the client read when it was built. It is a
-    /// snapshot: the client does not fetch it again. Only
+    /// snapshot: the client does not fetch it again. Within the SDK, only
     /// `Discovered::refresh` replaces it, together with the capability
     /// snapshot.
     pub fn discovered_service_info(&self) -> &Service {

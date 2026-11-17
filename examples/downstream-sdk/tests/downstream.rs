@@ -29,20 +29,23 @@ fn config(root: &str) -> Configuration {
     Configuration::new(Url::parse(&api_root(root)).unwrap())
 }
 
+/// The body of a TES service-info response.
+fn service_info_body() -> String {
+    json!({
+        "id": "org.example.tes",
+        "name": "Example TES",
+        "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
+        "organization": {"name": "Example", "url": "https://example.org"},
+        "version": "1.0.0"
+    })
+    .to_string()
+}
+
 /// A TES service-info response beneath `root`.
 fn service_info(root: &str) -> Mock {
     mock("GET", format!("/{root}/ga4gh/tes/v1/service-info").as_str())
         .with_status(200)
-        .with_body(
-            json!({
-                "id": "org.example.tes",
-                "name": "Example TES",
-                "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
-                "organization": {"name": "Example", "url": "https://example.org"},
-                "version": "1.0.0"
-            })
-            .to_string(),
-        )
+        .with_body(service_info_body())
         .create()
 }
 
@@ -63,16 +66,7 @@ async fn usage_client_shares_the_tes_clients_transport() {
     let info = mock("GET", "/shared/ga4gh/tes/v1/service-info")
         .match_header("x-client", "injected")
         .with_status(200)
-        .with_body(
-            json!({
-                "id": "org.example.tes",
-                "name": "Example TES",
-                "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
-                "organization": {"name": "Example", "url": "https://example.org"},
-                "version": "1.0.0"
-            })
-            .to_string(),
-        )
+        .with_body(service_info_body())
         .expect(1)
         .create();
     let _usage = mock("GET", "/shared/ga4gh/tes/v1/tasks/task%201/usage")
