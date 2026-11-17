@@ -104,6 +104,7 @@ use crate::utils::configuration::Configuration;
 /// Existing import path for the shared path-segment encoder.
 pub use crate::utils::transport::urlencode;
 use crate::utils::transport::Transport;
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json;
 use serde_json::from_str;
@@ -209,31 +210,24 @@ impl TES {
     /// # Returns
     /// - A new `TES` instance, or an error if the initialization fails.
     pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
-        let service = crate::clients::serviceinfo::fetch(&transport, "service-info").await?;
+        Self::with_artifact(transport, "tes").await
+    }
 
-        let instance = TES {
+    /// Creates a new `TES` instance, as [`Self::with_transport`] does, for a
+    /// service whose service info names `artifact` in place of `tes`, for
+    /// example a downstream service with a TES API.
+    ///
+    /// # Errors
+    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if the service info names
+    /// another artifact; the errors of the service-info request otherwise.
+    pub async fn with_artifact(transport: Transport, artifact: &str) -> crate::Result<Self> {
+        let service = crate::clients::serviceinfo::fetch(&transport, "service-info").await?;
+        crate::clients::serviceinfo::check_artifact(&service, artifact, "TES")?;
+        Ok(TES {
             config: transport.config.clone(),
             transport,
             service,
-        };
-
-        instance.check()?; // Propagate the error if check() fails
-        Ok(instance)
-    }
-
-    /// Checks that the service is a TES.
-    ///
-    /// # Errors
-    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if its service info names
-    /// another artifact.
-    fn check(&self) -> crate::Result<()> {
-        if self.service.r#type.artifact == "tes" {
-            Ok(())
-        } else {
-            Err(crate::Error::UnexpectedService(
-                "The endpoint is not an instance of TES".to_owned(),
-            ))
-        }
+        })
     }
 
     /// Creates a new TES task.
@@ -244,10 +238,14 @@ impl TES {
     /// # Returns
     /// - On success, returns a `Task` containing the created task details.
     /// - On failure, returns an error.
-    pub async fn create(
-        &self,
-        task: TesTask, /*, params: models::TesTask*/
-    ) -> crate::Result<Task> {
+    pub async fn create(&self, task: TesTask) -> crate::Result<Task> {
+        self.create_as(&task).await
+    }
+
+    /// Creates a task of any type that serializes to a TES task, for example a
+    /// downstream type that adds fields of its own, as [`Self::create_value`]
+    /// does.
+    pub async fn create_as<T: Serialize + ?Sized>(&self, task: &T) -> crate::Result<Task> {
         self.create_value(serde_json::to_value(task)?).await
     }
 
@@ -262,11 +260,6 @@ impl TES {
     /// the service may have created the task.
     pub async fn create_value(&self, task: Value) -> crate::Result<Task> {
         let _: TesTask = serde_json::from_value(task.clone())?;
-        // First, check if the service is of TES class
-        self.check().map_err(|e| {
-            log::error!("Service check failed: {}", e);
-            e
-        })?;
         let operation =
             crate::utils::operation::Operation::new(self.transport.config.timeouts.submission);
         // The token provider runs within the operation; running out of time
@@ -305,6 +298,12 @@ impl TES {
     /// - On success, returns a `TesTask` containing the task details.
     /// - On failure, returns an error.
     pub async fn get(&self, view: TesView, id: &str) -> crate::Result<TesTask> {
+        self.get_as(view, id).await
+    }
+
+    /// Retrieves a task as any type that deserializes from the server's task
+    /// JSON, for example a downstream type that reads fields of its own.
+    pub async fn get_as<T: DeserializeOwned>(&self, view: TesView, id: &str) -> crate::Result<T> {
         let response = self.get_raw(view, id).await?;
         Ok(from_str(&response)?)
     }

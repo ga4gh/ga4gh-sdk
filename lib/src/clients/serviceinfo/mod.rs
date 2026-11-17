@@ -73,6 +73,30 @@ pub(crate) async fn fetch(transport: &Transport, endpoint: &str) -> crate::Resul
     }
 }
 
+/// Checks that `service` names `artifact`; `api` names the API in the error,
+/// for example `TES`.
+///
+/// # Errors
+/// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if the service
+/// info names another artifact.
+pub(crate) fn check_artifact(
+    service: &models::Service,
+    artifact: &str,
+    api: &str,
+) -> crate::Result<()> {
+    if service.r#type.artifact == artifact {
+        return Ok(());
+    }
+    let expected = if artifact == api.to_ascii_lowercase() {
+        api.to_owned()
+    } else {
+        format!("'{artifact}'")
+    };
+    Err(crate::Error::UnexpectedService(format!(
+        "The endpoint is not an instance of {expected}"
+    )))
+}
+
 /// A service-info request of a client constructor that the service answered
 /// with an error status, with a hint if the API root seems wrong. The request's
 /// error stays available as the source and through

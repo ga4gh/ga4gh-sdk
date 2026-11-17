@@ -25,6 +25,7 @@ use crate::utils::configuration::Configuration;
 /// Existing import path for the shared path-segment encoder.
 pub use crate::utils::transport::urlencode;
 use crate::utils::transport::Transport;
+use serde::de::DeserializeOwned;
 use serde_json::from_str;
 use serde_json::json;
 
@@ -88,16 +89,16 @@ impl Run {
 
     /// Fetches the details of the run (including logs and outputs).
     pub async fn log(&self) -> crate::Result<RunLog> {
-        let id = &self.id;
-        let url = format!("runs/{}", urlencode(id));
-        let response = self.transport.get(&url, None).await;
-        match response {
-            Ok(resp_str) => {
-                let log: RunLog = from_str(&resp_str)?;
-                Ok(log)
-            }
-            Err(e) => Err(e),
-        }
+        self.log_as().await
+    }
+
+    /// Fetches the details of the run as any type that deserializes from the
+    /// server's run log JSON, for example a downstream type that reads fields
+    /// of its own.
+    pub async fn log_as<T: DeserializeOwned>(&self) -> crate::Result<T> {
+        let url = format!("runs/{}", urlencode(&self.id));
+        let response = self.transport.get(&url, None).await?;
+        Ok(from_str(&response)?)
     }
 
     /// Lists the tasks of the run, one page at a time (WES 1.1 `ListTasks`).
@@ -175,36 +176,34 @@ impl WES {
     /// request keep their variant, such as
     /// [`Error::Transport`](crate::Error::Transport).
     pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
+        Self::with_artifact(transport, "wes").await
+    }
+
+    /// Creates a new `WES` instance, as [`Self::with_transport`] does, for a
+    /// service whose service info names `artifact` in place of `wes`, for
+    /// example a downstream service with a WES API.
+    ///
+    /// # Errors
+    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if the
+    /// service info names another artifact; otherwise the errors of the
+    /// service-info request, as for [`Self::with_transport`].
+    pub async fn with_artifact(transport: Transport, artifact: &str) -> crate::Result<Self> {
         let service = crate::clients::serviceinfo::fetch_raw(&transport, "service-info")
             .await
             .and_then(|body| service_from_info(from_str(&body)?))
             .map_err(|source| DiscoveryError { api: "WES", source })?;
-
-        let instance = WES {
+        crate::clients::serviceinfo::check_artifact(&service, artifact, "WES")?;
+        Ok(WES {
             config: transport.config.clone(),
             transport,
             service,
-        };
-
-        instance.check()?;
-        Ok(instance)
+        })
     }
 
     /// Discovers WES with a caller-owned transport, including its authenticated
     /// client. Kept for callers that used this name before `with_transport`.
     pub async fn from_transport(transport: Transport) -> crate::Result<Self> {
         Self::with_transport(transport).await
-    }
-
-    // Checks that the service is a WES.
-    fn check(&self) -> crate::Result<()> {
-        if self.service.r#type.artifact == "wes" {
-            Ok(())
-        } else {
-            Err(crate::Error::UnexpectedService(
-                "The endpoint is not an instance of WES".to_owned(),
-            ))
-        }
     }
 
     /// Creates a new workflow run.
@@ -272,8 +271,15 @@ impl WES {
 
     /// Get run full details (wrapper around Run::log for convenience from client)
     pub async fn get_run(&self, id: &str) -> crate::Result<RunLog> {
-        let run = Run::new(id.to_string(), self.transport.clone());
-        run.log().await
+        self.get_run_as(id).await
+    }
+
+    /// Gets a run's details as any type that deserializes from the server's
+    /// run log JSON, as [`Run::log_as`] does.
+    pub async fn get_run_as<T: DeserializeOwned>(&self, id: &str) -> crate::Result<T> {
+        Run::new(id.to_string(), self.transport.clone())
+            .log_as()
+            .await
     }
 }
 

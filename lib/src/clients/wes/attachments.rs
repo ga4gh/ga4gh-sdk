@@ -139,7 +139,6 @@ impl WES {
         attachments: Vec<StreamingAttachment>,
         operation: &Operation,
     ) -> crate::Result<Run> {
-        self.check()?;
         let mut names = HashSet::new();
         for attachment in &attachments {
             validate_filename(&attachment.filename)?;

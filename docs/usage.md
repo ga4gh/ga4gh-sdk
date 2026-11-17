@@ -201,8 +201,8 @@ Rust clients, the CLI and the Python bindings read them from there:
 | --- | --- | --- |
 | `connect` | 10 s | Opening each connection, including TLS, within any of the limits below. |
 | `request` | 60 s | Each request that none of the limits below applies to, from sending it to reading the whole response. |
-| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`. |
-| `submission` | 300 s | One TES task or WES run submission: `TES::create`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. |
+| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `with_artifact`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`. |
+| `submission` | 300 s | One TES task or WES run submission: `TES::create`, `TES::create_as`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. |
 
 `discovery` and `submission` replace `request` for their requests, so they can
 be longer or shorter than `request`. Calls that take an `Operation`, such as
@@ -459,6 +459,14 @@ let details = tes.get(TesView::Full, &task.id).await?;
 
 To cancel a task that is still running, call `task.cancel().await?`.
 
+`create_as` and `get_as` take and return other types than `TesTask`, for
+example a downstream type that adds fields of its own (see
+[Build on this SDK](downstream.md#a-model-that-extends-testask)):
+`tes.create_as(&my_task).await?` and
+`let mine: MyTask = tes.get_as(TesView::Full, id).await?;`.
+For a service whose service info names another artifact than `tes`, use
+`TES::with_artifact(transport, "my-artifact")`.
+
 ### WES
 
 ```rust
@@ -484,7 +492,10 @@ run.cancel().await?;
 
 `WES::run_workflow_with_attachments` uploads workflow files along with the
 request, for services that accept `workflow_attachment`. Use a workflow URL and
-type/version supported by the target WES service.
+type/version supported by the target WES service. `WES::get_run_as` and
+`Run::log_as` read a run log into another type than `RunLog`, and
+`WES::with_artifact` accepts a service whose service info names another
+artifact than `wes`.
 
 ### DRS
 
@@ -507,7 +518,10 @@ wait for it within an `Operation` budget. `get_bulk_objects` and
 under a `BulkPolicy`. `uri::DrsResolver` plans access for hostname-based `drs://`
 URIs. The `_raw` variants (`get_object_raw`, `get_access_url_raw`,
 `resolve_reference_raw`, `get_bulk_objects_raw`, `get_bulk_access_urls_raw`) keep the
-server's JSON, including fields that the models don't know.
+server's JSON, including fields that the models don't know, and `get_object_as`
+reads an object into another type than `DrsObject`. `DRS::with_artifact`
+accepts a service whose service info names another artifact than `drs`, in any
+group; `new` and `with_transport` require the group `org.ga4gh`.
 
 ### TRS
 

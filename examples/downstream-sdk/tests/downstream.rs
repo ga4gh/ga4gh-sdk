@@ -197,6 +197,42 @@ async fn prioritized_task_sends_and_reads_the_extra_field() {
     );
 }
 
+#[tokio::test]
+async fn tes_client_accepts_the_artifact_of_the_extended_service() {
+    let _info = mock("GET", "/artifact/ga4gh/tes/v1/service-info")
+        .with_status(200)
+        .with_body(
+            json!({
+                "id": "org.example.prioritized",
+                "name": "Example TES with priorities",
+                "type": {"group": "org.example", "artifact": "prioritized-tes", "version": "1.1.0"},
+                "organization": {"name": "Example", "url": "https://example.org"},
+                "version": "1.0.0"
+            })
+            .to_string(),
+        )
+        .create();
+    let created = mock("POST", "/artifact/ga4gh/tes/v1/tasks")
+        .match_body(Matcher::PartialJson(json!({"priority": 2})))
+        .with_status(200)
+        .with_body(r#"{"id":"task-2"}"#)
+        .create();
+    let config = config("artifact");
+
+    let error = TES::new(&config).await.unwrap_err();
+    assert!(
+        matches!(error, ga4gh_sdk::Error::UnexpectedService(_)),
+        "{error:?}"
+    );
+
+    let tes = TES::with_artifact(Transport::new(&config), "prioritized-tes")
+        .await
+        .unwrap();
+    let task = PrioritizedTask::new(example_task()).with_priority(2);
+    assert_eq!(task.submit(&tes).await.unwrap().id, "task-2");
+    created.assert();
+}
+
 #[test]
 fn prioritized_task_writes_priority_once_or_not_at_all() {
     let mut spec_task = example_task();
