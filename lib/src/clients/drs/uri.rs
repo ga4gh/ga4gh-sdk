@@ -50,12 +50,15 @@ pub enum UriError {
     /// The URI doesn't start with `drs://`.
     UnsupportedScheme,
     /// The URI has a `:` after `drs://` that isn't part of a port or an
-    /// IPv6 host: a compact identifier (`drs://<prefix>:<accession>`),
-    /// which needs a resolver service.
+    /// IPv6 host in brackets: a compact identifier
+    /// (`drs://<prefix>:<accession>`), which needs a resolver service. A
+    /// `:` without a `/` after it always counts as one.
     UnsupportedCompactIdentifier,
     /// The URI isn't `drs://<host>/<id>` with a percent-encoded ID of one
     /// path segment, or its host has a port, which hostname-based DRS URIs
-    /// don't allow.
+    /// don't allow. Digits after the last `:` before the first `/` count as
+    /// a port, so a compact identifier such as `drs://ark:12148/x` also
+    /// gives this error.
     Malformed,
 }
 impl fmt::Display for UriError {
@@ -79,7 +82,8 @@ enum Authority {
     // brackets of an IPv6 address. `drs://<prefix>:<digits>/...` is
     // ambiguous with a compact identifier and counts as a port.
     WithPort,
-    // An opening bracket without a closing one.
+    // An opening bracket without a closing one, or an IPv6 address
+    // without the '/' that must follow a host.
     Invalid,
     // Anything else, including compact identifiers and the whole URI if it
     // has no '/', since a hostname-based URI needs one after its host.
@@ -90,7 +94,11 @@ impl Authority {
     // first '/'.
     fn classify(rest: &str) -> Self {
         let Some((authority, _)) = rest.split_once('/') else {
-            return Self::Other;
+            return if rest.starts_with('[') {
+                Self::Invalid
+            } else {
+                Self::Other
+            };
         };
         let port = match authority.strip_prefix('[') {
             Some(inner) => match inner.split_once(']') {
@@ -117,7 +125,8 @@ impl Authority {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DrsUri {
     /// The host as the URL parser normalizes it: lowercase, with
-    /// internationalized names in punycode.
+    /// internationalized names in punycode, IPv4 addresses in dotted
+    /// decimal and IPv6 addresses compressed, in brackets.
     pub authority: String,
     /// The object ID, percent-decoded.
     pub object_id: String,

@@ -715,7 +715,7 @@ class DrsUri:
         """
     @property
     def authority(self) -> str:
-        """The host, in lowercase; an IPv6 address keeps its brackets."""
+        """The normalized host: lowercase, punycode, IPv6 compressed in brackets."""
     @property
     def object_id(self) -> str:
         """The object ID, decoded."""

@@ -52,10 +52,11 @@ fn hostname_uri_decodes_exactly_once_and_rejects_unsupported_forms() {
         "drs://[::1]:/id",
         "drs://[::1]x/id",
         "drs://[::1/id",
+        "drs://[::1]",
     ] {
         assert_eq!(DrsUri::parse(uri), Err(UriError::Malformed), "{uri}");
     }
-    let uri = DrsUri::parse("drs://[2001:DB8::1]/id").unwrap();
+    let uri = DrsUri::parse("drs://[2001:DB8:0:0::1]/id").unwrap();
     assert_eq!(uri.authority, "[2001:db8::1]");
     assert_eq!(uri.object_id, "id");
     for uri in [

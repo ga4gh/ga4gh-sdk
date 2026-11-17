@@ -36,7 +36,7 @@ impl PyDrsUri {
         })
     }
 
-    /// The host, in lowercase; an IPv6 address keeps its brackets.
+    /// The normalized host: lowercase, punycode, IPv6 compressed in brackets.
     #[getter]
     fn authority(&self) -> String {
         self.inner.authority.clone()
