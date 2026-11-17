@@ -287,9 +287,11 @@ this guide in the same pull request.
   each one.
 - The example reads client state through accessors, such as
   `tes.transport()` and `tes.configuration()`, and never assigns client
-  fields. The public fields still exist; the
-  [client state ownership record](state_ownership.md) describes their
-  deprecation.
+  fields. The public fields are deprecated and become private in a later
+  release; the [README](../README.md#basic-usage) lists the replacement
+  of each, and the [client state ownership record](state_ownership.md)
+  explains why. A crate that denies warnings fails to build on a use of
+  them, so migrate before you update the SDK.
 - The example is Rust only. Building on the Python bindings is tracked in
   [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78), with the other
   remaining steps for downstream SDKs.

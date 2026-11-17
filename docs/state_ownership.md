@@ -5,7 +5,8 @@ This page records the decision for
 duplicated client state is authoritative, how callers may change it, and how
 the SDK moves from public fields to controlled access. It is a design record
 for maintainers and for authors of downstream Rust crates and Python
-extension crates. It does not describe completed changes. The
+extension crates. Apart from the [status](#status) below, it does not
+describe completed changes. The
 [follow-ups](#follow-ups-and-deferrals) below track the implementation under
 [#176](https://github.com/ga4gh/ga4gh-sdk/issues/176).
 
@@ -296,6 +297,37 @@ notice:
 Methods and fields can have the same name in Rust, so `tes.transport`
 becomes `tes.transport()` and `task.inner` becomes `task.inner()`. The
 `config` field maps to `configuration()`, as on `TRS`.
+
+### Status
+
+- Additive release: the accessors
+  ([#293](https://github.com/ga4gh/ga4gh-sdk/issues/293)) and
+  `TES::without_discovery`, `WES::without_discovery`, and
+  `DRS::without_discovery`
+  ([#294](https://github.com/ga4gh/ga4gh-sdk/issues/294)).
+- Deprecation release
+  ([#294](https://github.com/ga4gh/ga4gh-sdk/issues/294)): the client,
+  `Discovered`, and `Transport` fields below are `#[deprecated]`. The SDK's
+  code, tests, CLI, Python bindings, and the downstream example use the
+  replacements. The remaining `#[allow(deprecated)]` attributes are on the
+  constructors and accessors that own the fields, `Discovered::refresh`,
+  unit tests that compare an accessor with its field, and
+  `refresh_uses_the_discovery_timeout` in `lib/tests/timeouts.rs`, which
+  shortens a limit after construction.
+  `compile_fail` documentation tests on `TES`, `DRS`, `Discovered`, and
+  `Transport` check that `#![deny(deprecated)]` rejects an assignment.
+- Breaking release: not yet; the fields become private after a release
+  with the deprecations.
+
+| Deprecated field | Replacement |
+| --- | --- |
+| `TES::config`, `WES::config`, `DRS::config` | `configuration()`; the field is a copy that can differ from the transport's configuration, and goes away |
+| `TES::transport`, `WES::transport`, `DRS::transport` | `transport()`; to use another transport, build a client with `with_transport` |
+| `TES::service`, `WES::service`, `DRS::service` | `discovered_service_info()` |
+| A struct literal such as `TES { config, service, transport }` | `TES::without_discovery(transport, service)` (also `WES`, `DRS`), or a constructor that discovers |
+| `Discovered::client` | `client()`, `Deref`, or `into_parts()` |
+| `Discovered::capabilities` | `capabilities()` or `into_parts()` |
+| `Transport::config` | `configuration()`; to change it, build a new transport, for example with `with_timeouts` |
 
 ### Alternatives considered
 
