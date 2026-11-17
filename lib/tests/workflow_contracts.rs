@@ -46,6 +46,74 @@ fn validates_root_refs_and_preserves_values_without_defaults() {
         .any(|e| e.message.contains("required")));
 }
 #[test]
+fn fingerprint_ignores_map_iteration_order() {
+    // Each fresh `HashMap` gets its own random hasher, so the maps below
+    // iterate in different orders; the fingerprint must not depend on it.
+    let p = profile(schema());
+    let prepare = |reverse: bool| {
+        let mut keys: Vec<String> = (0..32).map(|i| format!("key-{i:02}")).collect();
+        if reverse {
+            keys.reverse();
+        }
+        let map = || {
+            keys.iter()
+                .map(|k| (k.clone(), format!("value of {k}")))
+                .collect::<std::collections::HashMap<_, _>>()
+        };
+        let req = RunRequest {
+            workflow_url: "workflow.cwl".into(),
+            workflow_type: "CWL".into(),
+            workflow_type_version: "v1.2".into(),
+            workflow_params: Some(json!({"mode":"fast","nested":{"n":4}})),
+            tags: Some(map()),
+            workflow_engine_parameters: Some(map()),
+            ..Default::default()
+        };
+        p.prepare(
+            req,
+            InvocationIdentity {
+                workflow: "qc@sha256:abc".into(),
+                descriptor_digest: None,
+            },
+        )
+        .unwrap()
+        .fingerprint()
+        .to_owned()
+    };
+    let expected = prepare(false);
+    for reverse in [false, true].into_iter().cycle().take(16) {
+        assert_eq!(prepare(reverse), expected);
+    }
+}
+#[test]
+fn prepare_rejects_extra_fields_that_shadow_request_fields() {
+    let p = profile(schema());
+    let prepare = |extra: Value| {
+        let req = RunRequest {
+            workflow_url: "workflow.cwl".into(),
+            workflow_type: "CWL".into(),
+            workflow_type_version: "v1.2".into(),
+            workflow_params: Some(json!({"mode":"fast","nested":{"n":4}})),
+            extra: extra.as_object().unwrap().clone(),
+            ..Default::default()
+        };
+        p.prepare(
+            req,
+            InvocationIdentity {
+                workflow: "qc@sha256:abc".into(),
+                descriptor_digest: None,
+            },
+        )
+    };
+    // The fingerprint would hash the extra value instead of the validated one
+    assert!(prepare(json!({"workflow_params":{"mode":"slow"}})).is_err());
+    assert!(prepare(json!({"workflow_url":"other.cwl"})).is_err());
+    // Submitting rejects these too, even if the request leaves them unset
+    assert!(prepare(json!({"tags":{"a":"b"}})).is_err());
+    assert!(prepare(json!({"workflow_attachment":"x"})).is_err());
+    assert!(prepare(json!({"vendor_option":1})).is_ok());
+}
+#[test]
 fn rejects_unresolved_refs_unknown_required_vocab_and_invalid_schema() {
     let mut s = schema();
     s["properties"]["inputs"]["properties"]["mode"] =
@@ -273,6 +341,85 @@ fn json_order_ignored_metadata_array_order_and_bounds_are_explicit() {
         policy.compare(&a, &b).unwrap().outcome,
         Outcome::Inconclusive
     );
+}
+#[test]
+fn json_metrics_outcome_ignores_key_order_and_nulls_yield_to_differences() {
+    let mut s = schema();
+    s["properties"]["outputs"]["properties"]["count"] = json!({"type":"object"});
+    let p = profile(s);
+    let outcome = |a: Value, b: Value| {
+        let project = |run: &str, count: Value| {
+            let mut r = p
+                .project_results(
+                    run,
+                    "COMPLETE",
+                    &json!({"count":count,"report":"https://example.org/qc"}),
+                )
+                .unwrap();
+            r.context.insert("workflow_digest".into(), "abc".into());
+            r
+        };
+        policy(0., 0.)
+            .compare(&project("a", a), &project("b", b))
+            .unwrap()
+            .outcome
+    };
+    // Check each case with the differing key at both ends ("a" sorts
+    // first, "z" last), so the outcome is shown not to depend on position.
+    for (first, last) in [("a", "z"), ("z", "a")] {
+        // A missing key beats a compared null
+        assert_eq!(
+            outcome(json!({first:1,last:null}), json!({last:null})),
+            Outcome::Different
+        );
+        // A differing value beats a compared null
+        assert_eq!(
+            outcome(json!({first:1,last:null}), json!({first:2,last:null})),
+            Outcome::Different
+        );
+        assert_eq!(
+            outcome(
+                json!({first:[1,{"x":null}],last:[null]}),
+                json!({first:[2,{"x":null}],last:[null]})
+            ),
+            Outcome::Different
+        );
+        // Without a difference, a compared null makes it inconclusive
+        assert_eq!(
+            outcome(json!({first:1,last:null}), json!({first:1,last:null})),
+            Outcome::Inconclusive
+        );
+        assert_eq!(
+            outcome(json!({first:1,last:null}), json!({first:1,last:3})),
+            Outcome::Inconclusive
+        );
+        assert_eq!(
+            outcome(json!({first:1,last:null}), json!({first:2,last:3})),
+            Outcome::Different
+        );
+        assert_eq!(
+            outcome(json!({first:1,last:2}), json!({first:1,last:2})),
+            Outcome::EquivalentUnderPolicy
+        );
+    }
+    // A key whose JSON pointer is too long is inconclusive, even on one
+    // side only
+    let long = "k".repeat(2100);
+    let long = long.as_str();
+    assert_eq!(outcome(json!({long: 1}), json!({})), Outcome::Inconclusive);
+    assert_eq!(
+        outcome(json!({"a": 1, long: 1}), json!({"a": 2})),
+        Outcome::Inconclusive
+    );
+    // Values over the node bound stay inconclusive, even with a difference
+    let wide = |n: i64| {
+        Value::Object(
+            (0..200)
+                .map(|i| (format!("k{i:03}"), json!(i + n)))
+                .collect(),
+        )
+    };
+    assert_eq!(outcome(wide(0), wide(1)), Outcome::Inconclusive);
 }
 #[tokio::test]
 async fn explicit_http_artifact_access_preserves_partial_records_and_no_credentials() {
