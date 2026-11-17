@@ -271,6 +271,9 @@ fn metrics(
                 if ignored.contains(&next) {
                     continue;
                 }
+                if next.len() > 2048 {
+                    return None;
+                }
                 result = result.max(match (a.get(key), b.get(key)) {
                     (Some(a), Some(b)) => metrics(a, b, &next, rules, budget)?,
                     _ => Walk::Different,

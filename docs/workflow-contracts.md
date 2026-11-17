@@ -37,8 +37,9 @@ prevent submitting an edited serialized plan as a validated object. Prepare agai
 for changed parameters, identities or schemas. The fingerprint is the SHA-256 of
 the plan's canonical JSON (compact, keys sorted at every level), so it doesn't
 depend on the order of map entries such as the request's `tags` and
-`workflow_engine_parameters`; parameter values are retained. A caller supplies workflow identity;
-preparation is not an independent attestation that a remote workflow URL is immutable.
+`workflow_engine_parameters`; parameter values are retained. A caller supplies
+workflow identity; preparation is not an independent attestation that a remote
+workflow URL is immutable.
 
 `PreparedInvocation::submit` composes the existing WES API. For local descriptors,
 `submit_with_attachments` checks a supplied `sha256:` primary-descriptor digest
@@ -137,8 +138,8 @@ The numeric rule is `abs(a-b) <= max(abs_tolerance,
 relative_tolerance * max(abs(a), abs(b)))`, inclusive at the boundary and defined
 at zero. JSON decimal numbers are compared using rational arithmetic, preserving
 integers above 2^53. Negative/non-finite policy tolerances are errors. JSON cannot
-represent NaN/infinity; missing values, invalid schema values and exhausted
-node/depth bounds are inconclusive. Within a compared value, a definite difference
+represent NaN/infinity; a value missing at the compared output pointer, invalid
+schema values and exhausted node/depth bounds are inconclusive. Within a compared value, a definite difference
 (a differing value, a key on one side only, or arrays of different lengths) makes
 the output different; otherwise any compared `null` makes it inconclusive. The
 outcome doesn't depend on key order. Large input files are bounded by the CLI.

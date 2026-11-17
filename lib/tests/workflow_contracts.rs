@@ -86,6 +86,32 @@ fn fingerprint_ignores_map_iteration_order() {
     }
 }
 #[test]
+fn prepare_rejects_extra_fields_that_shadow_request_fields() {
+    let p = profile(schema());
+    let prepare = |extra: Value| {
+        let req = RunRequest {
+            workflow_url: "workflow.cwl".into(),
+            workflow_type: "CWL".into(),
+            workflow_type_version: "v1.2".into(),
+            workflow_params: Some(json!({"mode":"fast","nested":{"n":4}})),
+            extra: extra.as_object().unwrap().clone(),
+            ..Default::default()
+        };
+        p.prepare(
+            req,
+            InvocationIdentity {
+                workflow: "qc@sha256:abc".into(),
+                descriptor_digest: None,
+            },
+        )
+    };
+    // The fingerprint would hash the extra value instead of the validated one
+    assert!(prepare(json!({"workflow_params":{"mode":"slow"}})).is_err());
+    assert!(prepare(json!({"workflow_url":"other.cwl"})).is_err());
+    // Fields that the request doesn't set aren't shadowed
+    assert!(prepare(json!({"tags":{"a":"b"},"vendor_option":1})).is_ok());
+}
+#[test]
 fn rejects_unresolved_refs_unknown_required_vocab_and_invalid_schema() {
     let mut s = schema();
     s["properties"]["inputs"]["properties"]["mode"] =
@@ -336,8 +362,8 @@ fn json_metrics_outcome_ignores_key_order_and_nulls_yield_to_differences() {
             .unwrap()
             .outcome
     };
-    // Keys are walked in sorted order, so each case is checked with the
-    // differing key first ("a") and last ("z").
+    // Check each case with the differing key at both ends ("a" sorts
+    // first, "z" last), so the outcome is shown not to depend on position.
     for (first, last) in [("a", "z"), ("z", "a")] {
         // A missing key beats a compared null
         assert_eq!(
@@ -362,10 +388,27 @@ fn json_metrics_outcome_ignores_key_order_and_nulls_yield_to_differences() {
             Outcome::Inconclusive
         );
         assert_eq!(
+            outcome(json!({first:1,last:null}), json!({first:1,last:3})),
+            Outcome::Inconclusive
+        );
+        assert_eq!(
+            outcome(json!({first:1,last:null}), json!({first:2,last:3})),
+            Outcome::Different
+        );
+        assert_eq!(
             outcome(json!({first:1,last:2}), json!({first:1,last:2})),
             Outcome::EquivalentUnderPolicy
         );
     }
+    // Exceeded bounds stay inconclusive, even with a difference
+    let wide = |n: i64| {
+        Value::Object(
+            (0..200)
+                .map(|i| (format!("k{i:03}"), json!(i + n)))
+                .collect(),
+        )
+    };
+    assert_eq!(outcome(wide(0), wide(1)), Outcome::Inconclusive);
 }
 #[tokio::test]
 async fn explicit_http_artifact_access_preserves_partial_records_and_no_credentials() {

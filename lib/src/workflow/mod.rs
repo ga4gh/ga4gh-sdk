@@ -328,9 +328,10 @@ impl Profile {
     ///
     /// Fails if `identity.workflow` is blank; if `workflow_url`,
     /// `workflow_type` or `workflow_type_version` of the request is blank;
-    /// if the request has no `workflow_params`; or if they don't conform
-    /// to the input schema, with the [`Diagnostic`]s as JSON in the
-    /// message.
+    /// if a key of the request's `extra` names a field that the request
+    /// sets, such as `workflow_params`; if the request has no
+    /// `workflow_params`; or if they don't conform to the input schema,
+    /// with the [`Diagnostic`]s as JSON in the message.
     pub fn prepare(
         &self,
         request: RunRequest,
@@ -348,6 +349,15 @@ impl Profile {
                 return Err(
                     "request requires workflow_url, workflow_type and workflow_type_version".into(),
                 );
+            }
+        }
+        // A flattened `extra` key would duplicate a field in the JSON, and
+        // the fingerprint would hash only one of the two values
+        let mut fields = request.clone();
+        fields.extra.clear();
+        if let Value::Object(fields) = serde_json::to_value(&fields)? {
+            if let Some(key) = request.extra.keys().find(|k| fields.contains_key(*k)) {
+                return Err(format!("request extra field {key} duplicates a request field").into());
             }
         }
         let errors = self.validate_inputs(
