@@ -52,7 +52,7 @@ have to match the SDK's `reqwest` version.
 `Transport` and sends its requests through it:
 
 ```rust
-pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
+pub async fn task_usage(&self, id: &str) -> ga4gh_sdk::Result<TaskUsage> {
     let path = format!("tasks/{}/usage", urlencode(id));
     let body = self.transport.get(&path, None).await?;
     Ok(serde_json::from_str(&body)?)
@@ -74,8 +74,11 @@ pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
   `request_response` returns the response with its status and headers; see
   [Advanced transport](../README.md#advanced-transport). For a dynamic token
   provider, use `authorized_request_builder()` instead.
-- An error status comes back as `ga4gh_sdk::utils::transport::HttpError`.
-  The status is inspectable. Its bounded body is available to Rust callers,
+- An error status comes back as `ga4gh_sdk::Error::Http`, holding an
+  `HttpError`, and an invalid body as `ga4gh_sdk::Error::Parse`; see
+  [Errors](usage.md#errors). Return `ga4gh_sdk::Result` from your own client,
+  so that `?` keeps these kinds for your callers.
+  `HttpError` has the status. Its bounded body is available to Rust callers,
   but omitted from default error messages because the server may echo secrets.
 - A custom section in the configuration file (any name besides the built-in
   ones) can hold the service's settings; read it with
