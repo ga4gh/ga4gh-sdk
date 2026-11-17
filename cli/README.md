@@ -1,8 +1,9 @@
 # GA4GH-CLI
 
 The `ga4gh-cli` uses the GA4GH SDK to work with GA4GH API services. It
-currently provides TES, WES, DRS, TRS and Service Registry commands. The Rust
-library also provides a `ServiceInfo` client (see the
+currently provides TES, WES, DRS, TRS and Service Registry commands, and a
+[`service-info` command](#service-info-command) for any configured service.
+The Rust library also provides a `ServiceInfo` client (see the
 [usage guide](../docs/usage.md)).
 
 ## Installation
@@ -101,8 +102,8 @@ See the [usage guide](../docs/usage.md#profiles) for the file rules.
 
 `timeouts` sets time limits in seconds for the commands of that section:
 `connect` (default 10), `request` (default 60), `discovery` (the service-info
-check, default 10) and `submission` (`tes create` and `wes run`, including
-uploads, default 300). `tes save` applies `request` to each wait for data
+check and the `service-info` command, default 10) and `submission`
+(`tes create` and `wes run`, including uploads, default 300). `tes save` applies `request` to each wait for data
 of a download instead of to the whole download. A submission is sent once;
 if it runs out of time
 after its request started, the error says that it may have been accepted, so look
@@ -760,6 +761,79 @@ success and code 1 on request or server errors. A 404 from `list` or `types`
 adds a hint to check `base_path`; from `get`, a 404 means that no service has
 that ID.
 
+## Service Info command
+
+`service-info` prints the [service info](https://github.com/ga4gh-discovery/ga4gh-service-info)
+of one configured service: its ID, name, type, organization, version and any
+fields that the service adds. `--service` names the section of the
+configuration file to read, such as `TES`, `WES`, `DRS`, `TRS`, `REGISTRY` or a
+custom section; names are case sensitive. `--profile` selects the profile as
+for the other commands:
+
+```sh
+ga4gh-cli service-info --service TES
+ga4gh-cli --profile staging service-info --service MY_SERVICE
+```
+
+The command requests `service-info` below the section's `base_path`, with or
+without a trailing slash, using the section's credentials (see
+[Authentication](#authentication)) and its `discovery` timeout (see
+[Profiles](#profiles)). It needs no other setting, so a custom section with only
+`base_path` works:
+
+```json
+{
+    "MY_SERVICE": {
+        "base_path": "https://my.example.org/api/v1"
+    }
+}
+```
+
+Example output:
+
+```json
+{
+  "id": "org.example.tes",
+  "name": "Example TES",
+  "type": {
+    "group": "org.ga4gh",
+    "artifact": "tes",
+    "version": "1.1.0"
+  },
+  "organization": {
+    "name": "Example",
+    "url": "https://example.org"
+  },
+  "version": "1.0.0",
+  "storage": [
+    "s3://bucket"
+  ]
+}
+```
+
+On success, stdout holds one JSON document and nothing else. Fields that the
+specification doesn't define are kept, at the top level and in `type` and
+`organization`. The CLI parses the response as Service Info and prints it again,
+indented, so field order and number spelling may differ from the server's.
+Control and bidirectional formatting characters inside strings are printed as
+JSON escapes such as `\u001b`, so the output stays valid JSON with the same
+values.
+
+The command exits with code 0 on success and code 1 on errors, with a message
+on stderr and nothing on stdout:
+
+- a missing configuration file, profile or section, or a missing login or
+  token variable, is reported before any request is sent;
+- an HTTP error status is reported with the status but without the response
+  body; a 404 adds a hint to check that `base_path` is the section's API root;
+- a response that isn't Service Info, such as one without `id` or not JSON at
+  all, is reported as `Invalid service info from section '<SECTION>'`;
+- a connection failure or an exceeded `discovery` timeout is reported with
+  its cause.
+
+Credentials are never printed. A missing or empty `--service` is a usage error
+with exit code 2.
+
 ## Experimental workflow contracts
 
 `wes` operates the WES service API: submit a run and inspect its state and
@@ -787,8 +861,8 @@ All commands treat values from a service the same way:
   values; its strings cannot contain unescaped C0 controls such as ESC.
 - `tes list --all --format jsonl` and `wes list --all --format jsonl` write
   each record with JSON escapes, such as `\u001b`, which decode to the
-  original value. `registry get` and the JSON output of the `trs` commands
-  use JSON escapes in the same way.
+  original value. `registry get`, `service-info` and the JSON output of the
+  `trs` commands use JSON escapes in the same way.
 - `trs descriptor --plain` and `trs tests --plain` print the file content as
   received, since it is meant to be saved as a file.
 - `tes log` escapes each line of a log like other text output and keeps the
@@ -831,6 +905,9 @@ too, as the `ga4gh-cli` binary does in [its logger setup](src/main.rs). See the
 downstream command that shares the `ga4gh-cli` file can read its own section
 with `Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))`;
 keys that the SDK doesn't use itself are in `Configuration::extra`.
+`dispatch()` runs `service-info` with the section that `--service` names, also
+a downstream binary's own section; `dispatch_with_config()` uses the supplied
+configuration, and `--service` then only names the section in error messages.
 
 A downstream binary with its own name, version, configuration file, profile
 variable or token variable describes them in a `ga4gh_cli::CliContext`:

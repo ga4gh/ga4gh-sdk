@@ -28,7 +28,9 @@
 //! The command tree has the global option `--profile`, which selects a
 //! profile of the configuration file, and the commands `login` and `logout`
 //! for sections that get their tokens from an OpenID Connect provider (see
-//! [`CliContext::token_store_path`]). [`CommandOutput`] and
+//! [`CliContext::token_store_path`]). The command `service-info` reads the
+//! section that its option `--service` names, built-in or custom.
+//! [`CommandOutput`] and
 //! [`printable`] give its own commands the output and exit codes of the
 //! built-in ones.
 #![deny(missing_docs)]
@@ -37,6 +39,7 @@ pub mod drs;
 mod login;
 pub mod registry;
 mod render;
+pub mod service_info;
 pub mod tes;
 mod tes_files;
 pub mod trs;
@@ -485,6 +488,7 @@ impl CliContext {
             .subcommand(wes::command())
             .subcommand(workflow::command())
             .subcommand(registry::command())
+            .subcommand(service_info::command())
             .subcommand(login::login_command())
             .subcommand(login::logout_command())
     }
@@ -559,6 +563,7 @@ impl CliContext {
 
 /// The service whose configuration section a built-in command reads, or
 /// `None` for `workflow` and commands that this crate doesn't own.
+/// `service-info` reads the section named by its `--service` option.
 fn built_in_service(matches: &ArgMatches) -> Option<ServiceType> {
     match matches.subcommand() {
         Some(("drs", _)) => Some(ServiceType::DRS),
@@ -566,6 +571,7 @@ fn built_in_service(matches: &ArgMatches) -> Option<ServiceType> {
         Some(("trs", _)) => Some(ServiceType::TRS),
         Some(("wes", _)) => Some(ServiceType::WES),
         Some(("registry", _)) => Some(ServiceType::REGISTRY),
+        Some(("service-info", sub)) => service_info::section(sub),
         _ => None,
     }
 }
@@ -602,6 +608,7 @@ pub async fn dispatch_with_config(
         Some(("trs", sub)) => trs::run(sub, config).await.map(Some),
         Some(("wes", sub)) => wes::run(sub, config).await.map(Some),
         Some(("registry", sub)) => registry::run(sub, config).await.map(Some),
+        Some(("service-info", sub)) => service_info::run(sub, config).await.map(Some),
         _ => Ok(None),
     }
 }

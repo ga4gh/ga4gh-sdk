@@ -1,0 +1,310 @@
+//! Checks the `service-info` command against a mock service.
+//!
+//! Each test uses its own API root on the shared mock server, so that tests
+//! running in parallel don't see each other's mocks. The binary tests set
+//! `HOME` only in their child processes.
+
+// The CLI finds its config file through `HOME`, which Windows doesn't use.
+#![cfg(unix)]
+
+use ga4gh_cli::{command, dispatch_with_config, CliContext};
+use ga4gh_sdk::utils::configuration::Configuration;
+use mockito::mock;
+use serde_json::{json, Value};
+use std::fs;
+use std::io::Read;
+use std::net::TcpListener;
+use std::process::{Command, ExitCode, Output};
+use std::time::{Duration, Instant};
+use tempfile::TempDir;
+use url::Url;
+
+/// A credential value that must never appear in any output.
+const MARKER: &str = "SENTINEL";
+
+/// Service info with extension fields at the top level and in nested metadata.
+fn service_info(artifact: &str) -> Value {
+    json!({
+        "id": format!("org.example.{artifact}"),
+        "name": format!("Example {artifact}"),
+        "type": {
+            "group": "org.ga4gh",
+            "artifact": artifact,
+            "version": "1.1.0",
+            "x-type-extension": "kept"
+        },
+        "organization": {
+            "name": "Example",
+            "url": "https://example.org",
+            "x-organization-extension": {"nested": [1, 2]}
+        },
+        "version": "1.0.0",
+        "storage": ["s3://bucket"],
+        "x-vendor": {"deep": {"deeper": true}}
+    })
+}
+
+/// Runs the CLI binary with `config` as `~/.ga4gh-cli/config.json`.
+fn run(config: &Value, args: &[&str]) -> Output {
+    let home = TempDir::new().unwrap();
+    let config_dir = home.path().join(".ga4gh-cli");
+    fs::create_dir(&config_dir).unwrap();
+    fs::write(config_dir.join("config.json"), config.to_string()).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
+    command
+        .args(args)
+        .env("HOME", home.path())
+        .env_remove("GA4GH_CLI_PROFILE")
+        .env_remove("RUST_LOG");
+    for proxy in ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+        command.env_remove(proxy);
+    }
+    let output = command.output().unwrap();
+    for stream in [&output.stdout, &output.stderr] {
+        let text = String::from_utf8_lossy(stream);
+        assert!(
+            !text.contains(MARKER),
+            "credential in the output of {args:?}:\n{text}"
+        );
+    }
+    output
+}
+
+fn root(prefix: &str) -> String {
+    format!("{}{prefix}", mockito::server_url())
+}
+
+fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// Asserts a failure with exit code 1, nothing on stdout, and `expected` on
+/// stderr.
+fn assert_failure(output: &Output, expected: &str) {
+    let message = stderr(output);
+    assert_eq!(output.status.code(), Some(1), "{message}");
+    assert!(output.stdout.is_empty(), "{}", stdout(output));
+    assert!(message.contains(expected), "{message}");
+}
+
+#[test]
+fn prints_the_service_info_of_a_built_in_section_with_its_credential() {
+    let body = service_info("tes");
+    let info = mock("GET", "/si-built-in/ga4gh/tes/v1/service-info")
+        .match_header("authorization", "Bearer SENTINEL_TOKEN")
+        .with_body(body.to_string())
+        .expect(2)
+        .create();
+    for suffix in ["", "/"] {
+        let config = json!({"TES": {
+            "base_path": format!("{}{suffix}", root("/si-built-in/ga4gh/tes/v1")),
+            "oauth_access_token": "SENTINEL_TOKEN",
+        }});
+        let output = run(&config, &["service-info", "--service", "TES"]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert!(output.stderr.is_empty(), "{}", stderr(&output));
+        let text = stdout(&output);
+        assert!(text.ends_with('\n'), "{text}");
+        let printed: Value = serde_json::from_str(&text).expect("one JSON document");
+        assert_eq!(printed, body);
+    }
+    info.assert();
+}
+
+#[test]
+fn reads_a_custom_section_of_the_selected_profile() {
+    let info = mock("GET", "/si-profile/staging/service-info")
+        .match_header("authorization", "Basic dXNlcjpTRU5USU5FTF9QQVNT")
+        .with_body(service_info("my-service").to_string())
+        .create();
+    let config = json!({
+        "default_profile": "local",
+        "profiles": {
+            "local": {"MY_SERVICE": {"base_path": root("/si-profile/local")}},
+            "staging": {"MY_SERVICE": {
+                "base_path": root("/si-profile/staging"),
+                "basic_auth": {"username": "user", "password": "SENTINEL_PASS"},
+            }}
+        }
+    });
+    let output = run(
+        &config,
+        &[
+            "--profile",
+            "staging",
+            "service-info",
+            "--service",
+            "MY_SERVICE",
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    let printed: Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(printed["type"]["artifact"], "my-service");
+    info.assert();
+}
+
+#[test]
+fn server_text_is_escaped_and_still_round_trips() {
+    let mut body = service_info("tes");
+    body["name"] = json!("a\u{1b}[2K\rb\u{9b}");
+    body["organization"]["name"] = json!("right\u{202e}left\u{2028}next");
+    let _info = mock("GET", "/si-escape/service-info")
+        .with_body(body.to_string())
+        .create();
+    let config = json!({"TES": {"base_path": root("/si-escape")}});
+    let output = run(&config, &["service-info", "--service", "TES"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    for raw in ['\u{1b}', '\r', '\u{9b}', '\u{202e}', '\u{2028}'] {
+        assert!(!text.contains(raw), "{text}");
+    }
+    assert!(text.contains(r"a\u001b[2K\rb\u009b"), "{text}");
+    assert!(text.contains(r"right\u202eleft\u2028next"), "{text}");
+    let printed: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(printed, body);
+}
+
+#[test]
+fn a_missing_section_or_service_option_fails_before_a_request() {
+    let config = json!({"TES": {"base_path": "http://127.0.0.1:9/"}});
+    let output = run(&config, &["service-info", "--service", "WES"]);
+    assert_failure(&output, "'WES'");
+
+    let output = run(&config, &["service-info"]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("--service"), "{}", stderr(&output));
+
+    let output = run(&config, &["service-info", "--service", ""]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn http_errors_report_the_status_without_the_body() {
+    for status in [401, 404, 500] {
+        let prefix = format!("/si-error-{status}");
+        let _info = mock("GET", format!("{prefix}/service-info").as_str())
+            .with_status(status)
+            .with_body("\u{1b}[2K\rforged line")
+            .create();
+        let config = json!({"DRS": {
+            "base_path": root(&prefix),
+            "bearer_access_token": "SENTINEL_BEARER",
+        }});
+        let output = run(&config, &["service-info", "--service", "DRS"]);
+        assert_failure(&output, &status.to_string());
+        let message = stderr(&output);
+        assert!(!message.contains("forged line"), "{message}");
+        assert!(!message.contains('\u{1b}'), "{message}");
+        assert_eq!(
+            message.contains("Check that base_path is the API root of section 'DRS'"),
+            status == 404,
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn malformed_service_info_is_an_error() {
+    for (name, body) in [
+        ("not-json", "<html>not service info</html>".to_owned()),
+        (
+            "missing-id",
+            json!({"name": "x", "type": {"group": "g", "artifact": "a", "version": "1"},
+                   "organization": {"name": "o", "url": "u"}, "version": "1"})
+            .to_string(),
+        ),
+        (
+            "wrong-type",
+            json!({"id": 1, "name": "x", "type": {"group": "g", "artifact": "a", "version": "1"},
+                   "organization": {"name": "o", "url": "u"}, "version": "1"})
+            .to_string(),
+        ),
+    ] {
+        let prefix = format!("/si-malformed-{name}");
+        let _info = mock("GET", format!("{prefix}/service-info").as_str())
+            .with_body(body)
+            .create();
+        let config = json!({"TRS": {"base_path": root(&prefix)}});
+        let output = run(&config, &["service-info", "--service", "TRS"]);
+        assert_failure(&output, "Invalid service info from section 'TRS'");
+    }
+}
+
+#[test]
+fn the_discovery_timeout_applies() {
+    // A server that accepts the connection but never answers.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut buffer = [0; 1024];
+        while matches!(stream.read(&mut buffer), Ok(n) if n > 0) {}
+    });
+    let config = json!({"TES": {
+        "base_path": format!("http://{address}/ga4gh/tes/v1"),
+        "timeouts": {"discovery": 0.5, "request": 30},
+    }});
+    let started = Instant::now();
+    let output = run(&config, &["service-info", "--service", "TES"]);
+    assert!(started.elapsed() < Duration::from_secs(4));
+    assert_failure(&output, "service-info");
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn dispatch_with_config_uses_the_supplied_configuration() {
+    let info = mock("GET", "/si-dispatch/ga4gh/wes/v1/service-info")
+        .with_body(service_info("wes").to_string())
+        .create();
+    let config = Configuration::new(Url::parse(&root("/si-dispatch/ga4gh/wes/v1")).unwrap());
+    let matches = command()
+        .try_get_matches_from(["ga4gh-cli", "service-info", "--service", "WES"])
+        .unwrap();
+    let output = dispatch_with_config(&matches, &config)
+        .await
+        .unwrap()
+        .expect("service-info is a built-in command");
+    assert!(output.stderr.is_empty(), "{}", output.stderr);
+    assert_eq!(output.exit_code, ExitCode::SUCCESS);
+    let printed: Value = serde_json::from_str(&output.stdout).unwrap();
+    assert_eq!(printed, service_info("wes"));
+    info.assert();
+}
+
+#[tokio::test]
+async fn context_dispatch_to_reads_the_section_of_its_own_file() {
+    let info = mock("GET", "/si-context/service-info")
+        .with_body(service_info("my-service").to_string())
+        .create();
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("config.json");
+    fs::write(
+        &path,
+        json!({"MY_SERVICE": {"base_path": root("/si-context")}}).to_string(),
+    )
+    .unwrap();
+    let context = CliContext::new("other-cli", "1.0.0").with_config_path(&path);
+    let matches = context
+        .command()
+        .try_get_matches_from(["other-cli", "service-info", "--service", "MY_SERVICE"])
+        .unwrap();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let exit_code = context
+        .dispatch_to(&matches, &mut out, &mut err)
+        .await
+        .unwrap();
+    assert_eq!(exit_code, Some(ExitCode::SUCCESS));
+    assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
+    let printed: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(printed["id"], "org.example.my-service");
+    info.assert();
+}
