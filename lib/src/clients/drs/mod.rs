@@ -1,9 +1,15 @@
+//! Client for the GA4GH Data Repository Service (DRS) 1.4 API.
+//!
+//! [`DRS`] reads object metadata and access URLs, one at a time or in bulk
+//! ([`bulk`]), and waits while a server prepares an answer ([`resolution`]).
+//! [`uri`] parses `drs://` URIs and plans access to their objects. The client
+//! never downloads object bytes.
+
 pub mod bulk;
+/// The DRS 1.4 models, generated from its OpenAPI specification.
 // Generated models (utils/build_models.sh): the generator writes `Default`
-// for enums by hand. Their docs still have bare URLs and AsciiDoc links;
-// remove the rustdoc exception once utils/patches/drs.patch fixes them.
-#[allow(clippy::derivable_impls)]
-#[allow(rustdoc::bare_urls, rustdoc::broken_intra_doc_links)]
+// for enums by hand.
+#[allow(clippy::derivable_impls, missing_docs)]
 pub mod models;
 pub mod resolution;
 pub mod uri;
@@ -47,9 +53,12 @@ impl Error for DiscoveryError {
 /// The main struct for interacting with a DRS service.
 #[derive(Debug)]
 pub struct DRS {
+    /// The configuration that the client was built with.
     #[allow(dead_code)]
     pub config: Configuration,
+    /// The service info that the client read when it was built.
     pub service: Result<Service, Box<dyn std::error::Error + Send + Sync>>,
+    /// The transport that sends the client's requests.
     pub transport: Transport,
 }
 

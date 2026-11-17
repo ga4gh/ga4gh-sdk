@@ -34,9 +34,14 @@ The immutable library `PreparedInvocation` records exact request parameters,
 workflow/descriptor identity, exact schema-byte digest, pins, the complete profile,
 expected outputs and a fingerprint. Private fields and the absence of Deserialize
 prevent submitting an edited serialized plan as a validated object. Prepare again
-for changed parameters, identities or schemas. JSON object key order is normalized
-by serde; parameter values are retained. A caller supplies workflow identity;
-preparation is not an independent attestation that a remote workflow URL is immutable.
+for changed parameters, identities or schemas. Preparation rejects a request whose
+`extra` fields name a RunWorkflow part, such as `workflow_params` or `tags`, as
+submission does. The fingerprint is the SHA-256 of
+the plan's canonical JSON (compact, keys sorted at every level), so it doesn't
+depend on the order of map entries such as the request's `tags` and
+`workflow_engine_parameters`; parameter values are retained. A caller supplies
+workflow identity; preparation is not an independent attestation that a remote
+workflow URL is immutable.
 
 `PreparedInvocation::submit` composes the existing WES API. For local descriptors,
 `submit_with_attachments` checks a supplied `sha256:` primary-descriptor digest
@@ -91,7 +96,10 @@ delivery. The report is JSON serializable and has no presentation dependency.
 The result separates execution state, contract status, access status and integrity.
 Only explicitly selected bytes are verified. An expected SHA-256 with an evidence
 source can produce `verified` or `mismatch`; computing a new digest alone remains
-`unverified`. No expected checksum is inferred from size, filename or ETag.
+`unverified`. No expected checksum is inferred from size, filename or ETag. A
+malformed expected checksum (another algorithm, a digest that isn't 64 hex digits
+or a blank evidence source) fails before anything is read, resolved or recorded,
+also when the output is missing or the read fails.
 Expected evidence is supplied by the caller and is not itself cryptographically
 attested by this API.
 
@@ -135,8 +143,12 @@ The numeric rule is `abs(a-b) <= max(abs_tolerance,
 relative_tolerance * max(abs(a), abs(b)))`, inclusive at the boundary and defined
 at zero. JSON decimal numbers are compared using rational arithmetic, preserving
 integers above 2^53. Negative/non-finite policy tolerances are errors. JSON cannot
-represent NaN/infinity; nulls, missing values, invalid schema values and exhausted
-node/depth bounds are inconclusive. Large input files are bounded by the CLI.
+represent NaN/infinity; a value missing at the compared output pointer, invalid
+schema values, exhausted node/depth bounds and JSON pointers longer than 2048
+bytes are inconclusive. Within a compared value, a definite difference
+(a differing value, a key on one side only, or arrays of different lengths) makes
+the output different; otherwise any compared `null` makes it inconclusive. The
+outcome doesn't depend on key order. Large input files are bounded by the CLI.
 
 Object member order is immaterial. Array order is significant unless explicitly
 ignored. Unordered-array mode is restricted to zero tolerance and compares canonical

@@ -12,9 +12,13 @@ use std::str::FromStr;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum TesView {
+    /// Only `id` and `state`; the TES default.
     #[default]
     Minimal,
+    /// All fields except executor `stdout` and `stderr`, input `content` and
+    /// `system_logs`.
     Basic,
+    /// All fields.
     Full,
 }
 
