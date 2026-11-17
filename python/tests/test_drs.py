@@ -321,6 +321,10 @@ def test_bulk_pending_and_empty_calls(server):
             "bulk limits",
         ),
         (
+            lambda drs: drs.get_bulk_objects([], policy=BulkPolicy(chunk_size=0)),
+            "bulk limits",
+        ),
+        (
             lambda drs: drs.get_bulk_objects(["a"], policy=BulkPolicy(concurrency=65)),
             "bulk limits",
         ),
@@ -378,7 +382,13 @@ def test_drs_uri():
     assert (uri.authority, uri.object_id) == ("drs.example", "a/b")
     assert uri.default_api_root() == "https://drs.example/ga4gh/drs/v1"
     assert repr(uri) == "DrsUri(authority='drs.example', object_id='a/b')"
-    for invalid in ["https://drs.example/a", "drs://prefix:accession", "drs://drs.example/", "drs://host:8080/a"]:
+    for invalid in [
+        "https://drs.example/a",
+        "drs://prefix:accession",
+        "drs://drs.example/",
+        "drs://host:8080/a",
+        "drs://[::1]/a",
+    ]:
         with pytest.raises(ValueError, match="Invalid DRS URI"):
             DrsUri(invalid)
 

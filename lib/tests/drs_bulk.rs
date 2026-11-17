@@ -111,6 +111,53 @@ async fn access_pairs_missing_and_duplicate_identities_are_never_zipped_to_posit
         .contains("one access ID"));
 }
 #[tokio::test]
+async fn invalid_policy_is_rejected_even_without_ids() {
+    let client = client("/invalid-policy");
+    let invalid = BulkPolicy {
+        chunk_size: 0,
+        ..BulkPolicy::default()
+    };
+    let rejected = |result: Result<(), ga4gh_sdk::Error>, call: &str| {
+        let message = result.expect_err(call).to_string();
+        assert!(message.contains("bulk limits"), "{call}: {message}");
+    };
+    rejected(
+        client
+            .get_bulk_objects(&[], &[], &invalid, &budget())
+            .await
+            .map(drop),
+        "get_bulk_objects",
+    );
+    rejected(
+        client
+            .get_bulk_objects_raw(&[], &[], &invalid, &budget())
+            .await
+            .map(drop),
+        "get_bulk_objects_raw",
+    );
+    rejected(
+        client
+            .get_bulk_access_urls(&[], &[], &invalid, &budget())
+            .await
+            .map(drop),
+        "get_bulk_access_urls",
+    );
+    rejected(
+        client
+            .get_bulk_access_urls_raw(&[], &[], &invalid, &budget())
+            .await
+            .map(drop),
+        "get_bulk_access_urls_raw",
+    );
+    // With a valid policy and without IDs, the report is empty
+    assert!(client
+        .get_bulk_access_urls(&[], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap()
+        .outcomes
+        .is_empty());
+}
+#[tokio::test]
 async fn empty_pending_and_auth_failure_do_not_fallback() {
     let client = client("/pending");
     assert!(client

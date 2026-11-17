@@ -515,8 +515,10 @@ let access = drs.get_access_url("my-object-id", "my-access-id").await?;
 server prepares an answer (`202 Accepted`); `resolve_object` and `resolve_access_url`
 wait for it within an `Operation` budget. `get_bulk_objects` and
 `get_bulk_access_urls` use the DRS 1.4 bulk endpoints and report an outcome per ID
-under a `BulkPolicy`. `uri::DrsResolver` plans access for hostname-based `drs://`
-URIs. The `_raw` variants (`get_object_raw`, `get_access_url_raw`,
+under a `BulkPolicy`; an invalid policy fails before any request, also without
+IDs. `uri::DrsResolver` plans access for hostname-based `drs://<host>/<id>` URIs,
+whose host is a name or an IPv4 address, without a port. IPv6 literals are
+rejected as malformed. The `_raw` variants (`get_object_raw`, `get_access_url_raw`,
 `resolve_reference_raw`, `get_bulk_objects_raw`, `get_bulk_access_urls_raw`) keep the
 server's JSON, including fields that the models don't know, and `get_object_as`
 reads an object into another type than `DrsObject`. `DRS::with_artifact`

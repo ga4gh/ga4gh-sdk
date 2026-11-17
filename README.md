@@ -292,7 +292,8 @@ and per-service credentials; unmapped authorities get a fresh anonymous HTTPS
 transport. Protocol/region preferences and an explicit method index control
 selection. Direct URLs and access-ID negotiation share deferred resolution;
 pending, unsupported/unavailable methods and local interruption stay distinct.
-Compact identifier forms are explicitly unsupported in this MVP. It never
+The host is a name or an IPv4 address, without a port. IPv6 literals and
+compact identifier forms are explicitly unsupported in this MVP. It never
 downloads object bytes or copies DRS credentials into an object-store request.
 
 DRS `get_bulk_objects` and `get_bulk_access_urls` accept optional Passports and

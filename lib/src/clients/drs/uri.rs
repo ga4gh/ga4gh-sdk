@@ -49,12 +49,16 @@ use url::Url;
 pub enum UriError {
     /// The URI doesn't start with `drs://`.
     UnsupportedScheme,
-    /// The URI has a `:` after `drs://`: a compact identifier
-    /// (`drs://<prefix>:<accession>`), which needs a resolver service, but
-    /// also a host with a port or an IPv6 address.
+    /// The URI has a `:` after `drs://` that isn't part of a port or an
+    /// IPv6 literal in brackets: a compact identifier
+    /// (`drs://<prefix>:<accession>`), which needs a resolver service. A
+    /// `:` without a `/` after it always counts as one.
     UnsupportedCompactIdentifier,
     /// The URI isn't `drs://<host>/<id>` with a percent-encoded ID of one
-    /// path segment.
+    /// path segment, or its authority has a port or an IPv6 literal, which
+    /// hostname-based DRS URIs don't allow. Digits after the last `:` before
+    /// the first `/` count as a port, so a compact identifier such as
+    /// `drs://ark:12148/x` also gives this error.
     Malformed,
 }
 impl fmt::Display for UriError {
@@ -69,17 +73,68 @@ impl fmt::Display for UriError {
     }
 }
 impl Error for UriError {}
+// What the part of a DRS URI before its first '/' looks like, judged by its
+// text before URL parsing.
+enum Authority {
+    // An IPv6 address in brackets, without a port; recognized so it can be
+    // rejected as malformed rather than mistaken for a compact identifier.
+    Ipv6,
+    // A host with a port: digits only after the last ':', or after the
+    // brackets of an IPv6 address. `drs://<prefix>:<digits>/...` is
+    // ambiguous with a compact identifier and counts as a port.
+    WithPort,
+    // An opening bracket without a closing one, or an IPv6 address
+    // without the '/' that must follow a host.
+    Invalid,
+    // Anything else, including compact identifiers and the whole URI if it
+    // has no '/', since a hostname-based URI needs one after its host.
+    Other,
+}
+impl Authority {
+    // Classifies the part of `rest`, the URI after `drs://`, before its
+    // first '/'.
+    fn classify(rest: &str) -> Self {
+        let Some((authority, _)) = rest.split_once('/') else {
+            return if rest.starts_with('[') {
+                Self::Invalid
+            } else {
+                Self::Other
+            };
+        };
+        let port = match authority.strip_prefix('[') {
+            Some(inner) => match inner.split_once(']') {
+                Some((_, "")) => return Self::Ipv6,
+                Some((_, after)) => after.strip_prefix(':'),
+                None => return Self::Invalid,
+            },
+            None => authority
+                .rsplit_once(':')
+                .map(|(_, port)| port)
+                .filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
+        };
+        if port.is_some() {
+            Self::WithPort
+        } else if authority.starts_with('[') {
+            // Text after the brackets that isn't a port; URL parsing rejects it
+            Self::Ipv6
+        } else {
+            Self::Other
+        }
+    }
+}
 /// A hostname-based DRS URI, `drs://<host>/<id>`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DrsUri {
     /// The host as the URL parser normalizes it: lowercase, with
-    /// internationalized names in punycode.
+    /// internationalized names in punycode and IPv4 addresses in dotted
+    /// decimal.
     pub authority: String,
     /// The object ID, percent-decoded.
     pub object_id: String,
 }
 impl DrsUri {
-    /// Parses `drs://<host>/<id>`; the scheme is matched ignoring case.
+    /// Parses `drs://<host>/<id>`; the scheme is matched ignoring case. The
+    /// host can be a name or an IPv4 address. An IPv6 literal is malformed.
     ///
     /// # Errors
     ///
@@ -92,10 +147,18 @@ impl DrsUri {
             return Err(UriError::UnsupportedScheme);
         }
         let rest = &uri[6..];
-        // The pinned hostname form has no literal ':'. Compact accessions may contain
-        // slashes and colons, so recognize them before interpreting URL authority.
-        if rest.contains(':') {
-            return Err(UriError::UnsupportedCompactIdentifier);
+        // The pinned hostname form has no literal ':'.
+        // Compact accessions may contain slashes and colons, so recognize them
+        // before interpreting URL authority, but tell a port or an IPv6 host
+        // apart from them.
+        match Authority::classify(rest) {
+            Authority::Ipv6 | Authority::WithPort | Authority::Invalid => {
+                return Err(UriError::Malformed)
+            }
+            Authority::Other if rest.contains(':') => {
+                return Err(UriError::UnsupportedCompactIdentifier)
+            }
+            Authority::Other => {}
         }
         if rest.contains(['?', '#', '\\', '@']) || rest.chars().any(char::is_whitespace) {
             return Err(UriError::Malformed);
@@ -105,7 +168,7 @@ impl DrsUri {
             return Err(UriError::Malformed);
         }
         let host = Url::parse(&format!("https://{authority}/")).map_err(|_| UriError::Malformed)?;
-        if host.host_str().is_none() || host.port().is_some() {
+        if host.host_str().is_none() {
             return Err(UriError::Malformed);
         }
         let mut bytes = Vec::new();
@@ -304,9 +367,9 @@ impl DrsResolver {
     ///
     /// # Errors
     ///
-    /// Fails with [`UriError::UnsupportedCompactIdentifier`] if `authority`
-    /// has a `:`, such as a port, and with [`UriError::Malformed`] if it
-    /// isn't a host otherwise.
+    /// Fails with [`UriError::Malformed`] if `authority` has a port, is an
+    /// IPv6 literal, or isn't a host, and with
+    /// [`UriError::UnsupportedCompactIdentifier`] if it has another `:`.
     pub fn with_service(mut self, authority: &str, transport: Transport) -> Result<Self, UriError> {
         let authority = DrsUri::parse(&format!("drs://{authority}/placeholder"))?.authority;
         self.services.insert(authority, transport);
