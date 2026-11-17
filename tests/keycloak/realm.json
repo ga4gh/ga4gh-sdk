@@ -1,0 +1,40 @@
+{
+  "realm": "ga4gh-sdk-test",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 40,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "oauth2DeviceCodeLifespan": 300,
+  "oauth2DevicePollingInterval": 1,
+  "clients": [
+    {
+      "clientId": "ga4gh-cli-test",
+      "name": "ga4gh-cli integration test",
+      "enabled": true,
+      "publicClient": true,
+      "consentRequired": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "true"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "test-user",
+      "enabled": true,
+      "email": "test-user@example.org",
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "User",
+      "realmRoles": ["offline_access"],
+      "credentials": [
+        {"type": "password", "value": "test-only-password", "temporary": false}
+      ]
+    }
+  ]
+}

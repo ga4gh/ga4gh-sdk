@@ -168,13 +168,18 @@ impl CapabilitySupport {
 pub enum CompatibilityError {
     /// Discovery did not identify a supported version under a strict policy.
     UnknownVersion {
+        /// The API, such as `"TRS"`.
         api: &'static str,
+        /// The version that the service declared, if any.
         declared: Option<String>,
     },
     /// The requested feature is unavailable or its support is unknown.
     Capability {
+        /// The API, such as `"TRS"`.
         api: &'static str,
+        /// The feature, such as `"tags"` (the tag filter of TRS).
         capability: &'static str,
+        /// What is known about the feature's support.
         support: CapabilitySupport,
     },
 }

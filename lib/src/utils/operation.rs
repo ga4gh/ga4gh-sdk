@@ -3,9 +3,12 @@ use std::{error::Error, fmt, future::Future, time::Duration};
 use tokio::time::Instant;
 pub use tokio_util::sync::CancellationToken;
 
+/// Why an [`Operation`] ended before its work did.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OperationError {
+    /// The operation's deadline passed.
     Deadline,
+    /// The operation's cancellation token was cancelled.
     Cancelled,
 }
 impl fmt::Display for OperationError {
@@ -18,9 +21,14 @@ impl fmt::Display for OperationError {
 }
 impl Error for OperationError {}
 
+/// A time budget with an absolute deadline and a cancellation token, shared by
+/// all steps of one operation: its requests, response bodies, retries and the
+/// sleeps between them.
 #[derive(Clone, Debug)]
 pub struct Operation {
+    /// When the operation ends.
     pub deadline: Instant,
+    /// Cancels the operation when cancelled; clones of the token share it.
     pub cancellation: CancellationToken,
 }
 impl Operation {
@@ -49,6 +57,12 @@ impl Operation {
             result = future => Ok(result),
         }
     }
+    /// Sleeps for `delay`, but not beyond the deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::Deadline`] if the deadline passes first,
+    /// [`OperationError::Cancelled`] if the operation is cancelled.
     pub async fn sleep(&self, delay: Duration) -> Result<(), OperationError> {
         // Retry-After is untrusted and may overflow a platform Instant. Never
         // construct a sleep beyond the absolute remaining budget.
@@ -60,14 +74,28 @@ impl Operation {
 /// Safety is asserted by the caller for the *operation*, not inferred from POST.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReplaySafety {
+    /// The operation changes nothing on the server, so a request may be sent
+    /// again, for example after a network error.
     ReadOnly,
+    /// The operation may change state on the server, such as a submission, so
+    /// a request is never sent twice.
     NonReplayable,
 }
 
+/// How often, and how far apart, a read-only request is tried.
+///
+/// The delays between attempts are randomized below a cap; see
+/// [`Self::delay`]. A `Retry-After` header on `429` or `503` can lengthen a
+/// delay up to the operation's deadline. A request with a token provider is
+/// sent once more after `401 Unauthorized`, even with one attempt.
 #[derive(Clone, Debug)]
 pub struct RetryPolicy {
+    /// The most attempts, the first included (1 to 32; default 1: no retries).
     pub max_attempts: usize,
+    /// The cap of the delay before the first retry (default 200 ms); it
+    /// doubles with each retry.
     pub initial_delay: Duration,
+    /// The largest cap of a delay (default 10 s).
     pub max_delay: Duration,
 }
 impl Default for RetryPolicy {
@@ -80,6 +108,12 @@ impl Default for RetryPolicy {
     }
 }
 impl RetryPolicy {
+    /// Checks the policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `max_attempts` is 1 to 32, `initial_delay` is
+    /// positive and `max_delay` is at least `initial_delay`.
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.max_attempts == 0
             || self.max_attempts > 32
@@ -90,6 +124,9 @@ impl RetryPolicy {
         }
         Ok(())
     }
+    /// The delay before retry number `attempt` (1 for the first retry): a random
+    /// duration between half and all of a cap, which is `initial_delay`
+    /// doubled `attempt - 1` times, but at most `max_delay`.
     pub fn delay(&self, attempt: usize) -> Duration {
         let cap = self
             .initial_delay
@@ -109,6 +146,7 @@ impl RetryPolicy {
 /// A non-replayable operation lost its response. Reconcile remote state first.
 #[derive(Debug)]
 pub struct AmbiguousSubmissionError {
+    /// What went wrong after the request was sent, such as a timeout.
     pub reason: String,
 }
 impl fmt::Display for AmbiguousSubmissionError {

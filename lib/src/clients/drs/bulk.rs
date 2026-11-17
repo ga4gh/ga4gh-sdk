@@ -25,9 +25,15 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+/// An object of a bulk call, and for access URL lookups its access ID.
+///
+/// `Debug` hides the access ID.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct BulkKey {
+    /// The DRS object ID; not empty.
     pub object_id: String,
+    /// The access ID; required by the access URL lookups, `None` for object
+    /// lookups.
     pub access_id: Option<String>,
 }
 impl fmt::Debug for BulkKey {
@@ -38,19 +44,33 @@ impl fmt::Debug for BulkKey {
             .finish()
     }
 }
+/// The server answered a bulk request with `202 Accepted`: the answer is
+/// being prepared, and the request can be sent again later.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BulkPending {
+    /// The DRS API root, without credentials, query or fragment.
     pub api_root: String,
+    /// The bulk endpoint, `objects` or `objects/access`.
     pub endpoint: String,
+    /// How many seconds to wait before asking again (1 to 3600).
     pub retry_after_secs: u64,
 }
+/// The result of a bulk call for one key.
+///
 /// Multiple returned values are retained rather than silently selecting a duplicate.
 /// Debug output shows counts because resolved access URLs and error text may
 /// contain credentials. Inspect the public fields only in an appropriate context.
 pub struct ObjectOutcome<T> {
+    /// The entries that the server resolved for the key; more than one is a
+    /// server error, kept as returned.
     pub resolved: Vec<T>,
+    /// The HTTP status codes that the server reported for the key, as an
+    /// unresolved entry or as the status of its whole request.
     pub failure_codes: Vec<u16>,
+    /// Set if the key's request was answered with `202 Accepted`.
     pub pending: Option<BulkPending>,
+    /// What went wrong for the key, such as a failed request, an invalid or
+    /// duplicate entry, or a key that the response left out.
     pub errors: Vec<String>,
 }
 impl<T> fmt::Debug for ObjectOutcome<T> {
@@ -74,6 +94,8 @@ impl<T> Default for ObjectOutcome<T> {
     }
 }
 impl<T> ObjectOutcome<T> {
+    /// Whether the key resolved to exactly one entry, with no failure code,
+    /// pending state or error.
     pub fn is_success(&self) -> bool {
         self.resolved.len() == 1
             && self.failure_codes.is_empty()
@@ -122,14 +144,28 @@ impl<T> BulkReport<T> {
         self.dialects.extend(other.dialects);
     }
 }
+/// Limits of a bulk call. Invalid values fail the call before any request;
+/// a call without keys returns an empty report without checking them.
 #[derive(Clone, Debug)]
 pub struct BulkPolicy {
+    /// The most keys per request (default 100); positive.
     pub chunk_size: usize,
+    /// The service's most keys per request, if known (default `None`); it
+    /// lowers `chunk_size`. Positive; see [`Self::with_service_info`].
     pub advertised_limit: Option<usize>,
+    /// The most requests at the same time (default 4); 1 to 64.
     pub concurrency: usize,
+    /// The most requests of the call, retries and splits included (default
+    /// 1000); positive.
     pub max_requests: usize,
+    /// How often a request that the server rejects with `413 Content Too
+    /// Large` is split in halves (default 8); at most 32.
     pub max_split_depth: usize,
+    /// How often a request is tried after network errors, `429` or `503`
+    /// (default 1 attempt); valid as [`RetryPolicy::validate`] requires.
     pub retry: RetryPolicy,
+    /// The most bytes read of each response body (default 8 MiB); see
+    /// [`BodyLimits`].
     pub limits: BodyLimits,
 }
 impl Default for BulkPolicy {
@@ -146,6 +182,13 @@ impl Default for BulkPolicy {
     }
 }
 impl BulkPolicy {
+    /// Sets [`Self::advertised_limit`] from the `maxBulkRequestLength` of a
+    /// DRS service info, if it has one.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `maxBulkRequestLength` isn't a positive integer that fits in
+    /// a `usize`.
     pub fn with_service_info(mut self, raw: &Value) -> Result<Self, Box<dyn Error>> {
         if let Some(value) = raw.get("maxBulkRequestLength") {
             let limit = value
@@ -379,7 +422,7 @@ impl DRS {
         let path = if access { "objects/access" } else { "objects" };
         for attempt in 1..=policy.retry.max_attempts {
             if count
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                     (n < policy.max_requests).then_some(n + 1)
                 })
                 .is_err()
@@ -549,6 +592,14 @@ impl DRS {
     /// Each resolved entry must match the DRS schema. An entry that does not,
     /// such as a Gen3 object with `created_time: null`, becomes an error in its
     /// outcome; use [`DRS::get_bulk_objects_raw`] to read it unchanged.
+    ///
+    /// Failures of single requests or objects end up in the report's
+    /// outcomes, not in an error.
+    ///
+    /// # Errors
+    ///
+    /// Fails before any request if `policy` is invalid or an ID is empty;
+    /// without IDs, it returns an empty report.
     pub async fn get_bulk_objects(
         &self,
         ids: &[String],
@@ -563,6 +614,10 @@ impl DRS {
     /// JSON, correlated by its `id`, without schema validation. Fields the SDK
     /// model omits or cannot represent, e.g. `created_time: null`, are kept.
     /// Identity checks, diagnostics and dialect recording are the same.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`DRS::get_bulk_objects`] does.
     pub async fn get_bulk_objects_raw(
         &self,
         ids: &[String],
@@ -573,8 +628,16 @@ impl DRS {
         self.bulk(object_keys(ids), passports, false, policy, operation)
             .await
     }
+    /// Looks up the access URLs of `keys` in bounded `POST /objects/access`
+    /// requests, as [`DRS::get_bulk_objects`] looks up objects.
+    ///
     /// Returned access URLs and headers may be credentials. The report's Debug
     /// output omits them; logging a raw generated `BulkAccessUrl` does not.
+    ///
+    /// # Errors
+    ///
+    /// Fails before any request if `policy` is invalid, an ID is empty, a key
+    /// has no access ID, or an object appears with two access IDs.
     pub async fn get_bulk_access_urls(
         &self,
         keys: &[BulkKey],
@@ -589,6 +652,10 @@ impl DRS {
     /// Like [`DRS::get_bulk_access_urls`], but keeps each resolved entry's JSON, including
     /// fields that the SDK models don't know. Resolved entries are not checked against
     /// the `BulkAccessUrl` model; they may hold credentials, as there.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`DRS::get_bulk_access_urls`] does.
     pub async fn get_bulk_access_urls_raw(
         &self,
         keys: &[BulkKey],
