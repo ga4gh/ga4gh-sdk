@@ -40,9 +40,41 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
-As for `TES`, the error type of `DRS::service` is now
-`Box<dyn Error + Send + Sync>`, so a `DRS` client can move between threads;
-`DRS::new` stores only a successful service-info response.
+The library returns its own error type, `ga4gh_sdk::Error`, in place of
+`Box<dyn std::error::Error>` (see [Errors](docs/usage.md#errors)). It is an enum
+of the kinds of failure (`Http`, `Transport`, `Endpoint`, `Parse`,
+`Configuration`, `UnexpectedService`, `Other`) and is `Send + Sync`, so
+clients and their futures can move between threads. This breaks some code:
+
+- Functions that return `Box<dyn Error>` still accept the SDK's errors with
+  `?`. But `downcast_ref::<HttpError>()` on such a box no longer finds the HTTP
+  error, nor does it on an `anyhow::Error` or in a `source()` chain: downcast
+  to `ga4gh_sdk::Error` and call its `downcast_ref`, or match on its variants.
+- An error status in answer to the service-info request of `DRS::new` and
+  `WES::new` is an `Other` error (with a hint on the API root for a 404),
+  not `Http`; its `downcast_ref` returns the HTTP error. `TES::new` and
+  `TRS::new` return `Http`. Other failures of that request keep their
+  variant, such as `Transport` for a failed connection, and no longer have
+  the "Error accessing … service" prefix.
+- Implementations of `DescriptorFetcher` and the attempts passed to
+  `drs::resolution::resolve_until` return `ga4gh_sdk::Error`; `?` or
+  `Error::other(error)` converts other errors.
+- An invalid Service Registry response is now `Error::Parse` with the
+  `serde_json` diagnostic, instead of a string prefixed with the registry
+  endpoint. Match the variant to handle it without parsing the message. The
+  CLI still includes the endpoint in its error output.
+- The `service` field of `TES`, `WES` and `DRS` is now a `Service`
+  instead of a `Result`; the constructors return the errors. Struct literals of
+  the clients set `service: Service::default()` or the service info itself.
+- The error of `ResolveCause::Request` and of the workflow contracts
+  (`ContractError`) is `ga4gh_sdk::Error`.
+
+`TES`, `WES` and `DRS` check the service type only in their constructors.
+No TES or WES method checks it again (`TES::create`, `create_value`,
+`WES::run_workflow` and `run_workflow_with_attachments` did), so a client
+built as a struct literal with another `service` sends its requests. Use
+`with_artifact` for a service whose service info names another artifact
+(see [Build on this SDK](docs/downstream.md)).
 
 The WES models follow WES 1.1.0 and use the schema names of the spec:
 `WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
@@ -51,8 +83,7 @@ required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
 now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
 items are `RunListResponseRunsInner` and deprecated task log items are
 `RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
-endpoints. As for `TES`, the error type of `WES::service` is now
-`Box<dyn Error + Send + Sync>`, so a `WES` client can move between threads.
+endpoints.
 
 All models now keep what their spec doesn't define (see
 [Models](docs/usage.md#models)). This breaks some code:
@@ -261,8 +292,8 @@ and per-service credentials; unmapped authorities get a fresh anonymous HTTPS
 transport. Protocol/region preferences and an explicit method index control
 selection. Direct URLs and access-ID negotiation share deferred resolution;
 pending, unsupported/unavailable methods and local interruption stay distinct.
-The host is a name, an IPv4 address or an IPv6 address in brackets, without a
-port. Compact identifier forms are explicitly unsupported in this MVP. It never
+The host is a name or an IPv4 address, without a port. IPv6 literals and
+compact identifier forms are explicitly unsupported in this MVP. It never
 downloads object bytes or copies DRS credentials into an object-store request.
 
 DRS `get_bulk_objects` and `get_bulk_access_urls` accept optional Passports and

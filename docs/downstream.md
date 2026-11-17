@@ -52,7 +52,7 @@ have to match the SDK's `reqwest` version.
 `Transport` and sends its requests through it:
 
 ```rust
-pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
+pub async fn task_usage(&self, id: &str) -> ga4gh_sdk::Result<TaskUsage> {
     let path = format!("tasks/{}/usage", urlencode(id));
     let body = self.transport.get(&path, None).await?;
     Ok(serde_json::from_str(&body)?)
@@ -74,8 +74,11 @@ pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
   `request_response` returns the response with its status and headers; see
   [Advanced transport](../README.md#advanced-transport). For a dynamic token
   provider, use `authorized_request_builder()` instead.
-- An error status comes back as `ga4gh_sdk::utils::transport::HttpError`.
-  The status is inspectable. Its bounded body is available to Rust callers,
+- An error status comes back as `ga4gh_sdk::Error::Http`, holding an
+  `HttpError`, and an invalid body as `ga4gh_sdk::Error::Parse`; see
+  [Errors](usage.md#errors). Return `ga4gh_sdk::Result` from your own client,
+  so that `?` keeps these kinds for your callers.
+  `HttpError` has the status. Its bounded body is available to Rust callers,
   but omitted from default error messages because the server may echo secrets.
 - A custom section in the configuration file (any name besides the built-in
   ones) can hold the service's settings; read it with
@@ -104,11 +107,31 @@ The JSON stays one flat object. When reading, `priority` goes to the outer
 field, the specification's fields to `task`, and any other fields to
 `task.extra`, which the SDK's models keep and write back (see
 [Models](usage.md#models)). To send and read such a model, the example uses
-the TES client's JSON methods, which don't drop unknown fields:
+the TES client's generic methods:
 
-- `TES::create_value` submits a task as a `serde_json::Value`, with the same
-  checks as `TES::create`.
-- `TES::get_raw` returns the task as the service sent it.
+```rust
+pub async fn submit(&self, tes: &TES) -> ga4gh_sdk::Result<Task> {
+    tes.create_as(self).await
+}
+
+pub async fn fetch(tes: &TES, view: TesView, id: &str) -> ga4gh_sdk::Result<Self> {
+    tes.get_as(view, id).await
+}
+```
+
+- `TES::create_as` submits any type that serializes to a TES task, after
+  checking, as `TES::create` does, that the JSON is a valid TES task;
+  `TES::create_value` does the same for a `serde_json::Value`.
+- `TES::get_as` reads the task into any type that deserializes from it;
+  `TES::get_raw` returns the task as the service sent it.
+- `WES::get_run_as`, `Run::log_as` and `DRS::get_object_as` do the same for
+  WES run logs and DRS objects.
+
+If the service's service info names its own artifact rather than `tes`,
+create the client with `TES::with_artifact(transport, "my-artifact")`;
+`WES::with_artifact` and `DRS::with_artifact` work the same way (the latter
+also accepts a group other than `org.ga4gh`). The constructors check the
+artifact once; the methods then don't check it again.
 
 For a single extra field, `TesTask::extra` alone is enough; a typed wrapper
 like this one is worth it when the downstream code reads or writes the field
@@ -258,6 +281,9 @@ this guide in the same pull request.
   The SDK supports other credential sources described in the
   [authentication guide](authentication.md); this example does not exercise
   each one.
+- The example assigns and reads public client fields, such as
+  `tes.transport`. The [client state ownership record](state_ownership.md)
+  describes the planned move to constructors and accessors.
 - The example is Rust only. Building on the Python bindings is tracked in
   [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78), with the other
   remaining steps for downstream SDKs.

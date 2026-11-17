@@ -223,6 +223,9 @@ data records. See the [Rust API Guidelines on private fields](https://rust-lang.
 Represent lifecycle states deliberately: construction, discovery, and readiness
 need not be the same operation. Do not retain an impossible failure state after
 a constructor has already rejected it unless another supported path needs it.
+The [client state ownership record](state_ownership.md) applies these rules
+to the service clients, their transports and discovery results, and the
+typed and raw views of the Python bindings.
 
 Allow callers to supply transport or operation policy where a supported use case
 requires it, and carry that policy through discovery and subsequent requests.

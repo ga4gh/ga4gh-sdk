@@ -67,8 +67,8 @@ For downstream Rust code, `Transport.client` is now private so replacement
 cannot silently change the redirect policy of SDK-owned authenticated
 requests. Use `Transport::with_client` at construction time and `client()` for
 read-only access. `request_builder()` can now return an `AuthError` as well as
-an endpoint error, so its return type is `Result<_, Box<dyn Error>>`; callers
-with an explicit `EndpointError` annotation must adapt their error handling.
+an endpoint error, so its return type is `ga4gh_sdk::Result<_>`; callers with
+an explicit `EndpointError` annotation must adapt their error handling.
 With a token provider, this synchronous builder returns an error; use
 `authorized_request_builder()` to obtain a request carrying a provider token.
 

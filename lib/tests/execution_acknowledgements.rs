@@ -16,13 +16,13 @@ async fn malformed_tes_acknowledgements_never_return_handles_or_replay() {
     let tes = TES {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service {
+        service: Service {
             r#type: Box::new(ServiceType {
                 artifact: "tes".into(),
                 ..Default::default()
             }),
             ..Default::default()
-        }),
+        },
     };
     for body in [
         "{}",
@@ -53,13 +53,13 @@ async fn raw_tes_creation_preserves_extensions_and_rejects_missing_id() {
     let tes = TES {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service {
+        service: Service {
             r#type: Box::new(ServiceType {
                 artifact: "tes".into(),
                 ..Default::default()
             }),
             ..Default::default()
-        }),
+        },
     };
     let body = serde_json::json!({
         "executors": [],
@@ -95,13 +95,13 @@ async fn opaque_tes_id_survives_creation_and_later_requests() {
     let tes = TES {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service {
+        service: Service {
             r#type: Box::new(ServiceType {
                 artifact: "tes".into(),
                 ..Default::default()
             }),
             ..Default::default()
-        }),
+        },
     };
     let task = tes.create(TesTask::default()).await.unwrap();
     assert_eq!(task.id, id);
@@ -153,13 +153,13 @@ async fn wes_creation_validates_once_and_preserves_opaque_ids() {
     let wes = WES {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service {
+        service: Service {
             r#type: Box::new(ServiceType {
                 artifact: "wes".into(),
                 ..Default::default()
             }),
             ..Default::default()
-        }),
+        },
     };
     let request = RunRequest {
         workflow_type: "CWL".into(),
@@ -256,7 +256,7 @@ async fn convenience_submission_lost_responses_are_ambiguous_and_never_replayed(
         let error = if wes {
             let client = WES {
                 config,
-                service: Ok(service),
+                service,
                 transport,
             };
             let mut request = RunRequest::new("CWL".into(), "v1.2".into(), "main.cwl".into());
@@ -265,7 +265,7 @@ async fn convenience_submission_lost_responses_are_ambiguous_and_never_replayed(
         } else {
             let client = TES {
                 config,
-                service: Ok(service),
+                service,
                 transport,
             };
             client.create(TesTask::default()).await.unwrap_err()

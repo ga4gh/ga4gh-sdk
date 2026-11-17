@@ -131,6 +131,7 @@ nav:
       - Testing: tests/README.md
       - Generated models: docs/autogenerate_OAI_models.md
       - Reviewing pull requests: docs/reviewer_framework.md
+      - Client state ownership: docs/state_ownership.md
       - Releasing: docs/releasing.md
       - Downstream example: examples/downstream-sdk/README.md
       - Provider contract proposals:

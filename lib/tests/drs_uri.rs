@@ -53,12 +53,10 @@ fn hostname_uri_decodes_exactly_once_and_rejects_unsupported_forms() {
         "drs://[::1]x/id",
         "drs://[::1/id",
         "drs://[::1]",
+        "drs://[2001:DB8:0:0::1]/id",
     ] {
         assert_eq!(DrsUri::parse(uri), Err(UriError::Malformed), "{uri}");
     }
-    let uri = DrsUri::parse("drs://[2001:DB8:0:0::1]/id").unwrap();
-    assert_eq!(uri.authority, "[2001:db8::1]");
-    assert_eq!(uri.object_id, "id");
     for uri in [
         "drs://dg.4503:accession",
         "drs://dg.4503:123456",
@@ -70,15 +68,18 @@ fn hostname_uri_decodes_exactly_once_and_rejects_unsupported_forms() {
             "{uri}"
         );
     }
-    // A resolver service can be registered for an IPv6 host, not with a port
+    // A resolver service cannot be registered for an IPv6 literal or a port.
     let transport = || {
         Transport::new(&Configuration::new(
             url::Url::parse("http://127.0.0.1:9/ga4gh/drs/v1").unwrap(),
         ))
     };
-    assert!(DrsResolver::default()
-        .with_service("[::1]", transport())
-        .is_ok());
+    assert_eq!(
+        DrsResolver::default()
+            .with_service("[::1]", transport())
+            .err(),
+        Some(UriError::Malformed)
+    );
     assert_eq!(
         DrsResolver::default()
             .with_service("drs.example:8443", transport())

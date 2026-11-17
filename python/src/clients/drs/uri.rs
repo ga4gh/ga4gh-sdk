@@ -20,7 +20,8 @@ pub(super) fn parse_uri(uri: &str) -> PyResult<DrsUri> {
 
 #[pymethods]
 impl PyDrsUri {
-    /// Compact identifiers (`drs://prefix:accession`) are not supported.
+    /// Compact identifiers (`drs://prefix:accession`), ports, and IPv6 literals
+    /// are not supported.
     #[new]
     #[classmethod]
     #[pyo3(signature = (uri, *args, **kwargs))]
@@ -36,7 +37,7 @@ impl PyDrsUri {
         })
     }
 
-    /// The normalized host: lowercase, punycode, IPv6 compressed in brackets.
+    /// The normalized host: lowercase, punycode, or dotted decimal IPv4.
     #[getter]
     fn authority(&self) -> String {
         self.inner.authority.clone()

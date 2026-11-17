@@ -8,7 +8,6 @@ use ga4gh_sdk::clients::registry::models::{ExternalService, ServiceType};
 use ga4gh_sdk::clients::registry::ServiceRegistry;
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::HttpError;
-use std::error::Error;
 
 /// Builds the Service Registry command and its subcommands.
 pub fn command() -> Command {
@@ -54,7 +53,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                         .collect();
                     CommandOutput::success(format_services(&services))
                 }
-                Err(error) => service_failure(error.as_ref()),
+                Err(error) => service_failure(&error, "services"),
             }
         }
         Some(("get", sub)) => {
@@ -67,7 +66,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                     CommandOutput::success(format!("{}\n", json_printable(&json)))
                 }
                 // A 404 means an unknown ID here, so no base_path hint.
-                Err(error) => CommandOutput::failure(error),
+                Err(error) => registry_failure(&error, "services/{id}"),
             }
         }
         Some(("types", _)) => match registry.list_service_types().await {
@@ -77,14 +76,14 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                     .map(|service_type| format!("{}\n", type_label(service_type)))
                     .collect(),
             ),
-            Err(error) => service_failure(error.as_ref()),
+            Err(error) => service_failure(&error, "services/types"),
         },
         _ => CommandOutput::success(String::new()),
     };
     Ok(output)
 }
 
-fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
+fn service_failure(error: &ga4gh_sdk::Error, endpoint: &str) -> CommandOutput {
     if error
         .downcast_ref::<HttpError>()
         .is_some_and(|http| http.status == 404)
@@ -93,7 +92,16 @@ fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
             "{error}. Check that base_path is the Service Registry API root"
         ))
     } else {
-        CommandOutput::failure(error)
+        registry_failure(error, endpoint)
+    }
+}
+
+fn registry_failure(error: &ga4gh_sdk::Error, endpoint: &str) -> CommandOutput {
+    match error {
+        ga4gh_sdk::Error::Parse(_) => CommandOutput::failure(format!(
+            "Invalid response from the service registry ({endpoint}): {error}"
+        )),
+        _ => CommandOutput::failure(error),
     }
 }
 

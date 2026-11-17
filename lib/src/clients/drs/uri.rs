@@ -50,15 +50,15 @@ pub enum UriError {
     /// The URI doesn't start with `drs://`.
     UnsupportedScheme,
     /// The URI has a `:` after `drs://` that isn't part of a port or an
-    /// IPv6 host in brackets: a compact identifier
+    /// IPv6 literal in brackets: a compact identifier
     /// (`drs://<prefix>:<accession>`), which needs a resolver service. A
     /// `:` without a `/` after it always counts as one.
     UnsupportedCompactIdentifier,
     /// The URI isn't `drs://<host>/<id>` with a percent-encoded ID of one
-    /// path segment, or its host has a port, which hostname-based DRS URIs
-    /// don't allow. Digits after the last `:` before the first `/` count as
-    /// a port, so a compact identifier such as `drs://ark:12148/x` also
-    /// gives this error.
+    /// path segment, or its authority has a port or an IPv6 literal, which
+    /// hostname-based DRS URIs don't allow. Digits after the last `:` before
+    /// the first `/` count as a port, so a compact identifier such as
+    /// `drs://ark:12148/x` also gives this error.
     Malformed,
 }
 impl fmt::Display for UriError {
@@ -76,7 +76,8 @@ impl Error for UriError {}
 // What the part of a DRS URI before its first '/' looks like, judged by its
 // text before URL parsing.
 enum Authority {
-    // An IPv6 address in brackets, without a port.
+    // An IPv6 address in brackets, without a port; recognized so it can be
+    // rejected as malformed rather than mistaken for a compact identifier.
     Ipv6,
     // A host with a port: digits only after the last ':', or after the
     // brackets of an IPv6 address. `drs://<prefix>:<digits>/...` is
@@ -125,15 +126,15 @@ impl Authority {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DrsUri {
     /// The host as the URL parser normalizes it: lowercase, with
-    /// internationalized names in punycode, IPv4 addresses in dotted
-    /// decimal and IPv6 addresses compressed, in brackets.
+    /// internationalized names in punycode and IPv4 addresses in dotted
+    /// decimal.
     pub authority: String,
     /// The object ID, percent-decoded.
     pub object_id: String,
 }
 impl DrsUri {
     /// Parses `drs://<host>/<id>`; the scheme is matched ignoring case. The
-    /// host can be a name, an IPv4 address or an IPv6 address in brackets.
+    /// host can be a name or an IPv4 address. An IPv6 literal is malformed.
     ///
     /// # Errors
     ///
@@ -146,13 +147,14 @@ impl DrsUri {
             return Err(UriError::UnsupportedScheme);
         }
         let rest = &uri[6..];
-        // The pinned hostname form has no literal ':' except in an IPv6 host.
+        // The pinned hostname form has no literal ':'.
         // Compact accessions may contain slashes and colons, so recognize them
         // before interpreting URL authority, but tell a port or an IPv6 host
         // apart from them.
         match Authority::classify(rest) {
-            Authority::Ipv6 => {}
-            Authority::WithPort | Authority::Invalid => return Err(UriError::Malformed),
+            Authority::Ipv6 | Authority::WithPort | Authority::Invalid => {
+                return Err(UriError::Malformed)
+            }
             Authority::Other if rest.contains(':') => {
                 return Err(UriError::UnsupportedCompactIdentifier)
             }
@@ -365,9 +367,9 @@ impl DrsResolver {
     ///
     /// # Errors
     ///
-    /// Fails with [`UriError::Malformed`] if `authority` has a port or isn't
-    /// a host, and with [`UriError::UnsupportedCompactIdentifier`] if it
-    /// has another `:` outside an IPv6 host.
+    /// Fails with [`UriError::Malformed`] if `authority` has a port, is an
+    /// IPv6 literal, or isn't a host, and with
+    /// [`UriError::UnsupportedCompactIdentifier`] if it has another `:`.
     pub fn with_service(mut self, authority: &str, transport: Transport) -> Result<Self, UriError> {
         let authority = DrsUri::parse(&format!("drs://{authority}/placeholder"))?.authority;
         self.services.insert(authority, transport);
@@ -388,7 +390,7 @@ impl DrsResolver {
         DRS {
             config: transport.config.clone(),
             transport,
-            service: Ok(Service::default()),
+            service: Service::default(),
         }
     }
     /// Plans access to the object of `uri` with at most one request per
@@ -404,7 +406,7 @@ impl DrsResolver {
         uri: &str,
         preferences: &AccessPreferences,
         operation: &Operation,
-    ) -> Result<AccessResolution, Box<dyn Error>> {
+    ) -> crate::Result<AccessResolution> {
         let uri = DrsUri::parse(uri)?;
         let client = self.client(&uri);
         let object = match operation
@@ -463,7 +465,7 @@ impl DrsResolver {
         preferences: &AccessPreferences,
         operation: &Operation,
         max_attempts: usize,
-    ) -> Result<AccessPlan, Box<dyn Error>> {
+    ) -> crate::Result<AccessPlan> {
         let uri = DrsUri::parse(uri)?;
         let client = self.client(&uri);
         let object = client

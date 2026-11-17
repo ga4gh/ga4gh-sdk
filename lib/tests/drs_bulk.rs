@@ -17,7 +17,7 @@ fn client(path: &str) -> DRS {
     DRS {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service::default()),
+        service: Service::default(),
     }
 }
 fn budget() -> Operation {
@@ -117,7 +117,7 @@ async fn invalid_policy_is_rejected_even_without_ids() {
         chunk_size: 0,
         ..BulkPolicy::default()
     };
-    let rejected = |result: Result<(), Box<dyn std::error::Error>>, call: &str| {
+    let rejected = |result: Result<(), ga4gh_sdk::Error>, call: &str| {
         let message = result.expect_err(call).to_string();
         assert!(message.contains("bulk limits"), "{call}: {message}");
     };
@@ -269,7 +269,7 @@ async fn configured_service_limit_and_concurrency_are_enforced() {
     let client = DRS {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service::default()),
+        service: Service::default(),
     };
     let mut policy = BulkPolicy::default()
         .with_service_info(&json!({"maxBulkRequestLength":1}))

@@ -3,7 +3,6 @@
 use ga4gh_sdk::clients::tes::models::TesTask;
 use ga4gh_sdk::clients::tes::{Task, TesView, TES};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 /// A TES task with the service's additional `priority` field.
 ///
@@ -42,17 +41,18 @@ impl PrioritizedTask {
     ///
     /// # Errors
     ///
-    /// Fails as [`TES::create_value`] does.
-    pub async fn submit(&self, tes: &TES) -> Result<Task, Box<dyn Error>> {
-        tes.create_value(serde_json::to_value(self)?).await
+    /// Fails as [`TES::create_as`] does.
+    pub async fn submit(&self, tes: &TES) -> ga4gh_sdk::Result<Task> {
+        tes.create_as(self).await
     }
 
     /// Fetches a task, including `priority`, with the SDK's TES client.
     ///
     /// # Errors
     ///
-    /// Fails as [`TES::get_raw`] does, or if the response isn't a valid task.
-    pub async fn fetch(tes: &TES, view: TesView, id: &str) -> Result<Self, Box<dyn Error>> {
-        Ok(serde_json::from_str(&tes.get_raw(view, id).await?)?)
+    /// Fails as [`TES::get_as`] does, for example if the response isn't a
+    /// valid task.
+    pub async fn fetch(tes: &TES, view: TesView, id: &str) -> ga4gh_sdk::Result<Self> {
+        tes.get_as(view, id).await
     }
 }

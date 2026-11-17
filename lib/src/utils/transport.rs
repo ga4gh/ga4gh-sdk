@@ -124,19 +124,19 @@ pub struct BufferedResponse {
 pub async fn read_bounded(
     mut response: reqwest::Response,
     limit: usize,
-) -> Result<BufferedResponse, Box<dyn Error>> {
+) -> crate::Result<BufferedResponse> {
     let status = response.status();
     let headers = response.headers().clone();
     if response
         .content_length()
         .is_some_and(|len| len > limit as u64)
     {
-        return Err(Box::new(BodyLimitError { status, limit }));
+        return Err(crate::Error::other(BodyLimitError { status, limit }));
     }
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         if chunk.len() > limit.saturating_sub(body.len()) {
-            return Err(Box::new(BodyLimitError { status, limit }));
+            return Err(crate::Error::other(BodyLimitError { status, limit }));
         }
         body.extend_from_slice(&chunk);
     }
@@ -151,7 +151,7 @@ pub async fn read_bounded(
 pub async fn response_text(
     response: reqwest::Response,
     limits: BodyLimits,
-) -> Result<String, Box<dyn Error>> {
+) -> crate::Result<String> {
     let response = checked_response(response, limits).await?;
     Ok(String::from_utf8_lossy(&response.body).into_owned())
 }
@@ -161,7 +161,7 @@ pub async fn response_text(
 pub async fn response_json<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
     limits: BodyLimits,
-) -> Result<T, Box<dyn Error>> {
+) -> crate::Result<T> {
     let response = checked_response(response, limits).await?;
     // Validate the whole document even when T ignores unknown properties.
     // A byte deserializer may skip UTF-8 checks for discarded string values.
@@ -172,7 +172,7 @@ pub async fn response_json<T: serde::de::DeserializeOwned>(
 async fn checked_response(
     response: reqwest::Response,
     limits: BodyLimits,
-) -> Result<BufferedResponse, Box<dyn Error>> {
+) -> crate::Result<BufferedResponse> {
     let limit = if response.status().is_success() {
         limits.success
     } else {
@@ -182,7 +182,7 @@ async fn checked_response(
     if response.status.is_success() {
         Ok(response)
     } else {
-        Err(Box::new(HttpError {
+        Err(crate::Error::other(HttpError {
             status: response.status,
             body: String::from_utf8_lossy(&response.body).into_owned(),
         }))
@@ -440,7 +440,7 @@ impl Transport {
         &self,
         endpoint: &str,
         timeout: std::time::Duration,
-    ) -> Result<String, Box<dyn Error>> {
+    ) -> crate::Result<String> {
         let operation = crate::utils::operation::Operation::new(timeout);
         operation
             .run(async {
@@ -463,7 +463,7 @@ impl Transport {
         &self,
         endpoint: &str,
         timeout: std::time::Duration,
-    ) -> Result<T, Box<dyn Error>> {
+    ) -> crate::Result<T> {
         crate::utils::operation::Operation::new(timeout)
             .run(async {
                 let response = self
@@ -491,7 +491,7 @@ impl Transport {
         request: reqwest::RequestBuilder,
         operation: &crate::utils::operation::Operation,
         limits: BodyLimits,
-    ) -> Result<String, Box<dyn Error>> {
+    ) -> crate::Result<String> {
         use crate::utils::operation::AmbiguousSubmissionError;
         let request = request.timeout(
             operation
@@ -511,14 +511,14 @@ impl Transport {
         match result {
             Ok(Ok(body)) => Ok(body),
             Ok(Err(error)) if !attempted => Err(error),
-            Ok(Err(error)) if error.downcast_ref::<HttpError>().is_some() => Err(error),
-            Ok(Err(error)) => Err(Box::new(AmbiguousSubmissionError {
+            Ok(Err(error)) if matches!(error, crate::Error::Http(_)) => Err(error),
+            Ok(Err(error)) => Err(crate::Error::other(AmbiguousSubmissionError {
                 reason: error.to_string(),
             })),
-            Err(error) if attempted => Err(Box::new(AmbiguousSubmissionError {
+            Err(error) if attempted => Err(crate::Error::other(AmbiguousSubmissionError {
                 reason: error.to_string(),
             })),
-            Err(error) => Err(Box::new(error)),
+            Err(error) => Err(crate::Error::other(error)),
         }
     }
 
@@ -531,7 +531,7 @@ impl Transport {
         data: Option<Value>,
         params: Option<Value>,
         options: &RequestOptions,
-    ) -> Result<String, Box<dyn Error>> {
+    ) -> crate::Result<String> {
         use crate::utils::operation::{retry_after, AmbiguousSubmissionError, ReplaySafety};
         options.retry.validate()?;
         let attempts = if options.safety == ReplaySafety::ReadOnly {
@@ -558,15 +558,15 @@ impl Transport {
             let response = match result {
                 Ok(Ok(response)) => response,
                 Err(error) if attempted && options.safety == ReplaySafety::NonReplayable => {
-                    return Err(Box::new(AmbiguousSubmissionError {
+                    return Err(crate::Error::other(AmbiguousSubmissionError {
                         reason: error.to_string(),
                     }))
                 }
-                Err(error) => return Err(Box::new(error)),
+                Err(error) => return Err(crate::Error::other(error)),
                 Ok(Err(error))
                     if attempted
                         && attempt < attempts
-                        && error.downcast_ref::<reqwest::Error>().is_some() =>
+                        && matches!(error, crate::Error::Transport(_)) =>
                 {
                     options
                         .operation
@@ -577,9 +577,9 @@ impl Transport {
                 Ok(Err(error))
                     if attempted
                         && options.safety == ReplaySafety::NonReplayable
-                        && error.downcast_ref::<reqwest::Error>().is_some() =>
+                        && matches!(error, crate::Error::Transport(_)) =>
                 {
-                    return Err(Box::new(AmbiguousSubmissionError {
+                    return Err(crate::Error::other(AmbiguousSubmissionError {
                         reason: error.to_string(),
                     }))
                 }
@@ -605,19 +605,19 @@ impl Transport {
                 Ok(Ok(body)) => Ok(body),
                 Ok(Err(error))
                     if options.safety == ReplaySafety::NonReplayable
-                        && error.downcast_ref::<reqwest::Error>().is_some() =>
+                        && matches!(error, crate::Error::Transport(_)) =>
                 {
-                    Err(Box::new(AmbiguousSubmissionError {
+                    Err(crate::Error::other(AmbiguousSubmissionError {
                         reason: error.to_string(),
                     }))
                 }
                 Ok(Err(error)) => Err(error),
                 Err(error) if options.safety == ReplaySafety::NonReplayable => {
-                    Err(Box::new(AmbiguousSubmissionError {
+                    Err(crate::Error::other(AmbiguousSubmissionError {
                         reason: error.to_string(),
                     }))
                 }
-                Err(error) => Err(Box::new(error)),
+                Err(error) => Err(crate::Error::other(error)),
             };
         }
         Err("retry attempts exhausted".into())
@@ -635,7 +635,7 @@ impl Transport {
         &self,
         method: reqwest::Method,
         endpoint: &str,
-    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+    ) -> crate::Result<reqwest::RequestBuilder> {
         self.request_builder_inner(method, endpoint, false)
     }
 
@@ -644,20 +644,20 @@ impl Transport {
         method: reqwest::Method,
         endpoint: &str,
         allow_provider: bool,
-    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+    ) -> crate::Result<reqwest::RequestBuilder> {
         if self.config.token_provider.is_some() {
             let sources = self.config.static_credentials();
             if !sources.is_empty() {
-                return Err(Box::new(AuthConflictError { sources }));
+                return Err(crate::Error::other(AuthConflictError { sources }));
             }
         }
         let auth = self.config.configured_auth()?;
         let has_provider = self.config.token_provider.is_some();
         if !self.apply_configured_auth && (has_provider || !matches!(auth, ConfiguredAuth::None)) {
-            return Err(Box::new(AuthError::CallerOwnedClient));
+            return Err(crate::Error::other(AuthError::CallerOwnedClient));
         }
         if has_provider && !allow_provider {
-            return Err(Box::new(AuthError::ProviderRequiresAsyncBuilder));
+            return Err(crate::Error::other(AuthError::ProviderRequiresAsyncBuilder));
         }
         let url = self.endpoint(endpoint)?;
         if self.apply_configured_auth
@@ -697,7 +697,7 @@ impl Transport {
         &self,
         method: reqwest::Method,
         endpoint: &str,
-    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+    ) -> crate::Result<reqwest::RequestBuilder> {
         let request = self.request_builder_inner(method, endpoint, true)?;
         self.authorize(request, false).await
     }
@@ -708,7 +708,7 @@ impl Transport {
         &self,
         request: reqwest::RequestBuilder,
         after_rejection: bool,
-    ) -> Result<reqwest::RequestBuilder, Box<dyn Error>> {
+    ) -> crate::Result<reqwest::RequestBuilder> {
         let Some(source) = &self.config.token_provider else {
             return Ok(request);
         };
@@ -745,7 +745,7 @@ impl Transport {
         &self,
         request: reqwest::RequestBuilder,
         sent: Option<&std::sync::atomic::AtomicBool>,
-    ) -> Result<reqwest::Response, Box<dyn Error>> {
+    ) -> crate::Result<reqwest::Response> {
         let (client, request) = request.build_split();
         let request = request?;
         let headers = request.headers().clone();
@@ -770,9 +770,9 @@ impl Transport {
         method: reqwest::Method,
         endpoint: &str,
         replayable: bool,
-        build: impl Fn(reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder, Box<dyn Error>>,
+        build: impl Fn(reqwest::RequestBuilder) -> crate::Result<reqwest::RequestBuilder>,
         sent: Option<&std::sync::atomic::AtomicBool>,
-    ) -> Result<reqwest::Response, Box<dyn Error>> {
+    ) -> crate::Result<reqwest::Response> {
         let request = build(
             self.authorized_request_builder(method.clone(), endpoint)
                 .await?,
@@ -845,7 +845,7 @@ impl Transport {
         endpoint: &str,
         data: Option<Value>,
         params: Option<Value>,
-    ) -> Result<reqwest::Response, Box<dyn Error>> {
+    ) -> crate::Result<reqwest::Response> {
         let replayable = matches!(method, reqwest::Method::GET | reqwest::Method::HEAD);
         self.request_response_with(method, endpoint, data, params, replayable, None)
             .await
@@ -859,7 +859,7 @@ impl Transport {
         params: Option<Value>,
         replayable: bool,
         sent: Option<&std::sync::atomic::AtomicBool>,
-    ) -> Result<reqwest::Response, Box<dyn Error>> {
+    ) -> crate::Result<reqwest::Response> {
         let pairs = match params {
             Some(ref params_value) => query_pairs(params_value).map_err(std::io::Error::from)?,
             None => Vec::new(),
@@ -895,7 +895,7 @@ impl Transport {
         data: Option<Value>,
         params: Option<Value>,
         limits: BodyLimits,
-    ) -> Result<String, Box<dyn Error>> {
+    ) -> crate::Result<String> {
         response_text(
             self.request_response(method, endpoint, data, params)
                 .await?,
@@ -910,7 +910,7 @@ impl Transport {
         endpoint: &str,
         data: Option<Value>,
         params: Option<Value>,
-    ) -> Result<String, Box<dyn Error>> {
+    ) -> crate::Result<String> {
         self.request_text(method, endpoint, data, params, BodyLimits::default())
             .await
     }
@@ -926,11 +926,7 @@ impl Transport {
     /// # Returns
     ///
     /// A `Result` containing the response body as a string, or an error if the request fails.
-    pub async fn get(
-        &self,
-        endpoint: &str,
-        params: Option<Value>,
-    ) -> Result<String, Box<dyn Error>> {
+    pub async fn get(&self, endpoint: &str, params: Option<Value>) -> crate::Result<String> {
         self.request(reqwest::Method::GET, endpoint, None, params)
             .await
     }
@@ -945,21 +941,13 @@ impl Transport {
     /// # Returns
     ///
     /// A `Result` containing the response body as a string, or an error if the request fails.
-    pub async fn post(
-        &self,
-        endpoint: &str,
-        data: Option<Value>,
-    ) -> Result<String, Box<dyn Error>> {
+    pub async fn post(&self, endpoint: &str, data: Option<Value>) -> crate::Result<String> {
         self.request(reqwest::Method::POST, endpoint, data, None)
             .await
     }
 
     /// Sends a multipart form, as required by APIs such as WES RunWorkflow.
-    pub async fn post_multipart(
-        &self,
-        endpoint: &str,
-        form: Form,
-    ) -> Result<String, Box<dyn Error>> {
+    pub async fn post_multipart(&self, endpoint: &str, form: Form) -> crate::Result<String> {
         let request = self
             .authorized_request_builder(reqwest::Method::POST, endpoint)
             .await?
@@ -978,7 +966,7 @@ impl Transport {
     /// # Returns
     ///
     /// A `Result` containing the response body as a string, or an error if the request fails.
-    pub async fn put(&self, endpoint: &str, data: Value) -> Result<String, Box<dyn Error>> {
+    pub async fn put(&self, endpoint: &str, data: Value) -> crate::Result<String> {
         self.request(reqwest::Method::PUT, endpoint, Some(data), None)
             .await
     }
@@ -992,7 +980,7 @@ impl Transport {
     /// # Returns
     ///
     /// A `Result` containing the response body as a string, or an error if the request fails.
-    pub async fn delete(&self, endpoint: &str) -> Result<String, Box<dyn Error>> {
+    pub async fn delete(&self, endpoint: &str) -> crate::Result<String> {
         self.request(reqwest::Method::DELETE, endpoint, None, None)
             .await
     }

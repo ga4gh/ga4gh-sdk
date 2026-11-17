@@ -12,6 +12,7 @@ pub mod attachments;
 pub mod models;
 
 use crate::clients::serviceinfo::models::Service;
+use crate::clients::serviceinfo::DiscoveryError;
 use crate::clients::wes::models::RunId;
 use crate::clients::wes::models::RunListResponse;
 use crate::clients::wes::models::RunListResponseRunsInner;
@@ -23,7 +24,8 @@ use crate::clients::wes::models::TaskLog;
 use crate::utils::configuration::Configuration;
 /// Existing import path for the shared path-segment encoder.
 pub use crate::utils::transport::urlencode;
-use crate::utils::transport::{HttpStatusError, Transport};
+use crate::utils::transport::Transport;
+use serde::de::DeserializeOwned;
 use serde_json::from_str;
 use serde_json::json;
 
@@ -55,7 +57,7 @@ impl Run {
     }
 
     /// Fetches the current status of the run.
-    pub async fn status(&self) -> Result<State, Box<dyn std::error::Error>> {
+    pub async fn status(&self) -> crate::Result<State> {
         let run_id = &self.id;
         let url = format!("runs/{}/status", urlencode(run_id));
         let resp_str = self.transport.get(&url, None).await?;
@@ -70,7 +72,7 @@ impl Run {
     }
 
     /// Cancels the run.
-    pub async fn cancel(&self) -> Result<RunId, Box<dyn std::error::Error>> {
+    pub async fn cancel(&self) -> crate::Result<RunId> {
         let id = &self.id;
         let id = urlencode(id);
         let url = format!("runs/{}/cancel", id);
@@ -86,17 +88,17 @@ impl Run {
     }
 
     /// Fetches the details of the run (including logs and outputs).
-    pub async fn log(&self) -> Result<RunLog, Box<dyn std::error::Error>> {
-        let id = &self.id;
-        let url = format!("runs/{}", urlencode(id));
-        let response = self.transport.get(&url, None).await;
-        match response {
-            Ok(resp_str) => {
-                let log: RunLog = from_str(&resp_str)?;
-                Ok(log)
-            }
-            Err(e) => Err(e),
-        }
+    pub async fn log(&self) -> crate::Result<RunLog> {
+        self.log_as().await
+    }
+
+    /// Fetches the details of the run as any type that deserializes from the
+    /// server's run log JSON, for example a downstream type that reads fields
+    /// of its own.
+    pub async fn log_as<T: DeserializeOwned>(&self) -> crate::Result<T> {
+        let url = format!("runs/{}", urlencode(&self.id));
+        let response = self.transport.get(&url, None).await?;
+        Ok(from_str(&response)?)
     }
 
     /// Lists the tasks of the run, one page at a time (WES 1.1 `ListTasks`).
@@ -104,7 +106,7 @@ impl Run {
         &self,
         page_token: Option<String>,
         page_size: Option<i64>,
-    ) -> Result<TaskListResponse, Box<dyn std::error::Error>> {
+    ) -> crate::Result<TaskListResponse> {
         let path = format!("runs/{}/tasks", urlencode(&self.id));
         let resp_str = self
             .transport
@@ -114,7 +116,7 @@ impl Run {
     }
 
     /// Fetches one task of the run (WES 1.1 `GetTask`).
-    pub async fn get_task(&self, task_id: &str) -> Result<TaskLog, Box<dyn std::error::Error>> {
+    pub async fn get_task(&self, task_id: &str) -> crate::Result<TaskLog> {
         // An empty ID would address the task list instead.
         if task_id.is_empty() {
             return Err("task ID must not be empty".into());
@@ -141,18 +143,6 @@ fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<s
     }
 }
 
-// Describes a failed service-info request, with a hint if the API root seems wrong.
-fn access_error(error: &(dyn std::error::Error + 'static)) -> String {
-    let mut message = format!("Error accessing WES service: {error}");
-    if error
-        .downcast_ref::<HttpStatusError>()
-        .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
-    {
-        message.push_str(". Check that base_path is the WES API root");
-    }
-    message
-}
-
 /// The main struct for interacting with a WES service.
 #[derive(Debug)]
 pub struct WES {
@@ -160,7 +150,7 @@ pub struct WES {
     #[allow(dead_code)]
     pub config: Configuration,
     /// The service info that the client read when it was built.
-    pub service: Result<Service, Box<dyn std::error::Error + Send + Sync>>,
+    pub service: Service,
     /// The transport that sends the client's requests.
     pub transport: Transport,
 }
@@ -168,50 +158,56 @@ pub struct WES {
 impl WES {
     /// Creates a new `WES` instance. The `timeouts` of `config` set the time
     /// limits (see [`Timeouts`](crate::utils::timeouts::Timeouts)).
-    pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(config: &Configuration) -> crate::Result<Self> {
         Self::with_transport(Transport::new(config)).await
     }
 
     /// Creates a new `WES` instance that sends its requests with `transport`, for
     /// example one from [`Transport::with_client`]. The client's configuration is
     /// the transport's.
-    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+    ///
+    /// # Errors
+    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if the
+    /// service info names another type of service. If the service answers the
+    /// service-info request with an error status, an
+    /// [`Error::Other`](crate::Error::Other), with a hint on the API root for a
+    /// 404, whose [`downcast_ref`](crate::Error::downcast_ref) returns the request's
+    /// [`HttpError`](crate::utils::transport::HttpError). Other failures of the
+    /// request keep their variant, such as
+    /// [`Error::Transport`](crate::Error::Transport).
+    pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
+        Self::with_artifact(transport, "wes").await
+    }
+
+    /// Creates a new `WES` instance, as [`Self::with_transport`] does, for a
+    /// service whose service info names `artifact` in place of `wes`, for
+    /// example a downstream service with a WES API.
+    ///
+    /// # Errors
+    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if the
+    /// service info names another artifact; otherwise the errors of the
+    /// service-info request, as for [`Self::with_transport`].
+    pub async fn with_artifact(transport: Transport, artifact: &str) -> crate::Result<Self> {
         let service = crate::clients::serviceinfo::fetch_raw(&transport, "service-info")
             .await
             .and_then(|body| service_from_info(from_str(&body)?))
-            .map_err(|error| access_error(error.as_ref()))?;
-
-        let instance = WES {
+            .map_err(|source| DiscoveryError { api: "WES", source })?;
+        crate::clients::serviceinfo::check_artifact(&service, artifact, "WES")?;
+        Ok(WES {
             config: transport.config.clone(),
             transport,
-            service: Ok(service),
-        };
-
-        instance.check()?;
-        Ok(instance)
+            service,
+        })
     }
 
     /// Discovers WES with a caller-owned transport, including its authenticated
     /// client. Kept for callers that used this name before `with_transport`.
-    pub async fn from_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn from_transport(transport: Transport) -> crate::Result<Self> {
         Self::with_transport(transport).await
     }
 
-    fn check(&self) -> Result<(), String> {
-        let resp = &self.service;
-        match resp.as_ref() {
-            Ok(service) if service.r#type.artifact == "wes" => Ok(()),
-            Ok(_) => Err("The endpoint is not an instance of WES".into()),
-            // `WES::new` stores only `Ok`; an `Err` comes from a client built by hand.
-            Err(error) => Err(access_error(error.as_ref())),
-        }
-    }
-
     /// Creates a new workflow run.
-    pub async fn run_workflow(
-        &self,
-        request: RunRequest,
-    ) -> Result<Run, Box<dyn std::error::Error>> {
+    pub async fn run_workflow(&self, request: RunRequest) -> crate::Result<Run> {
         self.run_workflow_with_attachments(request, Vec::new())
             .await
     }
@@ -228,7 +224,7 @@ impl WES {
         &self,
         request: RunRequest,
         attachments: Vec<WorkflowAttachment>,
-    ) -> Result<Run, Box<dyn std::error::Error>> {
+    ) -> crate::Result<Run> {
         let attachments = attachments
             .into_iter()
             .map(|file| attachments::StreamingAttachment {
@@ -249,7 +245,7 @@ impl WES {
         &self,
         next_page_token: Option<String>,
         page_size: Option<i64>,
-    ) -> Result<RunListResponse, Box<dyn std::error::Error>> {
+    ) -> crate::Result<RunListResponse> {
         let resp_str = self
             .transport
             .get("runs", paging_params(next_page_token, page_size))
@@ -274,17 +270,22 @@ impl WES {
     }
 
     /// Get run full details (wrapper around Run::log for convenience from client)
-    pub async fn get_run(&self, id: &str) -> Result<RunLog, Box<dyn std::error::Error>> {
-        let run = Run::new(id.to_string(), self.transport.clone());
-        run.log().await
+    pub async fn get_run(&self, id: &str) -> crate::Result<RunLog> {
+        self.get_run_as(id).await
+    }
+
+    /// Gets a run's details as any type that deserializes from the server's
+    /// run log JSON, as [`Run::log_as`] does.
+    pub async fn get_run_as<T: DeserializeOwned>(&self, id: &str) -> crate::Result<T> {
+        Run::new(id.to_string(), self.transport.clone())
+            .log_as()
+            .await
     }
 }
 
 // WES 1.0 service-info predates common GA4GH discovery fields. Keep this
 // compatibility projection outside generated models, and reject unrelated JSON.
-pub(crate) fn service_from_info(
-    raw: serde_json::Value,
-) -> Result<Service, Box<dyn std::error::Error>> {
+pub(crate) fn service_from_info(raw: serde_json::Value) -> crate::Result<Service> {
     if let Ok(service) = serde_json::from_value::<Service>(raw.clone()) {
         return Ok(service);
     }
@@ -352,7 +353,7 @@ mod tests {
         let run = Run::new("123".to_string(), transport.clone());
         let wes = WES {
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
             transport,
         };
         for output in [format!("{:?}", run), format!("{:?}", wes)] {
@@ -458,13 +459,13 @@ mod tests {
 
         let wes = WES {
             config,
-            service: Ok(Service {
+            service: Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
-            }),
+            },
             transport,
         };
 
@@ -483,13 +484,13 @@ mod tests {
         let wes = WES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service {
+            service: Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
-            }),
+            },
         };
         assert!(wes.run_workflow(valid_request()).await.is_err());
     }
@@ -507,13 +508,13 @@ mod tests {
         let wes = WES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service {
+            service: Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
-            }),
+            },
         };
         let error = wes.run_workflow(valid_request()).await.unwrap_err();
         assert_eq!(
@@ -540,13 +541,13 @@ mod tests {
         let wes = WES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service {
+            service: Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
-            }),
+            },
         };
         let request = RunRequest {
             workflow_url: "workflow.cwl".to_string(),
@@ -648,7 +649,7 @@ mod tests {
         let transport = Transport::new(&config);
         let wes = WES {
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
             transport,
         };
 
@@ -669,7 +670,7 @@ mod tests {
         let wes = WES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
         };
         let list = wes.list_runs(None, None).await.unwrap();
         let runs = list.runs.unwrap();
@@ -693,7 +694,7 @@ mod tests {
         let wes = WES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
         };
         assert!(wes
             .list_runs(Some("a+b&c".to_string()), Some(5))
@@ -713,7 +714,7 @@ mod tests {
         let transport = Transport::new(&config);
         let wes = WES {
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
             transport,
         };
 
@@ -727,13 +728,13 @@ mod tests {
         WES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service {
+            service: Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
-            }),
+            },
         }
     }
 
@@ -909,10 +910,7 @@ mod tests {
         let err = run.get_task("").await.unwrap_err();
         assert_eq!(err.to_string(), "task ID must not be empty");
         // Transport rejects dot segments before sending a request.
-        let is_endpoint_error = |err: Box<dyn std::error::Error>| {
-            err.downcast_ref::<crate::utils::transport::EndpointError>()
-                .is_some()
-        };
+        let is_endpoint_error = |err: crate::Error| matches!(err, crate::Error::Endpoint(_));
         for id in [".", ".."] {
             assert!(is_endpoint_error(run.get_task(id).await.unwrap_err()));
             let run = Run::new(id.to_string(), run.transport.clone());

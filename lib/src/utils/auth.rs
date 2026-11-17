@@ -60,7 +60,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// The error type of [`TokenProvider::token`].
-pub type BoxError = Box<dyn Error + Send + Sync>;
+pub use crate::error::BoxError;
 
 /// What the transport asks a [`TokenProvider`] for.
 #[non_exhaustive]

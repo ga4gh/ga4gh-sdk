@@ -20,7 +20,6 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    error::Error,
     fmt,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -189,7 +188,7 @@ impl BulkPolicy {
     ///
     /// Fails if `maxBulkRequestLength` isn't a positive integer that fits in
     /// a `usize`.
-    pub fn with_service_info(mut self, raw: &Value) -> Result<Self, Box<dyn Error>> {
+    pub fn with_service_info(mut self, raw: &Value) -> crate::Result<Self> {
         if let Some(value) = raw.get("maxBulkRequestLength") {
             let limit = value
                 .as_u64()
@@ -199,7 +198,7 @@ impl BulkPolicy {
         }
         Ok(self)
     }
-    fn batch_size(&self) -> Result<usize, Box<dyn Error>> {
+    fn batch_size(&self) -> crate::Result<usize> {
         self.retry.validate()?;
         if self.chunk_size == 0
             || self.advertised_limit == Some(0)
@@ -217,7 +216,7 @@ impl BulkPolicy {
             .min(self.advertised_limit.unwrap_or(self.chunk_size)))
     }
 }
-fn require_access_ids(keys: &[BulkKey]) -> Result<(), Box<dyn Error>> {
+fn require_access_ids(keys: &[BulkKey]) -> crate::Result<()> {
     if keys.iter().any(|k| k.access_id.is_none()) {
         return Err("bulk access lookup requires an access ID for each object".into());
     }
@@ -441,7 +440,7 @@ impl DRS {
                 Ok(Ok(response)) => response,
                 Ok(Err(error))
                     if attempt < policy.retry.max_attempts
-                        && error.downcast_ref::<reqwest::Error>().is_some() =>
+                        && matches!(error, crate::Error::Transport(_)) =>
                 {
                     if let Err(error) = operation.sleep(policy.retry.delay(attempt)).await {
                         return ChunkReply::Error(error.to_string());
@@ -553,7 +552,7 @@ impl DRS {
         access: bool,
         policy: &BulkPolicy,
         operation: &Operation,
-    ) -> Result<BulkReport<T>, Box<dyn Error>> {
+    ) -> crate::Result<BulkReport<T>> {
         // Validate the policy first, so that an invalid one fails even
         // without keys
         let batch = policy.batch_size()?;
@@ -609,7 +608,7 @@ impl DRS {
         passports: &[String],
         policy: &BulkPolicy,
         operation: &Operation,
-    ) -> Result<BulkReport<DrsObject>, Box<dyn Error>> {
+    ) -> crate::Result<BulkReport<DrsObject>> {
         self.bulk(object_keys(ids), passports, false, policy, operation)
             .await
     }
@@ -627,7 +626,7 @@ impl DRS {
         passports: &[String],
         policy: &BulkPolicy,
         operation: &Operation,
-    ) -> Result<BulkReport<Value>, Box<dyn Error>> {
+    ) -> crate::Result<BulkReport<Value>> {
         self.bulk(object_keys(ids), passports, false, policy, operation)
             .await
     }
@@ -647,7 +646,7 @@ impl DRS {
         passports: &[String],
         policy: &BulkPolicy,
         operation: &Operation,
-    ) -> Result<BulkReport<BulkAccessUrl>, Box<dyn Error>> {
+    ) -> crate::Result<BulkReport<BulkAccessUrl>> {
         require_access_ids(keys)?;
         self.bulk(keys.to_vec(), passports, true, policy, operation)
             .await
@@ -665,7 +664,7 @@ impl DRS {
         passports: &[String],
         policy: &BulkPolicy,
         operation: &Operation,
-    ) -> Result<BulkReport<Value>, Box<dyn Error>> {
+    ) -> crate::Result<BulkReport<Value>> {
         require_access_ids(keys)?;
         self.bulk(keys.to_vec(), passports, true, policy, operation)
             .await

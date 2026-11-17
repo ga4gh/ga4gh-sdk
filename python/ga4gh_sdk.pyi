@@ -705,17 +705,17 @@ class DrsUri:
         """Parses a DRS URI.
 
         Args:
-            uri: The URI, `drs://<host>/<object-id>`. The host is a name, an IPv4
-                address or an IPv6 address in brackets, without a port.
+            uri: The URI, `drs://<host>/<object-id>`. The host is a name or an
+                IPv4 address, without a port. IPv6 literals are unsupported.
 
         Raises:
-            ValueError: The URI is malformed or its host has a port, or it is a
-                compact identifier (`drs://prefix:accession`), which is not
-                supported.
+            ValueError: The URI is malformed, has a port or an IPv6 literal,
+                or is a compact identifier (`drs://prefix:accession`), which
+                is not supported.
         """
     @property
     def authority(self) -> str:
-        """The normalized host: lowercase, punycode, IPv6 compressed in brackets."""
+        """The normalized host: lowercase, punycode, or dotted decimal IPv4."""
     @property
     def object_id(self) -> str:
         """The object ID, decoded."""
@@ -767,7 +767,8 @@ class DrsResolver:
             The resolver itself, for chaining.
 
         Raises:
-            ValueError: `authority` is not a valid host or has a port.
+            ValueError: `authority` is not a valid host, has a port or is an
+                IPv6 literal.
             RuntimeError: Another thread is planning access with the resolver.
         """
     def access_plan_once(
