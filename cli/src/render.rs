@@ -53,7 +53,7 @@ pub(crate) fn json_printable(json: &str) -> String {
     output
 }
 
-fn needs_escape(c: char) -> bool {
+pub(crate) fn needs_escape(c: char) -> bool {
     c.is_control()
         || matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }

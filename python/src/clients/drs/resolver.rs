@@ -181,9 +181,7 @@ impl PyDrsResolver {
         let operation = budget(timeout)?;
         let answer = io(py, |rt| {
             rt.block_on(self.inner.access_plan_once(uri, &preferences, &operation))
-                .map_err(|error| {
-                    format!("Failed to plan DRS access: {}", plan_error(error.as_ref()))
-                })
+                .map_err(|error| format!("Failed to plan DRS access: {}", plan_error(&error)))
         })?;
         match answer {
             AccessResolution::Ready(inner) => PyAccessPlan { inner }.into_py_any(py),
@@ -218,7 +216,7 @@ impl PyDrsResolver {
                     .access_plan(uri, &preferences, &operation, max_attempts),
             )
             .map(|inner| PyAccessPlan { inner })
-            .map_err(|error| format!("Failed to plan DRS access: {}", plan_error(error.as_ref())))
+            .map_err(|error| format!("Failed to plan DRS access: {}", plan_error(&error)))
         })
     }
 }

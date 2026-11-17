@@ -7,3 +7,4 @@ assessment as a current defect list. Follow its linked issues for remediation
 status, and reproduce a finding on the implementation base before fixing it.
 
 - [2026-11-10 SDK assessment](2026-11-10-engineering.md)
+- [2026-11-16 writing-guidance pilot evaluation](2026-11-16-writing-pilot.md)

@@ -35,8 +35,7 @@ different directory is shown.
   the [technical writing guide](docs/technical_writing.md) for the affected
   text. Preserve technical meaning, conditions, exceptions, and API
   identifiers. Keep unrelated documentation rewrites outside the task. The
-  guide remains advisory until [#185](https://github.com/ga4gh/ga4gh-sdk/issues/185)
-  evaluates the pilot.
+  guide is advisory.
 
 ## Core engineering checks
 

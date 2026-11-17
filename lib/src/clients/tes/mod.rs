@@ -1,95 +1,98 @@
+//! A client for the Task Execution Service (TES) 1.1 API.
+//!
+//! [`TES`] creates, reads, lists and cancels tasks; [`Task`] reads the state
+//! of one task and cancels it.
+//!
+//! # Examples
+//!
+//! Creating a TES client:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::TES;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//!
+//! # async fn test_tes_new() -> ga4gh_sdk::Result<()> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let tes_result = TES::new(&config).await;
+//! // Check if the client was created successfully
+//! assert!(tes_result.is_ok());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Creating a task:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::TES;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use ga4gh_sdk::clients::tes::models::TesTask;
+//!
+//! # async fn test_tes() -> ga4gh_sdk::Result<()> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let tes = TES::new(&config).await?;
+//! let task = TesTask::default();
+//! let result = tes.create(task).await?;
+//! assert_eq!(result.id, "123");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Retrieving task status:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::Task;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use ga4gh_sdk::clients::tes::models::TesState;
+//! use ga4gh_sdk::utils::transport::Transport;
+//!
+//! # async fn test_task_status() -> ga4gh_sdk::Result<()> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let transport = Transport::new(&config);
+//! let task = Task::new("123".to_string(), transport);
+//! let result = task.status().await?;
+//! assert_eq!(result, TesState::Complete);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Canceling a task:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::Task;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use ga4gh_sdk::utils::transport::Transport;
+//!
+//! # async fn test_task_cancel() -> ga4gh_sdk::Result<()> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let transport = Transport::new(&config);
+//! let task = Task::new("123".to_string(), transport);
+//! let result = task.cancel().await?;
+//! assert_eq!(result["status"], "CANCELLED");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Listing tasks:
+//!
+//! ```rust
+//! use ga4gh_sdk::clients::tes::TES;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use ga4gh_sdk::clients::tes::models::ListTasksParams;
+//!
+//! # async fn test_tes_list_tasks() -> ga4gh_sdk::Result<()> {
+//! let config = Configuration::new(url::Url::parse("http://example.com")?);
+//! let tes = TES::new(&config).await?;
+//! let result = tes.list_tasks(None).await?;
+//! assert!(result.tasks.is_empty());
+//! # Ok(())
+//! # }
+//! ```
+
 mod list_tasks_params;
-/// This module provides a client for interacting with the TES (Task Execution Service) API.
-///
-/// The `TES` struct represents a TES client and provides methods for creating tasks, retrieving task status, canceling tasks, and listing tasks.
-///
-/// # Examples
-///
-/// Creating a TES client:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::TES;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-///
-/// # async fn test_tes_new() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let tes_result = TES::new(&config).await;
-/// // Check if the client was created successfully
-/// assert!(tes_result.is_ok());
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Creating a task:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::TES;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-/// use ga4gh_sdk::clients::tes::models::TesTask;
-///
-/// # async fn test_tes() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let tes = TES::new(&config).await?;
-/// let task = TesTask::default();
-/// let result = tes.create(task).await?;
-/// assert_eq!(result.id, "123");
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Retrieving task status:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::Task;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-/// use ga4gh_sdk::clients::tes::models::TesState;
-/// use ga4gh_sdk::utils::transport::Transport;
-///
-/// # async fn test_task_status() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let transport = Transport::new(&config);
-/// let task = Task::new("123".to_string(), transport);
-/// let result = task.status().await?;
-/// assert_eq!(result, TesState::Complete);
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Canceling a task:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::Task;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-/// use ga4gh_sdk::utils::transport::Transport;
-///
-/// # async fn test_task_cancel() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let transport = Transport::new(&config);
-/// let task = Task::new("123".to_string(), transport);
-/// let result = task.cancel().await?;
-/// assert_eq!(result["status"], "CANCELLED");
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Listing tasks:
-///
-/// ```rust
-/// use ga4gh_sdk::clients::tes::TES;
-/// use ga4gh_sdk::utils::configuration::Configuration;
-/// use ga4gh_sdk::clients::tes::models::ListTasksParams;
-///
-/// # async fn test_tes_list_tasks() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Configuration::new(url::Url::parse("http://example.com")?);
-/// let tes = TES::new(&config).await?;
-/// let result = tes.list_tasks(None).await?;
-/// assert!(result.tasks.is_empty());
-/// # Ok(())
-/// # }
-/// ```
+/// The TES 1.1 models, generated from its OpenAPI specification.
 // Generated models (utils/build_models.sh): the generator writes `Default`
 // for enums by hand.
-#[allow(clippy::derivable_impls)]
+#[allow(clippy::derivable_impls, missing_docs)]
 pub mod models;
 mod view;
 use crate::clients::serviceinfo::models::Service;
@@ -100,7 +103,7 @@ use crate::clients::tes::models::TesTask;
 use crate::utils::configuration::Configuration;
 /// Existing import path for the shared path-segment encoder.
 pub use crate::utils::transport::urlencode;
-use crate::utils::transport::{HttpStatusError, Transport};
+use crate::utils::transport::Transport;
 use serde::Serialize;
 use serde_json;
 use serde_json::from_str;
@@ -122,6 +125,9 @@ fn serialize_to_json<T: Serialize>(item: T) -> Value {
     serde_json::to_value(&item).unwrap()
 }
 
+/// A task on a TES server, addressed by its ID.
+///
+/// [`TES::create`] returns one; [`Task::new`] addresses an existing task.
 #[derive(Debug, Clone)]
 pub struct Task {
     /// The unique ID of the task.
@@ -148,7 +154,7 @@ impl Task {
     /// # Returns
     /// - On success, returns a `TesState` representing the task state.
     /// - On failure, returns an error.
-    pub async fn status(&self) -> Result<TesState, Box<dyn std::error::Error>> {
+    pub async fn status(&self) -> crate::Result<TesState> {
         let url = format!("tasks/{}", urlencode(&self.id));
         let response = self
             .transport
@@ -164,7 +170,7 @@ impl Task {
     /// # Returns
     /// - On success, returns a `serde_json::Value` containing the server's response.
     /// - On failure, returns an error.
-    pub async fn cancel(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    pub async fn cancel(&self) -> crate::Result<serde_json::Value> {
         let url = format!("tasks/{}:cancel", urlencode(&self.id));
         let response = self.transport.post(&url, None).await?;
         Ok(serde_json::from_str(&response)?)
@@ -174,9 +180,12 @@ impl Task {
 /// The main struct for interacting with a TES service.
 #[derive(Debug)]
 pub struct TES {
+    /// The configuration that the client was built with.
     #[allow(dead_code)]
     pub config: Configuration, // not used yet
-    pub service: Result<Service, Box<dyn std::error::Error + Send + Sync>>,
+    /// The service info that the client read when it was built.
+    pub service: Service,
+    /// The transport that sends the client's requests.
     pub transport: Transport,
 }
 
@@ -189,7 +198,7 @@ impl TES {
     ///
     /// # Returns
     /// - A new `TES` instance, or an error if the initialization fails.
-    pub async fn new(config: &Configuration) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(config: &Configuration) -> crate::Result<Self> {
         Self::with_transport(Transport::new(config)).await
     }
 
@@ -199,38 +208,31 @@ impl TES {
     ///
     /// # Returns
     /// - A new `TES` instance, or an error if the initialization fails.
-    pub async fn with_transport(transport: Transport) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
         let service = crate::clients::serviceinfo::fetch(&transport, "service-info").await?;
 
         let instance = TES {
             config: transport.config.clone(),
             transport,
-            service: Ok(service),
+            service,
         };
 
         instance.check()?; // Propagate the error if check() fails
         Ok(instance)
     }
 
-    /// Checks if the service is of TES class.
+    /// Checks that the service is a TES.
     ///
-    /// # Returns
-    /// - Ok(()) if the service is valid.
-    /// - Err(String) if the service is invalid or an error occurs.
-    fn check(&self) -> Result<(), String> {
-        let resp = &self.service;
-        match resp.as_ref() {
-            Ok(service) if service.r#type.artifact == "tes" => Ok(()),
-            Ok(_) => Err("The endpoint is not an instance of TES".into()),
-            Err(e) => {
-                let mut message = format!("Error accessing TES service: {e}");
-                if e.downcast_ref::<HttpStatusError>()
-                    .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND)
-                {
-                    message.push_str(". Check that base_path is the TES API root");
-                }
-                Err(message)
-            }
+    /// # Errors
+    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if its service info names
+    /// another artifact.
+    fn check(&self) -> crate::Result<()> {
+        if self.service.r#type.artifact == "tes" {
+            Ok(())
+        } else {
+            Err(crate::Error::UnexpectedService(
+                "The endpoint is not an instance of TES".to_owned(),
+            ))
         }
     }
 
@@ -245,7 +247,7 @@ impl TES {
     pub async fn create(
         &self,
         task: TesTask, /*, params: models::TesTask*/
-    ) -> Result<Task, Box<dyn std::error::Error>> {
+    ) -> crate::Result<Task> {
         self.create_value(serde_json::to_value(task)?).await
     }
 
@@ -258,7 +260,7 @@ impl TES {
     /// request started, the error is an
     /// [`AmbiguousSubmissionError`](crate::utils::operation::AmbiguousSubmissionError):
     /// the service may have created the task.
-    pub async fn create_value(&self, task: Value) -> Result<Task, Box<dyn std::error::Error>> {
+    pub async fn create_value(&self, task: Value) -> crate::Result<Task> {
         let _: TesTask = serde_json::from_value(task.clone())?;
         // First, check if the service is of TES class
         self.check().map_err(|e| {
@@ -302,22 +304,14 @@ impl TES {
     /// # Returns
     /// - On success, returns a `TesTask` containing the task details.
     /// - On failure, returns an error.
-    pub async fn get(
-        &self,
-        view: TesView,
-        id: &str,
-    ) -> Result<TesTask, Box<dyn std::error::Error>> {
+    pub async fn get(&self, view: TesView, id: &str) -> crate::Result<TesTask> {
         let response = self.get_raw(view, id).await?;
         Ok(from_str(&response)?)
     }
 
     /// Retrieves the server's task JSON verbatim, including fields unknown to
     /// the current TES models. This is useful for CLI output and extensions.
-    pub async fn get_raw(
-        &self,
-        view: TesView,
-        id: &str,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    pub async fn get_raw(&self, view: TesView, id: &str) -> crate::Result<String> {
         let url = format!("tasks/{}", urlencode(id));
         self.transport.get(&url, Some(json!({"view": view}))).await
     }
@@ -333,7 +327,7 @@ impl TES {
     pub async fn list_tasks(
         &self,
         params: Option<ListTasksParams>,
-    ) -> Result<TesListTasksResponse, Box<dyn std::error::Error>> {
+    ) -> crate::Result<TesListTasksResponse> {
         let params_value = params.map(serialize_to_json);
         // Make the request with or without parameters based on the presence of params
         let response = if let Some(params_value) = params_value {
@@ -359,7 +353,7 @@ mod tests {
         let task = Task::new("123".to_string(), transport.clone());
         let tes = TES {
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
             transport,
         };
         for output in [format!("{:?}", task), format!("{:?}", tes)] {
@@ -380,13 +374,13 @@ mod tests {
 
         let tes = TES {
             config,
-            service: Ok(Service {
+            service: Service {
                 r#type: Box::new(ServiceType {
                     artifact: "tes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
-            }),
+            },
             transport,
         };
 
@@ -481,7 +475,10 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(
-            error.downcast_ref::<HttpStatusError>().unwrap().status,
+            error
+                .downcast_ref::<crate::utils::transport::HttpError>()
+                .unwrap()
+                .status,
             reqwest::StatusCode::UNAUTHORIZED
         );
         let options = PagingOptions::new(std::time::Duration::from_secs(10));
@@ -529,7 +526,7 @@ mod tests {
         let transport = Transport::new(&config);
         let tes = TES {
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
             transport,
         };
 
@@ -550,7 +547,7 @@ mod tests {
         let transport = Transport::new(&config);
         let tes = TES {
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
             transport,
         };
 
@@ -572,7 +569,7 @@ mod tests {
         let tes = TES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
         };
         let result = tes
             .list_tasks(Some(ListTasksParams {
@@ -596,7 +593,7 @@ mod tests {
         let tes = TES {
             transport: Transport::new(&config),
             config,
-            service: Ok(Service::default()),
+            service: Service::default(),
         };
         for (view, value) in [
             (TesView::Minimal, "MINIMAL"),
@@ -746,13 +743,13 @@ mod tests {
         let transport = Transport::new(&config);
         let tes = TES {
             config,
-            service: Ok(Service {
+            service: Service {
                 r#type: Box::new(ServiceType {
                     artifact: "tes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
-            }),
+            },
             transport: transport.clone(),
         };
         let task = Task::new("123".to_owned(), transport);

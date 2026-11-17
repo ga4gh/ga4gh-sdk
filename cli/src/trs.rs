@@ -1,3 +1,6 @@
+//! The `trs` command: browses the tools of a TRS and fetches their versions,
+//! descriptors and files.
+
 use crate::render::{json_printable, printable};
 use crate::CommandOutput;
 use clap::{arg, ArgAction, ArgMatches, Command};
@@ -13,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// The largest ZIP archive that `trs files --zip` downloads.
 const ZIP_LIMIT: usize = 64 * 1024 * 1024;
 
-/// Build the TRS commands for browsing tools and fetching their descriptors.
+/// Builds the TRS commands for browsing tools and fetching their descriptors.
 pub fn command() -> Command {
     Command::new("trs")
         .about("Tool Registry Service commands")
@@ -135,7 +138,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     };
     let trs = match connection {
         Ok(trs) => trs,
-        Err(error) => return Ok(service_failure(error.as_ref())),
+        Err(error) => return Ok(service_failure(&error)),
     };
     Ok(match execute(&trs, request).await {
         Ok(stdout) => CommandOutput::success(stdout),
@@ -466,7 +469,7 @@ fn parse_descriptor_type(value: &str) -> anyhow::Result<DescriptorType> {
         })
 }
 
-fn service_failure(error: &(dyn Error + 'static)) -> CommandOutput {
+fn service_failure(error: &ga4gh_sdk::Error) -> CommandOutput {
     let message = if error
         .downcast_ref::<HttpError>()
         .is_some_and(|http| http.status == 404)

@@ -165,7 +165,7 @@ async fn tes_pages_repeat_tags_in_order() {
         .create();
     let tes = TES {
         config: Configuration::new(url::Url::parse(&format!("{}/qp-tags", server_url())).unwrap()),
-        service: Err("unused".into()),
+        service: Default::default(),
         transport: transport("/qp-tags"),
     };
     let params = ListTasksParams {

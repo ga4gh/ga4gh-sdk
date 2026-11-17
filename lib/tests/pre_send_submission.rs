@@ -13,7 +13,7 @@ async fn submit(
     transport: &Transport,
     options: &RequestOptions,
     streamed: bool,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> ga4gh_sdk::Result<String> {
     if streamed {
         transport
             .send_once(

@@ -1,0 +1,77 @@
+# One-off TES site check with the ga4gh-cli image; see README.md in this
+# directory. Create it with `kubectl create` (not `apply`): generateName gives
+# every check its own Job.
+#
+# The Job runs one Pod once. backoffLimit 0 and restartPolicy Never are
+# deliberate: TES task creation is not idempotent, so a retried Pod would
+# submit a second task.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: ga4gh-tes-site-check-
+  labels:
+    app.kubernetes.io/name: ga4gh-tes-site-check
+spec:
+  backoffLimit: 0
+  # Longer than TIMEOUT_SECONDS below, so the script can cancel a task that
+  # runs too long before Kubernetes stops the Pod.
+  activeDeadlineSeconds: 900
+  # Keeps the finished Job and its logs (with the task ID) for a day
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ga4gh-tes-site-check
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # The image's user. Remove these three IDs on platforms that assign
+        # their own (for example OpenShift); HOME stays /home/ga4gh either way.
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: site-check
+          # Pin a released version by digest; see docs/container-image.md
+          image: ghcr.io/ga4gh/ga4gh-cli:VERSION@sha256:DIGEST
+          command: [sh, /etc/ga4gh-site-check/tes-site-check.sh]
+          env:
+            - name: TASK_FILE
+              value: /etc/ga4gh-site-check/task.json
+            - name: TIMEOUT_SECONDS
+              value: "600"
+            - name: POLL_SECONDS
+              value: "5"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            # config.json with the TES base_path (and credentials, if any)
+            - name: config
+              mountPath: /home/ga4gh/.ga4gh-cli
+              readOnly: true
+            # tes-site-check.sh and task.json
+            - name: site-check
+              mountPath: /etc/ga4gh-site-check
+              readOnly: true
+      volumes:
+        - name: config
+          secret:
+            secretName: ga4gh-cli-config
+            defaultMode: 0440
+        - name: site-check
+          configMap:
+            name: ga4gh-tes-site-check
+            defaultMode: 0444

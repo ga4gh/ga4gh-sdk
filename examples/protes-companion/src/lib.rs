@@ -8,8 +8,10 @@ use ga4gh_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, error::Error};
-pub type CompanionError = Box<dyn Error>;
+use std::collections::BTreeMap;
+
+/// Preserves SDK error variants and sources for companion callers.
+pub type CompanionError = ga4gh_sdk::Error;
 pub const API_REVISION: &str = "55c4d1591cd3be883ad0b4fd2da01d49976414cb";
 const PLAN_SOURCE: &str = "caller_supplied_original_client_request";
 const PLAN_SUBMISSION: &str = "not_submitted; review this new request before explicit create";
@@ -307,9 +309,10 @@ pub async fn create_plan(
         Err(error) => {
             if let Some(status) = error.downcast_ref::<HttpStatusError>() {
                 if !status.status.is_client_error() {
-                    return Err(Box::new(AmbiguousSubmissionError {
+                    return Err(AmbiguousSubmissionError {
                         reason: format!("gateway returned HTTP {}", status.status),
-                    }));
+                    }
+                    .into());
                 }
             }
             Err(error)

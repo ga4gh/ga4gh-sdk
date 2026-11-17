@@ -8,7 +8,7 @@ description = "Python bindings for GA4GH API service clients"
 readme = { text = """
 # GA4GH SDK for Python
 
-Python clients for GA4GH TES, WES, DRS, and Service Info APIs.
+Python clients for GA4GH TES, WES, DRS, TRS, and Service Info APIs.
 
 Install with `pip install ga4gh-sdk` and import classes from `ga4gh_sdk`.
 For examples, supported Python APIs, and configuration, see the
@@ -37,6 +37,27 @@ Issues = "https://github.com/ga4gh/ga4gh-sdk/issues"
 [project.optional-dependencies]
 tests = [
     "pytest",
+]
+
+# Not needed by the bindings: the tools that build the repository's
+# documentation site (`mkdocs.yml`) on Read the Docs (`.readthedocs.yaml`)
+# and in CI (`docs` job). Install them with
+# `python -m pip install --group python/pyproject.toml:docs` (pip 25.1 or
+# later). Exact versions of the packages that `mkdocs.yml` uses, as for the
+# other tools of CI, so that their upgrades, which may add warnings that
+# fail the strict build, are deliberate (their own dependencies are not
+# pinned). Review each pinned-tool update explicitly. Pytest runs the
+# tests in `docs/` (the build's hooks and the Python API reference);
+# mkdocstrings formats the signatures of the Python API reference with Ruff
+[dependency-groups]
+docs = [
+    "mkdocs==1.6.1",
+    "mkdocs-material==9.8.1",
+    "mkdocstrings==1.0.8",
+    "mkdocstrings-python==2.0.11",
+    "pymdown-extensions==12.3",
+    "pytest==9.0.3",
+    "ruff==0.17.5",
 ]
 
 [tool.maturin]

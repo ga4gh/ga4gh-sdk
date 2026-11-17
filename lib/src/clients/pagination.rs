@@ -2,6 +2,29 @@
 //!
 //! Queries are encoded as described in [`crate::utils::query`], the same as
 //! for [`Transport`]; [`Pager::new`] rejects unsupported values.
+//!
+//! [`TES::pages`] and [`WES::pages`] build a [`Pager`], which fetches pages
+//! of the task or run list on demand, with [`Pager::next_page`], or single
+//! items across pages, with [`Pager::next_item`]. A [`PageCheckpoint`] saves
+//! the position, so that [`Pager::resume`] can continue a listing later, and
+//! every [`PageFailure`] carries one.
+//!
+//! ```no_run
+//! use ga4gh_sdk::clients::pagination::PagingOptions;
+//! use ga4gh_sdk::clients::wes::WES;
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//! use std::time::Duration;
+//!
+//! # async fn example() -> ga4gh_sdk::Result<()> {
+//! let config = Configuration::new(url::Url::parse("https://example.org/ga4gh/wes/v1")?);
+//! let wes = WES::new(&config).await?;
+//! let mut pager = wes.pages(Some(50), PagingOptions::new(Duration::from_secs(60)))?;
+//! while let Some(run) = pager.next_item().await? {
+//!     println!("{}", run["run_id"]);
+//! }
+//! # Ok(())
+//! # }
+//! ```
 use super::{
     tes::{models::ListTasksParams, TES},
     wait::ServiceKind,
@@ -22,14 +45,24 @@ use std::{
     time::Duration,
 };
 
+/// Limits of a listing.
 #[derive(Clone, Debug)]
 pub struct PagingOptions {
+    /// The deadline and cancellation of the whole listing, shared by all of
+    /// its page requests.
     pub operation: Operation,
+    /// The most page requests (default 1000); then the listing stops without
+    /// an error. Must be positive.
     pub max_requests: usize,
+    /// The most items in total (default: no limit); the page that exceeds it
+    /// is truncated and the listing stops.
     pub max_items: Option<usize>,
+    /// The most bytes read of each page's body.
     pub limits: BodyLimits,
 }
 impl PagingOptions {
+    /// Options for a listing that ends `budget` from now, with the defaults
+    /// of the fields.
     pub fn new(budget: Duration) -> Self {
         Self {
             operation: Operation::new(budget),
@@ -39,17 +72,28 @@ impl PagingOptions {
         }
     }
 }
+/// The position of a listing, saved to resume it with [`Pager::resume`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PageCheckpoint {
+    /// The API whose tasks or runs are listed.
     pub service: ServiceKind,
+    /// The service's API root, without credentials.
     pub api_root: String,
+    /// The query of the listing, without `page_token`.
     pub query: Value,
+    /// The token of the next page; `None` when the listing starts at the
+    /// service's first page, or after the last page.
     pub next_token: Option<String>,
+    /// Whether the last page has been fetched.
     pub finished: bool,
 }
+/// A page request failed; the listing can resume from `checkpoint`.
 #[derive(Debug)]
 pub struct PageFailure {
+    /// Where to resume: the start of the failed page, or of a partly read
+    /// item page (see [`Pager::checkpoint`]).
     pub checkpoint: PageCheckpoint,
+    /// What went wrong.
     pub reason: String,
 }
 impl fmt::Display for PageFailure {
@@ -62,12 +106,21 @@ impl fmt::Display for PageFailure {
     }
 }
 impl Error for PageFailure {}
+/// One page of a listing.
 #[derive(Debug)]
 pub struct Page {
+    /// The tasks (TES) or runs (WES) of the page, as the service sent them.
     pub items: Vec<Value>,
+    /// Where to resume: after this page, or at its start if it was truncated.
     pub checkpoint: PageCheckpoint,
+    /// Whether [`PagingOptions::max_items`] cut the page short.
     pub truncated: bool,
 }
+/// Fetches the pages of a TES task list or WES run list on demand.
+///
+/// It stops at the last page or a limit of its [`PagingOptions`], and fails
+/// when a page token repeats. Pages are fetched one by one, so a list that
+/// changes meanwhile may skip or repeat items.
 #[derive(Debug)]
 pub struct Pager {
     transport: Transport,
@@ -81,19 +134,28 @@ pub struct Pager {
     partial_page: Option<PageCheckpoint>,
     stopped: bool,
 }
-fn root(transport: &Transport) -> Result<String, Box<dyn Error>> {
+fn root(transport: &Transport) -> crate::Result<String> {
     let mut root = transport.endpoint("")?;
     let _ = root.set_username("");
     let _ = root.set_password(None);
     Ok(root.into())
 }
 impl Pager {
+    /// Starts a listing of `service` at `transport`'s API root, with the
+    /// query parameters of `query`; its `page_token`, if any, is the first
+    /// page's. Sends no request.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `options.max_requests` is 0, `query` isn't a JSON object, its
+    /// `page_token` isn't a string, or it has a value that can't be encoded
+    /// as a query parameter.
     pub fn new(
         transport: &Transport,
         service: ServiceKind,
         mut query: Value,
         options: PagingOptions,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> crate::Result<Self> {
         if options.max_requests == 0 {
             return Err("pagination max_requests must be positive".into());
         }
@@ -130,13 +192,23 @@ impl Pager {
             stopped: false,
         })
     }
+    /// Continues a listing from `checkpoint`, for the same `service`, API
+    /// root and `query`. Sends no request.
+    ///
+    /// Pass `query` without `page_token`: the checkpoint's token replaces it,
+    /// but a page that leads back to it still counts as a token cycle.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`Self::new`] does, or if `checkpoint` belongs to another
+    /// service, API root or query.
     pub fn resume(
         transport: &Transport,
         service: ServiceKind,
         query: Value,
         checkpoint: PageCheckpoint,
         options: PagingOptions,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> crate::Result<Self> {
         let mut pager = Self::new(transport, service, query, options)?;
         if checkpoint.service != service
             || checkpoint.api_root != pager.checkpoint.api_root
@@ -266,6 +338,14 @@ impl Pager {
             truncated,
         }))
     }
+    /// Fetches the next page, or gives `None` after the last page or at a
+    /// limit of the options.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the request fails, the deadline passes, the operation is
+    /// cancelled, the body isn't a page of the API, a page token repeats, or
+    /// [`Self::next_item`] has not yet given every item of its page.
     pub async fn next_page(&mut self) -> Result<Option<Page>, PageFailure> {
         if !self.buffer.is_empty() {
             return Err(
@@ -274,6 +354,12 @@ impl Pager {
         }
         self.fetch().await
     }
+    /// Gives the next item, fetching the next page when the current one is
+    /// used up; `None` at the end of the listing.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`Self::next_page`] does when it fetches a page.
     pub async fn next_item(&mut self) -> Result<Option<Value>, PageFailure> {
         loop {
             if let Some(item) = self.buffer.pop_front() {
@@ -292,11 +378,17 @@ impl Pager {
     }
 }
 impl TES {
+    /// Lists the tasks page by page, with the filters, view and `page_size`
+    /// of `params`; its `page_token`, if any, is the first page's.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`Pager::new`] does.
     pub fn pages(
         &self,
         params: Option<ListTasksParams>,
         options: PagingOptions,
-    ) -> Result<Pager, Box<dyn Error>> {
+    ) -> crate::Result<Pager> {
         Pager::new(
             &self.transport,
             ServiceKind::Tes,
@@ -309,11 +401,12 @@ impl TES {
     }
 }
 impl WES {
-    pub fn pages(
-        &self,
-        page_size: Option<i64>,
-        options: PagingOptions,
-    ) -> Result<Pager, Box<dyn Error>> {
+    /// Lists the runs page by page, with `page_size` runs per page if given.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`Pager::new`] does.
+    pub fn pages(&self, page_size: Option<i64>, options: PagingOptions) -> crate::Result<Pager> {
         let query = page_size
             .map(|size| json!({"page_size":size}))
             .unwrap_or(json!({}));

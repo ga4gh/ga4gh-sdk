@@ -7,12 +7,17 @@ library also provides a `ServiceInfo` client (see the
 
 ## Installation
 
-From the repository root:
+Releases include ready-made binaries; see
+[Download the CLI](../README.md#download-the-cli). To build from source, run
+from the repository root:
 
 ```sh
 cargo install --path cli --locked
 ga4gh-cli --help
 ```
+
+The CLI can also run as an OCI image for `linux/amd64` and `linux/arm64`;
+see the [container image guide](../docs/container-image.md).
 
 ## Configuration
 
@@ -97,7 +102,9 @@ See the [usage guide](../docs/usage.md#profiles) for the file rules.
 `timeouts` sets time limits in seconds for the commands of that section:
 `connect` (default 10), `request` (default 60), `discovery` (the service-info
 check, default 10) and `submission` (`tes create` and `wes run`, including
-uploads, default 300). A submission is sent once; if it runs out of time
+uploads, default 300). `tes save` applies `request` to each wait for data
+of a download instead of to the whole download. A submission is sent once;
+if it runs out of time
 after its request started, the error says that it may have been accepted, so look
 for the task or run before you submit it again. The
 [usage guide](../docs/usage.md#timeouts) has the details. Downstream binaries
@@ -116,6 +123,125 @@ SDK-owned clients do not follow redirects. See the
 [authentication guide](../docs/authentication.md) for the source and redirect
 contracts. Dynamic token-provider integration is tracked in
 [#215](https://github.com/ga4gh/ga4gh-sdk/pull/215).
+
+### Logging in with OpenID Connect
+
+Instead of pasting a token, you can log in with an OpenID Connect provider
+that supports the
+[device authorization grant](https://www.rfc-editor.org/rfc/rfc8628) (device
+flow). Give each section that should use the login an `oidc` object with the
+provider's issuer and a public client ID that the provider has registered for
+the device flow:
+
+```json
+{
+    "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oidc": {
+            "issuer": "https://login.example.org/realms/example",
+            "client_id": "my-cli-client"
+        }
+    }
+}
+```
+
+- `issuer` (string, required): the provider's issuer URL. The CLI reads the
+  provider's endpoints from `<issuer>/.well-known/openid-configuration`.
+  It must use HTTPS; HTTP is accepted only for loopback addresses, such as a
+  local test provider.
+- `client_id` (string, required): a public client. The CLI sends no client
+  secret, and the configuration can't hold one.
+- `scope` (string, optional): the scopes to request, separated by spaces.
+  The default is `openid offline_access`; `offline_access` asks for a refresh
+  token. Some providers need other scopes, for example one that sets the
+  token's audience.
+
+A section with `oidc` can't also set `basic_auth`, `oauth_access_token`,
+`bearer_access_token` or their `_env` variants. Other keys of `oidc` are
+errors. `ga4gh-cli` itself has no token variable; to use a token from the
+environment for a section, remove `oidc` and set `oauth_access_token_env`.
+Binaries built on this CLI with a token variable (see the
+[downstream guide](../docs/downstream.md)) use the variable's token instead of
+the login when the variable is set.
+
+Then log in, naming the section (the service commands' names, such as `tes`,
+stand for their sections):
+
+```sh
+ga4gh-cli login tes
+```
+
+The CLI shows a URL and a code on standard error. Open the URL in a browser,
+enter the code and approve the login. The CLI asks the provider at the
+interval the provider sets (by default every 5 seconds, and never more
+often than once a second) until you have approved, denied, or the code has expired. It then
+stores the tokens in `tokens.json` next to the configuration file
+(`~/.ga4gh-cli/tokens.json`). It creates the file with mode `0600` and its
+directory, if missing, with mode `0700`; it refuses to read a file that other
+users can access. The CLI never prints the tokens. On Windows, the file gets
+the default permissions of its directory. The CLI doesn't use an OS keyring.
+Processes that change the store take turns through the lock file
+`tokens.json.lock` next to it. `login` prints a confirmation, but no token,
+on standard error, leaves standard output empty and exits with code 0; it
+exits with code 1 if the configuration, the provider, or the approval fails.
+
+Sections with `oidc` now send the stored access token. When it has expired, or
+will within 30 seconds, the CLI refreshes it with the refresh token before the
+command and stores the new tokens. If a service rejects the token with `401`,
+the CLI refreshes it once and sends a read-only request again; submissions are
+not resent. If another process has refreshed the tokens in the meantime, the
+CLI uses its tokens instead. If the provider issued no refresh token, or
+rejects the refresh token (`invalid_grant`), the command fails and asks you
+to log in again; other recognized refresh errors are reported by their OAuth
+error code, while unknown codes receive a generic message.
+If the CLI can't store refreshed tokens, it still uses them and logs a
+warning on standard error. Downstream applications control their own logging.
+Tokens are stored per issuer, client ID and scope, so all sections with the
+same `oidc` settings share one login, in every profile. Sections with different
+scopes keep separate logins. The token store's directory must be writable.
+
+```sh
+ga4gh-cli logout tes
+```
+
+`logout` deletes the stored tokens of the section's issuer, client ID and scope and
+says so on standard error; it exits with code 0, also if you weren't logged
+in. It doesn't revoke the tokens at the provider; they stay valid there until
+they expire. Commands that are still running then can't refresh their token
+and don't store it again.
+
+`--profile` selects the profile whose section `login` and `logout` read.
+
+#### Example: Keycloak
+
+With [Keycloak](https://www.keycloak.org/), the issuer is the realm's URL:
+
+```json
+{
+    "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oidc": {
+            "issuer": "https://keycloak.example.org/realms/example",
+            "client_id": "ga4gh-cli"
+        }
+    }
+}
+```
+
+The client must be public ("Client authentication" off) and have the
+"OAuth 2.0 Device Authorization Grant" enabled. For the default scope
+`openid offline_access`, users need the realm role `offline_access`, which
+Keycloak's default roles include. Without it, Keycloak refuses the login
+with its own error code `not_allowed`, which isn't an OAuth error code, so
+`login` reports `unrecognized_error`. In the browser, Keycloak asks the user
+to sign in and then to grant the client access. If the realm rotates refresh
+tokens ("Revoke Refresh Token"), each refresh stores the new refresh token;
+Keycloak ends the login if an older one is used again, for example from a
+copy of the token store, and the CLI then asks you to log in again.
+
+An integration suite checks this setup against a Keycloak container; see the
+[integration test guide](../tests/README.md#keycloakcli-login) and the test
+realm in [`tests/keycloak/realm.json`](../tests/keycloak/realm.json).
 
 ## Usage
 
@@ -243,6 +369,122 @@ All five TES commands exit with code 0 on success and code 1 on request or
 server errors. Missing commands or arguments use Clap's exit code 2. Task IDs,
 page tokens and error messages are text output, so control characters in them
 are escaped (see [Text and JSON output](#text-and-json-output)).
+
+### TES logs and output files
+
+Three more commands read a task's `FULL` view and work with its logs and
+output files. Nothing is downloaded unless you select it.
+
+1. To see what a task has, run `tes files`. Each row has a selector for the
+   other two commands:
+
+```sh
+ga4gh-cli tes files "$task_id"
+```
+
+Example output:
+
+```sh
+SELECTOR       SIZE       DESCRIPTION
+output:0       -          declared output file: s3://bucket/results/out.txt (path /outputs/out.txt)
+stdout:0:0     6          executor stdout, 6 bytes, exit code 0
+stderr:0:0     0          executor stderr, 0 bytes, exit code 0
+system:0       21         system logs, 2 lines
+file:0:0       6          output file: s3://bucket/results/out.txt (path /outputs/out.txt)
+```
+
+| Selector | What it names |
+| --- | --- |
+| `stdout:ATTEMPT:EXECUTOR`, `stderr:ATTEMPT:EXECUTOR` | The `stdout` or `stderr` field of an executor log, as text in the response |
+| `system:ATTEMPT` | The `system_logs` of an attempt, one line per entry |
+| `output:INDEX` | An output that the task declares in `outputs` |
+| `file:ATTEMPT:INDEX` | An output file that the server reports in the attempt's `outputs` log, with its size |
+
+Attempts and executors are counted from 0, in the order of the response.
+Notes on stderr say what the response lacks, for example when the task is
+still running, has no logs yet, or an executor log has no `stdout` field. URLs
+are shown without user names, passwords, query strings and fragments; `?...`
+marks a removed query string or fragment, which may hold the signature of a
+pre-signed URL. `tes get "$task_id" FULL` shows the complete response.
+`tes log` and `tes save` print these notes only when they fail.
+
+2. To show an inline log, run `tes log` with its selector. Control and
+   bidirectional formatting characters are escaped; line breaks are kept:
+
+```sh
+ga4gh-cli tes log "$task_id" stdout:0:0
+```
+
+3. To save logs and output files, run `tes save` with one or more selectors
+   and a directory:
+
+```sh
+ga4gh-cli tes save "$task_id" stdout:0:0 file:0:0 --dir results
+ga4gh-cli tes save "$task_id" output:0 --dir results --name out-copy.txt
+```
+
+The directory is created if it is missing. Inline logs are saved as written
+in the response, without escapes, as `stdout-0-0.txt`, `stderr-0-0.txt` or
+`system-0.txt`. A file is named after the last part of its `path`, or of its
+URL if the path is empty. `--name` sets the name instead, for a single
+selector. Every file goes into the directory itself: a name with a path
+separator, `..`, or control or bidirectional formatting characters is refused,
+whether it comes from the server or from `--name`, and so is an absolute
+`--name`. An existing file is kept, and the command fails, unless you add
+`--force`, which replaces it.
+
+The command checks all selections and names before it downloads anything. It
+then saves the selections in order and stops at the first error; the files
+saved before it are listed on stdout. Each download goes to a temporary file in
+the directory, which is moved to its name only when the transfer is complete
+and, for a `file:` selector, the number of bytes matches the task's
+`size_bytes`. An HTTP error status, a broken connection, a missing object or a
+size mismatch leaves no file behind.
+
+Inline `stdout` and `stderr` are whatever the server put in the response: TES
+servers may cut them short or leave them out. To keep complete output, have
+the executor write it to a file (with the executor's `stdout` and `stderr`
+paths) and declare that file in `outputs`, then save it as a `file:` or
+`output:` selection.
+
+Supported URL schemes:
+
+- `http` and `https`: The CLI sends a plain `GET` request and follows
+  redirects. It sends no
+  credentials from the configuration file, since output URLs can point to
+  any host. Use URLs that need no credentials, such as pre-signed URLs.
+  Proxy environment variables apply.
+- `s3`: `s3://BUCKET/KEY`. Region and endpoint come from standard AWS
+  environment variables. Credentials can come from `AWS_*` variables or,
+  when no static keys are set, from the credential providers used by
+  `object_store`, including cloud instance metadata. A selected S3 URL may
+  therefore use the machine's instance role. Relevant variables include
+  `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+  `AWS_REGION` (default
+  `us-east-1`) and `AWS_ENDPOINT` (for S3-compatible storage such as MinIO;
+  add `AWS_ALLOW_HTTP=true` for a plain HTTP endpoint). Set
+  `AWS_SKIP_SIGNATURE=true` for public buckets. Requests that fail
+  temporarily are retried up to three times.
+
+Both use the `connect` time of the `TES` section for a connection. The
+`request` time (default 60 seconds) bounds the wait for the storage response
+and each later wait for body data; a download as a whole has no time limit.
+Saved files get the permissions that the umask allows, as with other new files.
+Debug logs of the HTTP libraries
+show full URLs, so the CLI logs them only when `RUST_LOG` names them, for
+example `RUST_LOG=debug,reqwest=debug`.
+
+Other schemes, such as `file`, `gs` or `ftp`, are refused with an error, and
+so are declared outputs of type `DIRECTORY` or with a wildcard: save the files
+that the server reports under `file:` instead. A declared output counts as a
+wildcard when its `path` contains `*`, `?` or `[`, or when it has a non-empty
+`path_prefix`; an empty `path_prefix`, which some servers send for single
+files, leaves a `FILE` output a file.
+
+The three commands exit with code 0 on success and code 1 on request, server,
+selection or download errors; missing arguments, such as `--dir`, use exit
+code 2. Invalid selectors and `--name` values fail before the CLI contacts
+the service.
 
 ### DRS examples
 
@@ -549,6 +791,8 @@ All commands treat values from a service the same way:
   use JSON escapes in the same way.
 - `trs descriptor --plain` and `trs tests --plain` print the file content as
   received, since it is meant to be saved as a file.
+- `tes log` escapes each line of a log like other text output and keeps the
+  line breaks. `tes save` writes logs and files as received, without escapes.
 
 Escaping changes only what is printed. The SDK keeps the values it received,
 and commands send the IDs given to them unchanged. For a newly submitted ID,
