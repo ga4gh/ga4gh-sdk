@@ -34,8 +34,10 @@ Read a client's state with its accessors: `configuration()` returns the
 configuration of the client's transport, which its requests use;
 `transport()` the transport, for example to share it with a client for an
 added endpoint; and `discovered_service_info()` the service info read at
-construction. `TES`, `WES`, `DRS`, and `TRS` have these accessors, and
-`Transport::configuration()` returns a transport's configuration. To change
+construction. `TES`, `WES`, `DRS`, and `TRS` have these accessors (on `TRS`,
+`discovered_service_info()` returns an `Option`, as a `TRS` client can be
+built without discovery), and `Transport::configuration()` returns a
+transport's configuration. To change
 the API root, credentials, or HTTP client, build a new client, for example
 with `with_transport`. The public `config`, `service`, and `transport` fields
 of `TES`, `WES`, and `DRS` remain for now; see the

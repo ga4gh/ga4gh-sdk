@@ -300,9 +300,10 @@ impl CapabilitySnapshot {
 /// capabilities. Accessors never fetch; refresh is explicit and atomic on success.
 #[derive(Debug)]
 pub struct Discovered<T> {
-    /// The client, also reached through `Deref`.
+    /// The client, also reached through `Deref` and [`Self::client`].
     pub client: T,
-    /// The service-info response that the client was built from.
+    /// The service-info response that the client was built from; also
+    /// returned by [`Self::capabilities`].
     pub capabilities: CapabilitySnapshot,
 }
 impl<T> Discovered<T> {

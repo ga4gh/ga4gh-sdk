@@ -57,9 +57,24 @@ fn example_task() -> TesTask {
 
 #[tokio::test]
 async fn usage_client_shares_the_tes_clients_transport() {
-    let _info = service_info("shared");
-    // Only the injected HTTP client sends this header, so the usage request
-    // proves that the client is shared, not just the configuration.
+    // Only the injected HTTP client sends this header, so the service-info
+    // and usage requests prove that the client is shared, not just the
+    // configuration.
+    let info = mock("GET", "/shared/ga4gh/tes/v1/service-info")
+        .match_header("x-client", "injected")
+        .with_status(200)
+        .with_body(
+            json!({
+                "id": "org.example.tes",
+                "name": "Example TES",
+                "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
+                "organization": {"name": "Example", "url": "https://example.org"},
+                "version": "1.0.0"
+            })
+            .to_string(),
+        )
+        .expect(1)
+        .create();
     let _usage = mock("GET", "/shared/ga4gh/tes/v1/tasks/task%201/usage")
         .match_header("x-client", "injected")
         .with_status(200)
@@ -75,6 +90,7 @@ async fn usage_client_shares_the_tes_clients_transport() {
     let tes = TES::with_transport(Transport::with_client(&config, client))
         .await
         .unwrap();
+    info.assert();
     assert_eq!(tes.configuration().base_path, config.base_path);
     assert_eq!(tes.discovered_service_info().id, "org.example.tes");
 

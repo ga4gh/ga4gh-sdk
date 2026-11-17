@@ -25,12 +25,17 @@ use serde::de::DeserializeOwned;
 /// The main struct for interacting with a DRS service.
 #[derive(Debug)]
 pub struct DRS {
-    /// The configuration that the client was built with.
+    /// A copy of the transport's configuration, made when the client was
+    /// built. Requests don't read it, so it can differ from what they
+    /// use; read [`Self::configuration`] instead. Resolution references
+    /// still take their API root from it.
     #[allow(dead_code)]
     pub config: Configuration,
-    /// The service info that the client read when it was built.
+    /// The service info that the client read when it was built; also
+    /// returned by [`Self::discovered_service_info`].
     pub service: Service,
-    /// The transport that sends the client's requests.
+    /// The transport that sends the client's requests; also returned by
+    /// [`Self::transport`].
     pub transport: Transport,
 }
 
@@ -94,10 +99,14 @@ impl DRS {
         })
     }
 
-    /// The configuration of the client's transport, which determines the API
-    /// root, SDK-configured credentials, user agent, and time limits of its
-    /// requests. It is the transport's own value, not a copy, so it can't
-    /// differ from what requests use.
+    /// The configuration of the client's transport: the value that requests
+    /// read, not the separate `config` copy. See
+    /// [`Transport::configuration`] for what it determines, and for the
+    /// settings of an injected HTTP client that apply instead.
+    ///
+    /// DRS resolution references still take their API root from the `config`
+    /// field; [#292](https://github.com/ga4gh/ga4gh-sdk/issues/292) moves them
+    /// to the transport.
     pub fn configuration(&self) -> &Configuration {
         self.transport.configuration()
     }
@@ -109,7 +118,9 @@ impl DRS {
     }
 
     /// The service info that the client read when it was built. It is a
-    /// snapshot: the client does not fetch it again.
+    /// snapshot: the client does not fetch it again. Only
+    /// `Discovered::refresh` replaces it, together with the capability
+    /// snapshot.
     pub fn discovered_service_info(&self) -> &Service {
         &self.service
     }

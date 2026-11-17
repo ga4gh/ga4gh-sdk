@@ -9,6 +9,11 @@ extension crates. It does not describe completed changes. The
 [follow-ups](#follow-ups-and-deferrals) below track the implementation under
 [#176](https://github.com/ga4gh/ga4gh-sdk/issues/176).
 
+Status: [#293](https://github.com/ga4gh/ga4gh-sdk/issues/293) added the
+accessors of rule 4 and switched the Python `config` getters to them; the
+public fields remain. The [current state](#current-state) below describes the
+analysed commit.
+
 The analysis is a static inspection of commit
 [`a5d0175`](https://github.com/ga4gh/ga4gh-sdk/tree/a5d017513fd9091619a5feb338008c6f8fb02df4),
 with two reproductions (see [Divergence cases](#divergence-cases)). It
@@ -318,8 +323,9 @@ becomes `tes.transport()` and `task.inner` becomes `task.inner()`. The
 
 ## Downstream usage
 
-The downstream test currently assigns a transport after construction. Under
-these rules, it builds the client with the transport instead:
+At the analysed commit, the downstream test assigned a transport after
+construction. Under these rules, it builds the client with the transport
+instead, as it does since #293:
 
 ```rust
 use ga4gh_sdk::clients::tes::TES;

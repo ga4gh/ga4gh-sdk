@@ -181,12 +181,16 @@ impl Task {
 /// The main struct for interacting with a TES service.
 #[derive(Debug)]
 pub struct TES {
-    /// The configuration that the client was built with.
+    /// A copy of the transport's configuration, made when the client was
+    /// built. Requests don't read it, so it can differ from what they
+    /// use; read [`Self::configuration`] instead.
     #[allow(dead_code)]
-    pub config: Configuration, // not used yet
-    /// The service info that the client read when it was built.
+    pub config: Configuration,
+    /// The service info that the client read when it was built; also
+    /// returned by [`Self::discovered_service_info`].
     pub service: Service,
-    /// The transport that sends the client's requests.
+    /// The transport that sends the client's requests; also returned by
+    /// [`Self::transport`].
     pub transport: Transport,
 }
 
@@ -230,10 +234,10 @@ impl TES {
         })
     }
 
-    /// The configuration of the client's transport, which determines the API
-    /// root, SDK-configured credentials, user agent, and time limits of its
-    /// requests. It is the transport's own value, not a copy, so it can't
-    /// differ from what requests use.
+    /// The configuration of the client's transport: the value that requests
+    /// read, not the separate `config` copy. See
+    /// [`Transport::configuration`] for what it determines, and for the
+    /// settings of an injected HTTP client that apply instead.
     pub fn configuration(&self) -> &Configuration {
         self.transport.configuration()
     }
@@ -245,7 +249,9 @@ impl TES {
     }
 
     /// The service info that the client read when it was built. It is a
-    /// snapshot: the client does not fetch it again.
+    /// snapshot: the client does not fetch it again. Only
+    /// `Discovered::refresh` replaces it, together with the capability
+    /// snapshot.
     pub fn discovered_service_info(&self) -> &Service {
         &self.service
     }
