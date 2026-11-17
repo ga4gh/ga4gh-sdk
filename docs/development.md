@@ -146,10 +146,13 @@ hand-written:
   [Autogenerate OpenAPI models](autogenerate_OAI_models.md)). A new client
   whose models trigger these lints needs the same attribute.
 
-Documentation lint enforcement remains in
-[#87](https://github.com/ga4gh/ga4gh-sdk/issues/87); it needs a policy for
-generated models and the existing undocumented public API before it can become
-a useful gate.
+`ga4gh-lib` and `ga4gh-cli` warn on public items without a doc comment
+(`missing_docs`), so `make clippy` and CI fail on them. Document every new
+public item. The generated `models` modules are exempt, as the generator
+writes their docs from the OpenAPI specifications. Modules that are still
+being documented carry a temporary `#[allow(missing_docs)]` with a comment
+that names their issue (`// Documented in #<issue>`); the pull request
+that closes the issue removes it.
 
 ## Documentation
 
