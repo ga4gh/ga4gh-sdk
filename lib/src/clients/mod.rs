@@ -1,3 +1,6 @@
+//! Clients for the GA4GH APIs, one module per API, and the helpers that they
+//! share.
+
 pub mod bundle;
 pub mod capabilities;
 pub mod drs;
@@ -17,11 +20,17 @@ pub mod wes;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ServiceType {
+    /// The Task Execution Service, section `TES`.
     TES,
+    /// The Data Repository Service, section `DRS`.
     DRS,
+    /// The Tool Registry Service, section `TRS`.
     TRS,
+    /// The authentication and authorization infrastructure, section `AAI`.
     AAI,
+    /// The Workflow Execution Service, section `WES`.
     WES,
+    /// The Service Registry, section `REGISTRY`.
     REGISTRY,
     /// Another service, by the name of its section in the configuration file.
     ///

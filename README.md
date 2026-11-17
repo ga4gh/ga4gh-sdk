@@ -494,7 +494,7 @@ This project is covered by the [Apache License 2.0][badge-license-url] also
 ## Contact
 The project is maintained by [ELIXIR Cloud & AAI][elixir-cloud-aai], a Driver
 Project of the [Global Alliance for Genomics and Health (GA4GH)][ga4gh], under
-the umbrella of the [ELIXIR] [Compute Platform][elixir-compute].
+the umbrella of the [ELIXIR][elixir] [Compute Platform][elixir-compute].
 
 To get in touch with us, please use one of the following routes:
 

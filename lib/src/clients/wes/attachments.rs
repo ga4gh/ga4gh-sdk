@@ -6,19 +6,34 @@ use std::{collections::HashSet, error::Error, path::PathBuf, pin::Pin};
 use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
 
+/// Where the content of a [`StreamingAttachment`] comes from.
 pub enum AttachmentSource {
+    /// Content in memory.
     Bytes(Vec<u8>),
+    /// A file, streamed from disk when the request is sent; its length is
+    /// read from its metadata.
     File(PathBuf),
+    /// Any reader, streamed when the request is sent. It can be read only
+    /// once, so a request with it is never sent twice.
     Reader {
+        /// The reader of the content.
         reader: Pin<Box<dyn AsyncRead + Send>>,
+        /// The content's length in bytes, if known.
         length: Option<u64>,
     },
 }
+
+/// A workflow attachment of a WES run request, whose content can be streamed
+/// from a file or reader instead of buffered in memory.
 pub struct StreamingAttachment {
+    /// The path of the file relative to the attachment root, with `/`
+    /// separators; see [`validate_filename`].
     pub filename: String,
+    /// Where the content comes from.
     pub source: AttachmentSource,
 }
 impl StreamingAttachment {
+    /// Builds an attachment that streams `reader`, of `length` bytes if known.
     pub fn reader(
         filename: String,
         reader: impl AsyncRead + Send + 'static,
@@ -102,7 +117,7 @@ fn workflow_form(mut request: RunRequest) -> Result<Form, Box<dyn Error>> {
 /// The parts of a RunWorkflow request that `RunRequest.extra` must not
 /// replace: the `RunRequest` fields and the attachments. Keep in step with
 /// `workflow_form` and the attachment parts.
-pub(super) const RESERVED_PARTS: [&str; 9] = [
+pub(crate) const RESERVED_PARTS: [&str; 9] = [
     "workflow_params",
     "workflow_type",
     "workflow_type_version",

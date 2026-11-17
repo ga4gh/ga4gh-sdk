@@ -463,8 +463,9 @@ asyncio.run(main())
 ### Type hints
 
 The package ships type stubs (`ga4gh_sdk.pyi`, with a `py.typed` marker), so editors and
-type checkers such as mypy see every class and method. `tests/test_stubs.py` checks that
-the stubs declare every class and member of the module.
+type checkers such as mypy see every class and method. Their docstrings are the
+[Python API reference](api.md). `tests/test_stubs.py` checks that the stubs declare and
+document every class and member of the module.
 
 ## Using WES
 
@@ -1006,6 +1007,10 @@ from there. The default feature `extension-module` builds the Python module; a d
 crate can turn it off with `default-features = false` and enable it in its own features
 instead.
 
+`clients::tes::register(py, m)` registers all TES classes at once: the sync and the async
+ones, the `PyTesTask` alias, the `TesState` enum and `WaitTimeoutError`. Use it instead of
+adding these one by one; `m.add_class` and `tes_state_type` remain for an extension module
+that needs only some of them.
 The DRS classes (`PyDRS`, `PyDrsResolver` and so on, in `clients::drs`) follow the same
 pattern; `clients::drs::register(py, m)` registers all of them.
 The WES classes (`PyWES`, `PyRun` and so on, in `clients::wes`) follow the same pattern;
