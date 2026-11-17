@@ -72,10 +72,13 @@ async fn usage_client_shares_the_tes_clients_transport() {
         .default_headers(headers)
         .build()
         .unwrap();
-    let mut tes = TES::new(&config).await.unwrap();
-    tes.transport = Transport::with_client(&config, client);
+    let tes = TES::with_transport(Transport::with_client(&config, client))
+        .await
+        .unwrap();
+    assert_eq!(tes.configuration().base_path, config.base_path);
+    assert_eq!(tes.discovered_service_info().id, "org.example.tes");
 
-    let usage = UsageClient::from_transport(tes.transport.clone())
+    let usage = UsageClient::from_transport(tes.transport().clone())
         .task_usage("task 1")
         .await
         .unwrap();
@@ -118,7 +121,7 @@ async fn usage_client_shares_configured_auth_with_tes() {
     let tes = TES::new(&config).await.unwrap();
     info.assert();
 
-    let usage = UsageClient::from_transport(tes.transport.clone())
+    let usage = UsageClient::from_transport(tes.transport().clone())
         .task_usage("task-1")
         .await
         .unwrap();

@@ -305,6 +305,24 @@ pub struct Discovered<T> {
     /// The service-info response that the client was built from.
     pub capabilities: CapabilitySnapshot,
 }
+impl<T> Discovered<T> {
+    /// The client, also reached through `Deref`.
+    pub fn client(&self) -> &T {
+        &self.client
+    }
+
+    /// The capability snapshot from the service-info response that the
+    /// client's discovered service came from.
+    pub fn capabilities(&self) -> &CapabilitySnapshot {
+        &self.capabilities
+    }
+
+    /// Splits the wrapper into the client and its capability snapshot, for
+    /// example to keep only the client.
+    pub fn into_parts(self) -> (T, CapabilitySnapshot) {
+        (self.client, self.capabilities)
+    }
+}
 impl<T> Deref for Discovered<T> {
     type Target = T;
     fn deref(&self) -> &T {
