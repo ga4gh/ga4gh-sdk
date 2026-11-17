@@ -21,7 +21,7 @@ fn drs() -> DRS {
     DRS {
         transport: Transport::new(&config),
         config,
-        service: Ok(Service::default()),
+        service: Service::default(),
     }
 }
 fn reference() -> ResolutionReference {
@@ -190,14 +190,14 @@ async fn resume_accepts_equivalent_api_root_with_trailing_slash() {
     let first = DRS {
         transport: Transport::new(&first_config),
         config: first_config,
-        service: Ok(Service::default()),
+        service: Service::default(),
     };
     let reference = first.resolution_reference("objects/id".into());
     let second_config = Configuration::new(url::Url::parse(&format!("{root}/")).unwrap());
     let second = DRS {
         transport: Transport::new(&second_config),
         config: second_config,
-        service: Ok(Service::default()),
+        service: Service::default(),
     };
     let request = mock("GET", "/ga4gh/drs/v1/objects/id")
         .with_body(r#"{"id":"id"}"#)
@@ -211,7 +211,7 @@ async fn resume_accepts_equivalent_api_root_with_trailing_slash() {
     let encoded = DRS {
         transport: Transport::new(&encoded_config),
         config: encoded_config,
-        service: Ok(Service::default()),
+        service: Service::default(),
     };
     assert_eq!(
         encoded.resolution_reference("objects/id".into()).api_root,

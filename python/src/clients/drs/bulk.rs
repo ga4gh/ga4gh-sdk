@@ -14,7 +14,8 @@ use serde_json::Value;
 
 /// Limits of `DRS.get_bulk_objects()` and `DRS.get_bulk_access_urls()`.
 ///
-/// The values are checked when a bulk call starts; invalid ones raise `ValueError` there.
+/// Negative counts and negative or non-finite delays raise `ValueError` when the
+/// policy is built; the other limits are checked when a bulk call starts.
 #[pyclass(name = "BulkPolicy", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyBulkPolicy {

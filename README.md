@@ -40,9 +40,34 @@ pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
 use form encoding for query values. `Transport` now returns `HttpStatusError`
 for non-2xx HTTP responses rather than `std::io::Error`.
 
-As for `TES`, the error type of `DRS::service` is now
-`Box<dyn Error + Send + Sync>`, so a `DRS` client can move between threads;
-`DRS::new` stores only a successful service-info response.
+The library returns its own error type, `ga4gh_sdk::Error`, in place of
+`Box<dyn std::error::Error>` (see [Errors](docs/usage.md#errors)). It is an enum
+of the kinds of failure (`Http`, `Transport`, `Endpoint`, `Parse`,
+`Configuration`, `UnexpectedService`, `Other`) and is `Send + Sync`, so
+clients and their futures can move between threads. This breaks some code:
+
+- Functions that return `Box<dyn Error>` still accept the SDK's errors with
+  `?`. But `downcast_ref::<HttpError>()` on such a box no longer finds the HTTP
+  error, nor does it on an `anyhow::Error` or in a `source()` chain: downcast
+  to `ga4gh_sdk::Error` and call its `downcast_ref`, or match on its variants.
+- An error status in answer to the service-info request of `DRS::new` and
+  `WES::new` is an `Other` error (with a hint on the API root for a 404),
+  not `Http`; its `downcast_ref` returns the HTTP error. `TES::new` and
+  `TRS::new` return `Http`. Other failures of that request keep their
+  variant, such as `Transport` for a failed connection, and no longer have
+  the "Error accessing … service" prefix.
+- Implementations of `DescriptorFetcher` and the attempts passed to
+  `drs::resolution::resolve_until` return `ga4gh_sdk::Error`; `?` or
+  `Error::other(error)` converts other errors.
+- An invalid Service Registry response is now `Error::Parse` with the
+  `serde_json` diagnostic, instead of a string prefixed with the registry
+  endpoint. Match the variant to handle it without parsing the message. The
+  CLI still includes the endpoint in its error output.
+- The `service` field of `TES`, `WES` and `DRS` is now a `Service`
+  instead of a `Result`; the constructors return the errors. Struct literals of
+  the clients set `service: Service::default()` or the service info itself.
+- The error of `ResolveCause::Request` and of the workflow contracts
+  (`ContractError`) is `ga4gh_sdk::Error`.
 
 The WES models follow WES 1.1.0 and use the schema names of the spec:
 `WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
@@ -51,8 +76,7 @@ required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
 now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
 items are `RunListResponseRunsInner` and deprecated task log items are
 `RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
-endpoints. As for `TES`, the error type of `WES::service` is now
-`Box<dyn Error + Send + Sync>`, so a `WES` client can move between threads.
+endpoints.
 
 All models now keep what their spec doesn't define (see
 [Models](docs/usage.md#models)). This breaks some code:
@@ -80,12 +104,54 @@ All models now keep what their spec doesn't define (see
 
 ## Installation
 
+### Download the CLI
+
+Each [release](https://github.com/ga4gh/ga4gh-sdk/releases) has an archive of
+`ga4gh-cli` per platform, named `ga4gh-cli-<version>-<target>`:
+
+| Platform | Target | Archive |
+| --- | --- | --- |
+| Linux x86-64 | `x86_64-unknown-linux-gnu` | `.tar.gz` |
+| Linux aarch64 | `aarch64-unknown-linux-gnu` | `.tar.gz` |
+| macOS x86-64 | `x86_64-apple-darwin` | `.tar.gz` |
+| macOS arm64 | `aarch64-apple-darwin` | `.tar.gz` |
+| Windows x86-64 | `x86_64-pc-windows-msvc` | `.zip` |
+| Windows arm64 | `aarch64-pc-windows-msvc` | `.zip` |
+
+The Linux binaries need glibc 2.34 or newer (for example Ubuntu 22.04,
+Debian 12, RHEL 9 or newer), the OpenSSL 3 library (`libssl3` on Debian and
+Ubuntu, `openssl-libs` on Fedora and RHEL) and CA certificates
+(`ca-certificates`); minimal container images may lack the last two.
+Elsewhere, build from source as below. The binaries aren't signed, so macOS
+may block them until you remove the quarantine attribute
+(`xattr -d com.apple.quarantine ga4gh-cli`). For example, on Linux x86-64,
+check the download against the release's `SHA256SUMS` and, optionally, its
+build provenance, then unpack it (replace the example version with that of
+the release):
+
+```sh
+version=0.2.0
+target=x86_64-unknown-linux-gnu
+archive="ga4gh-cli-$version-$target.tar.gz"
+base="https://github.com/ga4gh/ga4gh-sdk/releases/download/v$version"
+curl --fail --location --remote-name "$base/$archive"
+curl --fail --location --remote-name "$base/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify "$archive" --repo ga4gh/ga4gh-sdk  # needs the GitHub CLI
+tar -xzf "$archive"
+"ga4gh-cli-$version-$target/ga4gh-cli" --help
+```
+
+### Build from source
+
 These instructions install the SDK from this source repository.
 
 **Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) via
 `rustup` and Git. The repository pins its toolchain in
 [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs that version
-on the first build.
+on the first build. On Linux, the library and CLI also need the OpenSSL
+development files and `pkg-config` (for example `libssl-dev pkg-config` on
+Debian and Ubuntu).
 
 Install the command-line tool `ga4gh-cli` into `~/.cargo/bin`:
 
@@ -95,6 +161,11 @@ cd ga4gh-sdk
 cargo install --path cli --locked
 ga4gh-cli --help
 ```
+
+To run the CLI as a container, for example as a Kubernetes Job inside a
+cluster, see the [container image guide](docs/container-image.md). Releases
+publish the image as `ghcr.io/ga4gh/ga4gh-cli`; the guide says whether a
+release includes it yet.
 
 To use the Rust library in your own project, add it as a Git dependency
 (package `ga4gh-lib`, crate `ga4gh_sdk`):
@@ -439,6 +510,8 @@ code changes. Please read [these guidelines][contributing] if you want to
 contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
 
+New developers start with the [developer guide](DEVELOPER_GUIDE.md): the
+repository layout, setup, tests, documentation and how to add a client.
 For local checks, coverage, and hooks, see the [development guide](docs/development.md).
 
 ## License
@@ -449,7 +522,7 @@ This project is covered by the [Apache License 2.0][badge-license-url] also
 ## Contact
 The project is maintained by [ELIXIR Cloud & AAI][elixir-cloud-aai], a Driver
 Project of the [Global Alliance for Genomics and Health (GA4GH)][ga4gh], under
-the umbrella of the [ELIXIR] [Compute Platform][elixir-compute].
+the umbrella of the [ELIXIR][elixir] [Compute Platform][elixir-compute].
 
 To get in touch with us, please use one of the following routes:
 

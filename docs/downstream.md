@@ -52,7 +52,7 @@ have to match the SDK's `reqwest` version.
 `Transport` and sends its requests through it:
 
 ```rust
-pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
+pub async fn task_usage(&self, id: &str) -> ga4gh_sdk::Result<TaskUsage> {
     let path = format!("tasks/{}/usage", urlencode(id));
     let body = self.transport.get(&path, None).await?;
     Ok(serde_json::from_str(&body)?)
@@ -74,8 +74,11 @@ pub async fn task_usage(&self, id: &str) -> Result<TaskUsage, Box<dyn Error>> {
   `request_response` returns the response with its status and headers; see
   [Advanced transport](../README.md#advanced-transport). For a dynamic token
   provider, use `authorized_request_builder()` instead.
-- An error status comes back as `ga4gh_sdk::utils::transport::HttpError`.
-  The status is inspectable. Its bounded body is available to Rust callers,
+- An error status comes back as `ga4gh_sdk::Error::Http`, holding an
+  `HttpError`, and an invalid body as `ga4gh_sdk::Error::Parse`; see
+  [Errors](usage.md#errors). Return `ga4gh_sdk::Result` from your own client,
+  so that `?` keeps these kinds for your callers.
+  `HttpError` has the status. Its bounded body is available to Rust callers,
   but omitted from default error messages because the server may echo secrets.
 - A custom section in the configuration file (any name besides the built-in
   ones) can hold the service's settings; read it with
@@ -136,6 +139,7 @@ CliContext::new("downstream-cli", env!("CARGO_PKG_VERSION"))
 | Configuration file | `~/.<name>/config.json`; `with_config_path` sets another | `~/.ga4gh-cli/config.json` | `~/.downstream-cli/config.json` |
 | Token variable | none; `with_token_env` sets one and its sections | none | `DOWNSTREAM_CLI_TOKEN` for `TES` and `QUOTA` |
 | Profile variable | none; `with_profile_env` sets one | `GA4GH_CLI_PROFILE`; `without_profile_env` turns it off | none |
+| Token store of `login` | `tokens.json` next to the configuration file; `with_token_store_path` sets another | `~/.ga4gh-cli/tokens.json` | `~/.downstream-cli/tokens.json` |
 
 The name, version and help text are `&'static str`, usually literals or
 `env!` values. For the default configuration file, the name must be usable
@@ -151,6 +155,23 @@ token to another service, name a variable in its section with
 `oauth_access_token_env`. The SDK applies the credential to discovery and
 service requests under the configured API root; see the
 [authentication guide](authentication.md).
+
+The context's command tree also has `login` and `logout`, for sections with
+`oidc` settings (see
+[Logging in with OpenID Connect](../cli/README.md#logging-in-with-openid-connect)).
+`dispatch_to` runs both, writing the interactive login prompt to its caller-owned
+writer. `dispatch` runs `logout` but returns an error for `login`, since a
+completed `CommandOutput` cannot deliver the prompt before approval.
+`dispatch_with_config` and `dispatch_with_config_to` return `None` for them,
+as they need the context.
+`load_config` gives sections with `oidc` a token provider with the stored
+login. When the token variable applies to such a section and is set, its
+token is used instead; for such a section, an unset variable is no error.
+
+Downstream contexts also inherit the built-in `tes files`, `tes log` and
+`tes save` commands. The [CLI guide](../cli/README.md#tes-logs-and-output-files)
+describes their selectors and storage URL policy; artifact downloads do not
+forward the TES section's credential.
 
 The configuration file can hold [profiles](usage.md#profiles). The context's
 command tree has a global `--profile` option; its dispatch methods apply it
@@ -240,6 +261,9 @@ this guide in the same pull request.
   The SDK supports other credential sources described in the
   [authentication guide](authentication.md); this example does not exercise
   each one.
+- The example assigns and reads public client fields, such as
+  `tes.transport`. The [client state ownership record](state_ownership.md)
+  describes the planned move to constructors and accessors.
 - The example is Rust only. Building on the Python bindings is tracked in
   [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78), with the other
   remaining steps for downstream SDKs.

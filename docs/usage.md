@@ -11,10 +11,10 @@ of this one, see [Build on this SDK](downstream.md).
 | API | Rust library | CLI | Python bindings |
 | --- | --- | --- | --- |
 | Service Info | `ServiceInfo` | No direct command | `ServiceInfo` |
-| TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel` | TES |
+| TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel`, `files`, `log`, `save` | TES |
 | DRS | Objects, access URLs, bulk, and `drs://` URIs | `drs get`, `access` | `DRS`, `DrsResolver` |
 | WES | Runs and attachments | `wes run`, `list`, `get`, `status`, `cancel` | `WES`, `Run` |
-| TRS | Tools and descriptors | `trs tools`, `tool`, `versions`, `version`, `descriptor`, `files`, `tests` | Not yet |
+| TRS | Tools and descriptors | `trs tools`, `tool`, `versions`, `version`, `descriptor`, `files`, `tests` | `TRS` |
 | Service Registry | `ServiceRegistry` | `registry list`, `get`, `types` | Not yet |
 
 `ServiceInfo` reads the discovery endpoint of one configured service. The
@@ -52,11 +52,19 @@ When a client successfully retrieves `service-info`, it has reached that
 endpoint under the configured root. If the response includes service identity
 fields, check that they identify the intended deployment.
 
+The CLI does not print `service-info`. `ga4gh-cli tes list` discovers the TES
+service before requesting tasks, so success shows that discovery reached the
+configured API root. To read the identity fields, use `ServiceInfo` from Rust
+or Python. Some commands can skip discovery, such as TRS with
+`--no-discovery`; their success does not establish service identity.
+
 A host-only root such as `https://example.org` resolves `service-info` to
 `https://example.org/service-info`. If the service uses a path prefix, that
 request targets the wrong location and can return `404 Not Found`.
 If discovery returns 404, verify the API root against the deployment's
-documented URL. A 404 response alone does not identify the cause.
+documented URL. For TES and DRS, the error message then ends with
+`Check that base_path is the TES API root` or the DRS equivalent.
+A 404 response alone does not identify the cause.
 
 ## Configuration file
 
@@ -90,6 +98,10 @@ built-in services, or any other name for a custom service:
   variable isn't set, reading the section is an error.
 - `bearer_access_token` or `bearer_access_token_env` (string, optional): a
   generic bearer token, or the name of the variable that holds it.
+- `oidc` (object, optional, CLI only): the OpenID Connect provider that the
+  CLI's `login` command logs in with, in place of the credentials above. The
+  library and Python keep it in `extra` and don't use it. See
+  [Logging in with OpenID Connect](../cli/README.md#logging-in-with-openid-connect).
 - `timeouts` (object, optional): time limits in seconds, as positive numbers:
   `connect`, `request`, `discovery` and `submission`. Limits that the object
   doesn't name keep their defaults; see [Timeouts](#timeouts).
@@ -111,7 +123,8 @@ The [authentication guide](authentication.md) describes how credentials reach
 Rust, Python, and CLI requests, and the behavior of redirects and injected
 clients. Previously stored credentials now take effect on requests. Rust and
 Python callers can instead set a [token provider](#token-providers); the
-configuration file and CLI cannot set one.
+configuration file can't set one. The CLI uses one for sections with `oidc`
+settings, with the tokens stored by its `login` command.
 
 The file can hold credentials, so keep it private, for example with
 `chmod 600 ~/.ga4gh-cli/config.json`.
@@ -173,7 +186,9 @@ commands (`run`, `list`, `get`, `status`, `cancel`), DRS commands (`get`,
 `access`), TRS commands (`tools`, `tool`, `versions`, `version`, `descriptor`,
 `files`, `tests`), and Service Registry commands (`list`, `get`, `types`). It
 reads the matching `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` configuration
-section, including its `timeouts`. The [CLI README](../cli/README.md) describes
+section, including its `timeouts`. `login` and `logout` get and delete tokens
+from an OpenID Connect provider for sections with `oidc` settings. The
+[CLI README](../cli/README.md) describes
 each command, its output and exit codes. `ServiceInfo` is available from the
 Rust library below.
 
@@ -582,14 +597,61 @@ request already has are an error.
 
 ### Errors
 
-Clients return `Box<dyn std::error::Error>`. Non-2xx HTTP responses come back
-as `ga4gh_sdk::utils::transport::HttpError` (formerly `HttpStatusError`, still
-available under that name), which carries the status code and body. Downcast to
-it to distinguish, for example, a `404` from a network error. Its `Display` and
-`Debug` output omits the server body, because the server may echo a credential.
-The public `body` field retains the bounded raw response for
-explicit inspection; treat it as sensitive and do not log it by default.
-With a token provider, `ga4gh_sdk::utils::auth::TokenProviderError` means that
-the pending request was not sent; a prior read-only attempt may have received
-`401`. `AuthConflictError` means the configured sources conflict before any
-request. See [Token providers](#token-providers).
+Clients, the transport and the configuration return `ga4gh_sdk::Error`
+(`ga4gh_sdk::Result<T>` for short). Its variants are the kinds of failure:
+
+| Variant | Failure |
+|---|---|
+| `Http(HttpError)` | The service answered with a non-2xx status; `HttpError` (formerly `HttpStatusError`, still available under that name) has the status code and body. Distinguish, for example, a `404` from a network error with it. |
+| `Transport(reqwest::Error)` | No response: a connection or TLS failure, or the HTTP client's timeout. |
+| `Endpoint(EndpointError)` | A path or `base_path` that can't be used for a request. |
+| `Parse(serde_json::Error)` | A body that isn't valid JSON for its model. |
+| `Configuration(..)` | A configuration file, section or environment variable that can't be used. |
+| `UnexpectedService(String)` | The service info names another type of service. |
+| `Other(..)` | Anything else, for example the time limits' `OperationError` or `AmbiguousSubmissionError`. |
+
+More variants may be added, so a `match` needs a wildcard arm. `downcast_ref`
+finds an error of a given type in any variant, and in its sources:
+
+```rust
+use ga4gh_sdk::utils::operation::AmbiguousSubmissionError;
+use ga4gh_sdk::Error;
+
+match tes.create(task).await {
+    Ok(task) => println!("created {}", task.id),
+    Err(Error::Http(http)) if http.status == 401 => eprintln!("check the token"),
+    Err(error) if error.downcast_ref::<AmbiguousSubmissionError>().is_some() => {
+        eprintln!("the task may have been created: {error}")
+    }
+    Err(error) => eprintln!("{error}"),
+}
+```
+
+`ga4gh_sdk::Error` is `Send + Sync`, so the clients and their futures can move
+between threads, for example into `tokio::spawn`. The exception is
+`PreparedBundle::prepare` with a `DescriptorFetcher`, whose futures aren't
+`Send`. If the service answers the service-info request of `DRS::new` or
+`WES::new` with an error status, the error is `Other`, with a hint on the API
+root for a 404, not `Http`; `downcast_ref::<HttpError>()` still returns the
+HTTP error. Other failures of that request, such as a failed connection, keep
+their own variant, as for `TES::new` and `TRS::new`.
+
+A `Box<dyn Error>` made from the SDK error holds a `ga4gh_sdk::Error`, so its
+own `downcast_ref::<HttpError>()` returns `None`. The same holds for an
+`anyhow::Error` and for the errors that `source()` chains yield: the SDK error
+displays as the error it holds and doesn't list it as a source. Downcast to
+`ga4gh_sdk::Error` first, then call that error's `downcast_ref`, or call it
+before boxing.
+
+Code of your own that the SDK calls, such as a `DescriptorFetcher` or the
+attempts passed to `resolve_until`, returns `ga4gh_sdk::Error` too: `?`
+converts the SDK's errors and many standard ones, and `Error::other(error)`
+wraps any other error.
+
+`HttpError`'s `Display` and `Debug` output omits the server body, because the
+server may echo a credential. The public `body` field retains the bounded raw
+response for explicit inspection; treat it as sensitive and do not log it by
+default. With a token provider, `ga4gh_sdk::utils::auth::TokenProviderError`
+(in `Other`) means that the pending request was not sent; a prior read-only
+attempt may have received `401`. `AuthConflictError` means the configured
+sources conflict before any request. See [Token providers](#token-providers).

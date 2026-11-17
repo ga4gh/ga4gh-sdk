@@ -21,7 +21,7 @@ mod tests {
             Ok(tes) => tes,
             Err(e) => {
                 println!("Error creating TES instance: {:?}", e);
-                return Err(e);
+                return Err(e.into());
             }
         };
         let file_path = "../tests/sample.tes".to_string();

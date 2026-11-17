@@ -64,7 +64,7 @@ impl Session {
             serde_json::from_str(&transport.get("service-info", None).await.unwrap()).unwrap();
         WES {
             config: self.config("wes"),
-            service: Ok(service),
+            service,
             transport,
         }
     }
@@ -74,7 +74,7 @@ impl Session {
             serde_json::from_str(&transport.get("service-info", None).await.unwrap()).unwrap();
         TES {
             config: self.config("tes"),
-            service: Ok(service),
+            service,
             transport,
         }
     }
