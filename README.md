@@ -125,7 +125,9 @@ These instructions install the SDK from this source repository.
 **Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) via
 `rustup` and Git. The repository pins its toolchain in
 [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs that version
-on the first build.
+on the first build. On Linux, the library and CLI also need the OpenSSL
+development files and `pkg-config` (for example `libssl-dev pkg-config` on
+Debian and Ubuntu).
 
 Install the command-line tool `ga4gh-cli` into `~/.cargo/bin`:
 
@@ -484,6 +486,8 @@ code changes. Please read [these guidelines][contributing] if you want to
 contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
 
+New developers start with the [developer guide](DEVELOPER_GUIDE.md): the
+repository layout, setup, tests, documentation and how to add a client.
 For local checks, coverage, and hooks, see the [development guide](docs/development.md).
 
 ## License

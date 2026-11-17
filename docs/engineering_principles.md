@@ -519,7 +519,7 @@ for each procedure and link to it instead of maintaining competing copies.
 Check the documented behavior against the current implementation and intended
 contract; do not rewrite a promise solely to conceal an implementation defect.
 The [technical writing guide](technical_writing.md) offers advisory help for
-the affected prose until #185 evaluates the pilot.
+the affected prose.
 Clear wording and verified technical instructions are separate requirements;
 [Google's documentation review guidance](https://google.github.io/eng-practices/review/reviewer/looking-for.html#documentation)
 also treats documentation updates as part of a behavior change.
