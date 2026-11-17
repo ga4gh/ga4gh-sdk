@@ -327,7 +327,7 @@ impl DrsResolver {
         DRS {
             config: transport.config.clone(),
             transport,
-            service: Ok(Service::default()),
+            service: Service::default(),
         }
     }
     /// Plans access to the object of `uri` with at most one request per
@@ -343,7 +343,7 @@ impl DrsResolver {
         uri: &str,
         preferences: &AccessPreferences,
         operation: &Operation,
-    ) -> Result<AccessResolution, Box<dyn Error>> {
+    ) -> crate::Result<AccessResolution> {
         let uri = DrsUri::parse(uri)?;
         let client = self.client(&uri);
         let object = match operation
@@ -402,7 +402,7 @@ impl DrsResolver {
         preferences: &AccessPreferences,
         operation: &Operation,
         max_attempts: usize,
-    ) -> Result<AccessPlan, Box<dyn Error>> {
+    ) -> crate::Result<AccessPlan> {
         let uri = DrsUri::parse(uri)?;
         let client = self.client(&uri);
         let object = client

@@ -25,7 +25,6 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 use reqwest::Method;
 use serde_json::Value;
-use std::error::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
@@ -312,7 +311,7 @@ enum PollError {
 /// Polls the task in the minimal view on a call thread, as the library's waiter does.
 ///
 /// The future is `Send`: it takes a call thread only while the request runs.
-async fn poll_on_call_thread(task: Task, options: RequestOptions) -> Result<Value, Box<dyn Error>> {
+async fn poll_on_call_thread(task: Task, options: RequestOptions) -> ga4gh_sdk::Result<Value> {
     let polled = spawn_io(move || async move {
         let params = serde_json::json!({ "view": TesView::Minimal });
         let result = task
@@ -332,7 +331,7 @@ async fn poll_on_call_thread(task: Task, options: RequestOptions) -> Result<Valu
     .await;
     match polled {
         Ok(Ok(response)) => Ok(response),
-        Ok(Err(PollError::Operation(error))) => Err(Box::new(error)),
+        Ok(Err(PollError::Operation(error))) => Err(error.into()),
         Ok(Err(PollError::Other(error))) | Err(error) => Err(error.into()),
     }
 }

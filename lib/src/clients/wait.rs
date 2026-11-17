@@ -13,7 +13,7 @@
 //! use ga4gh_sdk::utils::{configuration::Configuration, transport::Transport};
 //! use std::time::Duration;
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn example() -> ga4gh_sdk::Result<()> {
 //! let config = Configuration::new(url::Url::parse("https://example.org/ga4gh/tes/v1")?);
 //! let task = Task::new("task-1".to_string(), Transport::new(&config));
 //! let result = task.wait(&WaitOptions::new(Duration::from_secs(600))).await;
@@ -31,7 +31,7 @@ use crate::utils::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{error::Error, future::Future, time::Duration};
+use std::{future::Future, time::Duration};
 
 /// The API that runs a remote job.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -71,7 +71,7 @@ impl RemoteHandle {
     ///
     /// Fails if the handle isn't for TES, its API root differs from that of
     /// `config`, or its ID is empty.
-    pub fn task(&self, config: &Configuration) -> Result<Task, Box<dyn Error>> {
+    pub fn task(&self, config: &Configuration) -> crate::Result<Task> {
         self.validate(config, ServiceKind::Tes)?;
         Ok(Task::new(self.id.clone(), Transport::new(config)))
     }
@@ -81,11 +81,11 @@ impl RemoteHandle {
     ///
     /// Fails if the handle isn't for WES, its API root differs from that of
     /// `config`, or its ID is empty.
-    pub fn run(&self, config: &Configuration) -> Result<Run, Box<dyn Error>> {
+    pub fn run(&self, config: &Configuration) -> crate::Result<Run> {
         self.validate(config, ServiceKind::Wes)?;
         Ok(Run::new(self.id.clone(), Transport::new(config)))
     }
-    fn validate(&self, config: &Configuration, kind: ServiceKind) -> Result<(), Box<dyn Error>> {
+    fn validate(&self, config: &Configuration, kind: ServiceKind) -> crate::Result<()> {
         if self.service != kind || self.api_root != api_root(config) || self.id.is_empty() {
             return Err("remote handle does not match service/API root or has an empty ID".into());
         }
@@ -191,7 +191,7 @@ fn terminal(kind: ServiceKind, state: &str) -> Option<WaitOutcome> {
 pub async fn observe<F, Fut>(handle: RemoteHandle, options: &WaitOptions, mut poll: F) -> WaitResult
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Result<Value, Box<dyn Error>>>,
+    Fut: Future<Output = crate::Result<Value>>,
 {
     let mut result = WaitResult {
         handle,
@@ -261,7 +261,7 @@ async fn poll(
     path: &str,
     params: Option<Value>,
     options: &WaitOptions,
-) -> Result<Value, Box<dyn Error>> {
+) -> crate::Result<Value> {
     let request = RequestOptions {
         operation: options.operation.clone(),
         retry: options.retry.clone(),
@@ -337,10 +337,7 @@ impl Task {
     ///
     /// Fails if the cancel request fails, or the operation's deadline passes
     /// or it is cancelled before the request is done.
-    pub async fn cancel_and_wait(
-        &self,
-        options: &WaitOptions,
-    ) -> Result<WaitResult, Box<dyn Error>> {
+    pub async fn cancel_and_wait(&self, options: &WaitOptions) -> crate::Result<WaitResult> {
         options.operation.run(self.cancel()).await??;
         Ok(self.wait(options).await)
     }
@@ -380,10 +377,7 @@ impl Run {
     ///
     /// Fails if the cancel request fails, or the operation's deadline passes
     /// or it is cancelled before the request is done.
-    pub async fn cancel_and_wait(
-        &self,
-        options: &WaitOptions,
-    ) -> Result<WaitResult, Box<dyn Error>> {
+    pub async fn cancel_and_wait(&self, options: &WaitOptions) -> crate::Result<WaitResult> {
         options.operation.run(self.cancel()).await??;
         Ok(self.wait(options).await)
     }

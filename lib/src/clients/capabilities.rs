@@ -12,7 +12,7 @@
 //! use ga4gh_sdk::utils::configuration::Configuration;
 //! use std::time::Duration;
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn example() -> ga4gh_sdk::Result<()> {
 //! let config = Configuration::new(url::Url::parse("https://example.org/ga4gh/wes/v1")?);
 //! let wes = WES::discover(&config, Duration::from_secs(300)).await?;
 //! let request = RunRequest {
@@ -44,7 +44,7 @@ use super::{
 use crate::utils::{configuration::Configuration, transport::Transport};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
-use std::{error::Error, ops::Deref, time::Duration};
+use std::{ops::Deref, time::Duration};
 use tokio::time::Instant;
 
 /// Whether the service advertises a requested value.
@@ -315,7 +315,7 @@ async fn discover(
     transport: &Transport,
     artifact: &str,
     max_age: Duration,
-) -> Result<(Service, CapabilitySnapshot), Box<dyn Error>> {
+) -> crate::Result<(Service, CapabilitySnapshot)> {
     let raw: Value =
         serde_json::from_str(&super::serviceinfo::fetch_raw(transport, "service-info").await?)?;
     let service: Service = if artifact == "wes" {
@@ -326,11 +326,13 @@ async fn discover(
     if service.r#type.group != "org.ga4gh"
         || !service.r#type.artifact.eq_ignore_ascii_case(artifact)
     {
-        return Err(format!("expected {artifact} service-info").into());
+        return Err(crate::Error::UnexpectedService(format!(
+            "expected {artifact} service-info"
+        )));
     }
     Ok((service, CapabilitySnapshot::from_raw(raw, max_age)))
 }
-fn ensure_strict(diagnostics: &[Diagnostic], strict: bool) -> Result<(), Box<dyn Error>> {
+fn ensure_strict(diagnostics: &[Diagnostic], strict: bool) -> crate::Result<()> {
     if strict {
         if let Some(d) = diagnostics
             .iter()
@@ -352,7 +354,7 @@ impl TES {
     pub async fn discover(
         config: &Configuration,
         max_age: Duration,
-    ) -> Result<Discovered<Self>, Box<dyn Error>> {
+    ) -> crate::Result<Discovered<Self>> {
         Self::discover_with_transport(Transport::new(config), max_age).await
     }
 
@@ -366,13 +368,13 @@ impl TES {
     pub async fn discover_with_transport(
         transport: Transport,
         max_age: Duration,
-    ) -> Result<Discovered<Self>, Box<dyn Error>> {
+    ) -> crate::Result<Discovered<Self>> {
         let (service, capabilities) = discover(&transport, "tes", max_age).await?;
         Ok(Discovered {
             client: Self {
                 config: transport.config.clone(),
                 transport,
-                service: Ok(service),
+                service,
             },
             capabilities,
         })
@@ -389,7 +391,7 @@ impl WES {
     pub async fn discover(
         config: &Configuration,
         max_age: Duration,
-    ) -> Result<Discovered<Self>, Box<dyn Error>> {
+    ) -> crate::Result<Discovered<Self>> {
         Self::discover_with_transport(Transport::new(config), max_age).await
     }
 
@@ -403,13 +405,13 @@ impl WES {
     pub async fn discover_with_transport(
         transport: Transport,
         max_age: Duration,
-    ) -> Result<Discovered<Self>, Box<dyn Error>> {
+    ) -> crate::Result<Discovered<Self>> {
         let (service, capabilities) = discover(&transport, "wes", max_age).await?;
         Ok(Discovered {
             client: Self {
                 config: transport.config.clone(),
                 transport,
-                service: Ok(service),
+                service,
             },
             capabilities,
         })
@@ -422,10 +424,10 @@ impl Discovered<TES> {
     /// # Errors
     ///
     /// Fails if the request fails or the response isn't a TES service info.
-    pub async fn refresh(&mut self) -> Result<(), Box<dyn Error>> {
+    pub async fn refresh(&mut self) -> crate::Result<()> {
         let (service, snapshot) =
             discover(&self.client.transport, "tes", self.capabilities.max_age).await?;
-        self.client.service = Ok(service);
+        self.client.service = service;
         self.capabilities = snapshot;
         Ok(())
     }
@@ -436,11 +438,7 @@ impl Discovered<TES> {
     ///
     /// With `strict`, fails before any request if a diagnostic blocks strict
     /// submissions; otherwise fails as [`TES::create`] does.
-    pub async fn create_validated(
-        &self,
-        task: TesTask,
-        strict: bool,
-    ) -> Result<Task, Box<dyn Error>> {
+    pub async fn create_validated(&self, task: TesTask, strict: bool) -> crate::Result<Task> {
         ensure_strict(&self.capabilities.validate_tes(&task), strict)?;
         self.client.create(task).await
     }
@@ -452,10 +450,10 @@ impl Discovered<WES> {
     /// # Errors
     ///
     /// Fails if the request fails or the response isn't a WES service info.
-    pub async fn refresh(&mut self) -> Result<(), Box<dyn Error>> {
+    pub async fn refresh(&mut self) -> crate::Result<()> {
         let (service, snapshot) =
             discover(&self.client.transport, "wes", self.capabilities.max_age).await?;
-        self.client.service = Ok(service);
+        self.client.service = service;
         self.capabilities = snapshot;
         Ok(())
     }
@@ -466,11 +464,7 @@ impl Discovered<WES> {
     ///
     /// With `strict`, fails before any request if a diagnostic blocks strict
     /// submissions; otherwise fails as [`WES::run_workflow`] does.
-    pub async fn run_validated(
-        &self,
-        request: RunRequest,
-        strict: bool,
-    ) -> Result<Run, Box<dyn Error>> {
+    pub async fn run_validated(&self, request: RunRequest, strict: bool) -> crate::Result<Run> {
         ensure_strict(&self.capabilities.validate_wes(&request), strict)?;
         self.client.run_workflow(request).await
     }
