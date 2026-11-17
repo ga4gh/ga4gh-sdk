@@ -411,6 +411,47 @@ fn save_writes_logs_and_files_byte_for_byte() {
 }
 
 #[test]
+fn a_file_output_with_an_empty_path_prefix_is_saved() {
+    // Some servers, such as Funnel, send `path_prefix: ""` for single-file
+    // outputs.
+    let prefix = "/save-empty-prefix";
+    let storage = format!("{}{prefix}/storage", mockito::server_url());
+    let task = json!({
+        "id": "t1",
+        "state": "COMPLETE",
+        "outputs": [{
+            "url": format!("{storage}/out.bin"),
+            "path": "/outputs/out.bin",
+            "path_prefix": "",
+            "type": "FILE",
+        }],
+    });
+    let _tes = tes_mocks(prefix, &task);
+    let _storage = storage_mocks(prefix);
+    let home = home_with_tes(prefix);
+    let output = run(&home, &["tes", "files", "t1"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("declared output file"), "{text}");
+    assert!(!text.contains("declared output directory"), "{text}");
+
+    let dir = home.path().join("results");
+    let output = run(
+        &home,
+        &[
+            "tes",
+            "save",
+            "t1",
+            "output:0",
+            "--dir",
+            dir.to_str().unwrap(),
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(fs::read(dir.join("out.bin")).unwrap(), BINARY);
+}
+
+#[test]
 fn failed_downloads_leave_no_file() {
     let prefix = "/save-errors";
     let _tes = tes_mocks(prefix, &complete_task(prefix));
