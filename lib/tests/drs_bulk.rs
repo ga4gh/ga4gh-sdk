@@ -111,6 +111,30 @@ async fn access_pairs_missing_and_duplicate_identities_are_never_zipped_to_posit
         .contains("one access ID"));
 }
 #[tokio::test]
+async fn invalid_policy_is_rejected_even_without_ids() {
+    let client = client("/invalid-policy");
+    let invalid = BulkPolicy {
+        chunk_size: 0,
+        ..BulkPolicy::default()
+    };
+    assert!(client
+        .get_bulk_objects(&[], &[], &invalid, &budget())
+        .await
+        .is_err());
+    assert!(client
+        .get_bulk_objects_raw(&[], &[], &invalid, &budget())
+        .await
+        .is_err());
+    assert!(client
+        .get_bulk_access_urls(&[], &[], &invalid, &budget())
+        .await
+        .is_err());
+    assert!(client
+        .get_bulk_access_urls_raw(&[], &[], &invalid, &budget())
+        .await
+        .is_err());
+}
+#[tokio::test]
 async fn empty_pending_and_auth_failure_do_not_fallback() {
     let client = client("/pending");
     assert!(client

@@ -554,10 +554,12 @@ impl DRS {
         policy: &BulkPolicy,
         operation: &Operation,
     ) -> Result<BulkReport<T>, Box<dyn Error>> {
+        // Validate the policy first, so that an invalid one fails even
+        // without keys
+        let batch = policy.batch_size()?;
         if keys.is_empty() {
             return Ok(BulkReport::default());
         }
-        let batch = policy.batch_size()?;
         let mut ids = BTreeMap::new();
         let mut unique = BTreeSet::new();
         for key in keys {
@@ -598,8 +600,9 @@ impl DRS {
     ///
     /// # Errors
     ///
-    /// Fails before any request if `policy` is invalid or an ID is empty;
-    /// without IDs, it returns an empty report.
+    /// Fails before any request if `policy` is invalid, also without IDs, or
+    /// if an ID is empty; with a valid policy and without IDs, it returns an
+    /// empty report.
     pub async fn get_bulk_objects(
         &self,
         ids: &[String],
