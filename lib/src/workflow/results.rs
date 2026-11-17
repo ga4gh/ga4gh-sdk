@@ -165,8 +165,8 @@ fn url_end(c: char) -> bool {
     c.is_whitespace() || "\"<>`".contains(c)
 }
 // The length of the scheme at the start of `text`: `http:` or `https:`, in
-// any case, followed by one or more `/` or `\`, which URL parsers also
-// accept.
+// any case, with any `/` or `\` after it; URL parsers accept any number of
+// them, none included.
 fn scheme_len(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
     let name = if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"https:") {
@@ -180,25 +180,45 @@ fn scheme_len(text: &str) -> Option<usize> {
         .iter()
         .take_while(|b| matches!(b, b'/' | b'\\'))
         .count();
-    (slashes > 0).then_some(name + slashes)
+    Some(name + slashes)
 }
 // Whether a fragment is empty, a JSON pointer or a plain-name anchor, which
-// references use, rather than something like `access_token=...`.
+// references use, rather than something like `access_token=...`. Pointers
+// with `?`, `@`, `=` or `:` are rejected, as they could hold a query,
+// credentials or another URL.
 fn reference_fragment(fragment: &str) -> bool {
     fragment.is_empty()
-        || fragment.starts_with('/')
+        || (fragment.starts_with('/') && !fragment.contains(['?', '@', '=', ':']))
         || (fragment.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
             && fragment
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)))
 }
+// The part of `after`, the text after a URL's scheme, that is its
+// credentials: up to the last `@` before the next `/`, `\`, `?`, `#` or
+// `url_end` character. If there is none there, but the text before that
+// stop has a `:` that doesn't start a port, the credentials may hold an
+// unencoded `/`, `?` or `#`, so it is up to the last `@` before the next
+// `url_end` character.
+fn credentials_len(after: &str, authority: &str) -> usize {
+    if let Some(at) = authority.rfind('@') {
+        return at + 1;
+    }
+    let password = authority
+        .split_once(':')
+        .is_some_and(|(_, port)| !port.bytes().all(|b| b.is_ascii_digit()));
+    let token = &after[..after.find(url_end).unwrap_or(after.len())];
+    match token.rfind('@') {
+        Some(at) if password && at >= authority.len() => at + 1,
+        _ => 0,
+    }
+}
 // Removes credentials, queries and fragments from the HTTP(S) URLs in
 // `text`, by their text, without parsing them, so that URLs which don't
 // parse, URLs inside other URLs and URLs in longer strings are covered too.
 //
-// A URL starts at its scheme (see `scheme_len`). Its credentials are
-// everything up to the last `@` before the next `/`, `\`, `?`, `#` or
-// `url_end` character. From the first `?` or `#` after the scheme on,
+// A URL starts at its scheme (see `scheme_len`). Its credentials (see
+// `credentials_len`) go. From the first `?` or `#` after the scheme on,
 // everything up to the next `url_end` character goes, except a trailing
 // run of `.,;:)]}`, and, if `keep_fragment`, a `reference_fragment`. Other
 // text stays exactly as it is. Runs in linear time.
@@ -213,13 +233,16 @@ fn redact_text(text: &str, keep_fragment: bool) -> String {
             let end = after
                 .find(|c: char| url_end(c) || "/\\?#".contains(c))
                 .unwrap_or(after.len());
-            let authority = &after[..end];
+            let skip = credentials_len(after, &after[..end]);
+            let end = if skip > end {
+                skip + after[skip..]
+                    .find(|c: char| url_end(c) || "/\\?#".contains(c))
+                    .unwrap_or(after.len() - skip)
+            } else {
+                end
+            };
             out.push_str(&rest[..scheme]);
-            out.push_str(
-                authority
-                    .rfind('@')
-                    .map_or(authority, |at| &authority[at + 1..]),
-            );
+            out.push_str(&after[skip..end]);
             i += scheme + end;
             in_url = true;
         } else if in_url && (c == '?' || c == '#') {
@@ -261,12 +284,32 @@ fn durable(value: &Value) -> Value {
 // JSON Schema keywords whose URL fragment can be a JSON pointer or an anchor
 // that references depend on.
 const REFERENCE_KEYWORDS: [&str; 4] = ["$ref", "$dynamicRef", "$id", "$schema"];
+// JSON Schema keywords whose values are instance data, not schemas, so keys
+// in them aren't keywords. Extension keywords (`x-...`) count too.
+const DATA_KEYWORDS: [&str; 4] = ["default", "const", "examples", "enum"];
+// Removes credentials, queries and fragments from the HTTP(S) URLs in the
+// strings of `value`, with no exceptions.
+fn redact_data(value: &Value) -> Value {
+    match value {
+        Value::String(s) => json!(redact_text(s, false)),
+        Value::Array(a) => Value::Array(a.iter().map(redact_data).collect()),
+        Value::Object(o) => {
+            Value::Object(o.iter().map(|(k, v)| (k.clone(), redact_data(v))).collect())
+        }
+        _ => value.clone(),
+    }
+}
 // Removes credentials, query and fragment from the HTTP(S) URLs in a
 // profile document or one of its schemas, as `redact_text` does. The
 // values of `REFERENCE_KEYWORDS` keep a fragment that is a JSON pointer or
 // an anchor, so that references still resolve, and `pattern` values, which
-// are regular expressions, stay as they are. Object keys stay as they are.
+// are regular expressions, stay as they are. Values of `DATA_KEYWORDS` and
+// extension keywords are instance data and get no exceptions. Object keys
+// stay as they are.
 fn durable_schema(value: &Value, keyword: Option<&str>) -> Value {
+    if keyword.is_some_and(|k| DATA_KEYWORDS.contains(&k) || k.starts_with("x-")) {
+        return redact_data(value);
+    }
     match value {
         Value::String(_) if keyword == Some("pattern") => value.clone(),
         Value::String(s) => json!(redact_text(
@@ -605,6 +648,19 @@ mod tests {
                 "https://u:pass word@h.example/",
                 "https://u:pass word@h.example/",
             ),
+            // No slashes, or encoded ones, which URL parsers accept too
+            (
+                "x https:user:pw@h.example/x?token=1 y",
+                "x https:h.example/x y",
+            ),
+            ("https:%2F%2Fuser:pw@h.example/", "https:h.example/"),
+            // Unencoded `/`, `?` or `#` in a password
+            ("https://user:p?ss@h.example/a", "https://h.example/a"),
+            ("https://user:pa/ss@h.example/a", "https://h.example/a"),
+            ("https://user:pa#ss@h.example/a b", "https://h.example/a b"),
+            // An `@` in a path, or after a port, isn't a credential
+            ("https://h.example/@me", "https://h.example/@me"),
+            ("https://h.example:8080/@me", "https://h.example:8080/@me"),
         ] {
             assert_eq!(redact_text(text, false), redacted, "{text}");
         }
@@ -612,6 +668,7 @@ mod tests {
             "see https://h.example",
             "s3://bucket/key?sig=1",
             "http:// nothing",
+            "use https: or http: only",
             "what? who# no URL at all",
             "https",
         ] {
@@ -629,6 +686,14 @@ mod tests {
                 "https://h.example:99999/a#/defs/x",
             ),
             ("https://h.example/s#access_token=t", "https://h.example/s"),
+            (
+                "https://h.example/a#/x?access_token=t",
+                "https://h.example/a",
+            ),
+            (
+                "https://h.example/s#/https://u:p@h2.example/x",
+                "https://h.example/s",
+            ),
         ] {
             assert_eq!(redact_text(text, true), redacted, "{text}");
         }
@@ -646,7 +711,10 @@ mod tests {
             "description": "https://h.example/s.json#frag",
             "enum": ["https://h.example/e?token=1"],
             "pattern": "^https://[^?#]+$",
-            "properties": {"$ref": {"type": "string", "default": "https://h.example/d?token=1"}}
+            "properties": {"$ref": {"type": "string", "default": "https://h.example/d?token=1"}},
+            "default": {"pattern": "https://u:p@h.example/?token=1"},
+            "examples": [{"$ref": "https://h.example/a#/x"}],
+            "x-link": {"$id": "https://h.example/b#/y"}
         });
         assert_eq!(
             durable_schema(&schema, None),
@@ -656,7 +724,10 @@ mod tests {
                 "description": "https://h.example/s.json",
                 "enum": ["https://h.example/e"],
                 "pattern": "^https://[^?#]+$",
-                "properties": {"$ref": {"type": "string", "default": "https://h.example/d"}}
+                "properties": {"$ref": {"type": "string", "default": "https://h.example/d"}},
+                "default": {"pattern": "https://h.example/"},
+                "examples": [{"$ref": "https://h.example/a"}],
+                "x-link": {"$id": "https://h.example/b"}
             })
         );
     }
