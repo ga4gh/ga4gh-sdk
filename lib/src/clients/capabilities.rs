@@ -303,7 +303,11 @@ impl CapabilitySnapshot {
 /// [`capabilities`](Self::capabilities), or split the wrapper with
 /// [`into_parts`](Self::into_parts). The public fields are deprecated and
 /// become private in a later release: an assignment to one of them would
-/// separate the client from the snapshot of its service.
+/// separate the client from the snapshot of its service. The
+/// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md#migration)
+/// lists the replacements.
+///
+/// With `#![deny(deprecated)]`, assigning a field fails to compile:
 ///
 /// ```compile_fail
 /// #![deny(deprecated)]

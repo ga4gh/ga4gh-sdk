@@ -342,7 +342,10 @@ fn warn_plain_http_credential_once() {
 /// [`configuration`](Self::configuration), and build a new transport for
 /// other values. The public `config` field is deprecated and becomes private
 /// in a later release, because the HTTP client of [`new`](Self::new) copies
-/// its connect and request timeouts at construction.
+/// its connect and request timeouts at construction (see the
+/// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md#migration)).
+///
+/// With `#![deny(deprecated)]`, assigning the field fails to compile:
 ///
 /// ```compile_fail
 /// #![deny(deprecated)]

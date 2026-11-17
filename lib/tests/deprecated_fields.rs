@@ -11,27 +11,32 @@ use ga4gh_sdk::{
     utils::{configuration::Configuration, transport::Transport},
 };
 
-/// The assignment of the `TES` documentation test.
+/// The assignment of the `TES` documentation test. Keep in sync with the `compile_fail`
+/// block on `TES`.
 fn swap_tes(tes: &mut TES, transport: Transport) {
     tes.transport = transport;
 }
 
-/// The assignment of the `WES` documentation test.
+/// The assignment of the `WES` documentation test. Keep in sync with the `compile_fail`
+/// block on `WES`.
 fn swap_wes(wes: &mut WES, service: ga4gh_sdk::clients::serviceinfo::models::Service) {
     wes.service = service;
 }
 
-/// The assignment of the `DRS` documentation test.
+/// The assignment of the `DRS` documentation test. Keep in sync with the `compile_fail`
+/// block on `DRS`.
 fn retarget(drs: &mut DRS, config: Configuration) {
     drs.config = config;
 }
 
-/// The assignment of the `Discovered` documentation test.
+/// The assignment of the `Discovered` documentation test. Keep in sync with the `compile_fail`
+/// block on `Discovered`.
 fn swap_client(discovered: &mut Discovered<TES>, client: TES) {
     discovered.client = client;
 }
 
-/// The assignment of the `Transport` documentation test.
+/// The assignment of the `Transport` documentation test. Keep in sync with the `compile_fail`
+/// block on `Transport`.
 fn retime(transport: &mut Transport) {
     transport.config.timeouts.request = std::time::Duration::from_secs(1);
 }

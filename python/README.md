@@ -1011,8 +1011,9 @@ let transport = self.inner.transport.clone();
 // After
 let transport = self.inner.transport().clone();
 let root = &self.inner.configuration().base_path;
-``` The TES calls
-that the sync and the async classes share are public functions in `clients::tes`, such as
+```
+
+The TES calls that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
 `clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
 `clients::tes_async` does. The extension module gets its own copies of the base classes,
