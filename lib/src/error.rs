@@ -192,7 +192,8 @@ impl From<&str> for Error {
     }
 }
 
-// Errors without a variant of their own.
+// Errors without a variant of their own. Add every new public error type of
+// the library here, so that `?` converts it.
 macro_rules! from_other {
     ($($error:ty),* $(,)?) => {
         $(

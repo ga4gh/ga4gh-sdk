@@ -44,6 +44,13 @@ impl DRS {
     ///
     /// # Returns
     /// - A new `DRS` instance, or an error if the initialization fails.
+    ///
+    /// # Errors
+    /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if the
+    /// service info names another type of service. If the service answers the
+    /// service-info request with an error status, an
+    /// [`Error::Other`](crate::Error::Other) with a hint on the API root, whose [`downcast_ref`](crate::Error::downcast_ref) returns the
+    /// request's error, such as the [`HttpError`](crate::utils::transport::HttpError).
     pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
         let service = crate::clients::serviceinfo::fetch(&transport, "service-info")
             .await

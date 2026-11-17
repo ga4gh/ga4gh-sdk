@@ -106,8 +106,16 @@ async fn constructors_return_service_and_transport_errors() {
         .unwrap()
         .port();
     let closed = Configuration::new(url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap());
-    let error = TES::new(&closed).await.unwrap_err();
-    assert!(matches!(error, Error::Transport(_)), "{error:?}");
+    // DRS and WES keep the variant, too; only an error status gets their hint.
+    let errors = [
+        TES::new(&closed).await.unwrap_err(),
+        WES::new(&closed).await.unwrap_err(),
+        DRS::new(&closed).await.unwrap_err(),
+        TRS::new(&closed).await.unwrap_err(),
+    ];
+    for error in errors {
+        assert!(matches!(error, Error::Transport(_)), "{error:?}");
+    }
 }
 
 #[tokio::test]

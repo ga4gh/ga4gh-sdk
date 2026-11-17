@@ -68,9 +68,9 @@ pub(crate) async fn fetch(transport: &Transport, endpoint: &str) -> crate::Resul
     }
 }
 
-/// A failed service-info request of a client constructor, with a hint if the
-/// API root seems wrong. The request's error stays available as the source and
-/// through [`Error::downcast_ref`](crate::Error::downcast_ref).
+/// A service-info request of a client constructor that the service answered
+/// with an error status, with a hint if the API root seems wrong. The request's
+/// error stays available as the source and through [`Error::downcast_ref`](crate::Error::downcast_ref).
 #[derive(Debug)]
 pub(crate) struct DiscoveryError {
     /// The name of the API, for example `DRS`.
@@ -102,8 +102,13 @@ impl std::error::Error for DiscoveryError {
 }
 
 impl From<DiscoveryError> for crate::Error {
+    /// An HTTP error gets the hint, in [`Error::Other`](crate::Error::Other);
+    /// other errors, such as a failed connection, keep their own variant.
     fn from(error: DiscoveryError) -> Self {
-        Self::Other(Box::new(error))
+        match error.source {
+            crate::Error::Http(_) => Self::Other(Box::new(error)),
+            source => source,
+        }
     }
 }
 

@@ -620,12 +620,18 @@ match tes.create(task).await {
 ```
 
 `ga4gh_sdk::Error` is `Send + Sync`, so the clients and their futures can move
-between threads, for example into `tokio::spawn`. If the service-info request
-of `DRS::new` or `WES::new` fails, the error is `Other` with a hint on the API
+between threads, for example into `tokio::spawn`. The exception is
+`PreparedBundle::prepare` with a `DescriptorFetcher`, whose futures aren't
+`Send`. If the service answers the service-info request of `DRS::new` or
+`WES::new` with an error status, the error is `Other` with a hint on the API
 root, not `Http`; `downcast_ref::<HttpError>()` still returns the HTTP error.
+Other failures of that request, such as a failed connection, keep their own
+variant, as for `TES::new` and `TRS::new`.
 
 A `Box<dyn Error>` made from the SDK error holds a `ga4gh_sdk::Error`, so its
-own `downcast_ref::<HttpError>()` returns `None`. Downcast the box to
+own `downcast_ref::<HttpError>()` returns `None`. The same holds for an
+`anyhow::Error` and for the errors that `source()` chains yield: the SDK error
+displays as the error it holds and doesn't list it as a source. Downcast to
 `ga4gh_sdk::Error` first, then call that error's `downcast_ref`, or call it
 before boxing.
 

@@ -43,16 +43,19 @@ for non-2xx HTTP responses rather than `std::io::Error`.
 The library returns its own error type, `ga4gh_sdk::Error`, in place of
 `Box<dyn std::error::Error>` (see [Errors](docs/usage.md#errors)). It is an enum
 of the kinds of failure (`Http`, `Transport`, `Endpoint`, `Parse`,
-`Configuration`, `UnexpectedService`, `Other`) and is `Send + Sync`, so clients and their
-futures can move between threads. This breaks some code:
+`Configuration`, `UnexpectedService`, `Other`) and is `Send + Sync`, so
+clients and their futures can move between threads. This breaks some code:
 
 - Functions that return `Box<dyn Error>` still accept the SDK's errors with
   `?`. But `downcast_ref::<HttpError>()` on such a box no longer finds the HTTP
-  error: downcast the box to `ga4gh_sdk::Error` and call its `downcast_ref`, or
-  match on its variants.
-- A failed service-info request of `DRS::new` and `WES::new` is an `Other`
-  error with a hint on the API root, not `Http`; its `downcast_ref` returns the
-  HTTP error. `TES::new` and `TRS::new` return `Http`.
+  error, nor does it on an `anyhow::Error` or in a `source()` chain: downcast
+  to `ga4gh_sdk::Error` and call its `downcast_ref`, or match on its variants.
+- An error status in answer to the service-info request of `DRS::new` and
+  `WES::new` is an `Other` error with a hint on the API root, not `Http`; its
+  `downcast_ref` returns the HTTP error. `TES::new` and `TRS::new` return
+  `Http`. Other failures of that request keep their variant, such as
+  `Transport` for a failed connection, and no longer have the
+  "Error accessing … service" prefix.
 - Implementations of `DescriptorFetcher` and the attempts passed to
   `drs::resolution::resolve_until` return `ga4gh_sdk::Error`; `?` or
   `Error::other(error)` converts other errors.
