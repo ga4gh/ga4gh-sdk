@@ -191,9 +191,8 @@ commands (`run`, `list`, `get`, `status`, `cancel`), DRS commands (`get`,
 reads the matching `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` configuration
 section, including its `timeouts`. `service-info --service <SECTION>` prints
 the service info of any configured section, built-in or custom, as JSON.
-`login` and `logout` get and delete tokens
-from an OpenID Connect provider for sections with `oidc` settings. The
-[CLI README](../cli/README.md) describes
+`login` and `logout` get and delete tokens from an OpenID Connect provider for
+sections with `oidc` settings. The [CLI README](../cli/README.md) describes
 each command, its output and exit codes. `ServiceInfo` is also available from
 the Rust library below.
 
@@ -206,7 +205,7 @@ Rust clients, the CLI and the Python bindings read them from there:
 | --- | --- | --- |
 | `connect` | 10 s | Opening each connection, including TLS, within any of the limits below. |
 | `request` | 60 s | Each request that none of the limits below applies to, from sending it to reading the whole response. |
-| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `with_artifact`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`; also `ServiceInfo::get` and `get_at`, and the CLI's `service-info` command. |
+| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `with_artifact`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`; also `ServiceInfo::get`, `get_at` and `get_raw`, and the CLI's `service-info` command. |
 | `submission` | 300 s | One TES task or WES run submission: `TES::create`, `TES::create_as`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. |
 
 `discovery` and `submission` replace `request` for their requests, so they can
@@ -413,7 +412,9 @@ let info = ServiceInfo::new(&config)?.get().await?;
 println!("{} ({} {})", info.name, info.r#type.artifact, info.r#type.version);
 ```
 
-For the CLI equivalent, see the [Service Info command](../cli/README.md#service-info-command).
+`get_raw()` returns the response body of the same request as received,
+unparsed, for callers that print or store it. For the CLI equivalent, see the
+[Service Info command](../cli/README.md#service-info-command).
 
 ### Service Registry
 

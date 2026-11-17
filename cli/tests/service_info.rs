@@ -89,6 +89,8 @@ fn assert_failure(output: &Output, expected: &str) {
     assert_eq!(output.status.code(), Some(1), "{message}");
     assert!(output.stdout.is_empty(), "{}", stdout(output));
     assert!(message.contains(expected), "{message}");
+    // One diagnostic, without a log line that repeats it.
+    assert_eq!(message.lines().count(), 1, "{message}");
 }
 
 #[test]
@@ -107,12 +109,32 @@ fn prints_the_service_info_of_a_built_in_section_with_its_credential() {
         let output = run(&config, &["service-info", "--service", "TES"]);
         assert!(output.status.success(), "{}", stderr(&output));
         assert!(output.stderr.is_empty(), "{}", stderr(&output));
-        let text = stdout(&output);
-        assert!(text.ends_with('\n'), "{text}");
-        let printed: Value = serde_json::from_str(&text).expect("one JSON document");
-        assert_eq!(printed, body);
+        // The body as received, with its layout.
+        assert_eq!(stdout(&output), body.to_string());
     }
     info.assert();
+}
+
+#[test]
+fn values_keep_their_spelling_and_order() {
+    let body = r#"{"zz":1,"id":"org.example.tes","name":"Example","type":{"group":"org.ga4gh","artifact":"tes","version":"1.1.0"},"organization":{"name":"Example","url":"https://example.org"},"version":"1.0.0","description":null,"big":123456789012345678901234567890,"f":1.00}"#;
+    let _info = mock("GET", "/si-spelling/service-info")
+        .with_body(body)
+        .create();
+    let config = json!({"TES": {"base_path": root("/si-spelling")}});
+    let output = run(&config, &["service-info", "--service", "TES"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), body);
+}
+
+#[test]
+fn help_describes_the_command() {
+    let output = run(&json!({}), &["service-info", "--help"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    for expected in ["--service <SECTION>", "base_path", "discovery timeout"] {
+        assert!(text.contains(expected), "{text}");
+    }
 }
 
 #[test]
@@ -173,6 +195,22 @@ fn a_missing_section_or_service_option_fails_before_a_request() {
     let config = json!({"TES": {"base_path": "http://127.0.0.1:9/"}});
     let output = run(&config, &["service-info", "--service", "WES"]);
     assert_failure(&output, "'WES'");
+
+    let output = run(
+        &config,
+        &["--profile", "nope", "service-info", "--service", "TES"],
+    );
+    assert_failure(&output, "nope");
+
+    // No configuration file at all.
+    let home = TempDir::new().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"))
+        .args(["service-info", "--service", "TES"])
+        .env("HOME", home.path())
+        .env_remove("GA4GH_CLI_PROFILE")
+        .output()
+        .unwrap();
+    assert_failure(&output, "");
 
     let output = run(&config, &["service-info"]);
     assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
@@ -237,6 +275,31 @@ fn malformed_service_info_is_an_error() {
 }
 
 #[test]
+fn numbers_that_the_model_cannot_hold_are_rejected() {
+    // `ServiceInfo::get` reads extensions as JSON values, which can't hold
+    // this number; the command accepts the same service info as the client.
+    let body = r#"{"id":"i","name":"n","type":{"group":"g","artifact":"a","version":"1"},"organization":{"name":"o","url":"u"},"version":"1","x":1e400}"#;
+    let _info = mock("GET", "/si-out-of-range/service-info")
+        .with_body(body)
+        .create();
+    let config = json!({"TES": {"base_path": root("/si-out-of-range")}});
+    let output = run(&config, &["service-info", "--service", "TES"]);
+    assert_failure(&output, "Invalid service info from section 'TES'");
+}
+
+#[test]
+fn a_refused_connection_is_an_error() {
+    // Bind a free port and release it, so that connections to it are refused.
+    let port = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let config = json!({"TES": {"base_path": format!("http://127.0.0.1:{port}/")}});
+    let output = run(&config, &["service-info", "--service", "TES"]);
+    assert_failure(&output, "Error requesting service-info of section 'TES'");
+}
+
+#[test]
 fn the_discovery_timeout_applies() {
     // A server that accepts the connection but never answers.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -256,7 +319,7 @@ fn the_discovery_timeout_applies() {
     let started = Instant::now();
     let output = run(&config, &["service-info", "--service", "TES"]);
     assert!(started.elapsed() < Duration::from_secs(4));
-    assert_failure(&output, "service-info");
+    assert_failure(&output, "deadline exceeded");
     server.join().unwrap();
 }
 
@@ -277,6 +340,45 @@ async fn dispatch_with_config_uses_the_supplied_configuration() {
     assert_eq!(output.exit_code, ExitCode::SUCCESS);
     let printed: Value = serde_json::from_str(&output.stdout).unwrap();
     assert_eq!(printed, service_info("wes"));
+    info.assert();
+}
+
+#[tokio::test]
+async fn context_dispatch_reads_the_section_of_the_selected_profile() {
+    let info = mock("GET", "/si-context-dispatch/service-info")
+        .with_body(service_info("my-service").to_string())
+        .create();
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("config.json");
+    fs::write(
+        &path,
+        json!({"profiles": {
+            "default": {"MY_SERVICE": {"base_path": "http://127.0.0.1:9/"}},
+            "other": {"MY_SERVICE": {"base_path": root("/si-context-dispatch")}}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let context = CliContext::new("other-cli", "1.0.0").with_config_path(&path);
+    let matches = context
+        .command()
+        .try_get_matches_from([
+            "other-cli",
+            "--profile",
+            "other",
+            "service-info",
+            "--service",
+            "MY_SERVICE",
+        ])
+        .unwrap();
+    let output = context
+        .dispatch(&matches)
+        .await
+        .unwrap()
+        .expect("service-info is a built-in command");
+    assert!(output.stderr.is_empty(), "{}", output.stderr);
+    assert_eq!(output.exit_code, ExitCode::SUCCESS);
+    assert_eq!(output.stdout, service_info("my-service").to_string());
     info.assert();
 }
 

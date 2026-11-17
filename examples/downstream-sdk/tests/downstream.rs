@@ -408,7 +408,7 @@ fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
         (vec!["quota"], "{\"cpu_hours\":3}"),
         (
             vec!["service-info", "--service", cli::QUOTA_SECTION],
-            "\"x-limit\": 3",
+            "\"x-limit\":3",
         ),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_downstream-cli"))

@@ -1,9 +1,10 @@
 //! The `service-info` command: reads the service info of one configured
 //! service.
 
-use crate::render::{json_printable, printable};
+use crate::render::printable;
 use crate::CommandOutput;
 use clap::{Arg, ArgMatches, Command};
+use ga4gh_sdk::clients::serviceinfo::models::Service;
 use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
 use ga4gh_sdk::clients::ServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
@@ -36,27 +37,23 @@ pub fn command() -> Command {
 }
 
 /// The configuration section that `matches` of the `service-info` command
-/// names: a built-in variant for a built-in section name, otherwise
-/// [`ServiceType::Custom`].
+/// names.
+///
+/// Sections are read by name ([`ServiceType::as_str`]), so a built-in name such
+/// as `TES` reads the same section, with the same token variable, as the
+/// built-in variant.
 pub(crate) fn section(matches: &ArgMatches) -> Option<ServiceType> {
     let name = matches.get_one::<String>(SERVICE_ARG)?;
-    Some(match name.as_str() {
-        "TES" => ServiceType::TES,
-        "DRS" => ServiceType::DRS,
-        "TRS" => ServiceType::TRS,
-        "AAI" => ServiceType::AAI,
-        "WES" => ServiceType::WES,
-        "REGISTRY" => ServiceType::REGISTRY,
-        _ => ServiceType::Custom(name.clone()),
-    })
+    Some(ServiceType::Custom(name.clone()))
 }
 
 /// Runs a parsed `service-info` command with the supplied configuration.
 ///
 /// The configuration is used as given; `--service` then only names the
-/// section in error messages. On success, `stdout` holds the service info as
-/// one pretty-printed JSON document, including fields that the specification
-/// doesn't define. A failed request or invalid service info returns a failure
+/// section in error messages. On success, `stdout` holds the response body as
+/// received, with control and bidirectional formatting characters inside
+/// strings escaped. The body must be service info that [`ServiceInfo::get`]
+/// accepts. A failed request or invalid service info returns a failure
 /// `CommandOutput`.
 ///
 /// # Errors
@@ -67,13 +64,15 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     let section = printable(section.as_str());
     let client = match ServiceInfo::new(config) {
         Ok(client) => client,
-        Err(error) => return Ok(CommandOutput::failure(error)),
+        Err(error) => return Ok(failure(&error, &section)),
     };
-    let output = match client.get().await {
-        Ok(service) => {
-            let json = serde_json::to_string_pretty(&service)?;
-            CommandOutput::success(format!("{}\n", json_printable(&json)))
-        }
+    let output = match client.get_raw().await {
+        // The model of `ServiceInfo::get` checks the body, and the body itself
+        // is printed, so that values keep their spelling.
+        Ok(body) => match serde_json::from_str::<Service>(&body) {
+            Ok(_) => CommandOutput::json(body),
+            Err(error) => failure(&error.into(), &section),
+        },
         Err(error) => failure(&error, &section),
     };
     Ok(output)

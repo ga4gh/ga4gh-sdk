@@ -103,8 +103,9 @@ See the [usage guide](../docs/usage.md#profiles) for the file rules.
 `timeouts` sets time limits in seconds for the commands of that section:
 `connect` (default 10), `request` (default 60), `discovery` (the service-info
 check and the `service-info` command, default 10) and `submission`
-(`tes create` and `wes run`, including uploads, default 300). `tes save` applies `request` to each wait for data
-of a download instead of to the whole download. A submission is sent once;
+(`tes create` and `wes run`, including uploads, default 300). `tes save`
+applies `request` to each wait for data of a download instead of to the whole
+download. A submission is sent once;
 if it runs out of time
 after its request started, the error says that it may have been accepted, so look
 for the task or run before you submit it again. The
@@ -789,45 +790,33 @@ without a trailing slash, using the section's credentials (see
 }
 ```
 
-Example output:
+Example output, as the service sent it:
 
 ```json
-{
-  "id": "org.example.tes",
-  "name": "Example TES",
-  "type": {
-    "group": "org.ga4gh",
-    "artifact": "tes",
-    "version": "1.1.0"
-  },
-  "organization": {
-    "name": "Example",
-    "url": "https://example.org"
-  },
-  "version": "1.0.0",
-  "storage": [
-    "s3://bucket"
-  ]
-}
+{"id":"org.example.tes","name":"Example TES","type":{"group":"org.ga4gh","artifact":"tes","version":"1.1.0"},"organization":{"name":"Example","url":"https://example.org"},"version":"1.0.0","storage":["s3://bucket"]}
 ```
 
-On success, stdout holds one JSON document and nothing else. Fields that the
-specification doesn't define are kept, at the top level and in `type` and
-`organization`. The CLI parses the response as Service Info and prints it again,
-indented, so field order and number spelling may differ from the server's.
-Control and bidirectional formatting characters inside strings are printed as
-JSON escapes such as `\u001b`, so the output stays valid JSON with the same
-values.
+On success, stdout holds the response body and nothing else, like `tes get`:
+the server's values, field order, whitespace and number spelling are kept,
+including the fields that the service adds at the top level and in `type` and
+`organization`. Control and bidirectional formatting characters inside strings
+are printed as JSON escapes such as `\u001b`, so the output stays valid JSON
+with the same values. Pipe it through a JSON tool, such as `jq .`, to indent it.
 
-The command exits with code 0 on success and code 1 on errors, with a message
-on stderr and nothing on stdout:
+The body must be service info that the SDK's `ServiceInfo` client accepts: it
+has the required fields with the types of the specification, and its added
+fields are JSON values that the SDK can read, so a number such as `1e400` is
+rejected.
+
+The command exits with code 0 on success and code 1 on errors, with one
+message on stderr and nothing on stdout:
 
 - a missing configuration file, profile or section, or a missing login or
   token variable, is reported before any request is sent;
 - an HTTP error status is reported with the status but without the response
   body; a 404 adds a hint to check that `base_path` is the section's API root;
-- a response that isn't Service Info, such as one without `id` or not JSON at
-  all, is reported as `Invalid service info from section '<SECTION>'`;
+- a response that isn't such service info, such as one without `id` or not
+  JSON at all, is reported as `Invalid service info from section '<SECTION>'`;
 - a connection failure or an exceeded `discovery` timeout is reported with
   its cause.
 
@@ -853,16 +842,16 @@ All commands treat values from a service the same way:
   including backslashes, are printed as they are, so an escaped value can't be
   told apart from a value that contains the same backslash sequence. Values
   without such characters are printed unchanged.
-- `tes get`, `wes get`, `drs get` and `drs access` preserve the server's JSON
-  values, field order, whitespace and number spelling. Raw control and
+- `tes get`, `wes get`, `drs get`, `drs access` and `service-info` preserve
+  the server's JSON values, field order, whitespace and number spelling. Raw control and
   bidirectional formatting characters inside strings become equivalent JSON
   `\u` escapes. A response that isn't valid JSON is reported as an error on
   stderr, with exit code 1. JSON may still contain layout whitespace between
   values; its strings cannot contain unescaped C0 controls such as ESC.
 - `tes list --all --format jsonl` and `wes list --all --format jsonl` write
   each record with JSON escapes, such as `\u001b`, which decode to the
-  original value. `registry get`, `service-info` and the JSON output of the
-  `trs` commands use JSON escapes in the same way.
+  original value. `registry get` and the JSON output of the `trs` commands
+  use JSON escapes in the same way.
 - `trs descriptor --plain` and `trs tests --plain` print the file content as
   received, since it is meant to be saved as a file.
 - `tes log` escapes each line of a log like other text output and keeps the
