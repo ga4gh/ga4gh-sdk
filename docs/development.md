@@ -161,8 +161,11 @@ examples. [Read the Docs](https://ga4gh-sdk.readthedocs.io/) publishes them
 as one site, built with [MkDocs](https://www.mkdocs.org/) and the
 [Material theme](https://squidfunk.github.io/mkdocs-material/), together with
 the Rust API reference of `cargo doc` for the `ga4gh_sdk` and `ga4gh_cli`
-crates. Once the Read the Docs project is configured as described below, it
-serves `latest` from `main`, a version per tag, and pull request previews.
+crates and the [Python API reference](../python/api.md), which
+[mkdocstrings](https://mkdocstrings.github.io/python/) renders from the
+docstrings of the type stubs (`python/ga4gh_sdk.pyi`). Once the Read the
+Docs project is configured as described below, it serves `latest` from
+`main`, a version per tag, and pull request previews.
 
 - [`mkdocs.yml`](../mkdocs.yml) configures the site. Its `nav` lists the
   pages by their paths in the repository; Markdown files that it doesn't
@@ -197,11 +200,24 @@ make site
   `utils/patches/` (see
   [Autogenerate OpenAPI models](autogenerate_OAI_models.md)).
 - `mkdocs build --strict`, which fails on warnings such as links to missing
-  files or anchors.
+  files or anchors. It also fails if the Python API reference can't be
+  generated or Griffe warns about a docstring of the stubs, for example one
+  that documents a parameter that the signature lacks. The stubs' docstrings
+  use the Google style (`Args:`, `Returns:`, `Raises:`). The hooks copy
+  `python/ga4gh_sdk.pyi` into the stub-only package
+  `target/python-stubs/ga4gh_sdk/`, where Griffe reads it, so the build
+  needs no compiled bindings.
 
-`python3 -m pytest docs/test_hooks.py` tests the hooks; CI
-runs both. After the first `make site`, `mkdocs serve` shows the site
-at <http://127.0.0.1:8000/> and rebuilds it when a guide changes.
+`python/tests/test_stubs.py`, which the `Python tests` job runs, checks that
+every class and member of the stubs has a docstring and that the `Args:`
+section of each method names all of its parameters.
+
+The Griffe extension `docs/griffe_overloads.py` renders methods that the
+stubs declare only with `@overload`, such as `Task.wait`.
+`python3 -m pytest docs` tests the hooks and checks that the reference loads
+every class and member of the stubs; CI runs both. After the first
+`make site`, `mkdocs serve` shows the site at <http://127.0.0.1:8000/> and
+rebuilds it when a guide changes.
 
 ### Read the Docs project
 
