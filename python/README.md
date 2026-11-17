@@ -1001,7 +1001,19 @@ library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES
 that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
 `clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
-`clients::tes_async` does. The extension module gets its own copies of the base classes,
+`clients::tes_async` does.
+`PyAsyncTES` keeps its state in its `transport` field: the first call connects the
+`LazyTES` with it, so the service check and all built-in calls use that transport, and the
+`config` getter gives `transport.config`. The `config` field is a copy of the configuration
+that the client was built with; the SDK no longer reads it, so changing it has no effect.
+To give a client another configuration or HTTP client, build it with
+`PyAsyncTES::with_transport(transport)`, for example with a transport from
+`Transport::with_client`; a connected client keeps the transport it connected with, so
+don't replace `transport` afterwards. `PyAsyncTES::connection()` gives the `LazyTES` and the
+transport for a call to move to `spawn_io`, and `clients::tes_async::connected(tes,
+transport)` gives the connected client. Earlier versions connected a new `TES` from the
+`config` field, and `connected()` took a `Configuration`: pass the transport instead.
+The extension module gets its own copies of the base classes,
 which don't mix with those of the `ga4gh_sdk` module: a `ga4gh_sdk.Configuration` can't be passed
 to it. So register every base class that its users need
 (`m.add_class::<PyConfiguration>()` and so on, and `m.add("TesState",

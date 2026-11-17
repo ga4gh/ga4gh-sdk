@@ -29,6 +29,9 @@ default = ["extension-module"]
 # `default-features = false`, for example to link their tests against libpython.
 extension-module = ["pyo3/extension-module"]
 
+[dev-dependencies]
+mockito = "0.31"
+
 [build-dependencies]
 pyo3-build-config = "0.30.1"
 
