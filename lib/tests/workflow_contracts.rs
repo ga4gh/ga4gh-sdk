@@ -191,6 +191,8 @@ fn contract_document_and_embedded_urls_are_redacted_like_outputs() {
         r.contract_document["$schema"],
         "https://json-schema.org/draft/2020-12/schema"
     );
+    // The digest still identifies the profile as given
+    assert_eq!(r.schema_digest, p.schema_digest());
 }
 fn policy(abs: f64, rel: f64) -> ComparisonPolicy {
     ComparisonPolicy {

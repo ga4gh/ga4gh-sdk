@@ -4,9 +4,10 @@
 //! the profile's output contract and gives a [`ResultRecord`]. HTTP(S) URLs
 //! in output values, annotations and the profile document lose their
 //! credentials, query and fragment, also where they are embedded in longer
-//! strings; the context is stored as given. The `verify_` methods of [`ResultRecord`] then add
-//! [`ArtifactEvidence`] for selected output artifacts: whether they could
-//! be read, and whether their SHA-256 matches an expected checksum.
+//! strings; the context is stored as given. The `verify_` methods of
+//! [`ResultRecord`] then add [`ArtifactEvidence`] for selected output
+//! artifacts: whether they could be read, and whether their SHA-256 matches
+//! an expected checksum.
 use super::{digest, pointer_segment, ContractError, Diagnostic, Profile};
 use crate::{
     clients::drs::uri::{AccessPlan, AccessPreferences, DrsResolver},
@@ -100,7 +101,8 @@ pub struct TypedOutput {
     /// Whether the value conforms to the output's schema.
     pub contract_status: ContractStatus,
     /// The output's schema from the profile, with the URL redaction of
-    /// [`ResultRecord::contract_document`].
+    /// [`ResultRecord::contract_document`]; URLs aren't normalized
+    /// otherwise.
     pub annotations: Value,
     /// The errors of validating the value against the output's schema.
     pub diagnostics: Vec<Diagnostic>,
@@ -125,11 +127,11 @@ pub struct ResultRecord {
     pub schema_digest: String,
     /// The profile's JSON document, which the schema references and
     /// annotations of the outputs resolve against. HTTP(S) URLs in its
-    /// strings lose their credentials, query and fragment; only URLs with
-    /// such access details are rewritten, and the values of `$ref`,
-    /// `$dynamicRef`, `$id` and `$schema` keep their fragment, so that
-    /// references still resolve. [`Self::schema_digest`] is computed over
-    /// the profile as given.
+    /// strings lose their credentials, query and fragment, by their text;
+    /// other text stays as it is. The values of `$ref`, `$dynamicRef`, `$id`
+    /// and `$schema` keep a fragment that is a JSON pointer or an anchor, so
+    /// that references still resolve, and `pattern` values stay as they
+    /// are. [`Self::schema_digest`] is computed over the profile as given.
     #[serde(default)]
     pub contract_document: Value,
     /// The errors of validating all outputs against the output contract.
@@ -144,9 +146,9 @@ pub struct ResultRecord {
     /// compares it.
     pub context: BTreeMap<String, String>,
 }
-// Parses `text` as an HTTP(S) URL and removes its credentials, query and,
-// unless `keep_fragment`, its fragment. `None` if it isn't an HTTP(S) URL.
-fn strip_url(text: &str, keep_fragment: bool) -> Option<url::Url> {
+// Parses `text` as an HTTP(S) URL and removes its credentials, query and
+// fragment. `None` if it isn't an HTTP(S) URL.
+fn strip_url(text: &str) -> Option<url::Url> {
     let mut u = url::Url::parse(text).ok()?;
     if !["http", "https"].contains(&u.scheme()) {
         return None;
@@ -154,77 +156,101 @@ fn strip_url(text: &str, keep_fragment: bool) -> Option<url::Url> {
     let _ = u.set_username("");
     let _ = u.set_password(None);
     u.set_query(None);
-    if !keep_fragment {
-        u.set_fragment(None);
-    }
+    u.set_fragment(None);
     Some(u)
 }
-// Whether an HTTP(S) URL carries credentials, a query or (unless
-// `keep_fragment`) a fragment.
-fn has_access_details(u: &url::Url, keep_fragment: bool) -> bool {
-    !u.username().is_empty()
-        || u.password().is_some()
-        || u.query().is_some()
-        || (!keep_fragment && u.fragment().is_some())
+// Whether `c` ends a URL in text: whitespace, or a character that a URL
+// can't hold unencoded.
+fn url_end(c: char) -> bool {
+    c.is_whitespace() || "\"<>`".contains(c)
 }
-// Removes what looks like credentials, a query or a fragment from a URL
-// that doesn't parse, by its text: everything up to the last `@` of the
-// authority, and everything from the first `?` or `#`. `None` if there is
-// nothing to remove.
-fn strip_unparsed(token: &str) -> Option<String> {
-    let (scheme, rest) = token.split_once("://")?;
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let host_start = rest[..authority_end].rfind('@').map_or(0, |i| i + 1);
-    let rest = &rest[host_start..];
-    let rest = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
-    let stripped = format!("{scheme}://{rest}");
-    (stripped != token).then_some(stripped)
-}
-// Removes credentials, query and fragment from the HTTP(S) URLs embedded in
-// `text`. A URL starts at `http://` or `https://`, in any case, and ends
-// before whitespace, a quote, `<`, `>` or a backtick; trailing punctuation
-// isn't part of it. Only URLs with access details are rewritten, so other
-// text stays exactly as it is.
-fn redact_text(text: &str, keep_fragment: bool) -> String {
-    let lower = text.to_ascii_lowercase();
-    let mut out = String::with_capacity(text.len());
-    let mut done = 0;
-    let mut from = 0;
-    while let Some(start) = ["http://", "https://"]
+// The length of the scheme at the start of `text`: `http:` or `https:`, in
+// any case, followed by one or more `/` or `\`, which URL parsers also
+// accept.
+fn scheme_len(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let name = if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"https:") {
+        6
+    } else if bytes.len() >= 5 && bytes[..5].eq_ignore_ascii_case(b"http:") {
+        5
+    } else {
+        return None;
+    };
+    let slashes = bytes[name..]
         .iter()
-        .filter_map(|scheme| lower[from..].find(scheme).map(|i| from + i))
-        .min()
-    {
-        let rest = &text[start..];
-        let end = rest
-            .find(|c: char| c.is_whitespace() || "\"'<>`".contains(c))
-            .unwrap_or(rest.len());
-        let token = rest[..end].trim_end_matches(|c: char| ".,;:!?)]}".contains(c));
-        from = start + token.len().max(1);
-        let redacted = match url::Url::parse(token) {
-            Ok(u) if has_access_details(&u, keep_fragment) => {
-                strip_url(token, keep_fragment).map(String::from)
+        .take_while(|b| matches!(b, b'/' | b'\\'))
+        .count();
+    (slashes > 0).then_some(name + slashes)
+}
+// Whether a fragment is empty, a JSON pointer or a plain-name anchor, which
+// references use, rather than something like `access_token=...`.
+fn reference_fragment(fragment: &str) -> bool {
+    fragment.is_empty()
+        || fragment.starts_with('/')
+        || (fragment.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && fragment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)))
+}
+// Removes credentials, queries and fragments from the HTTP(S) URLs in
+// `text`, by their text, without parsing them, so that URLs which don't
+// parse, URLs inside other URLs and URLs in longer strings are covered too.
+//
+// A URL starts at its scheme (see `scheme_len`). Its credentials are
+// everything up to the last `@` before the next `/`, `\`, `?`, `#` or
+// `url_end` character. From the first `?` or `#` after the scheme on,
+// everything up to the next `url_end` character goes, except a trailing
+// run of `.,;:)]}`, and, if `keep_fragment`, a `reference_fragment`. Other
+// text stays exactly as it is. Runs in linear time.
+fn redact_text(text: &str, keep_fragment: bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_url = false;
+    let mut i = 0;
+    while let Some(c) = text[i..].chars().next() {
+        let rest = &text[i..];
+        if let Some(scheme) = scheme_len(rest) {
+            let after = &rest[scheme..];
+            let end = after
+                .find(|c: char| url_end(c) || "/\\?#".contains(c))
+                .unwrap_or(after.len());
+            let authority = &after[..end];
+            out.push_str(&rest[..scheme]);
+            out.push_str(
+                authority
+                    .rfind('@')
+                    .map_or(authority, |at| &authority[at + 1..]),
+            );
+            i += scheme + end;
+            in_url = true;
+        } else if in_url && (c == '?' || c == '#') {
+            let tail = &rest[..rest.find(url_end).unwrap_or(rest.len())];
+            let core = tail.trim_end_matches(|c: char| ".,;:)]}".contains(c));
+            if keep_fragment {
+                if let Some(fragment) = core.find('#').map(|at| &core[at + 1..]) {
+                    if reference_fragment(fragment) {
+                        out.push('#');
+                        out.push_str(fragment);
+                    }
+                }
             }
-            Ok(_) => None,
-            Err(_) => strip_unparsed(token),
-        };
-        if let Some(redacted) = redacted {
-            out.push_str(&text[done..start]);
-            out.push_str(&redacted);
-            done = start + token.len();
+            out.push_str(&tail[core.len()..]);
+            i += tail.len();
+            in_url = false;
+        } else {
+            in_url &= !url_end(c);
+            out.push(c);
+            i += c.len_utf8();
         }
     }
-    out.push_str(&text[done..]);
     out
 }
 // Removes credentials, query and fragment from HTTP(S) URLs in an output
 // value, so that it can be stored. A string that is a whole HTTP(S) URL is
-// also normalized; URLs embedded in longer strings are rewritten only if
-// they have access details.
+// also normalized.
 fn durable(value: &Value) -> Value {
     match value {
-        Value::String(s) => match strip_url(s, false) {
-            Some(u) => json!(u.as_str()),
+        Value::String(s) => match strip_url(s) {
+            Some(u) => json!(redact_text(u.as_str(), false)),
             None => json!(redact_text(s, false)),
         },
         Value::Array(a) => Value::Array(a.iter().map(durable).collect()),
@@ -232,16 +258,17 @@ fn durable(value: &Value) -> Value {
         _ => value.clone(),
     }
 }
-// JSON Schema keywords whose URL fragment is a JSON pointer or an anchor
-// that references depend on, not an access detail.
+// JSON Schema keywords whose URL fragment can be a JSON pointer or an anchor
+// that references depend on.
 const REFERENCE_KEYWORDS: [&str; 4] = ["$ref", "$dynamicRef", "$id", "$schema"];
 // Removes credentials, query and fragment from the HTTP(S) URLs in a
-// profile document or one of its schemas, whole or embedded in longer
-// strings, rewriting only URLs with access details. The values of
-// [`REFERENCE_KEYWORDS`] keep their fragment, so that references still
-// resolve. Object keys stay as they are.
+// profile document or one of its schemas, as `redact_text` does. The
+// values of `REFERENCE_KEYWORDS` keep a fragment that is a JSON pointer or
+// an anchor, so that references still resolve, and `pattern` values, which
+// are regular expressions, stay as they are. Object keys stay as they are.
 fn durable_schema(value: &Value, keyword: Option<&str>) -> Value {
     match value {
+        Value::String(_) if keyword == Some("pattern") => value.clone(),
         Value::String(s) => json!(redact_text(
             s,
             keyword.is_some_and(|k| REFERENCE_KEYWORDS.contains(&k))
@@ -312,11 +339,12 @@ impl Profile {
             } else {
                 ContractStatus::Conformant
             };
+            let stored = value.map(durable);
             result.outputs.insert(
                 key.clone(),
                 TypedOutput {
-                    access_details_redacted: value.is_some_and(|v| durable(v) != *v),
-                    value: value.map(durable),
+                    access_details_redacted: stored.as_ref() != value,
+                    value: stored,
                     contract_status: status,
                     annotations: durable_schema(annotation, None),
                     diagnostics: errors,
@@ -523,44 +551,101 @@ impl ResultRecord {
 mod tests {
     use super::*;
     #[test]
-    fn redact_text_rewrites_only_urls_with_access_details() {
-        assert_eq!(
-            redact_text("x https://u:p@h.example/a?q=1#f) y", false),
-            "x https://h.example/a) y"
-        );
-        assert_eq!(
-            redact_text("HTTPS://h.example/?token=1", false),
-            "https://h.example/"
-        );
-        assert_eq!(
-            redact_text("<http://h.example/a#f>, http://h.example", false),
-            "<http://h.example/a>, http://h.example"
-        );
+    fn redact_text_removes_access_details_by_text() {
+        for (text, redacted) in [
+            (
+                "x https://u:p@h.example/a?q=1#f) y",
+                "x https://h.example/a) y",
+            ),
+            ("HTTPS://h.example/?token=1", "HTTPS://h.example/"),
+            (
+                "<http://h.example/a#f>, http://h.example",
+                "<http://h.example/a>, http://h.example",
+            ),
+            // URLs that don't parse
+            (
+                "https://u:p@h.example:99999/a?token=1#f",
+                "https://h.example:99999/a",
+            ),
+            // Byte offsets stay on character boundaries around non-ASCII text
+            (
+                "é https://u:p@h.example/ü?t=ß#f ñ",
+                "é https://h.example/ü ñ",
+            ),
+            // Several URLs, and a bare scheme at the end
+            (
+                "https://h.example/a?t=1 and https://h.example/b#f, see https://",
+                "https://h.example/a and https://h.example/b, see https://",
+            ),
+            // A URL inside another URL's path
+            (
+                "mirrors: https://h.example/a,https://user:pw@h2.example/b",
+                "mirrors: https://h.example/a,https://h2.example/b",
+            ),
+            (
+                "https://h.example/https://user:pw@h2.example/b?",
+                "https://h.example/https://h2.example/b",
+            ),
+            // Characters that are legal in credentials but end words
+            (
+                "x https://user:ab'cd@h.example/ y",
+                "x https://h.example/ y",
+            ),
+            ("https://h.example/?sig=ab'cd!", "https://h.example/"),
+            // Other spellings that URL parsers accept, and JSON escapes
+            (r"http:\\user:pw@h.example/", r"http:\\h.example/"),
+            ("https:/user:pw@h.example/", "https:/h.example/"),
+            (r"https:\/\/user:pw@h.example\/b", r"https:\/\/h.example\/b"),
+            (
+                r#"{"url":"https://u:p@h.example/x?t=1","n":2}"#,
+                r#"{"url":"https://h.example/x","n":2}"#,
+            ),
+            // Whitespace ends a URL, so a password with a space is cut there
+            (
+                "https://u:pass word@h.example/",
+                "https://u:pass word@h.example/",
+            ),
+        ] {
+            assert_eq!(redact_text(text, false), redacted, "{text}");
+        }
         for unchanged in [
             "see https://h.example",
             "s3://bucket/key?sig=1",
             "http:// nothing",
-            "no URL at all",
+            "what? who# no URL at all",
+            "https",
         ] {
             assert_eq!(redact_text(unchanged, false), unchanged);
         }
-        // URLs that don't parse lose the same parts by their text
-        assert_eq!(
-            redact_text("https://u:p@h.example:99999/a?token=1#f", false),
-            "https://h.example:99999/a"
-        );
-        assert_eq!(
-            redact_text("https://h.example/a#/defs/x", true),
-            "https://h.example/a#/defs/x"
-        );
     }
     #[test]
-    fn durable_schema_keeps_reference_fragments() {
+    fn redact_text_keeps_only_reference_fragments_if_asked() {
+        for (text, redacted) in [
+            ("https://h.example/a#/defs/x", "https://h.example/a#/defs/x"),
+            ("https://h.example/a#anchor", "https://h.example/a#anchor"),
+            ("https://h.example/a#", "https://h.example/a#"),
+            (
+                "https://u:p@h.example:99999/a?t=1#/defs/x",
+                "https://h.example:99999/a#/defs/x",
+            ),
+            ("https://h.example/s#access_token=t", "https://h.example/s"),
+        ] {
+            assert_eq!(redact_text(text, true), redacted, "{text}");
+        }
+    }
+    #[test]
+    fn redact_text_is_linear() {
+        let text = "http://a ".repeat(200_000) + &"x".repeat(200_000);
+        assert_eq!(redact_text(&text, false), text);
+    }
+    #[test]
+    fn durable_schema_keeps_reference_fragments_and_patterns() {
         let schema = json!({
             "$id": "https://h.example/s.json#",
             "$ref": "https://u:p@h.example/s.json?token=1#/$defs/a",
             "description": "https://h.example/s.json#frag",
             "enum": ["https://h.example/e?token=1"],
+            "pattern": "^https://[^?#]+$",
             "properties": {"$ref": {"type": "string", "default": "https://h.example/d?token=1"}}
         });
         assert_eq!(
@@ -570,8 +655,20 @@ mod tests {
                 "$ref": "https://h.example/s.json#/$defs/a",
                 "description": "https://h.example/s.json",
                 "enum": ["https://h.example/e"],
+                "pattern": "^https://[^?#]+$",
                 "properties": {"$ref": {"type": "string", "default": "https://h.example/d"}}
             })
+        );
+    }
+    #[test]
+    fn durable_normalizes_whole_urls_and_redacts_nested_ones() {
+        assert_eq!(
+            durable(&json!("HTTPS://h.example?t=1")),
+            json!("https://h.example/")
+        );
+        assert_eq!(
+            durable(&json!("https://h.example/a,https://user:pw@h2.example/b")),
+            json!("https://h.example/a,https://h2.example/b")
         );
     }
 }

@@ -109,17 +109,26 @@ URLs or guaranteed object identities. DRS references retain stable object identi
 AccessPlan headers and URLs are never serialized into artifact evidence.
 
 The same redaction applies to the stored `contract_document` and to the output
-annotations, so a URL never appears redacted in one place and in clear in another.
-It covers HTTP(S) URLs that make up a whole string and URLs embedded in longer
-strings, such as descriptions or log lines. An embedded URL starts at `http://` or
-`https://` (in any case) and ends before whitespace, a quote, `<`, `>` or a
-backtick; trailing punctuation is not part of it. URLs that don't parse lose
-everything up to the last `@` of their authority and everything from the first
-`?` or `#`. In the profile document and annotations, only URLs with such access
-details are rewritten, and the values of `$ref`, `$dynamicRef`, `$id` and `$schema`
-keep their fragment so that references still resolve. Whole-string output values
-are also normalized, as before. `schema_digest` still identifies the profile as
-given.
+annotations, so a URL never appears redacted in one place and in clear in another:
+
+- **Scope:** HTTP(S) URLs that make up a whole string, URLs embedded in longer
+  strings, such as descriptions or log lines, and URLs inside other URLs. URLs are
+  found and redacted by their text, so URLs that don't parse are covered too.
+- **Where a URL starts:** at `http:` or `https:`, in any case, followed by one or
+  more `/` or `\`, as URL parsers accept them. This includes JSON-escaped
+  `https:\/\/`.
+- **Credentials:** everything from the scheme up to the last `@` before the next
+  `/`, `\`, `?`, `#`, whitespace, `"`, `<`, `>` or backtick.
+- **Query and fragment:** everything from the first `?` or `#` after the scheme up
+  to the next whitespace, `"`, `<`, `>` or backtick, except a trailing run of `.`,
+  `,`, `;`, `:`, `)`, `]` and `}`. Credentials or queries with whitespace in them
+  are therefore only partly removed.
+- **References:** the values of `$ref`, `$dynamicRef`, `$id` and `$schema` keep a
+  fragment that is a JSON pointer or an anchor, so that references still resolve.
+- **Patterns:** `pattern` values are regular expressions and stay as they are.
+- **Output values:** a whole-string URL is also normalized, as before. Other text,
+  and URLs without credentials, a query or a fragment, stay exactly as they are.
+- **Digest:** `schema_digest` still identifies the profile as given.
 
 Not redacted: other URL schemes (for example presigned `s3://` URLs), object keys,
 checksum source labels and caller-owned context. Do not put credentials there. The
