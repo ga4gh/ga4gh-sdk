@@ -406,7 +406,7 @@ async fn malformed_expected_checksums_fail_before_any_read() {
             models::access_method::Type,
             uri::{AccessPlan, AccessPreferences, DrsResolver},
         },
-        utils::operation::Operation,
+        utils::{configuration::Configuration, operation::Operation, transport::Transport},
     };
     let checksum = |algorithm: &str, digest: &str, source: &str| ExpectedChecksum {
         algorithm: algorithm.into(),
@@ -427,8 +427,15 @@ async fn malformed_expected_checksums_fail_before_any_read() {
         url: url::Url::parse("http://127.0.0.1:9/report").unwrap(),
         headers: Default::default(),
     };
-    // A resolver without services can't resolve the URI
-    let resolver = DrsResolver::default();
+    // Nothing listens on the discard port, so resolution fails too
+    let resolver = DrsResolver::default()
+        .with_service(
+            "drs.example",
+            Transport::new(&Configuration::new(
+                url::Url::parse("http://127.0.0.1:9/ga4gh/drs/v1").unwrap(),
+            )),
+        )
+        .unwrap();
     let operation = Operation::new(std::time::Duration::from_secs(2));
     let p = profile(schema());
     let mut r = p
@@ -438,51 +445,61 @@ async fn malformed_expected_checksums_fail_before_any_read() {
             &json!({"count":1,"report":"drs://drs.example/report"}),
         )
         .unwrap();
+    // Fails because of the checksum, not for another reason
+    let rejected = |result: Result<(), ga4gh_sdk::workflow::ContractError>, case: &str| {
+        let message = result.expect_err(case).to_string();
+        assert!(
+            message.contains("checksum") || message.contains("SHA-256"),
+            "{case}: {message}"
+        );
+    };
     for expected in malformed {
         let some = || Some(expected.clone());
-        // A missing pointer
-        assert!(r.verify_bytes("/missing", b"report", some()).is_err());
-        assert!(r
-            .verify_access_plan("/missing", &plan, some(), &operation, 1024)
-            .await
-            .is_err());
-        assert!(r
-            .verify_drs(
-                "/missing",
-                &resolver,
-                &AccessPreferences::default(),
-                some(),
-                &operation,
-                1,
-                1024
-            )
-            .await
-            .is_err());
-        // A failing read or resolution
-        assert!(r
-            .verify_access_plan("/report", &plan, some(), &operation, 1024)
-            .await
-            .is_err());
-        assert!(r
-            .verify_drs(
-                "/report",
-                &resolver,
-                &AccessPreferences::default(),
-                some(),
-                &operation,
-                1,
-                1024
-            )
-            .await
-            .is_err());
+        let case = |method: &str, pointer: &str| format!("{method} {pointer} {expected:?}");
+        for pointer in ["/missing", "/report"] {
+            rejected(
+                r.verify_bytes(pointer, b"report", some()),
+                &case("verify_bytes", pointer),
+            );
+            rejected(
+                r.verify_access_plan(pointer, &plan, some(), &operation, 1024)
+                    .await,
+                &case("verify_access_plan", pointer),
+            );
+            rejected(
+                r.verify_drs(
+                    pointer,
+                    &resolver,
+                    &AccessPreferences::default(),
+                    some(),
+                    &operation,
+                    1,
+                    1024,
+                )
+                .await,
+                &case("verify_drs", pointer),
+            );
+        }
         assert!(r.artifacts.is_empty());
     }
-    // A valid expected checksum is still recorded when the read fails
-    r.verify_access_plan(
+    // A valid expected checksum is still recorded when the read or the
+    // resolution fails
+    let valid_checksum = || Some(checksum("SHA-256", &valid, "manifest"));
+    r.verify_access_plan("/report", &plan, valid_checksum(), &operation, 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        r.artifacts["/report"].access_status,
+        AccessStatus::Inaccessible
+    );
+    r.artifacts.clear();
+    r.verify_drs(
         "/report",
-        &plan,
-        Some(checksum("SHA-256", &valid, "manifest")),
+        &resolver,
+        &AccessPreferences::default(),
+        valid_checksum(),
         &operation,
+        1,
         1024,
     )
     .await
@@ -491,6 +508,7 @@ async fn malformed_expected_checksums_fail_before_any_read() {
         r.artifacts["/report"].access_status,
         AccessStatus::Inaccessible
     );
+    assert!(r.artifacts["/report"].expected.is_some());
 }
 
 #[tokio::test]
