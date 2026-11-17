@@ -1050,7 +1050,8 @@ let task = PyTesTask::from_value(raw)?;
 **Deprecated:** the public `inner` and `raw` fields of these classes, and the `tasks`,
 `runs` and `task_logs` fields of the list responses. A change to one field doesn't change
 the others, so the getters, `json()` and the request sent could disagree. The fields still
-work, with a deprecation warning; a later release makes them private. Replace
+work; extension crates that use them get a Rust compiler warning (an error under
+`-D warnings`), and Python code is not affected. A later release makes them private. Replace
 `task.inner` with `task.inner()`, `task.raw` with `task.raw()`, and `page.tasks` with
 `page.tasks()`, which returns a copy.
 

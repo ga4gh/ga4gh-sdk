@@ -307,4 +307,21 @@ mod tests {
         assert_eq!(url.inner().drs_access_id, None);
         assert_eq!(url.inner().extra["x_expires"], 60);
     }
+
+    #[test]
+    fn json_that_is_no_object_is_rejected() {
+        let raw = json!(["https://example.org/a"]);
+        assert_eq!(
+            PyDrsObject::parse(raw.clone()).err().unwrap(),
+            "not a JSON object"
+        );
+        assert_eq!(
+            PyAccessURL::parse(raw.clone()).err().unwrap(),
+            "not a JSON object"
+        );
+        assert_eq!(
+            PyBulkAccessURL::parse(raw).err().unwrap(),
+            "not a JSON object"
+        );
+    }
 }

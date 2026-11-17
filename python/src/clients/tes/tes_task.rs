@@ -251,4 +251,14 @@ mod tests {
         assert_eq!(changed.inner().name.as_deref(), Some("changed"));
         assert_eq!(task.inner().name.as_deref(), Some("original"));
     }
+
+    #[test]
+    fn json_that_is_no_task_is_rejected() {
+        assert_eq!(
+            PyTesTask::parse(json!([1])).err().unwrap(),
+            "not a JSON object"
+        );
+        let error = PyTesTask::parse(json!({"name": 1})).err().unwrap();
+        assert!(error.starts_with("invalid type: integer `1`"), "{error}");
+    }
 }

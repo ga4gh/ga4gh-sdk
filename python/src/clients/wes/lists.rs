@@ -265,6 +265,22 @@ mod tests {
     }
 
     #[test]
+    fn a_page_with_an_invalid_item_is_rejected() {
+        let error = PyRunListResponse::parse(json!({"runs": [{"state": "COMPLETE"}]}))
+            .err()
+            .unwrap();
+        assert!(error.starts_with("missing field `run_id`"), "{error}");
+        let error = PyTaskListResponse::parse(json!({"task_logs": ["x"]}))
+            .err()
+            .unwrap();
+        assert_eq!(error, "not a JSON object");
+        assert_eq!(
+            PyRunListResponse::parse(json!("x")).err().unwrap(),
+            "not a JSON object"
+        );
+    }
+
+    #[test]
     fn a_page_of_tasks_describes_its_json() {
         let raw = json!({
             "task_logs": [{"id": "t-1", "name": "step", "stdout": null, "x_task": 2}],

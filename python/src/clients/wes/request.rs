@@ -358,4 +358,17 @@ mod tests {
         assert_eq!(changed.inner().workflow_url, "other.cwl");
         assert_eq!(request.inner().workflow_url, "main.cwl");
     }
+
+    #[test]
+    fn json_that_is_no_request_is_rejected() {
+        assert_eq!(
+            PyRunRequest::parse(json!("text")).err().unwrap(),
+            "not a JSON object"
+        );
+        let raw = json!({"workflow_url": "main.cwl", "workflow_params": "x"});
+        assert_eq!(
+            PyRunRequest::parse(raw).err().unwrap(),
+            "workflow_params must be a JSON object"
+        );
+    }
 }
