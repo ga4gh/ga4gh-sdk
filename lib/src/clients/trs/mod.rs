@@ -283,7 +283,7 @@ impl TRS {
 
     /// The transport configuration that determines this connection's identity.
     pub fn configuration(&self) -> &Configuration {
-        &self.transport.config
+        self.transport.configuration()
     }
     /// Shared transport for lower-level operations. Passing `self` to the typed
     /// pagination helpers also preserves this client's compatibility policy.
@@ -326,7 +326,7 @@ impl TRS {
 
     async fn fetch_service_info(transport: &Transport) -> crate::Result<Service> {
         let mut value: Value = transport
-            .get_json_within("service-info", transport.config.timeouts.discovery)
+            .get_json_within("service-info", transport.configuration().timeouts.discovery)
             .await?;
         if let Some(object) = value.as_object_mut() {
             for key in ["createdAt", "updatedAt"] {

@@ -18,11 +18,7 @@ use mockito::{mock, server_url};
 use std::{cell::Cell, time::Duration};
 fn drs() -> DRS {
     let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
-    DRS {
-        transport: Transport::new(&config),
-        config,
-        service: Service::default(),
-    }
+    DRS::without_discovery(Transport::new(&config), Service::default())
 }
 fn reference() -> ResolutionReference {
     ResolutionReference {
@@ -187,18 +183,10 @@ async fn immediate_200_and_resume_validation() {
 async fn resume_accepts_equivalent_api_root_with_trailing_slash() {
     let root = format!("{}/ga4gh/drs/v1", server_url());
     let first_config = Configuration::new(url::Url::parse(&root).unwrap());
-    let first = DRS {
-        transport: Transport::new(&first_config),
-        config: first_config,
-        service: Service::default(),
-    };
+    let first = DRS::without_discovery(Transport::new(&first_config), Service::default());
     let reference = first.resolution_reference("objects/id".into());
     let second_config = Configuration::new(url::Url::parse(&format!("{root}/")).unwrap());
-    let second = DRS {
-        transport: Transport::new(&second_config),
-        config: second_config,
-        service: Service::default(),
-    };
+    let second = DRS::without_discovery(Transport::new(&second_config), Service::default());
     let request = mock("GET", "/ga4gh/drs/v1/objects/id")
         .with_body(r#"{"id":"id"}"#)
         .create();
@@ -208,11 +196,7 @@ async fn resume_accepts_equivalent_api_root_with_trailing_slash() {
 
     let encoded_config =
         Configuration::new(url::Url::parse("https://user:pass@example.org/a%20b/drs/v1").unwrap());
-    let encoded = DRS {
-        transport: Transport::new(&encoded_config),
-        config: encoded_config,
-        service: Service::default(),
-    };
+    let encoded = DRS::without_discovery(Transport::new(&encoded_config), Service::default());
     assert_eq!(
         encoded.resolution_reference("objects/id".into()).api_root,
         "https://example.org/a%20b/drs/v1/"

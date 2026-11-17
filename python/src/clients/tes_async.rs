@@ -202,7 +202,7 @@ impl PyAsyncTES {
         let (tes, config) = (self.inner.clone(), self.config.clone());
         future_into_py(py, async move {
             spawn_io(move || async move {
-                list_tasks(&connected(&tes, &config).await?.transport, &endpoint).await
+                list_tasks(connected(&tes, &config).await?.transport(), &endpoint).await
             })
             .await
             .map_err(PyRuntimeError::new_err)

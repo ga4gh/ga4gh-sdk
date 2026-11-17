@@ -24,9 +24,9 @@ async fn discovery_caches_raw_extensions_and_refreshes_once() {
     let mut client = TES::discover(&config, Duration::from_secs(60))
         .await
         .unwrap();
-    assert_eq!(client.capabilities.raw["extension"]["custom"], true);
-    assert_eq!(client.capabilities.tes_info().unwrap().name, "test");
-    assert_eq!(client.capabilities.tes_info().unwrap().name, "test");
+    assert_eq!(client.capabilities().raw["extension"]["custom"], true);
+    assert_eq!(client.capabilities().tes_info().unwrap().name, "test");
+    assert_eq!(client.capabilities().tes_info().unwrap().name, "test");
     first.assert();
     drop(first);
     info["extension"]["custom"] = json!(false);
@@ -35,7 +35,7 @@ async fn discovery_caches_raw_extensions_and_refreshes_once() {
         .expect(1)
         .create();
     client.refresh().await.unwrap();
-    assert_eq!(client.capabilities.raw["extension"]["custom"], false);
+    assert_eq!(client.capabilities().raw["extension"]["custom"], false);
     refresh.assert();
 }
 #[tokio::test]
@@ -62,7 +62,7 @@ async fn strict_wes_contradiction_prevents_submission_but_unknown_is_advisory() 
         ..Default::default()
     };
     assert_eq!(
-        client.capabilities.validate_wes(&request)[0].support,
+        client.capabilities().validate_wes(&request)[0].support,
         Support::Unsupported
     );
     assert!(client
@@ -123,6 +123,7 @@ fn config_below(root: &str) -> Configuration {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // compares the accessors with the fields
 async fn discovered_accessors_read_client_and_snapshot() {
     let mut info = service("tes");
     info["id"] = json!("org.example.accessors");

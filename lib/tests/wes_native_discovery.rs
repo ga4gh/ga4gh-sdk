@@ -28,10 +28,10 @@ async fn native_wes_10_capability_discovery_keeps_the_original_response() {
     let discovered = WES::discover(&c, std::time::Duration::from_secs(60))
         .await
         .unwrap();
-    let service = &discovered.client.service;
+    let service = &discovered.client().discovered_service_info();
     assert_eq!(service.r#type.artifact, "wes");
     assert_eq!(service.r#type.version, "1.0.0");
-    assert_eq!(discovered.capabilities.raw, info);
+    assert_eq!(discovered.capabilities().raw, info);
     m.assert();
 }
 

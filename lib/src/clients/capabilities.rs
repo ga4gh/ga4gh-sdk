@@ -298,14 +298,35 @@ impl CapabilitySnapshot {
 
 /// Opt-in discovery wrapper: one request populates the client and raw/typed
 /// capabilities. Accessors never fetch; refresh is explicit and atomic on success.
+///
+/// Read the parts with [`client`](Self::client) (or `Deref`) and
+/// [`capabilities`](Self::capabilities), or split the wrapper with
+/// [`into_parts`](Self::into_parts). The public fields are deprecated and
+/// become private in a later release: an assignment to one of them would
+/// separate the client from the snapshot of its service.
+///
+/// ```compile_fail
+/// #![deny(deprecated)]
+/// use ga4gh_sdk::clients::{capabilities::Discovered, tes::TES};
+/// fn swap(discovered: &mut Discovered<TES>, client: TES) {
+///     discovered.client = client;
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Discovered<T> {
     /// The client, also reached through `Deref` and [`Self::client`].
+    #[deprecated(
+        note = "use `client()`, `Deref`, or `into_parts()`; this field will become private"
+    )]
     pub client: T,
     /// The service-info response that the client was built from; also
     /// returned by [`Self::capabilities`].
+    #[deprecated(note = "use `capabilities()` or `into_parts()`; this field will become private")]
     pub capabilities: CapabilitySnapshot,
 }
+// The accessors, `Deref`, the constructors, and `refresh` are the only code
+// that reads or sets the deprecated fields.
+#[allow(deprecated)]
 impl<T> Discovered<T> {
     /// The client, also reached through `Deref`.
     pub fn client(&self) -> &T {
@@ -323,7 +344,17 @@ impl<T> Discovered<T> {
     pub fn into_parts(self) -> (T, CapabilitySnapshot) {
         (self.client, self.capabilities)
     }
+
+    /// Builds the wrapper from a client and the snapshot of the same
+    /// service-info response.
+    fn assemble(client: T, capabilities: CapabilitySnapshot) -> Self {
+        Self {
+            client,
+            capabilities,
+        }
+    }
 }
+#[allow(deprecated)]
 impl<T> Deref for Discovered<T> {
     type Target = T;
     fn deref(&self) -> &T {
@@ -389,14 +420,10 @@ impl TES {
         max_age: Duration,
     ) -> crate::Result<Discovered<Self>> {
         let (service, capabilities) = discover(&transport, "tes", max_age).await?;
-        Ok(Discovered {
-            client: Self {
-                config: transport.config.clone(),
-                transport,
-                service,
-            },
+        Ok(Discovered::assemble(
+            Self::without_discovery(transport, service),
             capabilities,
-        })
+        ))
     }
 }
 impl WES {
@@ -426,14 +453,10 @@ impl WES {
         max_age: Duration,
     ) -> crate::Result<Discovered<Self>> {
         let (service, capabilities) = discover(&transport, "wes", max_age).await?;
-        Ok(Discovered {
-            client: Self {
-                config: transport.config.clone(),
-                transport,
-                service,
-            },
+        Ok(Discovered::assemble(
+            Self::without_discovery(transport, service),
             capabilities,
-        })
+        ))
     }
 }
 impl Discovered<TES> {
@@ -443,10 +466,12 @@ impl Discovered<TES> {
     /// # Errors
     ///
     /// Fails if the request fails or the response isn't a TES service info.
+    // Replaces both deprecated fields in one step
+    #[allow(deprecated)]
     pub async fn refresh(&mut self) -> crate::Result<()> {
-        let (service, snapshot) =
-            discover(&self.client.transport, "tes", self.capabilities.max_age).await?;
-        self.client.service = service;
+        let transport = self.client.transport();
+        let (service, snapshot) = discover(transport, "tes", self.capabilities.max_age).await?;
+        self.client = TES::without_discovery(transport.clone(), service);
         self.capabilities = snapshot;
         Ok(())
     }
@@ -458,8 +483,8 @@ impl Discovered<TES> {
     /// With `strict`, fails before any request if a diagnostic blocks strict
     /// submissions; otherwise fails as [`TES::create`] does.
     pub async fn create_validated(&self, task: TesTask, strict: bool) -> crate::Result<Task> {
-        ensure_strict(&self.capabilities.validate_tes(&task), strict)?;
-        self.client.create(task).await
+        ensure_strict(&self.capabilities().validate_tes(&task), strict)?;
+        self.client().create(task).await
     }
 }
 impl Discovered<WES> {
@@ -469,10 +494,12 @@ impl Discovered<WES> {
     /// # Errors
     ///
     /// Fails if the request fails or the response isn't a WES service info.
+    // Replaces both deprecated fields in one step
+    #[allow(deprecated)]
     pub async fn refresh(&mut self) -> crate::Result<()> {
-        let (service, snapshot) =
-            discover(&self.client.transport, "wes", self.capabilities.max_age).await?;
-        self.client.service = service;
+        let transport = self.client.transport();
+        let (service, snapshot) = discover(transport, "wes", self.capabilities.max_age).await?;
+        self.client = WES::without_discovery(transport.clone(), service);
         self.capabilities = snapshot;
         Ok(())
     }
@@ -484,7 +511,7 @@ impl Discovered<WES> {
     /// With `strict`, fails before any request if a diagnostic blocks strict
     /// submissions; otherwise fails as [`WES::run_workflow`] does.
     pub async fn run_validated(&self, request: RunRequest, strict: bool) -> crate::Result<Run> {
-        ensure_strict(&self.capabilities.validate_wes(&request), strict)?;
-        self.client.run_workflow(request).await
+        ensure_strict(&self.capabilities().validate_wes(&request), strict)?;
+        self.client().run_workflow(request).await
     }
 }

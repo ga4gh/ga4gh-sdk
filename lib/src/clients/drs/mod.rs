@@ -23,6 +23,24 @@ use crate::utils::transport::{urlencode, Transport};
 use serde::de::DeserializeOwned;
 
 /// The main struct for interacting with a DRS service.
+///
+/// A client is immutable after construction: build a new one, for example
+/// with [`with_transport`](Self::with_transport), to change its API root,
+/// credentials, HTTP client, or time limits. Read its state with
+/// [`configuration`](Self::configuration), [`transport`](Self::transport),
+/// and [`discovered_service_info`](Self::discovered_service_info); the public
+/// fields are deprecated and become private in a later release (see the
+/// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md)).
+///
+/// With `#![deny(deprecated)]`, assigning a field fails to compile:
+///
+/// ```compile_fail
+/// #![deny(deprecated)]
+/// use ga4gh_sdk::{clients::drs::DRS, utils::configuration::Configuration};
+/// fn retarget(drs: &mut DRS, config: Configuration) {
+///     drs.config = config;
+/// }
+/// ```
 #[derive(Debug)]
 pub struct DRS {
     /// A copy of the transport's configuration, made when the client was
@@ -30,12 +48,21 @@ pub struct DRS {
     /// use; read [`Self::configuration`] instead. Resolution references
     /// still take their API root from it.
     #[allow(dead_code)]
+    #[deprecated(
+        note = "use `configuration()`, which reads the transport's configuration; \
+                this copy can differ from what requests use and will be removed"
+    )]
     pub config: Configuration,
     /// The service info that the client read when it was built; also
     /// returned by [`Self::discovered_service_info`].
+    #[deprecated(note = "use `discovered_service_info()`; this field will become private")]
     pub service: Service,
     /// The transport that sends the client's requests; also returned by
     /// [`Self::transport`].
+    #[deprecated(
+        note = "use `transport()`; build a client with another transport with \
+                `DRS::with_transport`; this field will become private"
+    )]
     pub transport: Transport,
 }
 
@@ -70,7 +97,7 @@ impl DRS {
     /// [`Error::Transport`](crate::Error::Transport).
     pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
         let instance = Self::with_artifact(transport, "drs").await?;
-        if instance.service.r#type.group != "org.ga4gh" {
+        if instance.discovered_service_info().r#type.group != "org.ga4gh" {
             return Err(crate::Error::UnexpectedService(
                 "The endpoint is not an instance of DRS".to_owned(),
             ));
@@ -92,11 +119,23 @@ impl DRS {
             .await
             .map_err(|source| DiscoveryError { api: "DRS", source })?;
         crate::clients::serviceinfo::check_artifact(&service, artifact, "DRS")?;
-        Ok(DRS {
-            config: transport.config.clone(),
+        Ok(Self::without_discovery(transport, service))
+    }
+
+    /// Creates a client from a transport and service info that the caller
+    /// already has, without a service-info request, for example in tests or
+    /// for a known deployment without usable discovery. It does not check the
+    /// service type; [`with_artifact`](Self::with_artifact) does.
+    ///
+    /// This replaces building a `DRS` from its fields.
+    // The only place that sets the deprecated fields
+    #[allow(deprecated)]
+    pub fn without_discovery(transport: Transport, service: Service) -> Self {
+        DRS {
+            config: transport.configuration().clone(),
             transport,
             service,
-        })
+        }
     }
 
     /// The configuration of the client's transport: the value that requests
@@ -108,11 +147,12 @@ impl DRS {
     /// field; [#292](https://github.com/ga4gh/ga4gh-sdk/issues/292) moves them
     /// to the transport.
     pub fn configuration(&self) -> &Configuration {
-        self.transport.configuration()
+        self.transport().configuration()
     }
 
     /// The transport that sends the client's requests, for example to share
     /// it with a client for an added endpoint.
+    #[allow(deprecated)]
     pub fn transport(&self) -> &Transport {
         &self.transport
     }
@@ -120,6 +160,7 @@ impl DRS {
     /// The service info that the client read when it was built. It is a
     /// snapshot: the client does not fetch it again, and the SDK never
     /// replaces it.
+    #[allow(deprecated)]
     pub fn discovered_service_info(&self) -> &Service {
         &self.service
     }
@@ -213,11 +254,7 @@ mod tests {
     fn test_debug_output() {
         let config = crate::utils::configuration::config_with_markers();
         let transport = Transport::new(&config);
-        let drs = DRS {
-            config,
-            service: Service::default(),
-            transport,
-        };
+        let drs = DRS::without_discovery(transport, Service::default());
         let output = format!("{:?}", drs);
         assert!(!output.contains("SENTINEL"), "{output}");
     }
@@ -241,7 +278,7 @@ mod tests {
         let config =
             Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
         let drs = DRS::new(&config).await.unwrap();
-        assert_eq!(drs.service.r#type.artifact, "drs");
+        assert_eq!(drs.discovered_service_info().r#type.artifact, "drs");
     }
 
     #[tokio::test]
@@ -283,17 +320,16 @@ mod tests {
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
-        let drs = DRS {
-            config,
-            service: Service {
+        let drs = DRS::without_discovery(
+            transport,
+            Service {
                 r#type: Box::new(ServiceType {
                     artifact: "drs".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
             },
-            transport,
-        };
+        );
 
         let result = drs.get_object(object_id).await;
         assert!(result.is_ok());
@@ -321,17 +357,16 @@ mod tests {
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
-        let drs = DRS {
-            config,
-            service: Service {
+        let drs = DRS::without_discovery(
+            transport,
+            Service {
                 r#type: Box::new(ServiceType {
                     artifact: "drs".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
             },
-            transport,
-        };
+        );
 
         let result = drs.get_access_url(object_id, access_id).await;
         assert!(result.is_ok());
@@ -370,11 +405,7 @@ mod tests {
 
         let config =
             Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
-        let drs = DRS {
-            transport: Transport::new(&config),
-            config,
-            service: Service::default(),
-        };
+        let drs = DRS::without_discovery(Transport::new(&config), Service::default());
         assert_eq!(drs.get_object(object_id).await.unwrap().id, object_id);
         assert_eq!(
             drs.get_access_url(object_id, access_id).await.unwrap().url,
@@ -462,6 +493,7 @@ mod tests {
     /// discovered service, below a non-default API root and with timeouts
     /// from `Transport::with_timeouts`.
     #[tokio::test]
+    #[allow(deprecated)] // compares the accessors with the fields
     async fn configuration_is_transport_configuration() {
         let _m = mock("GET", "/accessors/custom/drs/v9/service-info")
             .with_status(200)

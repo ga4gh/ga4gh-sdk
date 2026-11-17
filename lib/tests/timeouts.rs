@@ -199,9 +199,12 @@ fn defaults_keep_the_previous_limits() {
 fn transport_with_timeouts_records_them_in_its_configuration() {
     let config = Configuration::new(url::Url::parse("https://example.org").unwrap());
     let transport = Transport::with_timeouts(&config, SHORT, LONG).unwrap();
-    assert_eq!(transport.config.timeouts.connect, SHORT);
-    assert_eq!(transport.config.timeouts.request, LONG);
-    assert_eq!(transport.config.timeouts.discovery, Duration::from_secs(10));
+    assert_eq!(transport.configuration().timeouts.connect, SHORT);
+    assert_eq!(transport.configuration().timeouts.request, LONG);
+    assert_eq!(
+        transport.configuration().timeouts.discovery,
+        Duration::from_secs(10)
+    );
 }
 
 #[tokio::test]
@@ -266,18 +269,21 @@ async fn native_wes_service_info_uses_discovery_timeout_and_ready_transport() {
     );
 
     let wes = WES::new(&config).await.unwrap();
-    assert_eq!(wes.service.r#type.version, "1.0.0");
+    assert_eq!(wes.discovered_service_info().r#type.version, "1.0.0");
 
     let discovered = WES::discover(&config, LONG).await.unwrap();
-    assert_eq!(discovered.capabilities.raw["version"], "9.3.0");
+    assert_eq!(discovered.capabilities().raw["version"], "9.3.0");
 
     let transport = Transport::with_client(&config, ga4gh_sdk::reqwest::Client::new());
     let wes = WES::from_transport(transport).await.unwrap();
-    assert_eq!(wes.service.r#type.version, "1.0.0");
+    assert_eq!(wes.discovered_service_info().r#type.version, "1.0.0");
     assert_eq!(server.requests.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
+// Shortens the limit of a discovered client through the deprecated fields:
+// no supported path changes a client's configuration after construction.
+#[allow(deprecated)]
 async fn refresh_uses_the_discovery_timeout() {
     let timeouts = Timeouts {
         request: SHORT,
@@ -315,17 +321,26 @@ async fn clients_accept_a_ready_transport() {
         match artifact {
             "tes" => {
                 let tes = TES::with_transport(transport.clone()).await.unwrap();
-                assert_eq!(tes.config.user_agent.as_deref(), Some("custom agent"));
+                assert_eq!(
+                    tes.configuration().user_agent.as_deref(),
+                    Some("custom agent")
+                );
                 TES::discover_with_transport(transport, LONG).await.unwrap();
             }
             "wes" => {
                 let wes = WES::with_transport(transport.clone()).await.unwrap();
-                assert_eq!(wes.config.user_agent.as_deref(), Some("custom agent"));
+                assert_eq!(
+                    wes.configuration().user_agent.as_deref(),
+                    Some("custom agent")
+                );
                 WES::discover_with_transport(transport, LONG).await.unwrap();
             }
             "drs" => {
                 let drs = DRS::with_transport(transport).await.unwrap();
-                assert_eq!(drs.config.user_agent.as_deref(), Some("custom agent"));
+                assert_eq!(
+                    drs.configuration().user_agent.as_deref(),
+                    Some("custom agent")
+                );
             }
             _ => {
                 let trs = TRS::with_transport(transport).await.unwrap();

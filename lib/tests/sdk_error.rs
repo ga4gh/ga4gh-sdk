@@ -57,7 +57,7 @@ async fn spawned_client_reports_http_and_parse_errors() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(tes.service.r#type.artifact, "tes");
+    assert_eq!(tes.discovered_service_info().r#type.artifact, "tes");
     let (denied, malformed) = tokio::spawn(async move {
         (
             tes.get(TesView::Full, "denied").await.unwrap_err(),

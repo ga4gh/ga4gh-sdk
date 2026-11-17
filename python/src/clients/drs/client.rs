@@ -157,7 +157,7 @@ impl PyDRS {
     #[getter]
     fn transport(&self) -> PyTransport {
         PyTransport {
-            inner: self.inner.transport.clone(),
+            inner: self.inner.transport().clone(),
         }
     }
 

@@ -66,7 +66,7 @@ impl PyWES {
     #[getter]
     fn transport(&self) -> PyTransport {
         PyTransport {
-            inner: self.inner.transport.clone(),
+            inner: self.inner.transport().clone(),
         }
     }
 
@@ -112,7 +112,7 @@ impl PyWES {
                 request,
                 attachments,
                 // The submission limit, as for `WES::run_workflow_with_attachments`.
-                &Operation::new(self.inner.transport.config.timeouts.submission),
+                &Operation::new(self.inner.transport().configuration().timeouts.submission),
             ))
             .map(|inner| PyRun { inner })
             .map_err(|error| format!("Failed to run workflow: {error}"))
@@ -128,12 +128,17 @@ impl PyWES {
         page_token: Option<String>,
     ) -> PyResult<PyRunListResponse> {
         let endpoint = paged("runs", page_size, page_token)?;
-        PyRunListResponse::from_json(get_json(py, &self.inner.transport, &endpoint, "list runs")?)
+        PyRunListResponse::from_json(get_json(
+            py,
+            self.inner.transport(),
+            &endpoint,
+            "list runs",
+        )?)
     }
 
     /// Gets a run's details, with its request, state, logs and outputs, as a `RunLog`.
     pub fn get(&self, py: Python<'_>, id: &str) -> PyResult<PyRunLog> {
-        get_run_log(py, &self.inner.transport, id)
+        get_run_log(py, self.inner.transport(), id)
     }
 }
 

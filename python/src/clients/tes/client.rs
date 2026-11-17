@@ -62,7 +62,7 @@ impl PyTES {
     #[getter]
     fn transport(&self) -> PyTransport {
         PyTransport {
-            inner: self.inner.transport.clone(),
+            inner: self.inner.transport().clone(),
         }
     }
 
@@ -92,7 +92,7 @@ impl PyTES {
     ) -> PyResult<PyTesListTasksResponse> {
         let endpoint = list_endpoint(params)?;
         io(py, |rt| {
-            rt.block_on(list_tasks(&self.inner.transport, &endpoint))
+            rt.block_on(list_tasks(self.inner.transport(), &endpoint))
         })
     }
 }

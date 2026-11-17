@@ -179,18 +179,45 @@ impl Task {
 }
 
 /// The main struct for interacting with a TES service.
+///
+/// A client is immutable after construction: build a new one, for example
+/// with [`with_transport`](Self::with_transport), to change its API root,
+/// credentials, HTTP client, or time limits. Read its state with
+/// [`configuration`](Self::configuration), [`transport`](Self::transport),
+/// and [`discovered_service_info`](Self::discovered_service_info); the public
+/// fields are deprecated and become private in a later release (see the
+/// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md)).
+///
+/// With `#![deny(deprecated)]`, assigning a field fails to compile:
+///
+/// ```compile_fail
+/// #![deny(deprecated)]
+/// use ga4gh_sdk::{clients::tes::TES, utils::transport::Transport};
+/// fn swap(tes: &mut TES, transport: Transport) {
+///     tes.transport = transport;
+/// }
+/// ```
 #[derive(Debug)]
 pub struct TES {
     /// A copy of the transport's configuration, made when the client was
     /// built. Requests don't read it, so it can differ from what they
     /// use; read [`Self::configuration`] instead.
     #[allow(dead_code)]
+    #[deprecated(
+        note = "use `configuration()`, which reads the transport's configuration; \
+                this copy can differ from what requests use and will be removed"
+    )]
     pub config: Configuration,
     /// The service info that the client read when it was built; also
     /// returned by [`Self::discovered_service_info`].
+    #[deprecated(note = "use `discovered_service_info()`; this field will become private")]
     pub service: Service,
     /// The transport that sends the client's requests; also returned by
     /// [`Self::transport`].
+    #[deprecated(
+        note = "use `transport()`; build a client with another transport with \
+                `TES::with_transport`; this field will become private"
+    )]
     pub transport: Transport,
 }
 
@@ -227,11 +254,23 @@ impl TES {
     pub async fn with_artifact(transport: Transport, artifact: &str) -> crate::Result<Self> {
         let service = crate::clients::serviceinfo::fetch(&transport, "service-info").await?;
         crate::clients::serviceinfo::check_artifact(&service, artifact, "TES")?;
-        Ok(TES {
-            config: transport.config.clone(),
+        Ok(Self::without_discovery(transport, service))
+    }
+
+    /// Creates a client from a transport and service info that the caller
+    /// already has, without a service-info request, for example in tests or
+    /// for a known deployment without usable discovery. It does not check the
+    /// service type; [`with_artifact`](Self::with_artifact) does.
+    ///
+    /// This replaces building a `TES` from its fields.
+    // The only place that sets the deprecated fields
+    #[allow(deprecated)]
+    pub fn without_discovery(transport: Transport, service: Service) -> Self {
+        TES {
+            config: transport.configuration().clone(),
             transport,
             service,
-        })
+        }
     }
 
     /// The configuration of the client's transport: the value that requests
@@ -239,11 +278,12 @@ impl TES {
     /// [`Transport::configuration`] for what it determines, and for the
     /// settings of an injected HTTP client that apply instead.
     pub fn configuration(&self) -> &Configuration {
-        self.transport.configuration()
+        self.transport().configuration()
     }
 
     /// The transport that sends the client's requests, for example to share
     /// it with a client for an added endpoint.
+    #[allow(deprecated)]
     pub fn transport(&self) -> &Transport {
         &self.transport
     }
@@ -252,6 +292,7 @@ impl TES {
     /// snapshot: the client does not fetch it again. Within the SDK, only
     /// `Discovered::refresh` replaces it, together with the capability
     /// snapshot.
+    #[allow(deprecated)]
     pub fn discovered_service_info(&self) -> &Service {
         &self.service
     }
@@ -286,19 +327,20 @@ impl TES {
     /// the service may have created the task.
     pub async fn create_value(&self, task: Value) -> crate::Result<Task> {
         let _: TesTask = serde_json::from_value(task.clone())?;
-        let operation =
-            crate::utils::operation::Operation::new(self.transport.config.timeouts.submission);
+        let operation = crate::utils::operation::Operation::new(
+            self.transport().configuration().timeouts.submission,
+        );
         // The token provider runs within the operation; running out of time
         // there is not an ambiguous submission, as nothing was sent.
         let request = operation
             .run(
-                self.transport
+                self.transport()
                     .authorized_request_builder(reqwest::Method::POST, "tasks"),
             )
             .await??
             .json(&task);
         let response_body = self
-            .transport
+            .transport()
             .send_once(request, &operation, Default::default())
             .await?;
         let task_id = crate::utils::acknowledgement::execution_id(
@@ -310,7 +352,7 @@ impl TES {
 
         Ok(Task {
             id: task_id,
-            transport: self.transport.clone(),
+            transport: self.transport().clone(),
         })
     }
 
@@ -338,7 +380,9 @@ impl TES {
     /// the current TES models. This is useful for CLI output and extensions.
     pub async fn get_raw(&self, view: TesView, id: &str) -> crate::Result<String> {
         let url = format!("tasks/{}", urlencode(id));
-        self.transport.get(&url, Some(json!({"view": view}))).await
+        self.transport()
+            .get(&url, Some(json!({"view": view})))
+            .await
     }
 
     /// Lists TES tasks based on provided filtering parameters.
@@ -356,9 +400,9 @@ impl TES {
         let params_value = params.map(serialize_to_json);
         // Make the request with or without parameters based on the presence of params
         let response = if let Some(params_value) = params_value {
-            self.transport.get("tasks", Some(params_value)).await
+            self.transport().get("tasks", Some(params_value)).await
         } else {
-            self.transport.get("tasks", None).await
+            self.transport().get("tasks", None).await
         }?;
         Ok(from_str(&response)?)
     }
@@ -376,11 +420,7 @@ mod tests {
         let config = crate::utils::configuration::config_with_markers();
         let transport = Transport::new(&config);
         let task = Task::new("123".to_string(), transport.clone());
-        let tes = TES {
-            config,
-            service: Service::default(),
-            transport,
-        };
+        let tes = TES::without_discovery(transport, Service::default());
         for output in [format!("{:?}", task), format!("{:?}", tes)] {
             assert!(!output.contains("SENTINEL"), "{output}");
         }
@@ -397,17 +437,16 @@ mod tests {
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
-        let tes = TES {
-            config,
-            service: Service {
+        let tes = TES::without_discovery(
+            transport,
+            Service {
                 r#type: Box::new(ServiceType {
                     artifact: "tes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
             },
-            transport,
-        };
+        );
 
         let task = TesTask::default();
         let result = tes.create(task).await;
@@ -508,7 +547,7 @@ mod tests {
         );
         let options = PagingOptions::new(std::time::Duration::from_secs(10));
         let mut pager = Pager::new(
-            &tes.transport,
+            tes.transport(),
             ServiceKind::Tes,
             serde_json::json!({}),
             options,
@@ -549,11 +588,7 @@ mod tests {
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
-        let tes = TES {
-            config,
-            service: Service::default(),
-            transport,
-        };
+        let tes = TES::without_discovery(transport, Service::default());
 
         let result = tes.get(TesView::Full, "123").await;
         assert!(result.is_ok());
@@ -570,11 +605,7 @@ mod tests {
         let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
-        let tes = TES {
-            config,
-            service: Service::default(),
-            transport,
-        };
+        let tes = TES::without_discovery(transport, Service::default());
 
         let result = tes.list_tasks(None).await;
         assert!(result.is_ok());
@@ -591,11 +622,7 @@ mod tests {
             .with_body(r#"{"tasks":[],"next_page_token":"page-2"}"#)
             .create();
         let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
-        let tes = TES {
-            transport: Transport::new(&config),
-            config,
-            service: Service::default(),
-        };
+        let tes = TES::without_discovery(Transport::new(&config), Service::default());
         let result = tes
             .list_tasks(Some(ListTasksParams {
                 name_prefix: None,
@@ -615,11 +642,7 @@ mod tests {
     #[tokio::test]
     async fn test_each_view_sends_its_tes_value() {
         let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
-        let tes = TES {
-            transport: Transport::new(&config),
-            config,
-            service: Service::default(),
-        };
+        let tes = TES::without_discovery(Transport::new(&config), Service::default());
         for (view, value) in [
             (TesView::Minimal, "MINIMAL"),
             (TesView::Basic, "BASIC"),
@@ -766,17 +789,16 @@ mod tests {
             .create();
         let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
         let transport = Transport::new(&config);
-        let tes = TES {
-            config,
-            service: Service {
+        let tes = TES::without_discovery(
+            transport.clone(),
+            Service {
                 r#type: Box::new(ServiceType {
                     artifact: "tes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
             },
-            transport: transport.clone(),
-        };
+        );
         let task = Task::new("123".to_owned(), transport);
         let errors = [
             tes.create(TesTask::default()).await.unwrap_err(),
@@ -798,6 +820,7 @@ mod tests {
     /// discovered service, below a non-default API root and with timeouts
     /// from `Transport::with_timeouts`.
     #[tokio::test]
+    #[allow(deprecated)] // compares the accessors with the fields
     async fn configuration_is_transport_configuration() {
         let _m = mock("GET", "/accessors/custom/tes/v9/service-info")
             .with_status(200)
