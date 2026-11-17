@@ -193,8 +193,8 @@ Rust clients, the CLI and the Python bindings read them from there:
 | --- | --- | --- |
 | `connect` | 10 s | Opening each connection, including TLS, within any of the limits below. |
 | `request` | 60 s | Each request that none of the limits below applies to, from sending it to reading the whole response. |
-| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`. |
-| `submission` | 300 s | One TES task or WES run submission: `TES::create`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. |
+| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `with_artifact`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`. |
+| `submission` | 300 s | One TES task or WES run submission: `TES::create`, `TES::create_as`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. |
 
 `discovery` and `submission` replace `request` for their requests, so they can
 be longer or shorter than `request`. Calls that take an `Operation`, such as
@@ -454,7 +454,8 @@ To cancel a task that is still running, call `task.cancel().await?`.
 `create_as` and `get_as` take and return other types than `TesTask`, for
 example a downstream type that adds fields of its own (see
 [Build on this SDK](downstream.md#a-model-that-extends-testask)):
-`tes.create_as(&my_task)` and `let mine: MyTask = tes.get_as(TesView::Full, id)`.
+`tes.create_as(&my_task).await?` and
+`let mine: MyTask = tes.get_as(TesView::Full, id).await?;`.
 For a service whose service info names another artifact than `tes`, use
 `TES::with_artifact(transport, "my-artifact")`.
 

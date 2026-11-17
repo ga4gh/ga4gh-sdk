@@ -119,9 +119,9 @@ pub async fn fetch(tes: &TES, view: TesView, id: &str) -> ga4gh_sdk::Result<Self
 }
 ```
 
-- `TES::create_as` submits any type that serializes to a TES task, with the
-  same checks as `TES::create`; `TES::create_value` does the same for a
-  `serde_json::Value`.
+- `TES::create_as` submits any type that serializes to a TES task, after
+  checking, as `TES::create` does, that the JSON is a valid TES task;
+  `TES::create_value` does the same for a `serde_json::Value`.
 - `TES::get_as` reads the task into any type that deserializes from it;
   `TES::get_raw` returns the task as the service sent it.
 - `WES::get_run_as`, `Run::log_as` and `DRS::get_object_as` do the same for

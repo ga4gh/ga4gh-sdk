@@ -87,7 +87,7 @@ pub(crate) fn check_artifact(
     if service.r#type.artifact == artifact {
         return Ok(());
     }
-    let expected = if artifact.eq_ignore_ascii_case(api) {
+    let expected = if artifact == api.to_ascii_lowercase() {
         api.to_owned()
     } else {
         format!("'{artifact}'")

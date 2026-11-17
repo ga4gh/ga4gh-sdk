@@ -66,10 +66,11 @@ clients and their futures can move between threads. This breaks some code:
   (`ContractError`) is `ga4gh_sdk::Error`.
 
 `TES`, `WES` and `DRS` check the service type only in their constructors.
-`TES::create` and `create_value` and `WES::run_workflow` no longer check it
-again, so a client built as a struct literal with another `service` sends its
-requests. Use `with_artifact` for a service whose service info names another
-artifact (see [Build on this SDK](docs/downstream.md)).
+No TES or WES method checks it again (`TES::create`, `create_value`,
+`WES::run_workflow` and `run_workflow_with_attachments` did), so a client
+built as a struct literal with another `service` sends its requests. Use
+`with_artifact` for a service whose service info names another artifact
+(see [Build on this SDK](docs/downstream.md)).
 
 The WES models follow WES 1.1.0 and use the schema names of the spec:
 `WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is

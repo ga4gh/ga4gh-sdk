@@ -80,8 +80,8 @@ impl DRS {
     ///
     /// # Errors
     /// [`Error::UnexpectedService`](crate::Error::UnexpectedService) if the
-    /// service info names another artifact; the errors of the service-info
-    /// request otherwise.
+    /// service info names another artifact; otherwise the errors of the
+    /// service-info request, as for [`Self::with_transport`].
     pub async fn with_artifact(transport: Transport, artifact: &str) -> crate::Result<Self> {
         let service = crate::clients::serviceinfo::fetch(&transport, "service-info")
             .await

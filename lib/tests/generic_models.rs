@@ -125,6 +125,46 @@ async fn wes_and_drs_read_downstream_types() {
 }
 
 #[tokio::test]
+async fn generic_reads_report_parse_and_pending_errors() {
+    let _tes_info = service_info("/edge/tes", "org.ga4gh", "tes");
+    let _task = mock("GET", "/edge/tes/tasks/task-1?view=BASIC")
+        .with_body(r#"{"id":"task-1","executors":[]}"#)
+        .create();
+    let _run = mock("GET", "/edge/wes/runs/run-1")
+        .with_body(r#"{"run_id":"run-1","label":"green"}"#)
+        .create();
+    let _drs_info = service_info("/edge/drs", "org.ga4gh", "drs");
+    let _pending = mock("GET", "/edge/drs/objects/object-1")
+        .with_status(202)
+        .with_header("Retry-After", "1")
+        .create();
+
+    // The task has no `label`, which `Labelled` requires.
+    let tes = TES::with_transport(transport("/edge/tes")).await.unwrap();
+    let error = tes
+        .get_as::<Labelled>(TesView::Basic, "task-1")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::Parse(_)), "{error:?}");
+
+    #[derive(Deserialize)]
+    struct Run {
+        label: String,
+    }
+    let run = ga4gh_sdk::clients::wes::Run::new("run-1".to_owned(), transport("/edge/wes"));
+    assert_eq!(run.log_as::<Run>().await.unwrap().label, "green");
+
+    let drs = DRS::with_transport(transport("/edge/drs")).await.unwrap();
+    let error = drs.get_object_as::<Labelled>("object-1").await.unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<ga4gh_sdk::clients::drs::resolution::PendingResolution>()
+            .is_some(),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
 async fn clients_accept_the_artifact_they_are_given() {
     let _tes = service_info("/artifact/tes", "org.example", "labelled-tes");
     let _wes = service_info("/artifact/wes", "org.example", "labelled-wes");
@@ -144,9 +184,20 @@ async fn clients_accept_the_artifact_they_are_given() {
     )]);
     assert_eq!(tes.create(task).await.unwrap().id, "task-2");
     created.assert();
-    WES::with_artifact(transport("/artifact/wes"), "labelled-wes")
+    let started = mock("POST", "/artifact/wes/runs")
+        .with_body(r#"{"run_id":"run-2"}"#)
+        .create();
+    let wes = WES::with_artifact(transport("/artifact/wes"), "labelled-wes")
         .await
         .unwrap();
+    let mut request = ga4gh_sdk::clients::wes::models::RunRequest::new(
+        "CWL".to_owned(),
+        "v1.2".to_owned(),
+        "https://example.org/hello.cwl".to_owned(),
+    );
+    request.workflow_params = Some(json!({}));
+    assert_eq!(wes.run_workflow(request).await.unwrap().id, "run-2");
+    started.assert();
     // `with_artifact` accepts any group; `with_transport` needs `org.ga4gh`.
     DRS::with_artifact(transport("/artifact/drs"), "labelled-drs")
         .await
