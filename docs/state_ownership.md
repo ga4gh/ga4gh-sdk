@@ -349,6 +349,8 @@ No release contains these changes yet; the SDK has no tagged release.
 | `Discovered::client` | `client()`, `Deref`, or `into_parts()` |
 | `Discovered::capabilities` | `capabilities()` or `into_parts()` |
 | `Transport::config` | `configuration()`; to change it, build a new transport, for example with `with_timeouts` |
+| Python result views: `inner`, `raw` | `inner()`, `raw()`; rebuild a changed `PyTesTask` or `PyRunRequest` with `from_value`, other server-JSON views with `from_json`, and TRS views from a changed model with `new` (see the [Python guide](../python/README.md#result-classes)) |
+| Python list responses: `tasks`, `runs`, `task_logs` | `tasks()`, `runs()`, `task_logs()`; each returns a copy of the item views |
 
 ### Alternatives considered
 
