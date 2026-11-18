@@ -59,7 +59,7 @@ async fn real_qc_on_two_wes_instances() {
         let wait = run.wait(&options).await;
         assert_eq!(wait.outcome, WaitOutcome::Complete, "{wait:?}");
         let log: Value = serde_json::from_str(
-            &wes.transport
+            &wes.transport()
                 .get(&format!("runs/{}", run.id), None)
                 .await
                 .unwrap(),

@@ -18,11 +18,7 @@ use mockito::{mock, server_url};
 use std::{cell::Cell, time::Duration};
 fn drs() -> DRS {
     let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
-    DRS {
-        transport: Transport::new(&config),
-        config,
-        service: Service::default(),
-    }
+    DRS::without_discovery(Transport::new(&config), Service::default())
 }
 fn reference() -> ResolutionReference {
     ResolutionReference {
@@ -184,21 +180,54 @@ async fn immediate_200_and_resume_validation() {
 }
 
 #[tokio::test]
+async fn reference_root_is_transport_root() {
+    // Regression for #292: the reference names the root of the transport
+    // that received the request, including a non-default path.
+    let root = format!("{}/custom/ga4gh/drs/v9", server_url());
+    let config = Configuration::new(url::Url::parse(&root).unwrap());
+    let client = DRS::without_discovery(Transport::new(&config), Service::default());
+    let request = mock("GET", "/custom/ga4gh/drs/v9/objects/id")
+        .with_status(202)
+        .with_header("retry-after", "1")
+        .expect(1)
+        .create();
+    let error = client.get_object_raw("id").await.unwrap_err();
+    let pending = error
+        .downcast_ref::<PendingResolution>()
+        .expect("202 is pending");
+    request.assert();
+    drop(request);
+    assert_eq!(pending.reference.api_root, format!("{root}/"));
+    assert_eq!(pending.reference.endpoint, "objects/id");
+
+    // The reference resumes against the transport root; a reference for a
+    // different root is rejected before another request.
+    let ready = mock("GET", "/custom/ga4gh/drs/v9/objects/id")
+        .with_body(r#"{"id":"id"}"#)
+        .expect(1)
+        .create();
+    let result: Resolution<serde_json::Value> =
+        client.resolve_reference(&pending.reference).await.unwrap();
+    assert!(matches!(result, Resolution::Ready(value) if value["id"] == "id"));
+    ready.assert();
+    let foreign = ResolutionReference {
+        api_root: "https://other.example/ga4gh/drs/v1/".into(),
+        endpoint: "objects/id".into(),
+    };
+    assert!(client
+        .resolve_reference::<serde_json::Value>(&foreign)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn resume_accepts_equivalent_api_root_with_trailing_slash() {
     let root = format!("{}/ga4gh/drs/v1", server_url());
     let first_config = Configuration::new(url::Url::parse(&root).unwrap());
-    let first = DRS {
-        transport: Transport::new(&first_config),
-        config: first_config,
-        service: Service::default(),
-    };
+    let first = DRS::without_discovery(Transport::new(&first_config), Service::default());
     let reference = first.resolution_reference("objects/id".into());
     let second_config = Configuration::new(url::Url::parse(&format!("{root}/")).unwrap());
-    let second = DRS {
-        transport: Transport::new(&second_config),
-        config: second_config,
-        service: Service::default(),
-    };
+    let second = DRS::without_discovery(Transport::new(&second_config), Service::default());
     let request = mock("GET", "/ga4gh/drs/v1/objects/id")
         .with_body(r#"{"id":"id"}"#)
         .create();
@@ -208,11 +237,7 @@ async fn resume_accepts_equivalent_api_root_with_trailing_slash() {
 
     let encoded_config =
         Configuration::new(url::Url::parse("https://user:pass@example.org/a%20b/drs/v1").unwrap());
-    let encoded = DRS {
-        transport: Transport::new(&encoded_config),
-        config: encoded_config,
-        service: Service::default(),
-    };
+    let encoded = DRS::without_discovery(Transport::new(&encoded_config), Service::default());
     assert_eq!(
         encoded.resolution_reference("objects/id".into()).api_root,
         "https://example.org/a%20b/drs/v1/"

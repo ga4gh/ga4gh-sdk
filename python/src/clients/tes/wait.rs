@@ -248,7 +248,7 @@ mod tests {
                 Ok(String::new())
             },
         ));
-        assert!(matches!(end, WaitEnd::Task(task) if task.raw["id"] == "task-1"));
+        assert!(matches!(end, WaitEnd::Task(task) if task.raw()["id"] == "task-1"));
         assert!(!asked.load(Ordering::SeqCst));
     }
 
@@ -264,7 +264,7 @@ mod tests {
                 Ok(r#"{"id": "task-1", "state": "COMPLETE", "logs": []}"#.to_owned())
             },
         ));
-        assert!(matches!(end, WaitEnd::Task(task) if task.raw.get("logs").is_some()));
+        assert!(matches!(end, WaitEnd::Task(task) if task.raw().get("logs").is_some()));
     }
 
     #[test]

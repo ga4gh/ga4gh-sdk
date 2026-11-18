@@ -149,7 +149,7 @@ impl PyDRS {
     #[getter]
     fn config(&self) -> PyConfiguration {
         PyConfiguration {
-            inner: self.inner.config.clone(),
+            inner: self.inner.configuration().clone(),
         }
     }
 
@@ -157,7 +157,7 @@ impl PyDRS {
     #[getter]
     fn transport(&self) -> PyTransport {
         PyTransport {
-            inner: self.inner.transport.clone(),
+            inner: self.inner.transport().clone(),
         }
     }
 
@@ -338,5 +338,24 @@ impl PyDRS {
         let passports = passports.map(|p| strings(p, "passports")).transpose()?;
         let report = self.bulk(py, keys, true, passports, policy, timeout)?;
         PyBulkReport::convert(py, report, |raw| raw_json(py, raw))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ga4gh_sdk::clients::serviceinfo::models::Service;
+    use ga4gh_sdk::utils::configuration::Configuration;
+    use ga4gh_sdk::utils::transport::Transport;
+
+    /// The `config` getter returns the transport's configuration.
+    #[test]
+    fn config_is_transport_configuration() {
+        let root = "https://example.org/custom/ga4gh/drs/v9/";
+        let transport = Transport::new(&Configuration::new(url::Url::parse(root).unwrap()));
+        let client = PyDRS {
+            inner: DRS::without_discovery(transport, Service::default()),
+        };
+        assert_eq!(client.config().inner.base_path.as_str(), root);
     }
 }

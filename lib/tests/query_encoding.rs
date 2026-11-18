@@ -163,11 +163,7 @@ async fn tes_pages_repeat_tags_in_order() {
         .with_body(r#"{"tasks":[]}"#)
         .expect(1)
         .create();
-    let tes = TES {
-        config: Configuration::new(url::Url::parse(&format!("{}/qp-tags", server_url())).unwrap()),
-        service: Default::default(),
-        transport: transport("/qp-tags"),
-    };
+    let tes = TES::without_discovery(transport("/qp-tags"), Default::default());
     let params = ListTasksParams {
         tag_key: Some(vec!["team a".into(), "x/y".into()]),
         tag_value: Some(vec!["".into(), "1&2".into()]),

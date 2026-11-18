@@ -4,7 +4,7 @@ use ga4gh_sdk::{
         tes::{models::TesTask, TES},
         wes::{models::RunRequest, WES},
     },
-    utils::configuration::Configuration,
+    utils::{configuration::Configuration, transport::Transport},
 };
 use mockito::{mock, server_url};
 use serde_json::json;
@@ -24,9 +24,9 @@ async fn discovery_caches_raw_extensions_and_refreshes_once() {
     let mut client = TES::discover(&config, Duration::from_secs(60))
         .await
         .unwrap();
-    assert_eq!(client.capabilities.raw["extension"]["custom"], true);
-    assert_eq!(client.capabilities.tes_info().unwrap().name, "test");
-    assert_eq!(client.capabilities.tes_info().unwrap().name, "test");
+    assert_eq!(client.capabilities().raw["extension"]["custom"], true);
+    assert_eq!(client.capabilities().tes_info().unwrap().name, "test");
+    assert_eq!(client.capabilities().tes_info().unwrap().name, "test");
     first.assert();
     drop(first);
     info["extension"]["custom"] = json!(false);
@@ -35,7 +35,7 @@ async fn discovery_caches_raw_extensions_and_refreshes_once() {
         .expect(1)
         .create();
     client.refresh().await.unwrap();
-    assert_eq!(client.capabilities.raw["extension"]["custom"], false);
+    assert_eq!(client.capabilities().raw["extension"]["custom"], false);
     refresh.assert();
 }
 #[tokio::test]
@@ -62,7 +62,7 @@ async fn strict_wes_contradiction_prevents_submission_but_unknown_is_advisory() 
         ..Default::default()
     };
     assert_eq!(
-        client.capabilities.validate_wes(&request)[0].support,
+        client.capabilities().validate_wes(&request)[0].support,
         Support::Unsupported
     );
     assert!(client
@@ -115,4 +115,86 @@ async fn stale_metadata_and_tes_parameter_case_strictness() {
         .validate_tes(&task)
         .iter()
         .all(|d| d.support == Support::Unknown && !d.blocks_strict));
+}
+
+/// A configuration for the API root `/<root>/` on the mock server.
+fn config_below(root: &str) -> Configuration {
+    Configuration::new(url::Url::parse(&format!("{}/{root}/", server_url())).unwrap())
+}
+
+#[tokio::test]
+async fn discovered_accessors_read_client_and_snapshot() {
+    let mut info = service("tes");
+    info["id"] = json!("org.example.accessors");
+    let _info = mock("GET", "/accessors/ga4gh/tes/v9/service-info")
+        .with_body(info.to_string())
+        .create();
+    let config = config_below("accessors/ga4gh/tes/v9");
+    let root = config.base_path.clone();
+    let transport =
+        Transport::with_timeouts(&config, Duration::from_secs(3), Duration::from_secs(7)).unwrap();
+
+    let discovered = TES::discover_with_transport(transport, Duration::from_secs(60))
+        .await
+        .unwrap();
+
+    // `Deref` reaches the same client as the accessor.
+    assert!(std::ptr::eq(discovered.client(), &*discovered));
+    assert_eq!(discovered.client().configuration().base_path, root);
+    // `Deref` still reaches the client's accessors.
+    assert_eq!(
+        discovered.configuration().timeouts.request,
+        Duration::from_secs(7)
+    );
+    assert_eq!(
+        discovered.discovered_service_info().id,
+        "org.example.accessors"
+    );
+    assert_eq!(discovered.capabilities().raw["id"], "org.example.accessors");
+
+    let (client, capabilities) = discovered.into_parts();
+    assert_eq!(client.configuration().base_path, root);
+    assert_eq!(client.discovered_service_info().id, "org.example.accessors");
+    assert_eq!(capabilities.raw["id"], "org.example.accessors");
+}
+
+#[tokio::test]
+async fn refresh_replaces_service_and_snapshot_together() {
+    let mut info = service("wes");
+    info["id"] = json!("first");
+    let first = mock("GET", "/refresh/ga4gh/wes/v9/service-info")
+        .with_body(info.to_string())
+        .expect(1)
+        .create();
+    let mut discovered = WES::discover(
+        &config_below("refresh/ga4gh/wes/v9"),
+        Duration::from_secs(60),
+    )
+    .await
+    .unwrap();
+    first.assert();
+    drop(first);
+    assert_eq!(discovered.discovered_service_info().id, "first");
+    assert_eq!(discovered.capabilities().raw["id"], "first");
+
+    info["id"] = json!("second");
+    let second = mock("GET", "/refresh/ga4gh/wes/v9/service-info")
+        .with_body(info.to_string())
+        .expect(1)
+        .create();
+    discovered.refresh().await.unwrap();
+    second.assert();
+    drop(second);
+    assert_eq!(discovered.discovered_service_info().id, "second");
+    assert_eq!(discovered.capabilities().raw["id"], "second");
+
+    // A failed refresh keeps both values.
+    let failed = mock("GET", "/refresh/ga4gh/wes/v9/service-info")
+        .with_status(500)
+        .expect(1)
+        .create();
+    discovered.refresh().await.unwrap_err();
+    failed.assert();
+    assert_eq!(discovered.discovered_service_info().id, "second");
+    assert_eq!(discovered.capabilities().raw["id"], "second");
 }

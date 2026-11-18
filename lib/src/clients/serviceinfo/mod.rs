@@ -69,7 +69,7 @@ impl ServiceInfo {
 /// transport's configuration, which replaces its request timeout.
 pub(crate) async fn fetch_raw(transport: &Transport, endpoint: &str) -> crate::Result<String> {
     transport
-        .get_within(endpoint, transport.config.timeouts.discovery)
+        .get_within(endpoint, transport.configuration().timeouts.discovery)
         .await
 }
 

@@ -54,7 +54,7 @@ impl PyTES {
     #[getter]
     fn config(&self) -> PyConfiguration {
         PyConfiguration {
-            inner: self.inner.config.clone(),
+            inner: self.inner.configuration().clone(),
         }
     }
 
@@ -62,7 +62,7 @@ impl PyTES {
     #[getter]
     fn transport(&self) -> PyTransport {
         PyTransport {
-            inner: self.inner.transport.clone(),
+            inner: self.inner.transport().clone(),
         }
     }
 
@@ -92,7 +92,26 @@ impl PyTES {
     ) -> PyResult<PyTesListTasksResponse> {
         let endpoint = list_endpoint(params)?;
         io(py, |rt| {
-            rt.block_on(list_tasks(&self.inner.transport, &endpoint))
+            rt.block_on(list_tasks(self.inner.transport(), &endpoint))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ga4gh_sdk::clients::serviceinfo::models::Service;
+    use ga4gh_sdk::utils::configuration::Configuration;
+    use ga4gh_sdk::utils::transport::Transport;
+
+    /// The `config` getter returns the transport's configuration.
+    #[test]
+    fn config_is_transport_configuration() {
+        let root = "https://example.org/custom/ga4gh/tes/v9/";
+        let transport = Transport::new(&Configuration::new(url::Url::parse(root).unwrap()));
+        let client = PyTES {
+            inner: TES::without_discovery(transport, Service::default()),
+        };
+        assert_eq!(client.config().inner.base_path.as_str(), root);
     }
 }

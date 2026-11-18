@@ -176,7 +176,10 @@ async fn clients_accept_the_artifact_they_are_given() {
     let tes = TES::with_artifact(transport("/artifact/tes"), "labelled-tes")
         .await
         .unwrap();
-    assert_eq!(tes.service.r#type.artifact, "labelled-tes");
+    assert_eq!(
+        tes.discovered_service_info().r#type.artifact,
+        "labelled-tes"
+    );
     // Methods no longer check the artifact again.
     let task = TesTask::new(vec![TesExecutor::new(
         "alpine".to_owned(),

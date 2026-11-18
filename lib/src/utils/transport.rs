@@ -347,11 +347,36 @@ fn warn_plain_http_credential_once() {
 /// Endpoints are paths relative to the API root; requests that would leave it
 /// fail with an [`EndpointError`]. Clones share the HTTP client and its
 /// connections.
+///
+/// The configuration is fixed after construction: read it with
+/// [`configuration`](Self::configuration), and build a new transport for
+/// other values. The `config` field is private, because the HTTP client of
+/// [`new`](Self::new) copies its connect and request timeouts at
+/// construction (see the
+/// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md#migration)).
+///
+/// Assigning the field fails to compile:
+///
+/// ```compile_fail,E0616
+/// use ga4gh_sdk::utils::transport::Transport;
+/// fn retime(transport: &mut Transport) {
+///     transport.config.timeouts.request = std::time::Duration::from_secs(1);
+/// }
+/// ```
+///
+/// The accessor reads it:
+///
+/// ```
+/// use ga4gh_sdk::utils::transport::Transport;
+/// fn read(transport: &Transport) -> std::time::Duration {
+///     transport.configuration().timeouts.request
+/// }
+/// ```
 #[derive(Clone)]
 pub struct Transport {
     /// The configuration whose API root, credentials and time limits the
-    /// transport uses.
-    pub config: Configuration,
+    /// transport uses; returned by [`Self::configuration`].
+    config: Configuration,
     client: reqwest::Client,
     apply_configured_auth: bool,
 }
@@ -359,7 +384,7 @@ pub struct Transport {
 impl fmt::Debug for Transport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Transport")
-            .field("config", &self.config)
+            .field("config", self.configuration())
             .finish_non_exhaustive()
     }
 }
@@ -389,11 +414,7 @@ impl Transport {
             .timeout(config.timeouts.request)
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map(|client| Self {
-                config: config.clone(),
-                client,
-                apply_configured_auth: true,
-            })
+            .map(|client| Self::assemble(config, client, true))
     }
 
     /// Inject a configured client, for connection budgets, TLS and downstream use.
@@ -407,21 +428,21 @@ impl Transport {
     /// [`with_client_and_configured_auth`](Self::with_client_and_configured_auth)
     /// to opt in. The caller retains responsibility for redirect policy.
     pub fn with_client(config: &Configuration, client: Client) -> Self {
-        Self {
-            config: config.clone(),
-            client,
-            apply_configured_auth: false,
-        }
+        Self::assemble(config, client, false)
     }
 
     /// Explicitly apply configured credentials to a caller-owned HTTP client.
     /// The caller owns that client's redirect policy and must prevent credential
     /// forwarding outside the configured API root and replay of submissions.
     pub fn with_client_and_configured_auth(config: &Configuration, client: Client) -> Self {
+        Self::assemble(config, client, true)
+    }
+
+    fn assemble(config: &Configuration, client: Client, apply_configured_auth: bool) -> Self {
         Self {
             config: config.clone(),
             client,
-            apply_configured_auth: true,
+            apply_configured_auth,
         }
     }
 
@@ -429,6 +450,16 @@ impl Transport {
     /// clone of it do not acquire SDK-configured authentication automatically.
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// The configuration whose API root, SDK-configured credentials, user
+    /// agent, and `discovery` and `submission` limits the transport's
+    /// requests use. For a transport from [`with_client`](Self::with_client)
+    /// or [`with_client_and_configured_auth`](Self::with_client_and_configured_auth),
+    /// the injected HTTP client's own connect and request timeouts, redirect
+    /// policy, and default headers apply instead of what this reports.
+    pub fn configuration(&self) -> &Configuration {
+        &self.config
     }
 
     /// Creates a transport with these connect and request timeouts in place of
@@ -658,14 +689,14 @@ impl Transport {
         endpoint: &str,
         allow_provider: bool,
     ) -> crate::Result<reqwest::RequestBuilder> {
-        if self.config.token_provider.is_some() {
-            let sources = self.config.static_credentials();
+        if self.configuration().token_provider.is_some() {
+            let sources = self.configuration().static_credentials();
             if !sources.is_empty() {
                 return Err(crate::Error::other(AuthConflictError { sources }));
             }
         }
-        let auth = self.config.configured_auth()?;
-        let has_provider = self.config.token_provider.is_some();
+        let auth = self.configuration().configured_auth()?;
+        let has_provider = self.configuration().token_provider.is_some();
         if !self.apply_configured_auth && (has_provider || !matches!(auth, ConfiguredAuth::None)) {
             return Err(crate::Error::other(AuthError::CallerOwnedClient));
         }
@@ -680,7 +711,7 @@ impl Transport {
             warn_plain_http_credential_once();
         }
         let mut request = self.client.request(method, url);
-        if let Some(agent) = &self.config.user_agent {
+        if let Some(agent) = &self.configuration().user_agent {
             request = request.header(reqwest::header::USER_AGENT, agent);
         }
         if self.apply_configured_auth {
@@ -722,10 +753,10 @@ impl Transport {
         request: reqwest::RequestBuilder,
         after_rejection: bool,
     ) -> crate::Result<reqwest::RequestBuilder> {
-        let Some(source) = &self.config.token_provider else {
+        let Some(source) = &self.configuration().token_provider else {
             return Ok(request);
         };
-        let audience = self.config.token_audience();
+        let audience = self.configuration().token_audience();
         let token = source.token(&audience, after_rejection).await?;
         let invalid = || TokenProviderError::InvalidToken {
             audience: audience.clone(),
@@ -741,7 +772,7 @@ impl Transport {
     /// `401 Unauthorized` to a request with these `headers`, if they carry a
     /// bearer token and a provider is configured.
     fn reject_token(&self, headers: &reqwest::header::HeaderMap) {
-        let Some(source) = &self.config.token_provider else {
+        let Some(source) = &self.configuration().token_provider else {
             return;
         };
         let secret = headers
@@ -749,7 +780,7 @@ impl Transport {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "));
         if let Some(secret) = secret {
-            source.reject(&self.config.token_audience(), secret);
+            source.reject(&self.configuration().token_audience(), secret);
         }
     }
 
@@ -793,7 +824,7 @@ impl Transport {
         let response = self.send_checked(request, sent).await?;
         if !replayable
             || response.status() != reqwest::StatusCode::UNAUTHORIZED
-            || self.config.token_provider.is_none()
+            || self.configuration().token_provider.is_none()
         {
             return Ok(response);
         }
@@ -811,7 +842,7 @@ impl Transport {
     /// A leading slash in `path` is treated as API-relative, too. Absolute URLs and path
     /// traversal are rejected before a request is sent.
     pub fn endpoint(&self, path: &str) -> Result<Url, EndpointError> {
-        let mut base = self.config.base_path.clone();
+        let mut base = self.configuration().base_path.clone();
         if base.cannot_be_a_base() || base.query().is_some() || base.fragment().is_some() {
             return Err(EndpointError::InvalidBase);
         }
@@ -1039,6 +1070,28 @@ mod tests {
         let output = format!("{:?}", Transport::new(&config));
         assert_eq!(output, format!("Transport {{ config: {:?}, .. }}", config));
         assert!(!output.contains("SENTINEL"), "{output}");
+    }
+
+    /// `configuration()` is the transport's own configuration for every
+    /// constructor, including recorded timeouts and a non-default API root.
+    #[test]
+    fn configuration_is_the_transports_configuration() {
+        let root = "https://example.org/custom/ga4gh/tes/v9/";
+        let config = Configuration::new(Url::parse(root).unwrap());
+        let connect = std::time::Duration::from_secs(3);
+        let request = std::time::Duration::from_secs(7);
+        let timed = Transport::with_timeouts(&config, connect, request).unwrap();
+        assert_eq!(timed.configuration().timeouts.connect, connect);
+        assert_eq!(timed.configuration().timeouts.request, request);
+        for transport in [
+            Transport::new(&config),
+            timed,
+            Transport::with_client(&config, reqwest::Client::new()),
+            Transport::with_client_and_configured_auth(&config, reqwest::Client::new()),
+        ] {
+            assert_eq!(transport.configuration().base_path.as_str(), root);
+            assert!(std::ptr::eq(transport.configuration(), &transport.config));
+        }
     }
 
     #[test]

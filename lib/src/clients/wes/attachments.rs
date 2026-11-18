@@ -177,17 +177,17 @@ impl WES {
         // there is not an ambiguous submission, as nothing was sent.
         let request = operation
             .run(
-                self.transport
+                self.transport()
                     .authorized_request_builder(reqwest::Method::POST, "runs"),
             )
             .await??
             .multipart(form);
         let body = self
-            .transport
+            .transport()
             .send_once(request, operation, BodyLimits::default())
             .await?;
         let id =
             crate::utils::acknowledgement::execution_id(&body, "run_id", "WES creation", None)?;
-        Ok(Run::new(id, self.transport.clone()))
+        Ok(Run::new(id, self.transport().clone()))
     }
 }

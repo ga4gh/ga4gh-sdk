@@ -58,7 +58,7 @@ impl PyWES {
     #[getter]
     fn config(&self) -> PyConfiguration {
         PyConfiguration {
-            inner: self.inner.config.clone(),
+            inner: self.inner.configuration().clone(),
         }
     }
 
@@ -66,7 +66,7 @@ impl PyWES {
     #[getter]
     fn transport(&self) -> PyTransport {
         PyTransport {
-            inner: self.inner.transport.clone(),
+            inner: self.inner.transport().clone(),
         }
     }
 
@@ -106,13 +106,13 @@ impl PyWES {
             Some(attachments) => attachment_list(py, attachments)?,
             None => Vec::new(),
         };
-        let request = request.inner;
+        let request = request.inner().clone();
         io(py, |rt| {
             rt.block_on(self.inner.run_workflow_streaming(
                 request,
                 attachments,
                 // The submission limit, as for `WES::run_workflow_with_attachments`.
-                &Operation::new(self.inner.transport.config.timeouts.submission),
+                &Operation::new(self.inner.transport().configuration().timeouts.submission),
             ))
             .map(|inner| PyRun { inner })
             .map_err(|error| format!("Failed to run workflow: {error}"))
@@ -128,11 +128,35 @@ impl PyWES {
         page_token: Option<String>,
     ) -> PyResult<PyRunListResponse> {
         let endpoint = paged("runs", page_size, page_token)?;
-        PyRunListResponse::from_json(get_json(py, &self.inner.transport, &endpoint, "list runs")?)
+        PyRunListResponse::from_json(get_json(
+            py,
+            self.inner.transport(),
+            &endpoint,
+            "list runs",
+        )?)
     }
 
     /// Gets a run's details, with its request, state, logs and outputs, as a `RunLog`.
     pub fn get(&self, py: Python<'_>, id: &str) -> PyResult<PyRunLog> {
-        get_run_log(py, &self.inner.transport, id)
+        get_run_log(py, self.inner.transport(), id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ga4gh_sdk::clients::serviceinfo::models::Service;
+    use ga4gh_sdk::utils::configuration::Configuration;
+    use ga4gh_sdk::utils::transport::Transport;
+
+    /// The `config` getter returns the transport's configuration.
+    #[test]
+    fn config_is_transport_configuration() {
+        let root = "https://example.org/custom/ga4gh/wes/v9/";
+        let transport = Transport::new(&Configuration::new(url::Url::parse(root).unwrap()));
+        let client = PyWES {
+            inner: WES::without_discovery(transport, Service::default()),
+        };
+        assert_eq!(client.config().inner.base_path.as_str(), root);
     }
 }

@@ -701,7 +701,7 @@ impl PreparedBundle {
             .await?;
         let mut manifest = self.manifest.clone();
         manifest.execution = Some(ExecutionRecord {
-            api_root: safe_root(&wes.transport)?,
+            api_root: safe_root(wes.transport())?,
             run_id: run.id.clone(),
         });
         Ok(SubmittedBundle { run, manifest })
