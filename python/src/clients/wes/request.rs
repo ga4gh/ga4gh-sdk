@@ -25,17 +25,14 @@ use std::path::{Path, PathBuf};
 #[derive(Clone)]
 pub struct PyRunRequest {
     /// The request parsed into the WES model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed request from JSON with `from_value`")]
-    pub inner: RunRequest,
+    inner: RunRequest,
     /// The request's JSON as given or received.
-    #[deprecated(note = "read `raw()`; build a changed request from JSON with `from_value`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyRunRequest, RunRequest);
 
 impl PyRunRequest {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     pub(super) fn parse(raw: Value) -> Result<Self, String> {
         if !raw.is_object() {
             return Err("not a JSON object".to_owned());

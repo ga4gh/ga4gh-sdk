@@ -33,9 +33,8 @@ pub fn parse_body(api: &str, body: &str) -> PyResult<Value> {
 /// value in `raw` and its model in `inner`; both describe one value.
 ///
 /// Most classes parse `inner` from the JSON they are given; the TRS classes serialize `raw`
-/// from the model of the TRS client. The fields are deprecated, so that extension crates
-/// can't change one without the other; the accessors are the only code that reads them
-/// directly. See `docs/state_ownership.md` ("Python views").
+/// from the model of the TRS client. The fields are private, so that extension crates
+/// can't change one without the other. See `docs/state_ownership.md` ("Python views").
 macro_rules! view_accessors {
     ($view:ty, $model:ty) => {
         impl $view {
@@ -45,14 +44,12 @@ macro_rules! view_accessors {
             /// know come from `raw()`. To change a value, change a copy of `raw()` and
             /// build a new instance from it, so that unknown fields and explicit `null`s
             /// stay; the TRS classes are built from a changed model with `new`.
-            #[allow(deprecated)] // The accessor that replaces the field.
             pub fn inner(&self) -> &$model {
                 &self.inner
             }
 
             /// The JSON that the class describes: the value that its getters, `json()` and
             /// `to_dict()` return, including fields that the models don't know.
-            #[allow(deprecated)] // The accessor that replaces the field.
             pub fn raw(&self) -> &serde_json::Value {
                 &self.raw
             }

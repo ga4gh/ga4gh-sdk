@@ -15,17 +15,14 @@ use serde_json::Value;
 #[derive(Clone)]
 pub struct PyToolVersion {
     /// The version in the TRS model.
-    #[deprecated(note = "read `inner()`; build a changed version from a model with `new`")]
-    pub inner: ToolVersion,
+    inner: ToolVersion,
     /// The version as JSON; derived from `inner`.
-    #[deprecated(note = "read `raw()`; build a changed version from a model with `new`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyToolVersion, ToolVersion);
 
 impl PyToolVersion {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     fn build(inner: ToolVersion) -> serde_json::Result<Self> {
         Ok(Self {
             raw: serde_json::to_value(&inner)?,
@@ -147,17 +144,14 @@ impl PyToolVersion {
 #[derive(Clone)]
 pub struct PyTool {
     /// The tool in the TRS model.
-    #[deprecated(note = "read `inner()`; build a changed tool from a model with `new`")]
-    pub inner: Tool,
+    inner: Tool,
     /// The tool as JSON; derived from `inner`.
-    #[deprecated(note = "read `raw()`; build a changed tool from a model with `new`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyTool, Tool);
 
 impl PyTool {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     fn build(inner: Tool) -> serde_json::Result<Self> {
         Ok(Self {
             raw: serde_json::to_value(&inner)?,

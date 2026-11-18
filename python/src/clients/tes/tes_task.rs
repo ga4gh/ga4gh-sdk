@@ -1,4 +1,33 @@
 //! `TesTask`: a TES task to create, or one as returned by the server, with its JSON.
+//!
+//! The model and the JSON of a task are private, so that an extension crate can't change
+//! one without the other (see `docs/state_ownership.md`, "Python views"). Assigning either
+//! fails to compile:
+//!
+//! ```compile_fail,E0616
+//! use ga4gh::clients::tes::PyTesTask;
+//! fn rename(task: &mut PyTesTask, inner: ga4gh_sdk::clients::tes::models::TesTask) {
+//!     task.inner = inner;
+//! }
+//! ```
+//!
+//! ```compile_fail,E0616
+//! use ga4gh::clients::tes::PyTesTask;
+//! fn rewrite(task: &mut PyTesTask, raw: serde_json::Value) {
+//!     task.raw = raw;
+//! }
+//! ```
+//!
+//! Build a changed task from a changed copy of its JSON instead:
+//!
+//! ```no_run
+//! use ga4gh::clients::tes::PyTesTask;
+//! fn rename(task: &PyTesTask) -> pyo3::PyResult<PyTesTask> {
+//!     let mut raw = task.raw().clone();
+//!     raw["name"] = serde_json::json!("changed");
+//!     PyTesTask::from_value(raw)
+//! }
+//! ```
 
 use super::helpers::invalid_response;
 use super::state::state_to_python;
@@ -19,17 +48,14 @@ use std::path::{Path, PathBuf};
 #[derive(Clone)]
 pub struct PyTesTask {
     /// The task parsed into the TES model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed task from JSON with `from_value`")]
-    pub inner: TesTask,
+    inner: TesTask,
     /// The task's JSON as given or received.
-    #[deprecated(note = "read `raw()`; build a changed task from JSON with `from_value`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyTesTask, TesTask);
 
 impl PyTesTask {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     pub(super) fn parse(raw: Value) -> Result<Self, String> {
         if !raw.is_object() {
             return Err("not a JSON object".to_owned());

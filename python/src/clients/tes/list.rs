@@ -131,20 +131,16 @@ impl PyListTasksParams {
 #[derive(Clone)]
 pub struct PyTesListTasksResponse {
     /// The response parsed into the model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed response from JSON with `from_json`")]
-    pub inner: TesListTasksResponse,
+    inner: TesListTasksResponse,
     /// The tasks of `raw`, each with its JSON.
-    #[deprecated(note = "read `tasks()`; build a changed response from JSON with `from_json`")]
-    pub tasks: Vec<PyTesTask>,
+    tasks: Vec<PyTesTask>,
     /// The response's JSON as received.
-    #[deprecated(note = "read `raw()`; build a changed response from JSON with `from_json`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyTesListTasksResponse, TesListTasksResponse);
 
 impl PyTesListTasksResponse {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     fn parse(raw: Value) -> Result<Self, String> {
         let inner: TesListTasksResponse =
             serde_json::from_value(raw.clone()).map_err(|e| e.to_string())?;
@@ -168,7 +164,6 @@ impl PyTesListTasksResponse {
 #[pymethods]
 impl PyTesListTasksResponse {
     #[getter]
-    #[allow(deprecated)] // The accessor that replaces the field.
     pub fn tasks(&self) -> Vec<PyTesTask> {
         self.tasks.clone()
     }

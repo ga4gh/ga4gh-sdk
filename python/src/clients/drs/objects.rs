@@ -16,17 +16,14 @@ use serde_json::Value;
 #[derive(Clone)]
 pub struct PyDrsObject {
     /// The object parsed into the DRS model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed object from JSON with `from_json`")]
-    pub inner: DrsObject,
+    inner: DrsObject,
     /// The object's JSON as received.
-    #[deprecated(note = "read `raw()`; build a changed object from JSON with `from_json`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyDrsObject, DrsObject);
 
 impl PyDrsObject {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     pub(super) fn parse(raw: Value) -> Result<Self, String> {
         Ok(PyDrsObject {
             inner: parse_model(&raw)?,
@@ -133,17 +130,14 @@ impl PyDrsObject {
 #[derive(Clone)]
 pub struct PyAccessURL {
     /// The access URL parsed into the DRS model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed access URL from JSON with `from_json`")]
-    pub inner: AccessUrl,
+    inner: AccessUrl,
     /// The access URL's JSON as received.
-    #[deprecated(note = "read `raw()`; build a changed access URL from JSON with `from_json`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyAccessURL, AccessUrl);
 
 impl PyAccessURL {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     fn parse(raw: Value) -> Result<Self, String> {
         Ok(PyAccessURL {
             inner: parse_model(&raw)?,
@@ -194,17 +188,14 @@ impl PyAccessURL {
 #[derive(Clone)]
 pub struct PyBulkAccessURL {
     /// The access URL parsed into the DRS model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed entry from JSON with `from_json`")]
-    pub inner: BulkAccessUrl,
+    inner: BulkAccessUrl,
     /// The entry's JSON as received.
-    #[deprecated(note = "read `raw()`; build a changed entry from JSON with `from_json`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyBulkAccessURL, BulkAccessUrl);
 
 impl PyBulkAccessURL {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     pub(super) fn parse(raw: Value) -> Result<Self, String> {
         Ok(PyBulkAccessURL {
             inner: parse_model(&raw)?,

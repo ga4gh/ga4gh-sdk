@@ -14,17 +14,14 @@ use serde_json::Value;
 #[derive(Clone)]
 pub struct PyRunLog {
     /// The run log parsed into the model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed run log from JSON with `from_json`")]
-    pub inner: RunLog,
+    inner: RunLog,
     /// The run's JSON as received.
-    #[deprecated(note = "read `raw()`; build a changed run log from JSON with `from_json`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyRunLog, RunLog);
 
 impl PyRunLog {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     fn parse(raw: Value) -> Result<Self, String> {
         Ok(PyRunLog {
             inner: parse_model(&raw)?,
@@ -102,17 +99,14 @@ impl PyRunLog {
 #[derive(Clone)]
 pub struct PyTaskLog {
     /// The task log parsed into the model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed task log from JSON with `from_json`")]
-    pub inner: TaskLog,
+    inner: TaskLog,
     /// The task's JSON as received.
-    #[deprecated(note = "read `raw()`; build a changed task log from JSON with `from_json`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyTaskLog, TaskLog);
 
 impl PyTaskLog {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     pub(super) fn parse(raw: Value) -> Result<Self, String> {
         Ok(PyTaskLog {
             inner: parse_model(&raw)?,

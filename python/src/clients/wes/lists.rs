@@ -29,17 +29,14 @@ pub(super) fn paged(
 #[derive(Clone)]
 pub struct PyRunSummary {
     /// The run summary parsed into the model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed run summary from JSON with `from_json`")]
-    pub inner: RunListResponseRunsInner,
+    inner: RunListResponseRunsInner,
     /// The run's JSON as received.
-    #[deprecated(note = "read `raw()`; build a changed run summary from JSON with `from_json`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyRunSummary, RunListResponseRunsInner);
 
 impl PyRunSummary {
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     fn parse(raw: Value) -> Result<Self, String> {
         Ok(PyRunSummary {
             inner: parse_model(&raw)?,
@@ -105,14 +102,11 @@ impl PyRunSummary {
 #[derive(Clone)]
 pub struct PyRunListResponse {
     /// The response parsed into the model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed response from JSON with `from_json`")]
-    pub inner: RunListResponse,
+    inner: RunListResponse,
     /// The runs of `raw`, each with its JSON.
-    #[deprecated(note = "read `runs()`; build a changed response from JSON with `from_json`")]
-    pub runs: Vec<PyRunSummary>,
+    runs: Vec<PyRunSummary>,
     /// The response's JSON as received; a bare array of runs becomes `{"runs": [...]}`.
-    #[deprecated(note = "read `raw()`; build a changed response from JSON with `from_json`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyRunListResponse, RunListResponse);
@@ -125,7 +119,6 @@ impl PyRunListResponse {
         Self::parse(raw).map_err(invalid_response)
     }
 
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     fn parse(raw: Value) -> Result<Self, String> {
         let raw = match raw {
             Value::Array(runs) => serde_json::json!({ "runs": runs }),
@@ -146,7 +139,6 @@ impl PyRunListResponse {
 #[pymethods]
 impl PyRunListResponse {
     #[getter]
-    #[allow(deprecated)] // The accessor that replaces the field.
     pub fn runs(&self) -> Vec<PyRunSummary> {
         self.runs.clone()
     }
@@ -172,14 +164,11 @@ impl PyRunListResponse {
 #[derive(Clone)]
 pub struct PyTaskListResponse {
     /// The response parsed into the model; derived from `raw`.
-    #[deprecated(note = "read `inner()`; build a changed response from JSON with `from_json`")]
-    pub inner: TaskListResponse,
+    inner: TaskListResponse,
     /// The tasks of `raw`, each with its JSON.
-    #[deprecated(note = "read `task_logs()`; build a changed response from JSON with `from_json`")]
-    pub task_logs: Vec<PyTaskLog>,
+    task_logs: Vec<PyTaskLog>,
     /// The response's JSON as received.
-    #[deprecated(note = "read `raw()`; build a changed response from JSON with `from_json`")]
-    pub raw: Value,
+    raw: Value,
 }
 
 view_accessors!(PyTaskListResponse, TaskListResponse);
@@ -190,7 +179,6 @@ impl PyTaskListResponse {
         Self::parse(raw).map_err(invalid_response)
     }
 
-    #[allow(deprecated)] // Builds the fields that the accessors read.
     fn parse(raw: Value) -> Result<Self, String> {
         let task_logs = items(&raw, "task_logs")
             .into_iter()
@@ -207,7 +195,6 @@ impl PyTaskListResponse {
 #[pymethods]
 impl PyTaskListResponse {
     #[getter]
-    #[allow(deprecated)] // The accessor that replaces the field.
     pub fn task_logs(&self) -> Vec<PyTaskLog> {
         self.task_logs.clone()
     }

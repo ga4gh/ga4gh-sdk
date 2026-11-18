@@ -1047,13 +1047,12 @@ raw["name"] = json!("changed");
 let task = PyTesTask::from_value(raw)?;
 ```
 
-**Deprecated:** the public `inner` and `raw` fields of these classes, and the `tasks`,
-`runs` and `task_logs` fields of the list responses. A change to one field doesn't change
-the others, so the getters, `json()` and the request sent could disagree. The fields still
-work; extension crates that use them get a Rust compiler warning (an error under
-`-D warnings`), and Python code is not affected. A later release makes them private. Replace
-`task.inner` with `task.inner()`, `task.raw` with `task.raw()`, and `page.tasks` with
-`page.tasks()`, which returns a copy.
+The `inner` and `raw` fields of these classes, and the `tasks`, `runs` and `task_logs`
+fields of the list responses, are private: a change to one of them would not change the
+others, so the getters, `json()` and the request sent could disagree. Python code is not
+affected. In an extension crate, replace `task.inner` with `task.inner()`, `task.raw` with
+`task.raw()`, and `page.tasks` with `page.tasks()`, which returns a copy; replace a struct
+literal with the constructors above.
 
 ## Documentation
 
