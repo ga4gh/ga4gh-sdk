@@ -997,8 +997,22 @@ used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
 `Python::with_gil`, and `Bound::downcast` to `Py<PyAny>`, `Python::attach`, and
 `Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
 The `inner` field of each class holds the
-library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES calls
-that the sync and the async classes share are public functions in `clients::tes`, such as
+library type (for `PyAsyncTES`, a `LazyTES` that connects on first use).
+Read the state of a library client through its accessors, such as
+`self.inner.transport()` and `self.inner.configuration()` of `PyTES`: its
+fields, and those of `Discovered` and `Transport`, are private (see the
+[replacements](../docs/state_ownership.md#migration)). The Python getters,
+such as `TES.config` and `TES.transport`, don't change:
+
+```rust
+// Before: read the former public field
+let transport = self.inner.transport.clone();
+// After
+let transport = self.inner.transport().clone();
+let root = &self.inner.configuration().base_path;
+```
+
+The TES calls that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
 `clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
 `clients::tes_async` does.
@@ -1028,7 +1042,7 @@ discovery)` one with `TrsOptions`; its `inner` field holds the library's `TRS`.
 `PyAsyncTES` keeps its state in its `transport` field:
 
 - The first call connects the `LazyTES` with that transport, so the service check and all
-  built-in calls use it. The `config` getter gives `transport.config`.
+  built-in calls use it. The `config` getter gives `transport.configuration()`.
 - `PyAsyncTES::with_transport(transport)` builds a client with a given transport, for
   example one from `Transport::with_client`. Don't replace `transport` on a client that
   may be connected: a connected client keeps the transport it connected with.

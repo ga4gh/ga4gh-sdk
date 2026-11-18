@@ -22,17 +22,16 @@ use std::{
 use tokio::io::{AsyncRead, ReadBuf};
 fn wes(base: &str) -> WES {
     let config = Configuration::new(url::Url::parse(base).unwrap());
-    WES {
-        transport: Transport::new(&config),
-        config,
-        service: Service {
+    WES::without_discovery(
+        Transport::new(&config),
+        Service {
             r#type: Box::new(ServiceType {
                 artifact: "wes".into(),
                 ..Default::default()
             }),
             ..Default::default()
         },
-    }
+    )
 }
 fn request() -> RunRequest {
     RunRequest {
@@ -48,22 +47,23 @@ async fn sources_preserve_nested_filenames_content_and_shared_header_policy() {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("tool.cwl");
     std::fs::write(&file, "file contents").unwrap();
-    let mut wes = wes(&server_url());
+    let wes = wes(&server_url());
     let mut headers = ga4gh_sdk::reqwest::header::HeaderMap::new();
     headers.insert("authorization", "Bearer test-only".parse().unwrap());
-    wes.transport = Transport::with_client(
-        &wes.config,
+    let transport = Transport::with_client(
+        wes.configuration(),
         ga4gh_sdk::reqwest::Client::builder()
             .default_headers(headers)
             .build()
             .unwrap(),
     );
+    let wes = WES::without_discovery(transport, wes.discovered_service_info().clone());
     let json = mock("POST", "/json")
         .match_header("authorization", "Bearer test-only")
         .with_body("{}")
         .expect(1)
         .create();
-    wes.transport.post("json", None).await.unwrap();
+    wes.transport().post("json", None).await.unwrap();
     let upload = mock("POST", "/runs")
         .match_header("authorization", "Bearer test-only")
         .match_body(Matcher::AllOf(vec![

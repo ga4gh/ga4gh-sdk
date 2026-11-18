@@ -387,11 +387,7 @@ impl DrsResolver {
             });
         // Routing is explicit; do not perform a second, unrelated discovery request.
         // Low-level object/access operations do not depend on the generic service view.
-        DRS {
-            config: transport.config.clone(),
-            transport,
-            service: Service::default(),
-        }
+        DRS::without_discovery(transport, Service::default())
     }
     /// Plans access to the object of `uri` with at most one request per
     /// step, without waiting for pending answers.

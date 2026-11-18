@@ -21,7 +21,7 @@
 //!     workflow_url: "https://example.org/workflow.cwl".into(),
 //!     ..Default::default()
 //! };
-//! for diagnostic in wes.capabilities.validate_wes(&request) {
+//! for diagnostic in wes.capabilities().validate_wes(&request) {
 //!     println!("{}: {:?}", diagnostic.field, diagnostic.support);
 //! }
 //! // Strict: refuse the request if a diagnostic blocks it
@@ -298,13 +298,52 @@ impl CapabilitySnapshot {
 
 /// Opt-in discovery wrapper: one request populates the client and raw/typed
 /// capabilities. Accessors never fetch; refresh is explicit and atomic on success.
+///
+/// Read the parts with [`client`](Self::client) (or `Deref`) and
+/// [`capabilities`](Self::capabilities), or split the wrapper with
+/// [`into_parts`](Self::into_parts). The fields are private: an assignment
+/// to one of them would separate the client from the snapshot of its
+/// service. The
+/// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md#migration)
+/// lists the replacements of the former public fields.
+///
+/// Assigning a field fails to compile:
+///
+/// ```compile_fail,E0616
+/// use ga4gh_sdk::clients::{capabilities::Discovered, tes::TES};
+/// fn swap(discovered: &mut Discovered<TES>, client: TES) {
+///     discovered.client = client;
+/// }
+/// ```
+///
+/// ```compile_fail,E0616
+/// use ga4gh_sdk::clients::{
+///     capabilities::{CapabilitySnapshot, Discovered},
+///     tes::TES,
+/// };
+/// fn swap_snapshot(discovered: &mut Discovered<TES>, snapshot: CapabilitySnapshot) {
+///     discovered.capabilities = snapshot;
+/// }
+/// ```
+///
+/// The accessors read them:
+///
+/// ```
+/// use ga4gh_sdk::clients::{
+///     capabilities::{CapabilitySnapshot, Discovered},
+///     tes::TES,
+/// };
+/// fn read(discovered: &Discovered<TES>) -> (&TES, &CapabilitySnapshot) {
+///     (discovered.client(), discovered.capabilities())
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Discovered<T> {
     /// The client, also reached through `Deref` and [`Self::client`].
-    pub client: T,
-    /// The service-info response that the client was built from; also
-    /// returned by [`Self::capabilities`].
-    pub capabilities: CapabilitySnapshot,
+    client: T,
+    /// The service-info response that the client was built from; returned
+    /// by [`Self::capabilities`].
+    capabilities: CapabilitySnapshot,
 }
 impl<T> Discovered<T> {
     /// The client, also reached through `Deref`.
@@ -322,6 +361,15 @@ impl<T> Discovered<T> {
     /// example to keep only the client.
     pub fn into_parts(self) -> (T, CapabilitySnapshot) {
         (self.client, self.capabilities)
+    }
+
+    /// Builds the wrapper from a client and the snapshot of the same
+    /// service-info response.
+    fn assemble(client: T, capabilities: CapabilitySnapshot) -> Self {
+        Self {
+            client,
+            capabilities,
+        }
     }
 }
 impl<T> Deref for Discovered<T> {
@@ -389,14 +437,10 @@ impl TES {
         max_age: Duration,
     ) -> crate::Result<Discovered<Self>> {
         let (service, capabilities) = discover(&transport, "tes", max_age).await?;
-        Ok(Discovered {
-            client: Self {
-                config: transport.config.clone(),
-                transport,
-                service,
-            },
+        Ok(Discovered::assemble(
+            Self::without_discovery(transport, service),
             capabilities,
-        })
+        ))
     }
 }
 impl WES {
@@ -426,14 +470,10 @@ impl WES {
         max_age: Duration,
     ) -> crate::Result<Discovered<Self>> {
         let (service, capabilities) = discover(&transport, "wes", max_age).await?;
-        Ok(Discovered {
-            client: Self {
-                config: transport.config.clone(),
-                transport,
-                service,
-            },
+        Ok(Discovered::assemble(
+            Self::without_discovery(transport, service),
             capabilities,
-        })
+        ))
     }
 }
 impl Discovered<TES> {
@@ -444,9 +484,9 @@ impl Discovered<TES> {
     ///
     /// Fails if the request fails or the response isn't a TES service info.
     pub async fn refresh(&mut self) -> crate::Result<()> {
-        let (service, snapshot) =
-            discover(&self.client.transport, "tes", self.capabilities.max_age).await?;
-        self.client.service = service;
+        let transport = self.client.transport();
+        let (service, snapshot) = discover(transport, "tes", self.capabilities.max_age).await?;
+        self.client = TES::without_discovery(transport.clone(), service);
         self.capabilities = snapshot;
         Ok(())
     }
@@ -458,8 +498,8 @@ impl Discovered<TES> {
     /// With `strict`, fails before any request if a diagnostic blocks strict
     /// submissions; otherwise fails as [`TES::create`] does.
     pub async fn create_validated(&self, task: TesTask, strict: bool) -> crate::Result<Task> {
-        ensure_strict(&self.capabilities.validate_tes(&task), strict)?;
-        self.client.create(task).await
+        ensure_strict(&self.capabilities().validate_tes(&task), strict)?;
+        self.client().create(task).await
     }
 }
 impl Discovered<WES> {
@@ -470,9 +510,9 @@ impl Discovered<WES> {
     ///
     /// Fails if the request fails or the response isn't a WES service info.
     pub async fn refresh(&mut self) -> crate::Result<()> {
-        let (service, snapshot) =
-            discover(&self.client.transport, "wes", self.capabilities.max_age).await?;
-        self.client.service = service;
+        let transport = self.client.transport();
+        let (service, snapshot) = discover(transport, "wes", self.capabilities.max_age).await?;
+        self.client = WES::without_discovery(transport.clone(), service);
         self.capabilities = snapshot;
         Ok(())
     }
@@ -484,7 +524,7 @@ impl Discovered<WES> {
     /// With `strict`, fails before any request if a diagnostic blocks strict
     /// submissions; otherwise fails as [`WES::run_workflow`] does.
     pub async fn run_validated(&self, request: RunRequest, strict: bool) -> crate::Result<Run> {
-        ensure_strict(&self.capabilities.validate_wes(&request), strict)?;
-        self.client.run_workflow(request).await
+        ensure_strict(&self.capabilities().validate_wes(&request), strict)?;
+        self.client().run_workflow(request).await
     }
 }

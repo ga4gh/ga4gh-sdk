@@ -302,7 +302,7 @@ impl Task {
     pub fn remote_handle(&self) -> RemoteHandle {
         RemoteHandle {
             service: ServiceKind::Tes,
-            api_root: api_root(&self.transport.config),
+            api_root: api_root(self.transport.configuration()),
             id: self.id.clone(),
         }
     }
@@ -347,7 +347,7 @@ impl Run {
     pub fn remote_handle(&self) -> RemoteHandle {
         RemoteHandle {
             service: ServiceKind::Wes,
-            api_root: api_root(&self.transport.config),
+            api_root: api_root(self.transport.configuration()),
             id: self.id.clone(),
         }
     }

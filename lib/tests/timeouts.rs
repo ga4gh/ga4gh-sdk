@@ -26,6 +26,11 @@ use tokio::{
 const SHORT: Duration = Duration::from_millis(150);
 const DELAY: Duration = Duration::from_millis(600);
 const LONG: Duration = Duration::from_secs(5);
+/// The discovery limit of the refresh test: long enough for a fast loopback
+/// answer, and well below `SLOW_REFRESH`.
+const REFRESH_LIMIT: Duration = Duration::from_secs(1);
+/// The delay of the refresh answers in the refresh test.
+const SLOW_REFRESH: Duration = Duration::from_secs(3);
 const NATIVE_WES_INFO: &str = r#"{"version":"9.3.0","workflow_type_versions":{"CWL":{"workflow_type_version":["v1.2"]}},"supported_wes_versions":["1.0.0"],"supported_filesystem_protocols":["file"],"workflow_engine_versions":{"toil":"9.3.0"},"default_workflow_engine_parameters":[],"system_state_counts":{},"tags":{}}"#;
 
 /// How the test server answers one request.
@@ -35,6 +40,9 @@ enum Reply {
     After(Duration, &'static str),
     /// Answers with the service info of this artifact, such as `tes`, after a delay.
     ServiceInfo(Duration, &'static str),
+    /// Answers the server's first request with the service info of this
+    /// artifact at once, and later requests after the delay.
+    ServiceInfoSlowAfterFirst(Duration, &'static str),
     /// Reads the request, then keeps the connection open without answering.
     Never,
 }
@@ -109,7 +117,7 @@ async fn serve(routes: Vec<(&'static str, Reply)>) -> Server {
                 let Some(path) = read_request(&mut socket).await else {
                     return;
                 };
-                counter.fetch_add(1, Ordering::SeqCst);
+                let earlier = counter.fetch_add(1, Ordering::SeqCst);
                 let reply = routes
                     .iter()
                     .find(|(route, _)| path.starts_with(route))
@@ -117,6 +125,10 @@ async fn serve(routes: Vec<(&'static str, Reply)>) -> Server {
                 let answer = match reply {
                     Some(Reply::After(delay, body)) => Some((delay, body.to_owned())),
                     Some(Reply::ServiceInfo(delay, artifact)) => {
+                        Some((delay, service_info(artifact)))
+                    }
+                    Some(Reply::ServiceInfoSlowAfterFirst(delay, artifact)) => {
+                        let delay = if earlier == 0 { Duration::ZERO } else { delay };
                         Some((delay, service_info(artifact)))
                     }
                     _ => None,
@@ -153,6 +165,13 @@ fn config(url: &str, timeouts: Timeouts) -> Configuration {
 
 fn slow_service_info(artifact: &'static str) -> Vec<(&'static str, Reply)> {
     vec![("/service-info", Reply::ServiceInfo(DELAY, artifact))]
+}
+
+fn slow_after_first(artifact: &'static str) -> Vec<(&'static str, Reply)> {
+    vec![(
+        "/service-info",
+        Reply::ServiceInfoSlowAfterFirst(SLOW_REFRESH, artifact),
+    )]
 }
 
 // Creates the client of `artifact` with `new`, and for TES and WES also with
@@ -199,9 +218,12 @@ fn defaults_keep_the_previous_limits() {
 fn transport_with_timeouts_records_them_in_its_configuration() {
     let config = Configuration::new(url::Url::parse("https://example.org").unwrap());
     let transport = Transport::with_timeouts(&config, SHORT, LONG).unwrap();
-    assert_eq!(transport.config.timeouts.connect, SHORT);
-    assert_eq!(transport.config.timeouts.request, LONG);
-    assert_eq!(transport.config.timeouts.discovery, Duration::from_secs(10));
+    assert_eq!(transport.configuration().timeouts.connect, SHORT);
+    assert_eq!(transport.configuration().timeouts.request, LONG);
+    assert_eq!(
+        transport.configuration().timeouts.discovery,
+        Duration::from_secs(10)
+    );
 }
 
 #[tokio::test]
@@ -266,14 +288,14 @@ async fn native_wes_service_info_uses_discovery_timeout_and_ready_transport() {
     );
 
     let wes = WES::new(&config).await.unwrap();
-    assert_eq!(wes.service.r#type.version, "1.0.0");
+    assert_eq!(wes.discovered_service_info().r#type.version, "1.0.0");
 
     let discovered = WES::discover(&config, LONG).await.unwrap();
-    assert_eq!(discovered.capabilities.raw["version"], "9.3.0");
+    assert_eq!(discovered.capabilities().raw["version"], "9.3.0");
 
     let transport = Transport::with_client(&config, ga4gh_sdk::reqwest::Client::new());
     let wes = WES::from_transport(transport).await.unwrap();
-    assert_eq!(wes.service.r#type.version, "1.0.0");
+    assert_eq!(wes.discovered_service_info().r#type.version, "1.0.0");
     assert_eq!(server.requests.load(Ordering::SeqCst), 3);
 }
 
@@ -289,16 +311,48 @@ async fn refresh_uses_the_discovery_timeout() {
         .await
         .unwrap();
     tes.refresh().await.unwrap();
-    tes.client.transport.config.timeouts.discovery = SHORT;
-    assert!(tes.refresh().await.is_err());
 
     let server = serve(slow_service_info("wes")).await;
     let mut wes = WES::discover(&config(&server.url, timeouts), LONG)
         .await
         .unwrap();
     wes.refresh().await.unwrap();
-    wes.client.transport.config.timeouts.discovery = SHORT;
+
+    // A client is fixed after construction, so a shorter limit needs a
+    // client whose service answers discovery at once and refresh slowly.
+    // The refresh gives up at the limit, before the slow answer arrives;
+    // the server sees only the discovery and the refresh request.
+    let short = Timeouts {
+        discovery: REFRESH_LIMIT,
+        ..Default::default()
+    };
+    let server = serve(slow_after_first("tes")).await;
+    let mut tes = TES::discover(&config(&server.url, short), LONG)
+        .await
+        .unwrap();
+    let start = std::time::Instant::now();
+    assert!(tes.refresh().await.is_err());
+    let elapsed = start.elapsed();
+    // It waited for the limit and gave up before the slow answer.
+    assert!(
+        elapsed >= REFRESH_LIMIT - SHORT && elapsed < SLOW_REFRESH,
+        "{elapsed:?}"
+    );
+    assert_eq!(server.requests.load(Ordering::SeqCst), 2);
+
+    let server = serve(slow_after_first("wes")).await;
+    let mut wes = WES::discover(&config(&server.url, short), LONG)
+        .await
+        .unwrap();
+    let start = std::time::Instant::now();
     assert!(wes.refresh().await.is_err());
+    let elapsed = start.elapsed();
+    // It waited for the limit and gave up before the slow answer.
+    assert!(
+        elapsed >= REFRESH_LIMIT - SHORT && elapsed < SLOW_REFRESH,
+        "{elapsed:?}"
+    );
+    assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -315,17 +369,26 @@ async fn clients_accept_a_ready_transport() {
         match artifact {
             "tes" => {
                 let tes = TES::with_transport(transport.clone()).await.unwrap();
-                assert_eq!(tes.config.user_agent.as_deref(), Some("custom agent"));
+                assert_eq!(
+                    tes.configuration().user_agent.as_deref(),
+                    Some("custom agent")
+                );
                 TES::discover_with_transport(transport, LONG).await.unwrap();
             }
             "wes" => {
                 let wes = WES::with_transport(transport.clone()).await.unwrap();
-                assert_eq!(wes.config.user_agent.as_deref(), Some("custom agent"));
+                assert_eq!(
+                    wes.configuration().user_agent.as_deref(),
+                    Some("custom agent")
+                );
                 WES::discover_with_transport(transport, LONG).await.unwrap();
             }
             "drs" => {
                 let drs = DRS::with_transport(transport).await.unwrap();
-                assert_eq!(drs.config.user_agent.as_deref(), Some("custom agent"));
+                assert_eq!(
+                    drs.configuration().user_agent.as_deref(),
+                    Some("custom agent")
+                );
             }
             _ => {
                 let trs = TRS::with_transport(transport).await.unwrap();

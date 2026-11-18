@@ -429,7 +429,7 @@ impl DRS {
                 return ChunkReply::Error("bulk request bound exhausted".into());
             }
             let response = match operation
-                .run(self.transport.request_response(
+                .run(self.transport().request_response(
                     reqwest::Method::POST,
                     path,
                     Some(request_body(keys, passports, access)),
