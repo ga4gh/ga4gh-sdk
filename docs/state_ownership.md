@@ -92,7 +92,7 @@ depend on the `ga4gh` crate can change the public Rust fields.
 | `PyTesListTasksResponse`, `PyRunListResponse`, `PyTaskListResponse` | `inner`, a vector of item views, `raw` | Page token | Items: the vector; `json()`, `to_dict()`: `raw` |
 | `PyDrsObject`, `PyAccessURL`, `PyBulkAccessURL` | `inner`, `raw` | Scalar fields | Nested fields, `json()`, `to_dict()` |
 | `PyTool`, `PyToolVersion`, `PyFileWrapper`, `PyToolFile` | `inner`, `raw` | Scalar fields | Nested fields, `json()`, `to_dict()` |
-| `PyAsyncTES` | `config`, `transport`, `inner: LazyTES` | — | The `config` and `transport` getters read the fields; the first call connects a new `TES` from the `config` that it receives |
+| `PyAsyncTES` | `config`, `transport`, `inner: LazyTES` | — | At `a5d0175`, the `config` and `transport` getters read the fields, and the first call connects a new `TES` from the `config` that it receives. Since [#296](https://github.com/ga4gh/ga4gh-sdk/issues/296), the first call connects with `transport`, and the `config` getter reads `transport.config` |
 | `PyTES`, `PyWES`, `PyDRS`, `PyTRS`, `PyTask`, `PyRun`, `PyTransport`, `PyConfiguration`, and others | `inner` only | — | — |
 
 The constructors (`from_json`, `from_value`, `parse`) derive `inner` from
@@ -198,6 +198,9 @@ against `a5d0175`; the others follow from the code paths cited above.
    creates its own transport. A Rust extension that changes `config` before
    the first call changes the connected client but not `transport`. A change
    after the first call has no effect on requests.
+   Resolved by [#296](https://github.com/ga4gh/ga4gh-sdk/issues/296): the
+   first call connects with `TES::with_transport(transport)`, and the SDK no
+   longer reads the `config` field.
 
 ### Snapshots and invariants
 
