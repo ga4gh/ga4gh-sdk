@@ -1063,9 +1063,10 @@ The result classes that keep JSON describe one JSON value: `PyTesTask`,
 `PyRunListResponse`, `PyTaskListResponse`, `PyDrsObject`, `PyAccessURL`,
 `PyBulkAccessURL`, `PyTool`, `PyToolVersion`, `PyFileWrapper` and `PyToolFile`. Read the
 value with `raw()` and its model with `inner()`; the list responses also return their
-items with `tasks()`, `runs()` and `task_logs()`. The typed getters, `json()`,
-`to_dict()`, pickling and the request that `TES.create()` or `WES.run()` sends describe
-that value, including fields that the models don't know.
+items with `tasks()`, `runs()` and `task_logs()`. The typed getters, `json()` and
+`to_dict()` describe that value, including fields that the models don't know.
+For `PyTesTask` and `PyRunRequest`, pickling and the request that `TES.create()`
+or `WES.run()` sends also use that value.
 
 The classes have no setters. To change a value, change a copy of `raw()` and build a new
 instance: with `from_value` for `PyTesTask` and `PyRunRequest`, and with `from_json` for
