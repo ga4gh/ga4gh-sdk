@@ -268,11 +268,14 @@ against `a5d0175`; the others follow from the code paths cited above.
 
 ### Python views
 
-1. **`raw` is authoritative.** For each view class, `raw` holds the JSON as
-   given or received. `inner` is a projection derived from `raw`. All
-   accessors, `json()`, `to_dict()`, pickling, and submission describe that
-   value. Either representation can be sent if tests prove that they agree,
-   including unknown fields and explicit `null`.
+1. **One JSON value per view.** For TES, WES, and DRS views, `raw` keeps the
+   JSON as given or received, and `inner` is a projection derived from it.
+   TRS views instead receive a model in `new` and serialize `raw` from that
+   model; a `null` field omitted by model serialization is not restored.
+   Once built, both representations are read-only and describe the same
+   value. Accessors, `json()`, `to_dict()`, and, where supported, pickling and
+   submission agree. Tests cover unknown fields and explicit `null` in the
+   JSON-backed views, and model/JSON agreement in the TRS views.
 2. **Views are immutable.** Extension crates read `inner()` and `raw()`
    accessors and build a changed view from JSON with the existing
    constructors (`from_value`, `from_json`). No setter changes one field.
