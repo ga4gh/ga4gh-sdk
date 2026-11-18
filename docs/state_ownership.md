@@ -15,8 +15,9 @@ accessors of rule 4 and switched the Python `config` getters to them;
 [#294](https://github.com/ga4gh/ga4gh-sdk/issues/294) made the fields
 private, without a deprecation release
 ([#304](https://github.com/ga4gh/ga4gh-sdk/issues/304); see
-[Status](#status)). The [current state](#current-state) below describes the
-analysed commit.
+[Status](#status)); [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295)
+made the Python result-view fields private as well. The
+[current state](#current-state) below describes the analysed commit.
 
 The analysis is a static inspection of commit
 [`a5d0175`](https://github.com/ga4gh/ga4gh-sdk/tree/a5d017513fd9091619a5feb338008c6f8fb02df4),
@@ -331,8 +332,11 @@ No release contains these changes yet; the SDK has no tagged release.
   bindings, and the downstream example use the accessors and constructors.
   `compile_fail` documentation tests on `TES`, `WES`, `DRS`, `Discovered`,
   and `Transport` check that an assignment from outside the crate fails.
-- Python views: [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295) makes
-  the `inner` and `raw` fields of the view classes private in the same way.
+- Done (Python views, [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295),
+  [#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)): the `inner` and
+  `raw` fields of the result classes, and the `tasks`, `runs`, and `task_logs`
+  fields of list responses, are private. Read-only accessors and constructors
+  preserve extension-crate access to the same JSON-backed view.
 
 ### Migration
 
