@@ -85,7 +85,7 @@ pub async fn connected(tes: &LazyTES, transport: &Transport) -> Result<Arc<TES>,
 #[pyclass(name = "AsyncTES", module = "ga4gh_sdk", subclass)]
 pub struct PyAsyncTES {
     /// The configuration that the client was built with, kept for compatibility. The SDK
-    /// doesn't read it: the client's configuration is `transport.config`.
+    /// doesn't read it: the client's configuration is `transport.configuration()`.
     pub config: Configuration,
     /// The client's transport: the built-in calls connect with it, and further endpoints
     /// can use it.
@@ -104,7 +104,7 @@ impl PyAsyncTES {
     /// [`Transport::with_client`]; sends no request.
     pub fn with_transport(transport: Transport) -> Self {
         PyAsyncTES {
-            config: transport.config.clone(),
+            config: transport.configuration().clone(),
             transport,
             inner: LazyTES::default(),
         }
@@ -164,7 +164,7 @@ impl PyAsyncTES {
     #[getter]
     fn config(&self) -> PyConfiguration {
         PyConfiguration {
-            inner: self.transport.config.clone(),
+            inner: self.transport.configuration().clone(),
         }
     }
 
