@@ -28,7 +28,7 @@ pub struct DRS {
     /// A copy of the transport's configuration, made when the client was
     /// built. Requests don't read it, so it can differ from what they
     /// use; read [`Self::configuration`] instead. Resolution references
-    /// still take their API root from it.
+    /// also use the transport's API root.
     #[allow(dead_code)]
     pub config: Configuration,
     /// The service info that the client read when it was built; also
@@ -100,13 +100,9 @@ impl DRS {
     }
 
     /// The configuration of the client's transport: the value that requests
-    /// read, not the separate `config` copy. See
+    /// and resolution references read, not the separate `config` copy. See
     /// [`Transport::configuration`] for what it determines, and for the
     /// settings of an injected HTTP client that apply instead.
-    ///
-    /// DRS resolution references still take their API root from the `config`
-    /// field; [#292](https://github.com/ga4gh/ga4gh-sdk/issues/292) moves them
-    /// to the transport.
     pub fn configuration(&self) -> &Configuration {
         self.transport.configuration()
     }
