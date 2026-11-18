@@ -196,8 +196,28 @@ async fn reference_root_is_transport_root() {
         .downcast_ref::<PendingResolution>()
         .expect("202 is pending");
     request.assert();
+    drop(request);
     assert_eq!(pending.reference.api_root, format!("{root}/"));
     assert_eq!(pending.reference.endpoint, "objects/id");
+
+    // The reference resumes against the transport root; a reference for a
+    // different root is rejected before another request.
+    let ready = mock("GET", "/custom/ga4gh/drs/v9/objects/id")
+        .with_body(r#"{"id":"id"}"#)
+        .expect(1)
+        .create();
+    let result: Resolution<serde_json::Value> =
+        client.resolve_reference(&pending.reference).await.unwrap();
+    assert!(matches!(result, Resolution::Ready(value) if value["id"] == "id"));
+    ready.assert();
+    let foreign = ResolutionReference {
+        api_root: "https://other.example/ga4gh/drs/v1/".into(),
+        endpoint: "objects/id".into(),
+    };
+    assert!(client
+        .resolve_reference::<serde_json::Value>(&foreign)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
