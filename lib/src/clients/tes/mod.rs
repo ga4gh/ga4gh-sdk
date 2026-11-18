@@ -196,6 +196,13 @@ impl Task {
 ///     tes.transport = transport;
 /// }
 /// ```
+///
+/// ```compile_fail,E0616
+/// use ga4gh_sdk::clients::{serviceinfo::models::Service, tes::TES};
+/// fn swap_service(tes: &mut TES, service: Service) {
+///     tes.service = service;
+/// }
+/// ```
 #[derive(Debug)]
 pub struct TES {
     /// The service info that the client read when it was built; returned by

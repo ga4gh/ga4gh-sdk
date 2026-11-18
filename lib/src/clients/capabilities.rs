@@ -315,6 +315,16 @@ impl CapabilitySnapshot {
 ///     discovered.client = client;
 /// }
 /// ```
+///
+/// ```compile_fail,E0616
+/// use ga4gh_sdk::clients::{
+///     capabilities::{CapabilitySnapshot, Discovered},
+///     tes::TES,
+/// };
+/// fn swap_snapshot(discovered: &mut Discovered<TES>, snapshot: CapabilitySnapshot) {
+///     discovered.capabilities = snapshot;
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Discovered<T> {
     /// The client, also reached through `Deref` and [`Self::client`].

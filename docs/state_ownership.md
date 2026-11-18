@@ -55,6 +55,9 @@ either change.
 
 ## Current state
 
+This section describes commit `a5d0175`. The fields that it shows as public
+are private now (see [Status](#status)).
+
 ### Client configuration, transport, and discovery
 
 | Type | Fields | Set by | Read by | Public mutation |
@@ -298,9 +301,9 @@ The fields of this record were never in a release: the SDK has no tag, and
 no crate or Python package is published under its names. No downstream crate
 can depend on them through a release, so a deprecation release would warn
 nobody. The first release therefore ships steps 1 and 3 together
-([#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)): the accessors, and the fields already private. Its release
-notes list each former public field with its replacement (see
-[Migration](#migration)).
+([#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)): the accessors, and
+the fields already private. Its release notes list each former public field
+with its replacement (see [Migration](#migration)).
 
 Methods and fields can have the same name in Rust, so `tes.transport`
 becomes `tes.transport()` and `task.inner` becomes `task.inner()`. The
@@ -316,9 +319,10 @@ No release contains these changes yet; the SDK has no tagged release.
   `DRS::without_discovery`
   ([#294](https://github.com/ga4gh/ga4gh-sdk/issues/294)).
 - Done (private, [#294](https://github.com/ga4gh/ga4gh-sdk/issues/294),
-  [#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)): the `service` and `transport` fields of `TES`, `WES`, and `DRS`,
-  the `client` and `capabilities` fields of `Discovered`, and the `config`
-  field of `Transport` are private, and the `config` copy of `TES`, `WES`,
+  [#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)): the `service` and
+  `transport` fields of `TES`, `WES`, and `DRS`, the `client` and
+  `capabilities` fields of `Discovered`, and the `config` field of
+  `Transport` are private, and the `config` copy of `TES`, `WES`,
   and `DRS` is gone. DRS resolution references take their API root from
   the transport's configuration. The SDK's code, tests, CLI, Python
   bindings, and the downstream example use the accessors and constructors.

@@ -40,6 +40,13 @@ use serde::de::DeserializeOwned;
 ///     drs.transport = transport;
 /// }
 /// ```
+///
+/// ```compile_fail,E0616
+/// use ga4gh_sdk::clients::{drs::DRS, serviceinfo::models::Service};
+/// fn swap_service(drs: &mut DRS, service: Service) {
+///     drs.service = service;
+/// }
+/// ```
 #[derive(Debug)]
 pub struct DRS {
     /// The service info that the client read when it was built; returned by

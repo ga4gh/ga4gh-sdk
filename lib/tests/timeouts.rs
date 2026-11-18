@@ -324,12 +324,15 @@ async fn refresh_uses_the_discovery_timeout() {
         .await
         .unwrap();
     assert!(tes.refresh().await.is_err());
+    // Discovery and the refresh only: the failure is the slow second answer.
+    assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 
     let server = serve(slow_after_first("wes")).await;
     let mut wes = WES::discover(&config(&server.url, short), LONG)
         .await
         .unwrap();
     assert!(wes.refresh().await.is_err());
+    assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

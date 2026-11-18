@@ -161,6 +161,13 @@ fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<s
 ///     wes.service = service;
 /// }
 /// ```
+///
+/// ```compile_fail,E0616
+/// use ga4gh_sdk::{clients::wes::WES, utils::transport::Transport};
+/// fn swap_transport(wes: &mut WES, transport: Transport) {
+///     wes.transport = transport;
+/// }
+/// ```
 #[derive(Debug)]
 pub struct WES {
     /// The service info that the client read when it was built; returned by
