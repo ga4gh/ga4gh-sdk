@@ -300,10 +300,29 @@ impl CapabilitySnapshot {
 /// capabilities. Accessors never fetch; refresh is explicit and atomic on success.
 #[derive(Debug)]
 pub struct Discovered<T> {
-    /// The client, also reached through `Deref`.
+    /// The client, also reached through `Deref` and [`Self::client`].
     pub client: T,
-    /// The service-info response that the client was built from.
+    /// The service-info response that the client was built from; also
+    /// returned by [`Self::capabilities`].
     pub capabilities: CapabilitySnapshot,
+}
+impl<T> Discovered<T> {
+    /// The client, also reached through `Deref`.
+    pub fn client(&self) -> &T {
+        &self.client
+    }
+
+    /// The capability snapshot from the service-info response that the
+    /// client's discovered service came from.
+    pub fn capabilities(&self) -> &CapabilitySnapshot {
+        &self.capabilities
+    }
+
+    /// Splits the wrapper into the client and its capability snapshot, for
+    /// example to keep only the client.
+    pub fn into_parts(self) -> (T, CapabilitySnapshot) {
+        (self.client, self.capabilities)
+    }
 }
 impl<T> Deref for Discovered<T> {
     type Target = T;

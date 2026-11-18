@@ -181,12 +181,16 @@ impl Task {
 /// The main struct for interacting with a TES service.
 #[derive(Debug)]
 pub struct TES {
-    /// The configuration that the client was built with.
+    /// A copy of the transport's configuration, made when the client was
+    /// built. Requests don't read it, so it can differ from what they
+    /// use; read [`Self::configuration`] instead.
     #[allow(dead_code)]
-    pub config: Configuration, // not used yet
-    /// The service info that the client read when it was built.
+    pub config: Configuration,
+    /// The service info that the client read when it was built; also
+    /// returned by [`Self::discovered_service_info`].
     pub service: Service,
-    /// The transport that sends the client's requests.
+    /// The transport that sends the client's requests; also returned by
+    /// [`Self::transport`].
     pub transport: Transport,
 }
 
@@ -228,6 +232,28 @@ impl TES {
             transport,
             service,
         })
+    }
+
+    /// The configuration of the client's transport: the value that requests
+    /// read, not the separate `config` copy. See
+    /// [`Transport::configuration`] for what it determines, and for the
+    /// settings of an injected HTTP client that apply instead.
+    pub fn configuration(&self) -> &Configuration {
+        self.transport.configuration()
+    }
+
+    /// The transport that sends the client's requests, for example to share
+    /// it with a client for an added endpoint.
+    pub fn transport(&self) -> &Transport {
+        &self.transport
+    }
+
+    /// The service info that the client read when it was built. It is a
+    /// snapshot: the client does not fetch it again. Within the SDK, only
+    /// `Discovered::refresh` replaces it, together with the capability
+    /// snapshot.
+    pub fn discovered_service_info(&self) -> &Service {
+        &self.service
     }
 
     /// Creates a new TES task.
@@ -766,5 +792,50 @@ mod tests {
             assert_eq!(http.status, reqwest::StatusCode::UNAUTHORIZED);
             assert_eq!(http.body, "unauthorized");
         }
+    }
+
+    /// The accessors return the transport's own configuration and the
+    /// discovered service, below a non-default API root and with timeouts
+    /// from `Transport::with_timeouts`.
+    #[tokio::test]
+    async fn configuration_is_transport_configuration() {
+        let _m = mock("GET", "/accessors/custom/tes/v9/service-info")
+            .with_status(200)
+            .with_body(
+                serde_json::json!({
+                    "id": "org.example.tes",
+                    "name": "Example",
+                    "type": { "group": "org.ga4gh", "artifact": "tes", "version": "1.0.0" },
+                    "organization": { "name": "Example", "url": "https://example.org" },
+                    "version": "1.0.0"
+                })
+                .to_string(),
+            )
+            .create();
+        let root = format!("{}/accessors/custom/tes/v9/", server_url());
+        let config = Configuration::new(url::Url::parse(&root).unwrap());
+        let connect = std::time::Duration::from_secs(3);
+        let request = std::time::Duration::from_secs(7);
+        let transport = Transport::with_timeouts(&config, connect, request).unwrap();
+
+        let mut client = TES::with_transport(transport).await.unwrap();
+
+        assert_eq!(client.configuration().base_path.as_str(), root);
+        assert_eq!(client.configuration().timeouts.connect, connect);
+        assert_eq!(client.configuration().timeouts.request, request);
+        assert!(std::ptr::eq(
+            client.configuration(),
+            client.transport().configuration()
+        ));
+        assert!(std::ptr::eq(client.transport(), &client.transport));
+        assert_eq!(client.discovered_service_info().id, "org.example.tes");
+        assert!(std::ptr::eq(
+            client.discovered_service_info(),
+            &client.service
+        ));
+
+        // The accessor reads the transport, not the separate `config` copy.
+        client.config.base_path = url::Url::parse("https://stale.example/").unwrap();
+        assert_eq!(client.configuration().base_path.as_str(), root);
     }
 }

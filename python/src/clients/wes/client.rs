@@ -58,7 +58,7 @@ impl PyWES {
     #[getter]
     fn config(&self) -> PyConfiguration {
         PyConfiguration {
-            inner: self.inner.config.clone(),
+            inner: self.inner.configuration().clone(),
         }
     }
 
@@ -134,5 +134,30 @@ impl PyWES {
     /// Gets a run's details, with its request, state, logs and outputs, as a `RunLog`.
     pub fn get(&self, py: Python<'_>, id: &str) -> PyResult<PyRunLog> {
         get_run_log(py, &self.inner.transport, id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ga4gh_sdk::clients::serviceinfo::models::Service;
+    use ga4gh_sdk::utils::configuration::Configuration;
+    use ga4gh_sdk::utils::transport::Transport;
+
+    /// The `config` getter returns the transport's configuration, not the
+    /// client's separate `config` copy.
+    #[test]
+    fn config_is_transport_configuration() {
+        let root = "https://example.org/custom/ga4gh/wes/v9/";
+        let transport = Transport::new(&Configuration::new(url::Url::parse(root).unwrap()));
+        let stale = Configuration::new(url::Url::parse("https://stale.example/").unwrap());
+        let client = PyWES {
+            inner: WES {
+                config: stale,
+                service: Service::default(),
+                transport,
+            },
+        };
+        assert_eq!(client.config().inner.base_path.as_str(), root);
     }
 }
