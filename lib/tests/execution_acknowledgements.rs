@@ -13,17 +13,16 @@ use mockito::{mock, server_url};
 #[tokio::test]
 async fn malformed_tes_acknowledgements_never_return_handles_or_replay() {
     let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
-    let tes = TES {
-        transport: Transport::new(&config),
-        config,
-        service: Service {
+    let tes = TES::without_discovery(
+        Transport::new(&config),
+        Service {
             r#type: Box::new(ServiceType {
                 artifact: "tes".into(),
                 ..Default::default()
             }),
             ..Default::default()
         },
-    };
+    );
     for body in [
         "{}",
         r#"{"id":null}"#,
@@ -50,17 +49,16 @@ async fn malformed_tes_acknowledgements_never_return_handles_or_replay() {
 #[tokio::test]
 async fn raw_tes_creation_preserves_extensions_and_rejects_missing_id() {
     let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
-    let tes = TES {
-        transport: Transport::new(&config),
-        config,
-        service: Service {
+    let tes = TES::without_discovery(
+        Transport::new(&config),
+        Service {
             r#type: Box::new(ServiceType {
                 artifact: "tes".into(),
                 ..Default::default()
             }),
             ..Default::default()
         },
-    };
+    );
     let body = serde_json::json!({
         "executors": [],
         "extension_field": {"kept": true}
@@ -92,17 +90,16 @@ async fn opaque_tes_id_survives_creation_and_later_requests() {
         .expect(1)
         .create();
     let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
-    let tes = TES {
-        transport: Transport::new(&config),
-        config,
-        service: Service {
+    let tes = TES::without_discovery(
+        Transport::new(&config),
+        Service {
             r#type: Box::new(ServiceType {
                 artifact: "tes".into(),
                 ..Default::default()
             }),
             ..Default::default()
         },
-    };
+    );
     let task = tes.create(TesTask::default()).await.unwrap();
     assert_eq!(task.id, id);
     task.status().await.unwrap();
@@ -150,17 +147,16 @@ async fn wes_cancel_requires_the_exact_requested_id_without_replay() {
 async fn wes_creation_validates_once_and_preserves_opaque_ids() {
     use ga4gh_sdk::clients::wes::{models::RunRequest, WES};
     let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
-    let wes = WES {
-        transport: Transport::new(&config),
-        config,
-        service: Service {
+    let wes = WES::without_discovery(
+        Transport::new(&config),
+        Service {
             r#type: Box::new(ServiceType {
                 artifact: "wes".into(),
                 ..Default::default()
             }),
             ..Default::default()
         },
-    };
+    );
     let request = RunRequest {
         workflow_type: "CWL".into(),
         workflow_type_version: "v1.2".into(),
@@ -254,20 +250,12 @@ async fn convenience_submission_lost_responses_are_ambiguous_and_never_replayed(
         };
         let transport = Transport::new(&config);
         let error = if wes {
-            let client = WES {
-                config,
-                service,
-                transport,
-            };
+            let client = WES::without_discovery(transport, service);
             let mut request = RunRequest::new("CWL".into(), "v1.2".into(), "main.cwl".into());
             request.workflow_params = Some(serde_json::json!({}));
             client.run_workflow(request).await.unwrap_err()
         } else {
-            let client = TES {
-                config,
-                service,
-                transport,
-            };
+            let client = TES::without_discovery(transport, service);
             client.create(TesTask::default()).await.unwrap_err()
         };
         assert!(

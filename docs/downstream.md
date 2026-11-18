@@ -62,12 +62,16 @@ pub async fn task_usage(&self, id: &str) -> ga4gh_sdk::Result<TaskUsage> {
 - `Transport::get`, `post`, `put` and `delete` take paths relative to the
   configured API root (`base_path`). Absolute URLs and paths that leave the
   root are rejected. `urlencode` encodes a path segment, such as an ID.
-- `UsageClient::from_transport(tes.transport.clone())` shares the transport
-  of an SDK client, such as `TES`. The new client then uses the same base
-  path, user agent, configured credentials and HTTP client: timeouts, TLS
-  settings and connection pool. `UsageClient::new(&config)` creates its own
-  transport and applies the same configured credentials. An injected HTTP
-  client has a separate authentication policy; see the
+- `UsageClient::from_transport(tes.transport().clone())` shares the
+  transport of an SDK client, such as `TES`. The new client then uses the
+  same base path, user agent, configured credentials and HTTP client:
+  timeouts, TLS settings and connection pool. To use an injected HTTP client
+  for both, build the SDK client with it, as in
+  `TES::with_transport(Transport::with_client(&config, client))`;
+  `tes.configuration()` then returns that transport's configuration.
+  `UsageClient::new(&config)` creates its own transport and applies the same
+  configured credentials. An injected HTTP client has a separate
+  authentication policy; see the
   [authentication guide](authentication.md#request-boundary-and-failures).
 - For other methods, headers or bodies, `request_builder` returns a
   `reqwest::RequestBuilder` for a path beneath the root, and
@@ -291,9 +295,10 @@ this guide in the same pull request.
   The SDK supports other credential sources described in the
   [authentication guide](authentication.md); this example does not exercise
   each one.
-- The example assigns and reads public client fields, such as
-  `tes.transport`. The [client state ownership record](state_ownership.md)
-  describes the planned move to constructors and accessors.
+- The example reads client state through accessors, such as
+  `tes.transport()` and `tes.configuration()`. The client fields are
+  private; the [client state ownership record](state_ownership.md#migration)
+  lists the replacement of each former public field and explains why.
 - The example is Rust only. Building on the Python bindings is tracked in
   [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78), with the other
   remaining steps for downstream SDKs.

@@ -1,9 +1,65 @@
 //! `TesTask`: a TES task to create, or one as returned by the server, with its JSON.
+//!
+//! The model and the JSON of a task are private, so that an extension crate can't change
+//! one without the other (see `docs/state_ownership.md`, "Python views"). The same holds
+//! for the other result classes that keep JSON. Assigning a field fails to compile, here
+//! for one class of each family:
+//!
+//! ```compile_fail,E0616
+//! use ga4gh::clients::tes::PyTesTask;
+//! fn reset(task: &mut PyTesTask) {
+//!     task.inner = task.inner().clone();
+//! }
+//! ```
+//!
+//! ```compile_fail,E0616
+//! use ga4gh::clients::tes::PyTesTask;
+//! fn reset(task: &mut PyTesTask) {
+//!     task.raw = task.raw().clone();
+//! }
+//! ```
+//!
+//! ```compile_fail,E0616
+//! use ga4gh::clients::wes::PyRunRequest;
+//! fn reset(request: &mut PyRunRequest) {
+//!     request.raw = request.raw().clone();
+//! }
+//! ```
+//!
+//! ```compile_fail,E0616
+//! use ga4gh::clients::wes::PyRunListResponse;
+//! fn reset(page: &mut PyRunListResponse) {
+//!     page.runs = page.runs();
+//! }
+//! ```
+//!
+//! ```compile_fail,E0616
+//! use ga4gh::clients::trs::PyTool;
+//! fn reset(tool: &mut PyTool) {
+//!     tool.inner = tool.inner().clone();
+//! }
+//! ```
+//!
+//! The accessors read them (stable rustdoc doesn't check the error code above, so this
+//! twin shows that the imports and accessors are valid), and a changed task is built from
+//! a changed copy of its JSON:
+//!
+//! ```no_run
+//! use ga4gh::clients::{tes::PyTesTask, trs::PyTool, wes::{PyRunListResponse, PyRunRequest}};
+//! fn read(task: &PyTesTask, request: &PyRunRequest, page: &PyRunListResponse, tool: &PyTool) {
+//!     let _ = (task.inner(), request.raw(), page.runs(), tool.inner());
+//! }
+//! fn rename(task: &PyTesTask) -> pyo3::PyResult<PyTesTask> {
+//!     let mut raw = task.raw().clone();
+//!     raw["name"] = serde_json::json!("changed");
+//!     PyTesTask::from_value(raw)
+//! }
+//! ```
 
 use super::helpers::invalid_response;
 use super::state::state_to_python;
 use crate::utils::convert::{check_extra_args, read_file, to_json, to_python};
-use crate::utils::json::field;
+use crate::utils::json::{field, view_accessors};
 use ga4gh_sdk::clients::tes::models::TesTask;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -19,11 +75,12 @@ use std::path::{Path, PathBuf};
 #[derive(Clone)]
 pub struct PyTesTask {
     /// The task parsed into the TES model; derived from `raw`.
-    pub inner: TesTask,
-    /// The task's JSON as given or received. Build both fields with `from_json` or
-    /// `from_value` to keep them in step.
-    pub raw: Value,
+    inner: TesTask,
+    /// The task's JSON as given or received.
+    raw: Value,
 }
+
+view_accessors!(PyTesTask, TesTask);
 
 impl PyTesTask {
     pub(super) fn parse(raw: Value) -> Result<Self, String> {
@@ -114,7 +171,7 @@ impl PyTesTask {
     #[classmethod]
     fn from_file<'py>(cls: &Bound<'py, PyType>, path: PathBuf) -> PyResult<Bound<'py, PyAny>> {
         let task = Self::from_path(cls.py(), &path)?;
-        cls.call1((to_python(cls.py(), &task.raw)?,))
+        cls.call1((to_python(cls.py(), task.raw())?,))
     }
 
     /// Lets `pickle` and `copy` rebuild the task as `type(task)(task.to_dict())`, with the
@@ -123,21 +180,21 @@ impl PyTesTask {
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
     ) -> PyResult<(Bound<'py, PyType>, (Py<PyAny>,), Option<Bound<'py, PyAny>>)> {
-        let raw = to_python(slf.py(), &slf.borrow().raw)?;
+        let raw = to_python(slf.py(), slf.borrow().raw())?;
         let state = slf.getattr("__dict__").ok();
         Ok((slf.get_type(), (raw,), state))
     }
 
     #[getter]
     pub fn id(&self) -> Option<String> {
-        self.inner.id.clone()
+        self.inner().id.clone()
     }
 
     /// The task's state as a `TesState`; `UNKNOWN` if the task has none or one that
     /// TES 1.1 doesn't define.
     #[getter]
     pub fn state(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        state_to_python(py, self.inner.state.unwrap_or_default())
+        state_to_python(py, self.inner().state.unwrap_or_default())
     }
 
     /// Same as `state`.
@@ -148,68 +205,113 @@ impl PyTesTask {
 
     #[getter]
     fn name(&self) -> Option<String> {
-        self.inner.name.clone()
+        self.inner().name.clone()
     }
 
     #[getter]
     fn description(&self) -> Option<String> {
-        self.inner.description.clone()
+        self.inner().description.clone()
     }
 
     #[getter]
     fn creation_time(&self) -> Option<String> {
-        self.inner.creation_time.clone()
+        self.inner().creation_time.clone()
     }
 
     #[getter]
     fn inputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "inputs")
+        field(py, self.raw(), "inputs")
     }
 
     #[getter]
     fn outputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "outputs")
+        field(py, self.raw(), "outputs")
     }
 
     #[getter]
     fn resources(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "resources")
+        field(py, self.raw(), "resources")
     }
 
     #[getter]
     fn executors(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "executors")
+        field(py, self.raw(), "executors")
     }
 
     #[getter]
     fn volumes(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "volumes")
+        field(py, self.raw(), "volumes")
     }
 
     #[getter]
     fn tags(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "tags")
+        field(py, self.raw(), "tags")
     }
 
     #[getter]
     fn logs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "logs")
+        field(py, self.raw(), "logs")
     }
 
     /// The task as JSON text, as given or received.
     pub fn json(&self) -> String {
-        self.raw.to_string()
+        self.raw().to_string()
     }
 
     /// The task as a new `dict`, as given or received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        to_python(py, &self.raw)
+        to_python(py, self.raw())
     }
 
     fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {
         let name = slf.get_type().qualname()?;
         let id = slf.getattr("id")?.repr()?;
-        let state = slf.borrow().inner.state.unwrap_or_default();
+        let state = slf.borrow().inner().state.unwrap_or_default();
         Ok(format!("{name}(id={id}, state='{state}')"))
+    }
+}
+
+// The tests call `parse`, which `from_value` and `from_json` share: a Python exception
+// needs libpython, which the test binary doesn't link (see `utils::json::tests`).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::json::tests::assert_describes;
+    use serde_json::json;
+
+    #[test]
+    fn a_task_describes_its_json() {
+        let raw = json!({
+            "name": "hello",
+            "description": null,
+            "executors": [{"image": "alpine", "command": ["true"]}],
+            "x_extension": {"kept": true}
+        });
+        let task = PyTesTask::parse(raw.clone()).unwrap();
+        assert_describes(task.inner(), task.raw(), &task.json(), &raw);
+        assert_eq!(task.inner().name.as_deref(), Some("hello"));
+        assert_eq!(task.inner().description, None);
+        assert_eq!(task.inner().extra["x_extension"], json!({"kept": true}));
+    }
+
+    #[test]
+    fn a_changed_task_is_built_from_changed_json() {
+        let task = PyTesTask::parse(json!({"name": "original"})).unwrap();
+        let mut raw = task.raw().clone();
+        raw["name"] = json!("changed");
+        let changed = PyTesTask::parse(raw.clone()).unwrap();
+        assert_describes(changed.inner(), changed.raw(), &changed.json(), &raw);
+        assert_eq!(changed.inner().name.as_deref(), Some("changed"));
+        assert_eq!(task.inner().name.as_deref(), Some("original"));
+    }
+
+    #[test]
+    fn json_that_is_no_task_is_rejected() {
+        assert_eq!(
+            PyTesTask::parse(json!([1])).err().unwrap(),
+            "not a JSON object"
+        );
+        let error = PyTesTask::parse(json!({"name": 1})).err().unwrap();
+        assert!(error.starts_with("invalid type: integer `1`"), "{error}");
     }
 }

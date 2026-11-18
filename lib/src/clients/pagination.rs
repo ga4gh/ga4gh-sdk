@@ -390,7 +390,7 @@ impl TES {
         options: PagingOptions,
     ) -> crate::Result<Pager> {
         Pager::new(
-            &self.transport,
+            self.transport(),
             ServiceKind::Tes,
             params
                 .map(serde_json::to_value)
@@ -410,6 +410,6 @@ impl WES {
         let query = page_size
             .map(|size| json!({"page_size":size}))
             .unwrap_or(json!({}));
-        Pager::new(&self.transport, ServiceKind::Wes, query, options)
+        Pager::new(self.transport(), ServiceKind::Wes, query, options)
     }
 }

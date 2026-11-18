@@ -1,8 +1,8 @@
 //! Descriptor, test, container, and listed-file results.
 
-use super::helpers::to_raw;
+use super::helpers::invalid_response;
 use crate::utils::convert::to_python;
-use crate::utils::json::field;
+use crate::utils::json::{field, view_accessors};
 use ga4gh_sdk::clients::trs::models::{FileWrapper, ToolFile};
 use pyo3::prelude::*;
 use serde_json::Value;
@@ -14,18 +14,25 @@ use serde_json::Value;
 #[pyclass(name = "FileWrapper", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyFileWrapper {
-    pub inner: FileWrapper,
+    /// The file in the TRS model.
+    inner: FileWrapper,
     /// The file as JSON; derived from `inner`.
-    pub raw: Value,
+    raw: Value,
 }
 
+view_accessors!(PyFileWrapper, FileWrapper);
+
 impl PyFileWrapper {
-    /// Wraps a file of the Rust client, keeping its JSON.
-    pub fn new(inner: FileWrapper) -> PyResult<Self> {
+    fn build(inner: FileWrapper) -> serde_json::Result<Self> {
         Ok(Self {
-            raw: to_raw(&inner)?,
+            raw: serde_json::to_value(&inner)?,
             inner,
         })
+    }
+
+    /// Wraps a file of the Rust client, keeping its JSON.
+    pub fn new(inner: FileWrapper) -> PyResult<Self> {
+        Self::build(inner).map_err(invalid_response)
     }
 }
 
@@ -33,33 +40,33 @@ impl PyFileWrapper {
 impl PyFileWrapper {
     #[getter]
     fn content(&self) -> Option<String> {
-        self.inner.content.clone()
+        self.inner().content.clone()
     }
 
     #[getter]
     fn url(&self) -> Option<String> {
-        self.inner.url.clone()
+        self.inner().url.clone()
     }
 
     #[getter]
     fn checksum(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "checksum")
+        field(py, self.raw(), "checksum")
     }
 
     /// The image or descriptor type of the file, such as `"Docker"` or `"CWL"`.
     #[getter]
     fn image_type(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "image_type")
+        field(py, self.raw(), "image_type")
     }
 
     /// The file as JSON text.
     pub fn json(&self) -> String {
-        self.raw.to_string()
+        self.raw().to_string()
     }
 
     /// The file as a new `dict`.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        to_python(py, &self.raw)
+        to_python(py, self.raw())
     }
 
     /// Shows the URL and the length of the content, not the content itself.
@@ -67,7 +74,7 @@ impl PyFileWrapper {
         let name = slf.get_type().qualname()?;
         let this = slf.borrow();
         let url = slf.getattr("url")?.repr()?;
-        let content = match &this.inner.content {
+        let content = match &this.inner().content {
             Some(content) => format!("<{} characters>", content.chars().count()),
             None => "None".to_owned(),
         };
@@ -79,18 +86,25 @@ impl PyFileWrapper {
 #[pyclass(name = "ToolFile", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyToolFile {
-    pub inner: ToolFile,
+    /// The file in the TRS model.
+    inner: ToolFile,
     /// The file as JSON; derived from `inner`.
-    pub raw: Value,
+    raw: Value,
 }
 
+view_accessors!(PyToolFile, ToolFile);
+
 impl PyToolFile {
-    /// Wraps a file of the Rust client, keeping its JSON.
-    pub fn new(inner: ToolFile) -> PyResult<Self> {
+    fn build(inner: ToolFile) -> serde_json::Result<Self> {
         Ok(Self {
-            raw: to_raw(&inner)?,
+            raw: serde_json::to_value(&inner)?,
             inner,
         })
+    }
+
+    /// Wraps a file of the Rust client, keeping its JSON.
+    pub fn new(inner: ToolFile) -> PyResult<Self> {
+        Self::build(inner).map_err(invalid_response)
     }
 }
 
@@ -98,28 +112,28 @@ impl PyToolFile {
 impl PyToolFile {
     #[getter]
     fn path(&self) -> Option<String> {
-        self.inner.path.clone()
+        self.inner().path.clone()
     }
 
     /// The file type, such as `"PRIMARY_DESCRIPTOR"`, as the server sent it.
     #[getter]
     fn file_type(&self) -> Option<String> {
-        self.inner.file_type.as_ref().map(ToString::to_string)
+        self.inner().file_type.as_ref().map(ToString::to_string)
     }
 
     #[getter]
     fn checksum(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        field(py, &self.raw, "checksum")
+        field(py, self.raw(), "checksum")
     }
 
     /// The file as JSON text.
     pub fn json(&self) -> String {
-        self.raw.to_string()
+        self.raw().to_string()
     }
 
     /// The file as a new `dict`.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        to_python(py, &self.raw)
+        to_python(py, self.raw())
     }
 
     fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {
@@ -127,5 +141,41 @@ impl PyToolFile {
         let path = slf.getattr("path")?.repr()?;
         let file_type = slf.getattr("file_type")?.repr()?;
         Ok(format!("{name}(path={path}, file_type={file_type})"))
+    }
+}
+
+// The tests call `build`, which `new` shares (see `utils::json::tests`).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::json::tests::assert_describes;
+    use serde_json::json;
+
+    /// `raw` parsed into a model: the SDK's TRS client gives the bindings models.
+    fn model<T: serde::de::DeserializeOwned>(raw: &Value) -> T {
+        serde_json::from_value(raw.clone()).unwrap()
+    }
+
+    #[test]
+    fn a_file_describes_its_json() {
+        let file = json!({"content": "cwlVersion: v1.2", "x_encoding": "utf-8"});
+        let mut given = file.clone();
+        given["url"] = Value::Null;
+        let view = PyFileWrapper::build(model(&given)).unwrap();
+        // The models serialize unknown fields, and leave out the ones that are `null`.
+        assert_describes(view.inner(), view.raw(), &view.json(), &file);
+        assert_eq!(view.inner().url, None);
+        assert_eq!(view.inner().extra["x_encoding"], "utf-8");
+    }
+
+    #[test]
+    fn a_listed_file_describes_its_json() {
+        let file = json!({"path": "main.cwl", "file_type": "PRIMARY_DESCRIPTOR", "x_size": 9});
+        let mut given = file.clone();
+        given["checksum"] = Value::Null;
+        let view = PyToolFile::build(model(&given)).unwrap();
+        assert_describes(view.inner(), view.raw(), &view.json(), &file);
+        assert_eq!(view.inner().checksum, None);
+        assert_eq!(view.inner().extra["x_size"], 9);
     }
 }

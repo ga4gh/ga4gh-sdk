@@ -26,6 +26,32 @@ def test_get_service_info_failure(server):
     assert (request["method"], request["path"]) == ("GET", "/missing/service-info")
 
 
+def test_get_service_info_keeps_custom_types_and_extensions(server):
+    result = ServiceInfo(Configuration(f"{server.root}/si-extended")).get_service_info()
+
+    # The string is the Rust model's debug output, whose layout isn't stable.
+    for value in ("custom-api", "99.0", "x-provider", "features", "gpu"):
+        assert value in result
+
+
+@pytest.mark.parametrize(
+    "case, message",
+    [
+        ("missing", "missing field `version`"),
+        ("wrong-type", "invalid type: integer"),
+        # Loose matches of the parsers' messages, which their libraries word.
+        ("malformed", "(?i:eof)"),
+        ("bad-utf8", "(?i:utf-?8)"),
+        ("unauthorized", "401"),
+    ],
+)
+def test_get_service_info_rejects_invalid_responses(server, case, message):
+    service_info = ServiceInfo(Configuration(f"{server.root}/si-{case}"))
+
+    with pytest.raises(RuntimeError, match=rf"Failed to get service info: .*{message}"):
+        service_info.get_service_info()
+
+
 @pytest.mark.parametrize(
     "method, args, path, body, expected",
     [

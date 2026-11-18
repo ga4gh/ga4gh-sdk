@@ -11,7 +11,8 @@ tracks adoption across APIs; TRS is the first implementation.
 | Client | Selected response contracts | Current policy |
 | --- | --- | --- |
 | TRS | [2.0.1](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.1), [2.0.2](https://github.com/ga4gh/tool-registry-service-schemas/tree/2.0.2) | Per-client selection; tested with local HTTP fixtures for both contracts. |
-| TES, WES, DRS, Service Info, Service Registry | See [pinned model schemas](autogenerate_OAI_models.md#pinned-specs). | Existing behavior; these clients do not yet use shared version selection. A pinned schema is not a tested compatibility range. |
+| Service Info | [1.0.0](https://github.com/ga4gh-discovery/ga4gh-service-info/tree/v1.0.0) | One generic metadata contract for every service type, without version selection; tested with local HTTP fixtures. See [Service Info](#service-info). |
+| TES, WES, DRS, Service Registry | See [pinned model schemas](autogenerate_OAI_models.md#pinned-specs). | Existing behavior; these clients do not yet use shared version selection. A pinned schema is not a tested compatibility range. |
 
 Both TRS contracts use the same `/ga4gh/trs/v2` API root and operations. The
 SDK keeps that root under caller control. TRS 2.0.2 adds an optional version
@@ -211,3 +212,85 @@ subprocesses, including optional metadata tolerance, extensions, tag guards,
 pagination, discovery failures, malformed data, and bounded HTTP errors.
 Live registry tests in `lib/tests/trs_public_registries.rs` provide separate
 interoperability evidence; they do not prove conformance of every deployment.
+
+## Service Info
+
+`ServiceInfo::get()` reads `service-info` below the configured API root, and
+`get_at(path)` reads another path below it. Both decode the response into the
+generic `serviceinfo::models::Service`, generated from the pinned
+[Service Info 1.0.0](https://github.com/ga4gh-discovery/ga4gh-service-info/tree/v1.0.0)
+schema. The SDK has no second Service Info contract and selects no decoder:
+1.0.0 is the only schema version it pins, and no demonstrated contract
+difference needs another one. `TES::new`, `WES::new`, `DRS::new` and
+capability discovery (`TES::discover`, `WES::discover`) read their
+service info with the same request.
+
+### Version fields
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The version of the service software, for example a release, date or commit. |
+| `type.group`, `type.artifact` | The API that the service implements, for example `org.ga4gh` and `tes`, or a custom API in another group. |
+| `type.version` | The version of that API, for example TES `1.1.0`. |
+
+Neither version declares the Service Info schema version, so the client
+doesn't choose how to decode the document from them. It returns every
+`type` as declared, including custom groups and artifacts, artifacts that
+aren't GA4GH APIs, and API versions that it doesn't know or that aren't
+semantic versions. It doesn't judge whether the metadata is consistent, for
+example an empty `id`, a `name` that suggests another API, or equal software
+and API versions.
+
+That decision belongs to the service-specific clients: `TES::new`, `WES::new`
+and `DRS::new` check `type.artifact` (`with_artifact` accepts another one);
+`DRS::new` also requires the group `org.ga4gh`, and capability discovery
+requires that group and compares the artifact case-insensitively.
+`TRS::new` selects its profile from `type.version` as described in
+[Selection and capabilities](#selection-and-capabilities). The generic
+client stays usable for any service, including one that a service-specific
+client rejects.
+
+### Supported metadata
+
+| Data | Behavior |
+| --- | --- |
+| Required fields: `id`, `name`, `type` (`group`, `artifact`, `version`), `organization` (`name`, `url`), `version` | Read as strings. A missing field, `null`, or a value of another JSON type is an `Error::Parse`; no value is fabricated. An empty string is returned as it is. |
+| Optional fields: `description`, `contactUrl`, `documentationUrl`, `createdAt`, `updatedAt`, `environment` | `Some` for a string. An omitted field and `null` both read as `None`; another JSON type is an `Error::Parse`. Formats, such as RFC 3339 timestamps and URLs, aren't checked. |
+| Fields that the schema doesn't define, at the top level and in `type` and `organization` | Kept as received in the `extra` map of their object, including nested objects, arrays and `null` values. |
+
+Writing a `Service` back with `serde_json` yields the same JSON value, with
+two deliberate normalizations: an optional field that was `null` is omitted,
+because the typed model can't distinguish it from an omitted one, and the
+order of keys and the formatting of the document aren't kept. The model
+keeps no byte-for-byte copy of the response.
+
+### Failures
+
+| Response | Result |
+| --- | --- |
+| A body over the fixed discovery limits (8 MiB for success, 16 KiB for an error status) | An error whose `downcast_ref::<BodyLimitError>()` returns the limit and the status, also for a `401`, `403` or `404`; the body isn't truncated. |
+| A non-2xx status within the limit, including `401` and `403` | `Error::Http` with the status and the body; the error's `Display` and `Debug` output omit the body and the credential. With a [token provider](usage.md#token-providers), a `401` is retried once with a new token, as for every `GET` of the transport. |
+| A body that isn't valid UTF-8 | An error whose `downcast_ref::<std::str::Utf8Error>()` returns the decoding error. The text isn't repaired with replacement characters, also not in the discovery requests above. |
+| Malformed JSON, including an empty body, trailing data and a byte order mark | `Error::Parse`. |
+| JSON that isn't a valid `Service` | `Error::Parse` with the `serde_json` diagnostic, for example ``missing field `version` ``. |
+
+A failed decoding isn't retried, neither with another schema nor with a
+second request, and the client doesn't fall back to a more permissive model.
+The two provider adaptations of the SDK are scoped to their clients: the
+TRS client drops non-string `createdAt` and `updatedAt` values of one
+registry (see [Models and failures](#models-and-failures)), and `WES::new` and
+WES capability discovery fall back to the native service info of WES 1.0.1
+servers when a document isn't a valid `Service` (see the
+[model generation guide](autogenerate_OAI_models.md#pinned-specs)). The
+generic client applies neither.
+
+The Python `ServiceInfo.get_service_info()` uses the same client. It returns the
+`Service` as a formatted string, and raises `RuntimeError` with
+`Failed to get service info: …` and the message of the error above. The CLI
+has no direct Service Info command yet.
+
+Regression tests live in `lib/tests/serviceinfo_compatibility.rs` and the
+`ServiceInfo` tests of `python/tests/test_all.py`. The model's round trip is
+also covered by `lib/tests/model_unknown_values.rs`, and the token
+provider's retry by the transport's unit tests. They use local HTTP fixtures
+and don't establish that any particular deployment conforms to the schema.

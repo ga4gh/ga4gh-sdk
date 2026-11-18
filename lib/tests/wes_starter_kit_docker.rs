@@ -107,7 +107,7 @@ async fn starter_kit_wes_101_client_round_trip() {
         .await
         .expect("service discovery timed out")
         .expect("SDK could not discover Starter Kit WES");
-    let service = &wes.service;
+    let service = wes.discovered_service_info();
     assert_eq!(service.r#type.artifact, "wes");
     assert_eq!(service.r#type.version, "1.0.1");
     assert_eq!(service.id, "org.ga4gh.sdk.wes.integration");

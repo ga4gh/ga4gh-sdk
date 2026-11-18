@@ -5,6 +5,7 @@ use super::helpers::{invalid_response, invalid_response_text};
 use super::state::{parse_state, parse_view, state_to_python};
 use super::tes_task::PyTesTask;
 use crate::utils::convert::{to_python, with_query};
+use crate::utils::json::view_accessors;
 use ga4gh_sdk::clients::tes::models::ListTasksParams;
 use ga4gh_sdk::clients::tes::models::TesListTasksResponse;
 use ga4gh_sdk::utils::transport::Transport;
@@ -129,11 +130,15 @@ impl PyListTasksParams {
 #[pyclass(name = "ListTasksResponse", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyTesListTasksResponse {
-    pub inner: TesListTasksResponse,
-    pub tasks: Vec<PyTesTask>,
+    /// The response parsed into the model; derived from `raw`.
+    inner: TesListTasksResponse,
+    /// The tasks of `raw`, each with its JSON.
+    tasks: Vec<PyTesTask>,
     /// The response's JSON as received.
-    pub raw: Value,
+    raw: Value,
 }
+
+view_accessors!(PyTesListTasksResponse, TesListTasksResponse);
 
 impl PyTesListTasksResponse {
     fn parse(raw: Value) -> Result<Self, String> {
@@ -165,16 +170,46 @@ impl PyTesListTasksResponse {
 
     #[getter]
     pub fn next_page_token(&self) -> Option<String> {
-        self.inner.next_page_token.clone()
+        self.inner().next_page_token.clone()
     }
 
     /// The response as JSON text, as received.
     pub fn json(&self) -> String {
-        self.raw.to_string()
+        self.raw().to_string()
     }
 
     /// The response as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        to_python(py, &self.raw)
+        to_python(py, self.raw())
+    }
+}
+
+// The tests call `parse`, which `from_json` shares (see `utils::json::tests`).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::json::tests::assert_describes;
+    use serde_json::json;
+
+    #[test]
+    fn a_page_of_tasks_describes_its_json() {
+        let raw = json!({
+            "tasks": [{"id": "task-1", "name": null, "x_task": 1}],
+            "next_page_token": null,
+            "x_page": "kept"
+        });
+        let page = PyTesListTasksResponse::parse(raw.clone()).unwrap();
+        assert_describes(page.inner(), page.raw(), &page.json(), &raw);
+        assert_eq!(page.inner().next_page_token, None);
+        assert_eq!(page.inner().extra["x_page"], "kept");
+        let tasks = page.tasks();
+        assert_eq!(tasks.len(), 1);
+        assert_describes(
+            tasks[0].inner(),
+            tasks[0].raw(),
+            &tasks[0].json(),
+            &raw["tasks"][0],
+        );
+        assert_eq!(&page.inner().tasks[0], tasks[0].inner());
     }
 }

@@ -509,7 +509,7 @@ pub async fn export_all(
         }
     };
     let pager = ga4gh_sdk::clients::pagination::Pager::new(
-        &tes.transport,
+        tes.transport(),
         ServiceKind::Tes,
         query.into(),
         options,

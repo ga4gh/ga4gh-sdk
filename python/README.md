@@ -85,7 +85,7 @@ GA4GH_TRS_PUBLIC_TESTS=1 pytest tests/test_trs_public.py
 | Python API | Current behavior |
 | --- | --- |
 | `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. `set_token_provider()` supplies dynamic bearer tokens. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication), [Timeouts](#timeouts) and [Token providers](#token-providers). |
-| `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
+| `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. An invalid response raises `RuntimeError`; see the [Service Info contract](../docs/api_compatibility.md#service-info). |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, cancel and wait for TES tasks; read full task JSON including unknown fields. See [Waiting for tasks](#waiting-for-tasks). |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |
@@ -996,12 +996,28 @@ their direct `pyo3` dependency to `0.30.1` (and `pyo3-async-runtimes` to `0.30.0
 used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
 `Python::with_gil`, and `Bound::downcast` to `Py<PyAny>`, `Python::attach`, and
 `Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
-The `inner` field of each class holds the
-library type (for `PyAsyncTES`, a `LazyTES` that connects on first use). The TES calls
-that the sync and the async classes share are public functions in `clients::tes`, such as
+The `inner` field of each client and handle class holds the
+library type (for `PyAsyncTES`, a `LazyTES` that connects on first use); result classes
+have accessors instead (see [Result classes](#result-classes)).
+Read the state of a library client through its accessors, such as
+`self.inner.transport()` and `self.inner.configuration()` of `PyTES`: its
+fields, and those of `Discovered` and `Transport`, are private (see the
+[replacements](../docs/state_ownership.md#migration)). The Python getters,
+such as `TES.config` and `TES.transport`, don't change:
+
+```rust
+// Before: read the former public field
+let transport = self.inner.transport.clone();
+// After
+let transport = self.inner.transport().clone();
+let root = &self.inner.configuration().base_path;
+```
+
+The TES calls that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
 `clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
-`clients::tes_async` does. The extension module gets its own copies of the base classes,
+`clients::tes_async` does.
+The extension module gets its own copies of the base classes,
 which don't mix with those of the `ga4gh_sdk` module: a `ga4gh_sdk.Configuration` can't be passed
 to it. So register every base class that its users need
 (`m.add_class::<PyConfiguration>()` and so on, and `m.add("TesState",
@@ -1023,6 +1039,52 @@ The TRS classes (`PyTRS`, `PyTool` and so on, in `clients::trs`) follow it too;
 builds a client with the default options and `PyTRS::with_options(config, options,
 discovery)` one with `TrsOptions`; its `inner` field holds the library's `TRS`.
 `PyToolPage` keeps the response's `HeaderMap` in `headers`.
+
+`PyAsyncTES` keeps its state in its `transport` field:
+
+- The first call connects the `LazyTES` with that transport, so the service check and all
+  built-in calls use it. The `config` getter gives `transport.configuration()`.
+- `PyAsyncTES::with_transport(transport)` builds a client with a given transport, for
+  example one from `Transport::with_client`. Don't replace `transport` on a client that
+  may be connected: a connected client keeps the transport it connected with.
+- `PyAsyncTES::connection()` gives the `LazyTES` and the transport, for a call to move to
+  `spawn_io`; `clients::tes_async::connected(tes, transport)` gives the connected client.
+- The public `config` field is a copy of the configuration that the client was built
+  with. The SDK doesn't read it, so changing it has no effect.
+
+Migration: earlier versions connected a new `TES` from the `config` field, and
+`connected()` took a `Configuration`. Pass the transport to `connected()`, and change the
+client's configuration or HTTP client through `with_transport` instead of `config`.
+
+#### Result classes
+
+The result classes that keep JSON describe one JSON value: `PyTesTask`,
+`PyTesListTasksResponse`, `PyRunRequest`, `PyRunLog`, `PyTaskLog`, `PyRunSummary`,
+`PyRunListResponse`, `PyTaskListResponse`, `PyDrsObject`, `PyAccessURL`,
+`PyBulkAccessURL`, `PyTool`, `PyToolVersion`, `PyFileWrapper` and `PyToolFile`. Read the
+value with `raw()` and its model with `inner()`; the list responses also return their
+items with `tasks()`, `runs()` and `task_logs()`. The typed getters, `json()` and
+`to_dict()` describe that value, including fields that the models don't know.
+For `PyTesTask` and `PyRunRequest`, pickling and the request that `TES.create()`
+or `WES.run()` sends also use that value.
+
+The classes have no setters. To change a value, change a copy of `raw()` and build a new
+instance: with `from_value` for `PyTesTask` and `PyRunRequest`, and with `from_json` for
+the other classes that keep a server's JSON. The TRS classes keep the JSON of their model,
+so build them from a changed model with `new`.
+
+```rust
+let mut raw = task.raw().clone();
+raw["name"] = json!("changed");
+let task = PyTesTask::from_value(raw)?;
+```
+
+The `inner` and `raw` fields of these classes, and the `tasks`, `runs` and `task_logs`
+fields of the list responses, are private. A change to one of them would not change the
+others, and the getters, `json()` and the request sent could then disagree. Python code is
+not affected. In an extension crate, replace `task.inner` with `task.inner()`, `task.raw` with
+`task.raw()`, and `page.tasks` with `page.tasks()`, which returns a copy; replace a struct
+literal with the constructors above.
 
 ## Documentation
 

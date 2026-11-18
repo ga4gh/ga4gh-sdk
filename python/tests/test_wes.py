@@ -208,6 +208,27 @@ def test_run_sends_extension_fields_as_form_parts(server, wes_config):
     assert fields["x_dry_run"] == "true"
 
 
+def test_run_sends_request_json(server, wes_config):
+    """Getters, `json()`, `to_dict()`, copies and the sent form describe one JSON value.
+
+    A `null` known field isn't sent; an unknown field is sent as JSON, also when `null`.
+    """
+    given = {**RUN_REQUEST, "workflow_engine": None, "x_limits": {"cpus": 2}, "x_note": None}
+    request = RunRequest(given)
+    for view in (request, pickle.loads(pickle.dumps(request)), copy.deepcopy(request)):
+        assert view.to_dict() == given
+        assert json.loads(view.json()) == given
+        assert (view.workflow_url, view.workflow_engine) == (given["workflow_url"], None)
+        assert view.workflow_params == given["workflow_params"]
+    WES(wes_config).run(request)
+    text_parts = {"workflow_type", "workflow_type_version", "workflow_url", "workflow_engine_version"}
+    sent = {
+        key: value if key in text_parts else json.loads(value)
+        for key, value in text_fields(server.last()).items()
+    }
+    assert sent == {key: value for key, value in given.items() if key != "workflow_engine"}
+
+
 def test_run_from_file_path(server, wes_config, tmp_path):
     path = tmp_path / "run.json"
     path.write_text(json.dumps(RUN_REQUEST))

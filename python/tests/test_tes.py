@@ -89,6 +89,19 @@ def test_create_from_task_object(server, config):
     assert json.loads(server.last()["body"]) == NEW_TASK
 
 
+def test_task_accessors_match_json(server, config):
+    """Getters, `json()`, `to_dict()`, copies and the sent body describe one JSON value."""
+    given = {**NEW_TASK, "description": None, "x_unknown": [1, None]}
+    task = TesTask(given)
+    for view in (task, pickle.loads(pickle.dumps(task)), copy.deepcopy(task)):
+        assert view.to_dict() == given
+        assert json.loads(view.json()) == given
+        assert (view.name, view.description, view.tags) == ("hello", None, given["tags"])
+        assert view.executors == given["executors"]
+    TES(config).create(task)
+    assert json.loads(server.last()["body"]) == given
+
+
 def test_create_from_file_path(server, config, tmp_path):
     path = tmp_path / "task.json"
     path.write_text(json.dumps(NEW_TASK))

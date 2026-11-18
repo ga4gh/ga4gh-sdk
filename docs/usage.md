@@ -412,6 +412,13 @@ let info = ServiceInfo::new(&config)?.get().await?;
 println!("{} ({} {})", info.name, info.r#type.artifact, info.r#type.version);
 ```
 
+`info.version` is the version of the service software; `info.r#type.version`
+is the version of the API named by `type.group` and `type.artifact`.
+`ServiceInfo` returns any service type as declared, keeps undefined fields in
+`extra`, and returns an error for a missing required field, a value of the
+wrong type, malformed JSON or a body that isn't valid UTF-8. See
+[Service Info](api_compatibility.md#service-info) for the full contract.
+
 `get_raw()` returns the response body of the same request as received,
 unparsed, for callers that print or store it. For the CLI equivalent, see the
 [Service Info command](../cli/README.md#service-info-command).
