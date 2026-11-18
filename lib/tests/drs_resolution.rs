@@ -184,6 +184,47 @@ async fn immediate_200_and_resume_validation() {
 }
 
 #[tokio::test]
+async fn reference_root_is_transport_root() {
+    // Regression for #292: the reference must name the service that
+    // received the request, even if `DRS.config` names another one.
+    let mut client = drs();
+    let stale = "https://other.example/ga4gh/drs/v1/";
+    client.config.base_path = url::Url::parse(stale).unwrap();
+    let request = mock("GET", "/objects/id")
+        .with_status(202)
+        .with_header("retry-after", "1")
+        .expect(1)
+        .create();
+    let error = client.get_object_raw("id").await.unwrap_err();
+    let pending = error
+        .downcast_ref::<PendingResolution>()
+        .expect("202 is pending");
+    request.assert();
+    drop(request);
+    assert_eq!(pending.reference.api_root, format!("{}/", server_url()));
+    assert_eq!(pending.reference.endpoint, "objects/id");
+
+    // The reference resumes against the transport root; a reference that
+    // names the stale configuration root is still a foreign root.
+    let ready = mock("GET", "/objects/id")
+        .with_body(r#"{"id":"id"}"#)
+        .expect(1)
+        .create();
+    let result: Resolution<serde_json::Value> =
+        client.resolve_reference(&pending.reference).await.unwrap();
+    assert!(matches!(result, Resolution::Ready(value) if value["id"] == "id"));
+    ready.assert();
+    let foreign = ResolutionReference {
+        api_root: stale.into(),
+        endpoint: "objects/id".into(),
+    };
+    assert!(client
+        .resolve_reference::<serde_json::Value>(&foreign)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn resume_accepts_equivalent_api_root_with_trailing_slash() {
     let root = format!("{}/ga4gh/drs/v1", server_url());
     let first_config = Configuration::new(url::Url::parse(&root).unwrap());

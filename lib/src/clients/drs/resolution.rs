@@ -152,8 +152,12 @@ where
 impl DRS {
     /// The reference of `endpoint` at this client's API root, without
     /// credentials, query or fragment.
+    ///
+    /// The API root is the base path of [`DRS::transport`], which sends the
+    /// requests, not of [`DRS::config`], so a reference always names the
+    /// service that received the request.
     pub fn resolution_reference(&self, endpoint: String) -> ResolutionReference {
-        let mut root = self.config.base_path.clone();
+        let mut root = self.transport.config.base_path.clone();
         let _ = root.set_username("");
         let _ = root.set_password(None);
         root.set_query(None);
