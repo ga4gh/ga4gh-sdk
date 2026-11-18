@@ -1048,9 +1048,9 @@ let task = PyTesTask::from_value(raw)?;
 ```
 
 The `inner` and `raw` fields of these classes, and the `tasks`, `runs` and `task_logs`
-fields of the list responses, are private: a change to one of them would not change the
-others, so the getters, `json()` and the request sent could disagree. Python code is not
-affected. In an extension crate, replace `task.inner` with `task.inner()`, `task.raw` with
+fields of the list responses, are private. A change to one of them would not change the
+others, and the getters, `json()` and the request sent could then disagree. Python code is
+not affected. In an extension crate, replace `task.inner` with `task.inner()`, `task.raw` with
 `task.raw()`, and `page.tasks` with `page.tasks()`, which returns a copy; replace a struct
 literal with the constructors above.
 

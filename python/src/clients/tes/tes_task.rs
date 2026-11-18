@@ -1,27 +1,54 @@
 //! `TesTask`: a TES task to create, or one as returned by the server, with its JSON.
 //!
 //! The model and the JSON of a task are private, so that an extension crate can't change
-//! one without the other (see `docs/state_ownership.md`, "Python views"). Assigning either
-//! fails to compile:
+//! one without the other (see `docs/state_ownership.md`, "Python views"). The same holds
+//! for the other result classes that keep JSON. Assigning a field fails to compile, here
+//! for one class of each family:
 //!
 //! ```compile_fail,E0616
 //! use ga4gh::clients::tes::PyTesTask;
-//! fn rename(task: &mut PyTesTask, inner: ga4gh_sdk::clients::tes::models::TesTask) {
-//!     task.inner = inner;
+//! fn reset(task: &mut PyTesTask) {
+//!     task.inner = task.inner().clone();
 //! }
 //! ```
 //!
 //! ```compile_fail,E0616
 //! use ga4gh::clients::tes::PyTesTask;
-//! fn rewrite(task: &mut PyTesTask, raw: serde_json::Value) {
-//!     task.raw = raw;
+//! fn reset(task: &mut PyTesTask) {
+//!     task.raw = task.raw().clone();
 //! }
 //! ```
 //!
-//! Build a changed task from a changed copy of its JSON instead:
+//! ```compile_fail,E0616
+//! use ga4gh::clients::wes::PyRunRequest;
+//! fn reset(request: &mut PyRunRequest) {
+//!     request.raw = request.raw().clone();
+//! }
+//! ```
+//!
+//! ```compile_fail,E0616
+//! use ga4gh::clients::wes::PyRunListResponse;
+//! fn reset(page: &mut PyRunListResponse) {
+//!     page.runs = page.runs();
+//! }
+//! ```
+//!
+//! ```compile_fail,E0616
+//! use ga4gh::clients::trs::PyTool;
+//! fn reset(tool: &mut PyTool) {
+//!     tool.inner = tool.inner().clone();
+//! }
+//! ```
+//!
+//! The accessors read them (stable rustdoc doesn't check the error code above, so this
+//! twin shows that the imports and accessors are valid), and a changed task is built from
+//! a changed copy of its JSON:
 //!
 //! ```no_run
-//! use ga4gh::clients::tes::PyTesTask;
+//! use ga4gh::clients::{tes::PyTesTask, trs::PyTool, wes::{PyRunListResponse, PyRunRequest}};
+//! fn read(task: &PyTesTask, request: &PyRunRequest, page: &PyRunListResponse, tool: &PyTool) {
+//!     let _ = (task.inner(), request.raw(), page.runs(), tool.inner());
+//! }
 //! fn rename(task: &PyTesTask) -> pyo3::PyResult<PyTesTask> {
 //!     let mut raw = task.raw().clone();
 //!     raw["name"] = serde_json::json!("changed");
