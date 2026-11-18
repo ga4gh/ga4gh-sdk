@@ -1042,7 +1042,7 @@ discovery)` one with `TrsOptions`; its `inner` field holds the library's `TRS`.
 `PyAsyncTES` keeps its state in its `transport` field:
 
 - The first call connects the `LazyTES` with that transport, so the service check and all
-  built-in calls use it. The `config` getter gives `transport.config`.
+  built-in calls use it. The `config` getter gives `transport.configuration()`.
 - `PyAsyncTES::with_transport(transport)` builds a client with a given transport, for
   example one from `Transport::with_client`. Don't replace `transport` on a client that
   may be connected: a connected client keeps the transport it connected with.
