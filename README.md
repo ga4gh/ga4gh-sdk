@@ -254,8 +254,9 @@ Docker may download the Alpine image on the first run.
 The [CLI README](cli/README.md) describes all CLI commands. The
 [usage guide](docs/usage.md) covers configuration, authentication, and the
 Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, `TRS`, and `ServiceRegistry`
-clients. The CLI also has [WES commands](cli/README.md#wes-examples) and
-[Service Registry commands](cli/README.md#service-registry-commands).
+clients. The CLI also has [WES commands](cli/README.md#wes-examples),
+[Service Registry commands](cli/README.md#service-registry-commands) and a
+[`service-info` command](cli/README.md#service-info-command).
 
 The [provider contract proposals](docs/rfcs/README.md) describe possible
 extensions for leased interactive sessions and workload-bound secrets. They

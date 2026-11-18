@@ -10,7 +10,7 @@ of this one, see [Build on this SDK](downstream.md).
 
 | API | Rust library | CLI | Python bindings |
 | --- | --- | --- | --- |
-| Service Info | `ServiceInfo` | No direct command | `ServiceInfo` |
+| Service Info | `ServiceInfo` | `service-info --service <SECTION>` | `ServiceInfo` |
 | TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel`, `files`, `log`, `save` | TES |
 | DRS | Objects, access URLs, bulk, and `drs://` URIs | `drs get`, `access` | `DRS`, `DrsResolver` |
 | WES | Runs and attachments | `wes run`, `list`, `get`, `status`, `cancel` | `WES`, `Run` |
@@ -52,18 +52,21 @@ When a client successfully retrieves `service-info`, it has reached that
 endpoint under the configured root. If the response includes service identity
 fields, check that they identify the intended deployment.
 
-The CLI does not print `service-info`. `ga4gh-cli tes list` discovers the TES
-service before requesting tasks, so success shows that discovery reached the
-configured API root. To read the identity fields, use `ServiceInfo` from Rust
-or Python. Some commands can skip discovery, such as TRS with
-`--no-discovery`; their success does not establish service identity.
+To read the identity fields, run `ga4gh-cli service-info --service TES` (or
+another section name), or use `ServiceInfo` from Rust or Python. Other
+commands discover their service without printing `service-info`: success of
+`ga4gh-cli tes list` shows that discovery reached the configured API root.
+Some commands can skip discovery, such as TRS with `--no-discovery`; their
+success does not establish service identity.
 
 A host-only root such as `https://example.org` resolves `service-info` to
 `https://example.org/service-info`. If the service uses a path prefix, that
 request targets the wrong location and can return `404 Not Found`.
 If discovery returns 404, verify the API root against the deployment's
 documented URL. For TES and DRS, the error message then ends with
-`Check that base_path is the TES API root` or the DRS equivalent.
+`Check that base_path is the TES API root` or the DRS equivalent;
+for `service-info`, with `Check that base_path is the API root of section 'TES'`
+or the name of the section it read.
 A 404 response alone does not identify the cause.
 
 ## Configuration file
@@ -186,11 +189,12 @@ commands (`run`, `list`, `get`, `status`, `cancel`), DRS commands (`get`,
 `access`), TRS commands (`tools`, `tool`, `versions`, `version`, `descriptor`,
 `files`, `tests`), and Service Registry commands (`list`, `get`, `types`). It
 reads the matching `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` configuration
-section, including its `timeouts`. `login` and `logout` get and delete tokens
-from an OpenID Connect provider for sections with `oidc` settings. The
-[CLI README](../cli/README.md) describes
-each command, its output and exit codes. `ServiceInfo` is available from the
-Rust library below.
+section, including its `timeouts`. `service-info --service <SECTION>` prints
+the service info of any configured section, built-in or custom, as JSON.
+`login` and `logout` get and delete tokens from an OpenID Connect provider for
+sections with `oidc` settings. The [CLI README](../cli/README.md) describes
+each command, its output and exit codes. `ServiceInfo` is also available from
+the Rust library below.
 
 ## Timeouts
 
@@ -201,7 +205,7 @@ Rust clients, the CLI and the Python bindings read them from there:
 | --- | --- | --- |
 | `connect` | 10 s | Opening each connection, including TLS, within any of the limits below. |
 | `request` | 60 s | Each request that none of the limits below applies to, from sending it to reading the whole response. |
-| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `with_artifact`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`. |
+| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `with_artifact`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`; also `ServiceInfo::get`, `get_at` and `get_raw`, and the CLI's `service-info` command. |
 | `submission` | 300 s | One TES task or WES run submission: `TES::create`, `TES::create_as`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. |
 
 `discovery` and `submission` replace `request` for their requests, so they can
@@ -414,6 +418,12 @@ is the version of the API named by `type.group` and `type.artifact`.
 `extra`, and returns an error for a missing required field, a value of the
 wrong type, malformed JSON or a body that isn't valid UTF-8. See
 [Service Info](api_compatibility.md#service-info) for the full contract.
+
+`get_raw()` returns the response body of the same request as received,
+unparsed, for callers that print or store it. The CLI's
+[`service-info` command](../cli/README.md#service-info-command) prints a JSON
+object from this raw response, including native WES service info that the
+generic typed model does not accept.
 
 ### Service Registry
 

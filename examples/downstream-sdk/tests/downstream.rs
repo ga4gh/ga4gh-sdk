@@ -271,7 +271,15 @@ fn cli_keeps_the_built_in_commands_and_adds_its_own() {
         assert!(tes.find_subcommand(name).is_some(), "missing tes {name}");
     }
     for name in [
-        "drs", "trs", "wes", "workflow", "registry", "login", "logout", "quota",
+        "drs",
+        "trs",
+        "wes",
+        "workflow",
+        "registry",
+        "service-info",
+        "login",
+        "logout",
+        "quota",
     ] {
         assert!(command.find_subcommand(name).is_some(), "missing {name}");
     }
@@ -380,6 +388,21 @@ fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
         .match_header("authorization", "Bearer from-file")
         .with_body(r#"{"cpu_hours":3}"#)
         .create();
+    // The built-in `service-info` command reads the binary's own sections too.
+    let _quota_info = mock("GET", "/cli-run-quota/service-info")
+        .match_header("authorization", "Bearer from-file")
+        .with_body(
+            json!({
+                "id": "org.example.quota",
+                "name": "Example quota",
+                "type": {"group": "org.example", "artifact": "quota", "version": "1.0.0"},
+                "organization": {"name": "Example", "url": "https://example.org"},
+                "version": "1.0.0",
+                "x-limit": 3
+            })
+            .to_string(),
+        )
+        .create();
     let home = tempfile::tempdir().unwrap();
     std::fs::create_dir(home.path().join(".downstream-cli")).unwrap();
     std::fs::write(
@@ -396,6 +419,10 @@ fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
         (vec!["tes", "usage", "task-1"], "task-1\t-\t5\n"),
         (vec!["tes", "list"], "task-from-sdk"),
         (vec!["quota"], "{\"cpu_hours\":3}"),
+        (
+            vec!["service-info", "--service", cli::QUOTA_SECTION],
+            "\"x-limit\":3",
+        ),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_downstream-cli"))
             .args(&args)

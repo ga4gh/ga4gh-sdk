@@ -286,8 +286,11 @@ generic client applies neither.
 
 The Python `ServiceInfo.get_service_info()` uses the same client. It returns the
 `Service` as a formatted string, and raises `RuntimeError` with
-`Failed to get service info: …` and the message of the error above. The CLI
-has no direct Service Info command yet.
+`Failed to get service info: …` and the message of the error above. The CLI's
+[`service-info --service <SECTION>`](../cli/README.md#service-info-command)
+prints a JSON object from any configured section without applying the generic
+`Service` model. For example, it can display native WES 1.0 service info that
+the generic model cannot decode. This raw CLI output is not schema validation.
 
 Regression tests live in `lib/tests/serviceinfo_compatibility.rs` and the
 `ServiceInfo` tests of `python/tests/test_all.py`. The model's round trip is
