@@ -85,7 +85,7 @@ GA4GH_TRS_PUBLIC_TESTS=1 pytest tests/test_trs_public.py
 | Python API | Current behavior |
 | --- | --- |
 | `Configuration` | Set one service API root, authentication source and time limits, or read a built-in or custom section of `~/.ga4gh-cli/config.json`; `get_extra()` returns the section's other keys. `set_token_provider()` supplies dynamic bearer tokens. See [Reading the configuration file](#reading-the-configuration-file), [Authentication](#authentication), [Timeouts](#timeouts) and [Token providers](#token-providers). |
-| `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. |
+| `ServiceInfo` | Fetch service info as a formatted string; it is not yet a typed Python model. An invalid response raises `RuntimeError`; see the [Service Info contract](../docs/api_compatibility.md#service-info). |
 | `TES`, `Task`, `TesTask`, `ListTasksParams` | Create, inspect, list, poll, cancel and wait for TES tasks; read full task JSON including unknown fields. See [Waiting for tasks](#waiting-for-tasks). |
 | `AsyncTES`, `AsyncTask` | The same TES calls for `asyncio`, as awaitables; see [asyncio](#asyncio). |
 | `Transport` | Send relative HTTP requests with JSON, query parameters, or multipart bodies; responses are text. |

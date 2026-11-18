@@ -123,8 +123,30 @@ class Raw:
 
 PENDING = (202, {}, {"Retry-After": "1"})
 
+# Service info documents for the parsing contract of `ServiceInfo`, below `/si-<case>`.
+SERVICE_INFO_CASES = {
+    "extended": (
+        200,
+        {
+            **SERVICE_INFO,
+            "type": {**SERVICE_INFO["type"], "artifact": "custom-api", "version": "99.0"},
+            "description": None,
+            "x-provider": {"features": ["gpu"]},
+        },
+    ),
+    "missing": (200, {key: value for key, value in SERVICE_INFO.items() if key != "version"}),
+    "wrong-type": (200, {**SERVICE_INFO, "createdAt": 1700000000}),
+    "malformed": (200, Raw(b'{"id": ', "application/json")),
+    "bad-utf8": (
+        200,
+        Raw(json.dumps(SERVICE_INFO).encode().replace(b"Example", b"\xffxample"), "application/json"),
+    ),
+    "unauthorized": (401, {"msg": "authentication required"}),
+}
+
 ROUTES.update(
     {
+        **{("GET", f"/si-{case}/service-info"): reply for case, reply in SERVICE_INFO_CASES.items()},
         ("GET", "/api/auth-failure"): (401, {"msg": "authentication required"}),
         ("GET", "/drs/service-info"): (200, DRS_SERVICE_INFO),
         ("GET", "/drs/objects/obj-1"): (200, DRS_OBJECT),
