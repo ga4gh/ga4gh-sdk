@@ -332,7 +332,12 @@ async fn refresh_uses_the_discovery_timeout() {
         .unwrap();
     let start = std::time::Instant::now();
     assert!(tes.refresh().await.is_err());
-    assert!(start.elapsed() < SLOW_REFRESH, "{:?}", start.elapsed());
+    let elapsed = start.elapsed();
+    // It waited for the limit and gave up before the slow answer.
+    assert!(
+        elapsed >= REFRESH_LIMIT - SHORT && elapsed < SLOW_REFRESH,
+        "{elapsed:?}"
+    );
     assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 
     let server = serve(slow_after_first("wes")).await;
@@ -341,7 +346,12 @@ async fn refresh_uses_the_discovery_timeout() {
         .unwrap();
     let start = std::time::Instant::now();
     assert!(wes.refresh().await.is_err());
-    assert!(start.elapsed() < SLOW_REFRESH, "{:?}", start.elapsed());
+    let elapsed = start.elapsed();
+    // It waited for the limit and gave up before the slow answer.
+    assert!(
+        elapsed >= REFRESH_LIMIT - SHORT && elapsed < SLOW_REFRESH,
+        "{elapsed:?}"
+    );
     assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 }
 
