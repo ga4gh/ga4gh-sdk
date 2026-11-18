@@ -106,7 +106,7 @@ impl PyWES {
             Some(attachments) => attachment_list(py, attachments)?,
             None => Vec::new(),
         };
-        let request = request.inner;
+        let request = request.inner().clone();
         io(py, |rt| {
             rt.block_on(self.inner.run_workflow_streaming(
                 request,

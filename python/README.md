@@ -996,8 +996,9 @@ their direct `pyo3` dependency to `0.30.1` (and `pyo3-async-runtimes` to `0.30.0
 used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
 `Python::with_gil`, and `Bound::downcast` to `Py<PyAny>`, `Python::attach`, and
 `Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
-The `inner` field of each class holds the
-library type (for `PyAsyncTES`, a `LazyTES` that connects on first use).
+The `inner` field of each client and handle class holds the
+library type (for `PyAsyncTES`, a `LazyTES` that connects on first use); result classes
+have accessors instead (see [Result classes](#result-classes)).
 Read the state of a library client through its accessors, such as
 `self.inner.transport()` and `self.inner.configuration()` of `PyTES`: its
 fields, and those of `Discovered` and `Transport`, are private (see the
@@ -1054,6 +1055,36 @@ discovery)` one with `TrsOptions`; its `inner` field holds the library's `TRS`.
 Migration: earlier versions connected a new `TES` from the `config` field, and
 `connected()` took a `Configuration`. Pass the transport to `connected()`, and change the
 client's configuration or HTTP client through `with_transport` instead of `config`.
+
+#### Result classes
+
+The result classes that keep JSON describe one JSON value: `PyTesTask`,
+`PyTesListTasksResponse`, `PyRunRequest`, `PyRunLog`, `PyTaskLog`, `PyRunSummary`,
+`PyRunListResponse`, `PyTaskListResponse`, `PyDrsObject`, `PyAccessURL`,
+`PyBulkAccessURL`, `PyTool`, `PyToolVersion`, `PyFileWrapper` and `PyToolFile`. Read the
+value with `raw()` and its model with `inner()`; the list responses also return their
+items with `tasks()`, `runs()` and `task_logs()`. The typed getters, `json()` and
+`to_dict()` describe that value, including fields that the models don't know.
+For `PyTesTask` and `PyRunRequest`, pickling and the request that `TES.create()`
+or `WES.run()` sends also use that value.
+
+The classes have no setters. To change a value, change a copy of `raw()` and build a new
+instance: with `from_value` for `PyTesTask` and `PyRunRequest`, and with `from_json` for
+the other classes that keep a server's JSON. The TRS classes keep the JSON of their model,
+so build them from a changed model with `new`.
+
+```rust
+let mut raw = task.raw().clone();
+raw["name"] = json!("changed");
+let task = PyTesTask::from_value(raw)?;
+```
+
+The `inner` and `raw` fields of these classes, and the `tasks`, `runs` and `task_logs`
+fields of the list responses, are private. A change to one of them would not change the
+others, and the getters, `json()` and the request sent could then disagree. Python code is
+not affected. In an extension crate, replace `task.inner` with `task.inner()`, `task.raw` with
+`task.raw()`, and `page.tasks` with `page.tasks()`, which returns a copy; replace a struct
+literal with the constructors above.
 
 ## Documentation
 

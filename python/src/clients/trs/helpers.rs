@@ -10,7 +10,12 @@ use serde_json::Value;
 
 /// A model as JSON. The models serialize their unknown fields too.
 pub(super) fn to_raw(value: &impl Serialize) -> PyResult<Value> {
-    serde_json::to_value(value).map_err(|error| json::invalid_response("TRS", error))
+    serde_json::to_value(value).map_err(invalid_response)
+}
+
+/// A `RuntimeError` for a TRS response that doesn't fit its models.
+pub(super) fn invalid_response(error: impl std::fmt::Display) -> PyErr {
+    json::invalid_response("TRS", error)
 }
 
 /// A descriptor type, such as `CWL` (`DescriptorType`) or `PLAIN_CWL`

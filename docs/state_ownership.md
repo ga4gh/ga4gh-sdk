@@ -15,8 +15,9 @@ accessors of rule 4 and switched the Python `config` getters to them;
 [#294](https://github.com/ga4gh/ga4gh-sdk/issues/294) made the fields
 private, without a deprecation release
 ([#304](https://github.com/ga4gh/ga4gh-sdk/issues/304); see
-[Status](#status)). The [current state](#current-state) below describes the
-analysed commit.
+[Status](#status)); [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295)
+made the Python result-view fields private as well. The
+[current state](#current-state) below describes the analysed commit.
 
 The analysis is a static inspection of commit
 [`a5d0175`](https://github.com/ga4gh/ga4gh-sdk/tree/a5d017513fd9091619a5feb338008c6f8fb02df4),
@@ -267,11 +268,14 @@ against `a5d0175`; the others follow from the code paths cited above.
 
 ### Python views
 
-1. **`raw` is authoritative.** For each view class, `raw` holds the JSON as
-   given or received. `inner` is a projection derived from `raw`. All
-   accessors, `json()`, `to_dict()`, pickling, and submission describe that
-   value. Either representation can be sent if tests prove that they agree,
-   including unknown fields and explicit `null`.
+1. **One JSON value per view.** For TES, WES, and DRS views, `raw` keeps the
+   JSON as given or received, and `inner` is a projection derived from it.
+   TRS views instead receive a model in `new` and serialize `raw` from that
+   model; a `null` field omitted by model serialization is not restored.
+   Once built, both representations are read-only and describe the same
+   value. Accessors, `json()`, `to_dict()`, and, where supported, pickling and
+   submission agree. Tests cover unknown fields and explicit `null` in the
+   JSON-backed views, and model/JSON agreement in the TRS views.
 2. **Views are immutable.** Extension crates read `inner()` and `raw()`
    accessors and build a changed view from JSON with the existing
    constructors (`from_value`, `from_json`). No setter changes one field.
@@ -331,8 +335,11 @@ No release contains these changes yet; the SDK has no tagged release.
   bindings, and the downstream example use the accessors and constructors.
   `compile_fail` documentation tests on `TES`, `WES`, `DRS`, `Discovered`,
   and `Transport` check that an assignment from outside the crate fails.
-- Python views: [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295) makes
-  the `inner` and `raw` fields of the view classes private in the same way.
+- Done (Python views, [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295),
+  [#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)): the `inner` and
+  `raw` fields of the result classes, and the `tasks`, `runs`, and `task_logs`
+  fields of list responses, are private. Read-only accessors and constructors
+  preserve extension-crate access to the same JSON-backed view.
 
 ### Migration
 
@@ -345,6 +352,8 @@ No release contains these changes yet; the SDK has no tagged release.
 | `Discovered::client` | `client()`, `Deref`, or `into_parts()` |
 | `Discovered::capabilities` | `capabilities()` or `into_parts()` |
 | `Transport::config` | `configuration()`; to change it, build a new transport, for example with `with_timeouts` |
+| Python result views: `inner`, `raw` | `inner()`, `raw()`; rebuild a changed `PyTesTask` or `PyRunRequest` with `from_value`, other server-JSON views with `from_json`, and TRS views from a changed model with `new` (see the [Python guide](../python/README.md#result-classes)) |
+| Python list responses: `tasks`, `runs`, `task_logs` | `tasks()`, `runs()`, `task_logs()`; each returns a copy of the item views |
 
 ### Alternatives considered
 
