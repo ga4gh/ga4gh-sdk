@@ -401,7 +401,7 @@ proposals for the follow-ups.
 
 | Invariant | Evidence |
 | --- | --- |
-| A DRS reference names the root that received the request | `lib/tests/drs_resolution.rs`: `reference_root_is_transport_root`. Build a DRS whose transport root differs from a stale client configuration, receive a 202 response from the mock server at the transport root, and compare the reference's `api_root` with that root. Keep `immediate_200_and_resume_validation`, which rejects a reference for another root. |
+| A DRS reference names the root that received the request | `lib/tests/drs_resolution.rs`: `reference_root_is_transport_root`. Build a DRS whose transport has a non-default API root path, receive a 202 response from the mock server at the transport root, and compare the reference's `api_root` with that root. Keep `immediate_200_and_resume_validation`, which rejects a reference for another root. |
 | `configuration()` is the transport's configuration | Unit tests in `tes`, `wes`, and `drs`: `configuration_is_transport_configuration`, with a transport from `Transport::with_timeouts` and a non-default API root. |
 | Discovery results stay together | `lib/tests/capabilities.rs`: `refresh_replaces_service_and_snapshot_together`; the existing `discovery_caches_raw_extensions_and_refreshes_once` stays. |
 | Fields cannot change after construction | `compile_fail` documentation tests on `TES`, `WES`, `DRS`, `Discovered`, and `Transport` that assign each field, each with a compiling twin that reads it through the accessor. Stable rustdoc doesn't check the error code, so the twins show that only the assignment fails. |
