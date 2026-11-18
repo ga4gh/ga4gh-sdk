@@ -4,7 +4,6 @@
 use crate::render::printable;
 use crate::CommandOutput;
 use clap::{Arg, ArgMatches, Command};
-use ga4gh_sdk::clients::serviceinfo::models::Service;
 use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
 use ga4gh_sdk::clients::ServiceType;
 use ga4gh_sdk::utils::configuration::Configuration;
@@ -52,9 +51,10 @@ pub(crate) fn section(matches: &ArgMatches) -> Option<ServiceType> {
 /// The configuration is used as given; `--service` then only names the
 /// section in error messages. On success, `stdout` holds the response body as
 /// received, with control and bidirectional formatting characters inside
-/// strings escaped. The body must be service info that [`ServiceInfo::get`]
-/// accepts. A failed request or invalid service info returns a failure
-/// `CommandOutput`.
+/// strings escaped. The body must be a JSON object, but its fields are not
+/// restricted to the generic [`ServiceInfo::get`] model: some supported APIs,
+/// including native WES 1.0, return another service-info shape. A failed
+/// request or invalid JSON object returns a failure `CommandOutput`.
 ///
 /// # Errors
 ///
@@ -67,9 +67,13 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
         Err(error) => return Ok(failure(&error, &section)),
     };
     let output = match client.get_raw().await {
-        // The model of `ServiceInfo::get` checks the body, and the body itself
-        // is printed, so that values keep their spelling.
-        Ok(body) => match serde_json::from_str::<Service>(&body) {
+        // Check the JSON object without decoding its values into the generic
+        // Service model. The original body is printed, so provider-specific
+        // fields and number spelling stay intact.
+        Ok(body) => match serde_json::from_str::<
+            std::collections::HashMap<String, serde::de::IgnoredAny>,
+        >(&body)
+        {
             Ok(_) => CommandOutput::json(body),
             Err(error) => failure(&error.into(), &section),
         },

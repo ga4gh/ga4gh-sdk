@@ -266,21 +266,12 @@ fn http_errors_report_the_status_without_the_body() {
 }
 
 #[test]
-fn malformed_service_info_is_an_error() {
+fn malformed_json_or_a_non_object_is_an_error() {
     for (name, body) in [
         ("not-json", "<html>not service info</html>".to_owned()),
-        (
-            "missing-id",
-            json!({"name": "x", "type": {"group": "g", "artifact": "a", "version": "1"},
-                   "organization": {"name": "o", "url": "u"}, "version": "1"})
-            .to_string(),
-        ),
-        (
-            "wrong-type",
-            json!({"id": 1, "name": "x", "type": {"group": "g", "artifact": "a", "version": "1"},
-                   "organization": {"name": "o", "url": "u"}, "version": "1"})
-            .to_string(),
-        ),
+        ("array", "[]".to_owned()),
+        ("null", "null".to_owned()),
+        ("trailing", "{} trailing".to_owned()),
     ] {
         let prefix = format!("/si-malformed-{name}");
         let _info = mock("GET", format!("{prefix}/service-info").as_str())
@@ -293,16 +284,44 @@ fn malformed_service_info_is_an_error() {
 }
 
 #[test]
-fn numbers_that_the_model_cannot_hold_are_rejected() {
-    // `ServiceInfo::get` reads extensions as JSON values, which can't hold
-    // this number; the command accepts the same service info as the client.
+fn the_raw_command_keeps_numbers_that_the_typed_model_cannot_hold() {
+    // The command reads a JSON object; `ServiceInfo::get` uses serde_json::Value
+    // for extensions, which cannot represent this number.
     let body = r#"{"id":"i","name":"n","type":{"group":"g","artifact":"a","version":"1"},"organization":{"name":"o","url":"u"},"version":"1","x":1e400}"#;
     let _info = mock("GET", "/si-out-of-range/service-info")
         .with_body(body)
         .create();
     let config = json!({"TES": {"base_path": root("/si-out-of-range")}});
     let output = run(&config, &["service-info", "--service", "TES"]);
-    assert_failure(&output, "Invalid service info from section 'TES'");
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(output.stderr.is_empty());
+    assert_eq!(stdout(&output), body);
+}
+
+#[test]
+fn prints_native_wes_service_info_without_generic_discovery_fields() {
+    // WES::new accepts this WES 1.0 shape, even though ServiceInfo::get cannot
+    // decode it into the generic Service model.
+    let body = json!({
+        "version": "9.3.0",
+        "workflow_type_versions": {"CWL": {"workflow_type_version": ["v1.2"]}},
+        "supported_wes_versions": ["1.0.0"],
+        "supported_filesystem_protocols": ["file"],
+        "workflow_engine_versions": {"toil": "9.3.0"},
+        "default_workflow_engine_parameters": [],
+        "system_state_counts": {},
+        "tags": {}
+    });
+    let response = mock("GET", "/si-native-wes/service-info")
+        .with_body(body.to_string())
+        .expect(1)
+        .create();
+    let config = json!({"WES": {"base_path": root("/si-native-wes")}});
+    let output = run(&config, &["service-info", "--service", "WES"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(output.stderr.is_empty());
+    assert_eq!(stdout(&output), body.to_string());
+    response.assert();
 }
 
 #[test]

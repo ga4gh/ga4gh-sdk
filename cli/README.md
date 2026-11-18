@@ -765,8 +765,8 @@ that ID.
 ## Service Info command
 
 `service-info` prints the [service info](https://github.com/ga4gh-discovery/ga4gh-service-info)
-of one configured service: its ID, name, type, organization, version and any
-fields that the service adds. `--service` names the section of the
+of one configured service. It can include an ID, name, type, organization,
+version and provider-specific fields. `--service` names the section of the
 configuration file to read, such as `TES`, `WES`, `DRS`, `TRS`, `REGISTRY` or a
 custom section; names are case sensitive. `--profile` selects the profile as
 for the other commands:
@@ -803,10 +803,12 @@ including the fields that the service adds at the top level and in `type` and
 are printed as JSON escapes such as `\u001b`, so the output stays valid JSON
 with the same values. Pipe it through a JSON tool, such as `jq .`, to indent it.
 
-The body must be service info that the SDK's `ServiceInfo` client accepts: it
-has the required fields with the types of the specification, and its added
-fields are JSON values that the SDK can read, so a number such as `1e400` is
-rejected.
+The body must be a JSON object. The command prints its fields without checking
+them against the generic `ServiceInfo::get()` model. This also works with the
+native WES 1.0 service-info shape, which omits some generic fields. The typed
+Rust and Python `ServiceInfo` clients still apply their documented model
+contract; use them when you need those fields checked. The CLI's output alone
+does not certify that a service conforms to a particular schema.
 
 The command exits with code 0 on success and code 1 on errors, with one
 message on stderr and nothing on stdout:
@@ -815,8 +817,8 @@ message on stderr and nothing on stdout:
   token variable, is reported before any request is sent;
 - an HTTP error status is reported with the status but without the response
   body; a 404 adds a hint to check that `base_path` is the section's API root;
-- a response that isn't such service info, such as one without `id` or not
-  JSON at all, is reported as `Invalid service info from section '<SECTION>'`;
+- malformed JSON or a JSON value that is not an object is reported as
+  `Invalid service info from section '<SECTION>'`;
 - a connection failure or an exceeded `discovery` timeout is reported with
   its cause.
 

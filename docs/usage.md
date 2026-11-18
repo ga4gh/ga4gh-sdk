@@ -420,8 +420,10 @@ wrong type, malformed JSON or a body that isn't valid UTF-8. See
 [Service Info](api_compatibility.md#service-info) for the full contract.
 
 `get_raw()` returns the response body of the same request as received,
-unparsed, for callers that print or store it. For the CLI equivalent, see the
-[Service Info command](../cli/README.md#service-info-command).
+unparsed, for callers that print or store it. The CLI's
+[`service-info` command](../cli/README.md#service-info-command) prints a JSON
+object from this raw response, including native WES service info that the
+generic typed model does not accept.
 
 ### Service Registry
 
