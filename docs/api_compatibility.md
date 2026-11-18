@@ -286,8 +286,9 @@ generic client applies neither.
 
 The Python `ServiceInfo.get_service_info()` uses the same client. It returns the
 `Service` as a formatted string, and raises `RuntimeError` with
-`Failed to get service info: …` and the message of the error above. The CLI
-has no direct Service Info command yet.
+`Failed to get service info: …` and the message of the error above. The CLI's
+[`service-info --service <SECTION>`](../cli/README.md#service-info-command)
+prints the validated response as JSON for any configured section.
 
 Regression tests live in `lib/tests/serviceinfo_compatibility.rs` and the
 `ServiceInfo` tests of `python/tests/test_all.py`. The model's round trip is

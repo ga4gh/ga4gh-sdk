@@ -530,7 +530,10 @@ impl CliContext {
         let Some(service_type) = built_in_service(matches) else {
             return Ok(None);
         };
-        let config = context.load_config_fresh(service_type).await?;
+        let config = context
+            .load_config_fresh(service_type)
+            .await
+            .map_err(|error| anyhow::anyhow!(printable(&error.to_string())))?;
         dispatch_with_config(matches, &config).await
     }
 
@@ -556,7 +559,10 @@ impl CliContext {
         let Some(service_type) = built_in_service(matches) else {
             return Ok(None);
         };
-        let config = context.load_config_fresh(service_type).await?;
+        let config = context
+            .load_config_fresh(service_type)
+            .await
+            .map_err(|error| anyhow::anyhow!(printable(&error.to_string())))?;
         dispatch_with_config_to(matches, &config, stdout, stderr).await
     }
 }

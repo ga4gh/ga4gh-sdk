@@ -196,6 +196,15 @@ fn a_missing_section_or_service_option_fails_before_a_request() {
     let output = run(&config, &["service-info", "--service", "WES"]);
     assert_failure(&output, "'WES'");
 
+    // A user-supplied section name can reach a configuration error before
+    // service_info::run has a chance to format it.
+    let output = run(
+        &config,
+        &["service-info", "--service", "BAD\u{1b}[2K\rforged"],
+    );
+    assert_failure(&output, "BAD");
+    assert!(!stderr(&output).contains(['\u{1b}', '\r']));
+
     let output = run(
         &config,
         &["--profile", "nope", "service-info", "--service", "TES"],
