@@ -13,7 +13,7 @@ use ga4gh_sdk::clients::tes::Task;
 use ga4gh_sdk::clients::tes::TesView;
 use ga4gh_sdk::clients::tes::TES;
 use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::transport::urlencode;
+use ga4gh_sdk::utils::transport::{urlencode, Transport};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
@@ -22,7 +22,13 @@ use std::path::PathBuf;
 
 /// Connects to a TES service: reads its service info and checks that it is a TES.
 pub async fn connect(config: &Configuration) -> Result<TES, String> {
-    TES::new(config)
+    connect_with(Transport::new(config)).await
+}
+
+/// Connects to a TES service as [`connect`] does, sending the service-info request and all
+/// later requests of the client with `transport`.
+pub async fn connect_with(transport: Transport) -> Result<TES, String> {
+    TES::with_transport(transport)
         .await
         .map_err(|error| format!("Failed to create TES instance: {error}"))
 }

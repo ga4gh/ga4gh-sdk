@@ -421,6 +421,16 @@ impl Transport {
         &self.client
     }
 
+    /// The configuration whose API root, SDK-configured credentials, user
+    /// agent, and `discovery` and `submission` limits the transport's
+    /// requests use. For a transport from [`with_client`](Self::with_client)
+    /// or [`with_client_and_configured_auth`](Self::with_client_and_configured_auth),
+    /// the injected HTTP client's own connect and request timeouts, redirect
+    /// policy, and default headers apply instead of what this reports.
+    pub fn configuration(&self) -> &Configuration {
+        &self.config
+    }
+
     /// Creates a transport with these connect and request timeouts in place of
     /// those of `config.timeouts`, and records them there.
     pub fn with_timeouts(
@@ -1026,6 +1036,28 @@ mod tests {
         let output = format!("{:?}", Transport::new(&config));
         assert_eq!(output, format!("Transport {{ config: {:?}, .. }}", config));
         assert!(!output.contains("SENTINEL"), "{output}");
+    }
+
+    /// `configuration()` is the transport's own configuration for every
+    /// constructor, including recorded timeouts and a non-default API root.
+    #[test]
+    fn configuration_is_the_transports_configuration() {
+        let root = "https://example.org/custom/ga4gh/tes/v9/";
+        let config = Configuration::new(Url::parse(root).unwrap());
+        let connect = std::time::Duration::from_secs(3);
+        let request = std::time::Duration::from_secs(7);
+        let timed = Transport::with_timeouts(&config, connect, request).unwrap();
+        assert_eq!(timed.configuration().timeouts.connect, connect);
+        assert_eq!(timed.configuration().timeouts.request, request);
+        for transport in [
+            Transport::new(&config),
+            timed,
+            Transport::with_client(&config, reqwest::Client::new()),
+            Transport::with_client_and_configured_auth(&config, reqwest::Client::new()),
+        ] {
+            assert_eq!(transport.configuration().base_path.as_str(), root);
+            assert!(std::ptr::eq(transport.configuration(), &transport.config));
+        }
     }
 
     #[test]

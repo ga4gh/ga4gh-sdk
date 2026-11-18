@@ -30,6 +30,19 @@ let config = Configuration::new(
 let tes = TES::new(&config).await?;
 ```
 
+Read a client's state with its accessors: `configuration()` returns the
+configuration of the client's transport, which its requests use;
+`transport()` the transport, for example to share it with a client for an
+added endpoint; and `discovered_service_info()` the service info read at
+construction. `TES`, `WES`, `DRS`, and `TRS` have these accessors (on `TRS`,
+`discovered_service_info()` returns an `Option`, as a `TRS` client can be
+built without discovery), and `Transport::configuration()` returns a
+transport's configuration. To change the API root, credentials, or HTTP
+client, build a new client, for example with `with_transport`. The public
+`config`, `service`, and `transport` fields of `TES`, `WES`, and `DRS` remain
+for now; see the
+[client state ownership record](docs/state_ownership.md).
+
 ### Migration notes
 
 Configs that previously used only the host must include the service path prefix
@@ -338,7 +351,10 @@ array stays empty and the requested IDs are reported as omitted.
 `TES::discover` and `WES::discover` return a `Discovered<T>` wrapper with a
 cached `CapabilitySnapshot`. One service-info request supplies both the client
 and the snapshot; typed/raw accessors make no requests and `refresh()` is
-explicit. Raw extensions are preserved. Preflight diagnostics distinguish
+explicit; it replaces the client's discovered service and the snapshot
+together. `client()` and `capabilities()` read the two parts, `into_parts()`
+splits the wrapper, and `Deref` still reaches the client's methods. Raw
+extensions are preserved. Preflight diagnostics distinguish
 supported, unsupported and unknown/stale metadata. `create_validated` and
 `run_validated` accept an explicit strict flag; ordinary submission stays
 advisory. TES backend keys are case insensitive and storage is nonexhaustive.

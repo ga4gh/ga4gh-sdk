@@ -29,20 +29,23 @@ fn config(root: &str) -> Configuration {
     Configuration::new(Url::parse(&api_root(root)).unwrap())
 }
 
+/// The body of a TES service-info response.
+fn service_info_body() -> String {
+    json!({
+        "id": "org.example.tes",
+        "name": "Example TES",
+        "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
+        "organization": {"name": "Example", "url": "https://example.org"},
+        "version": "1.0.0"
+    })
+    .to_string()
+}
+
 /// A TES service-info response beneath `root`.
 fn service_info(root: &str) -> Mock {
     mock("GET", format!("/{root}/ga4gh/tes/v1/service-info").as_str())
         .with_status(200)
-        .with_body(
-            json!({
-                "id": "org.example.tes",
-                "name": "Example TES",
-                "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
-                "organization": {"name": "Example", "url": "https://example.org"},
-                "version": "1.0.0"
-            })
-            .to_string(),
-        )
+        .with_body(service_info_body())
         .create()
 }
 
@@ -57,9 +60,15 @@ fn example_task() -> TesTask {
 
 #[tokio::test]
 async fn usage_client_shares_the_tes_clients_transport() {
-    let _info = service_info("shared");
-    // Only the injected HTTP client sends this header, so the usage request
-    // proves that the client is shared, not just the configuration.
+    // Only the injected HTTP client sends this header, so the service-info
+    // and usage requests prove that the client is shared, not just the
+    // configuration.
+    let info = mock("GET", "/shared/ga4gh/tes/v1/service-info")
+        .match_header("x-client", "injected")
+        .with_status(200)
+        .with_body(service_info_body())
+        .expect(1)
+        .create();
     let _usage = mock("GET", "/shared/ga4gh/tes/v1/tasks/task%201/usage")
         .match_header("x-client", "injected")
         .with_status(200)
@@ -72,10 +81,14 @@ async fn usage_client_shares_the_tes_clients_transport() {
         .default_headers(headers)
         .build()
         .unwrap();
-    let mut tes = TES::new(&config).await.unwrap();
-    tes.transport = Transport::with_client(&config, client);
+    let tes = TES::with_transport(Transport::with_client(&config, client))
+        .await
+        .unwrap();
+    info.assert();
+    assert_eq!(tes.configuration().base_path, config.base_path);
+    assert_eq!(tes.discovered_service_info().id, "org.example.tes");
 
-    let usage = UsageClient::from_transport(tes.transport.clone())
+    let usage = UsageClient::from_transport(tes.transport().clone())
         .task_usage("task 1")
         .await
         .unwrap();
@@ -118,7 +131,7 @@ async fn usage_client_shares_configured_auth_with_tes() {
     let tes = TES::new(&config).await.unwrap();
     info.assert();
 
-    let usage = UsageClient::from_transport(tes.transport.clone())
+    let usage = UsageClient::from_transport(tes.transport().clone())
         .task_usage("task-1")
         .await
         .unwrap();

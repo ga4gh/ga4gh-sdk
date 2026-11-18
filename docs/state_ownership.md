@@ -9,6 +9,11 @@ extension crates. It does not describe completed changes. The
 [follow-ups](#follow-ups-and-deferrals) below track the implementation under
 [#176](https://github.com/ga4gh/ga4gh-sdk/issues/176).
 
+Status: [#293](https://github.com/ga4gh/ga4gh-sdk/issues/293) added the
+accessors of rule 4 and switched the Python `config` getters to them; the
+public fields remain. The [current state](#current-state) below describes the
+analysed commit.
+
 The analysis is a static inspection of commit
 [`a5d0175`](https://github.com/ga4gh/ga4gh-sdk/tree/a5d017513fd9091619a5feb338008c6f8fb02df4),
 with two reproductions (see [Divergence cases](#divergence-cases)). It
@@ -92,7 +97,7 @@ depend on the `ga4gh` crate can change the public Rust fields.
 | `PyTesListTasksResponse`, `PyRunListResponse`, `PyTaskListResponse` | `inner`, a vector of item views, `raw` | Page token | Items: the vector; `json()`, `to_dict()`: `raw` |
 | `PyDrsObject`, `PyAccessURL`, `PyBulkAccessURL` | `inner`, `raw` | Scalar fields | Nested fields, `json()`, `to_dict()` |
 | `PyTool`, `PyToolVersion`, `PyFileWrapper`, `PyToolFile` | `inner`, `raw` | Scalar fields | Nested fields, `json()`, `to_dict()` |
-| `PyAsyncTES` | `config`, `transport`, `inner: LazyTES` | — | The `config` and `transport` getters read the fields; the first call connects a new `TES` from the `config` that it receives |
+| `PyAsyncTES` | `config`, `transport`, `inner: LazyTES` | — | At `a5d0175`, the `config` and `transport` getters read the fields, and the first call connects a new `TES` from the `config` that it receives. Since [#296](https://github.com/ga4gh/ga4gh-sdk/issues/296), the first call connects with `transport`, and the `config` getter reads `transport.config` |
 | `PyTES`, `PyWES`, `PyDRS`, `PyTRS`, `PyTask`, `PyRun`, `PyTransport`, `PyConfiguration`, and others | `inner` only | — | — |
 
 The constructors (`from_json`, `from_value`, `parse`) derive `inner` from
@@ -198,6 +203,9 @@ against `a5d0175`; the others follow from the code paths cited above.
    creates its own transport. A Rust extension that changes `config` before
    the first call changes the connected client but not `transport`. A change
    after the first call has no effect on requests.
+   Resolved by [#296](https://github.com/ga4gh/ga4gh-sdk/issues/296): the
+   first call connects with `TES::with_transport(transport)`, and the SDK no
+   longer reads the `config` field.
 
 ### Snapshots and invariants
 
@@ -318,8 +326,9 @@ becomes `tes.transport()` and `task.inner` becomes `task.inner()`. The
 
 ## Downstream usage
 
-The downstream test currently assigns a transport after construction. Under
-these rules, it builds the client with the transport instead:
+At the analysed commit, the downstream test assigned a transport after
+construction. Under these rules, it builds the client with the transport
+instead, as it does since #293:
 
 ```rust
 use ga4gh_sdk::clients::tes::TES;
