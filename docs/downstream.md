@@ -286,12 +286,9 @@ this guide in the same pull request.
   [authentication guide](authentication.md); this example does not exercise
   each one.
 - The example reads client state through accessors, such as
-  `tes.transport()` and `tes.configuration()`, and never assigns client
-  fields. The public fields are deprecated and become private in a later
-  release; the [client state ownership record](state_ownership.md#migration)
-  lists the replacement of each and explains why. A crate that denies
-  warnings fails to build on a use of them, so migrate before you update
-  the SDK.
+  `tes.transport()` and `tes.configuration()`. The client fields are
+  private; the [client state ownership record](state_ownership.md#migration)
+  lists the replacement of each former public field and explains why.
 - The example is Rust only. Building on the Python bindings is tracked in
   [#78](https://github.com/ga4gh/ga4gh-sdk/issues/78), with the other
   remaining steps for downstream SDKs.

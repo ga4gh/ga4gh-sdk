@@ -1000,13 +1000,12 @@ The `inner` field of each class holds the
 library type (for `PyAsyncTES`, a `LazyTES` that connects on first use).
 Read the state of a library client through its accessors, such as
 `self.inner.transport()` and `self.inner.configuration()` of `PyTES`: its
-public `config`, `service`, and `transport` fields, and those of
-`Discovered` and `Transport`, are deprecated and become private in a later
-release (see the [replacements](../docs/state_ownership.md#migration)). The
-Python getters, such as `TES.config` and `TES.transport`, don't change:
+fields, and those of `Discovered` and `Transport`, are private (see the
+[replacements](../docs/state_ownership.md#migration)). The Python getters,
+such as `TES.config` and `TES.transport`, don't change:
 
 ```rust
-// Before: reads the deprecated field
+// Before: read the former public field
 let transport = self.inner.transport.clone();
 // After
 let transport = self.inner.transport().clone();

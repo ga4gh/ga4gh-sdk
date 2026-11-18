@@ -43,12 +43,11 @@ client, build a new client, for example with `with_transport`.
 client from values the caller already has, without a service-info request,
 as `TRS::without_discovery` does.
 
-The public `config`, `service`, and `transport` fields of `TES`, `WES`, and
-`DRS`, the `client` and `capabilities` fields of `Discovered`, and the
-`config` field of `Transport` are deprecated: each use gives a compiler
-warning that names its replacement, and a later release makes them private.
-The [client state ownership record](docs/state_ownership.md#migration) lists
-the replacement of each field.
+The `service` and `transport` fields of `TES`, `WES`, and `DRS`, the
+`client` and `capabilities` fields of `Discovered`, and the `config` field
+of `Transport` are private, and the `config` copy of `TES`, `WES`, and `DRS`
+is gone. The [client state ownership record](docs/state_ownership.md#migration)
+lists the replacement of each former public field.
 
 ### Migration notes
 

@@ -12,9 +12,11 @@ completed changes. The
 
 Status: [#293](https://github.com/ga4gh/ga4gh-sdk/issues/293) added the
 accessors of rule 4 and switched the Python `config` getters to them;
-[#294](https://github.com/ga4gh/ga4gh-sdk/issues/294) deprecated the public
-fields (see [Status](#status)). The [current state](#current-state) below
-describes the analysed commit.
+[#294](https://github.com/ga4gh/ga4gh-sdk/issues/294) made the fields
+private, without a deprecation release
+([#304](https://github.com/ga4gh/ga4gh-sdk/issues/304); see
+[Status](#status)). The [current state](#current-state) below describes the
+analysed commit.
 
 The analysis is a static inspection of commit
 [`a5d0175`](https://github.com/ga4gh/ga4gh-sdk/tree/a5d017513fd9091619a5feb338008c6f8fb02df4),
@@ -231,8 +233,7 @@ against `a5d0175`; the others follow from the code paths cited above.
    caller opts in with `with_client_and_configured_auth`.
    Every other read of the configuration, including DRS references and the
    Python `config` getters, uses
-   `transport.config`. The separate `config` field becomes a deprecated copy,
-   then goes away.
+   `transport.config`. The separate `config` field goes away.
 2. **A client is immutable after construction.** To change the API root,
    credentials, HTTP client, or time limits, build a new client, for example
    with `with_transport`. The SDK adds no setters for these values: a new
@@ -278,8 +279,8 @@ against `a5d0175`; the others follow from the code paths cited above.
 ### Compatibility path
 
 The SDK is pre-1.0, and its [versioning](../README.md#versioning) allows
-breaking changes. The path below still avoids a breaking change without
-notice:
+breaking changes. For state that a published release exposes, the path
+below avoids a breaking change without notice:
 
 1. **Additive release.** Add the accessors, `Transport::configuration()`, and
    `Discovered` accessors. Fix the DRS reference root and the `AsyncTES`
@@ -287,13 +288,19 @@ notice:
    for a client without discovery where tests or offline use need one, as
    `TRS::without_discovery` does.
 2. **Deprecation release.** Mark the public fields `#[deprecated]` with a
-   note that names the accessor or constructor to use. The SDK's own code
-   uses the accessors. Remaining internal uses, such as the constructors,
-   need a scoped `#[allow(deprecated)]`, because CI denies warnings. Update the downstream example,
-   the [downstream guide](downstream.md), and the
+   note that names the accessor or constructor to use, and update the
+   downstream example, the [downstream guide](downstream.md), and the
    [Python bindings guide](../python/README.md#rust-crates).
 3. **Breaking release.** Make the fields private. Release notes list each
    field with its replacement.
+
+The fields of this record were never in a release: the SDK has no tag, and
+no crate or Python package is published under its names. No downstream crate
+can depend on them through a release, so a deprecation release would warn
+nobody. The first release therefore ships steps 1 and 3 together
+([#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)): the accessors, and the fields already private. Its release
+notes list each former public field with its replacement (see
+[Migration](#migration)).
 
 Methods and fields can have the same name in Rust, so `tes.transport`
 becomes `tes.transport()` and `task.inner` becomes `task.inner()`. The
@@ -308,30 +315,23 @@ No release contains these changes yet; the SDK has no tagged release.
   `TES::without_discovery`, `WES::without_discovery`, and
   `DRS::without_discovery`
   ([#294](https://github.com/ga4gh/ga4gh-sdk/issues/294)).
-- Done (deprecation,
-  [#294](https://github.com/ga4gh/ga4gh-sdk/issues/294)): the client,
-  `Discovered`, and `Transport` fields in the table below are
-  `#[deprecated]`. The SDK's code, tests, CLI, Python bindings, and the
-  downstream example use the replacements. The remaining
-  `#[allow(deprecated)]` attributes are on the constructors and accessors
-  that own the fields, `Discovered::refresh`, unit tests that compare an
-  accessor with its field or build a stale copy, `DRS::resolution_reference`
-  (until [#292](https://github.com/ga4gh/ga4gh-sdk/issues/292) reads the
-  transport's root), two statements of
-  `refresh_uses_the_discovery_timeout` in `lib/tests/timeouts.rs`, which
-  shorten a limit after construction, and `lib/tests/deprecated_fields.rs`.
+- Done (private, [#294](https://github.com/ga4gh/ga4gh-sdk/issues/294),
+  [#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)): the `service` and `transport` fields of `TES`, `WES`, and `DRS`,
+  the `client` and `capabilities` fields of `Discovered`, and the `config`
+  field of `Transport` are private, and the `config` copy of `TES`, `WES`,
+  and `DRS` is gone. DRS resolution references take their API root from
+  the transport's configuration. The SDK's code, tests, CLI, Python
+  bindings, and the downstream example use the accessors and constructors.
   `compile_fail` documentation tests on `TES`, `WES`, `DRS`, `Discovered`,
-  and `Transport` check that `#![deny(deprecated)]` rejects an assignment;
-  `lib/tests/deprecated_fields.rs` shows that the same assignments compile
-  without it.
-- Planned (breaking): the fields become private in a release after one
-  that contains the deprecations.
+  and `Transport` check that an assignment from outside the crate fails.
+- Python views: [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295) makes
+  the `inner` and `raw` fields of the view classes private in the same way.
 
 ### Migration
 
-| Deprecated field | Replacement |
+| Former public field | Replacement |
 | --- | --- |
-| `TES::config`, `WES::config`, `DRS::config` | `configuration()`. The field is a copy of the transport's configuration that requests don't read (except the API-root check of DRS resolution references, until [#292](https://github.com/ga4gh/ga4gh-sdk/issues/292)); it goes away |
+| `TES::config`, `WES::config`, `DRS::config` | `configuration()`. The field was a copy of the transport's configuration; it is gone |
 | `TES::transport`, `WES::transport`, `DRS::transport` | `transport()`; to use another transport, build a client with `with_transport`, or with `without_discovery(transport, client.discovered_service_info().clone())` to keep the service info without a request |
 | `TES::service`, `WES::service`, `DRS::service` | `discovered_service_info()` |
 | A struct literal such as `TES { config, service, transport }` | `TES::without_discovery(transport, service)` (also `WES`, `DRS`), or a constructor that discovers |
@@ -347,7 +347,7 @@ No release contains these changes yet; the SDK has no tagged release.
 | Controlled mutation (setters that rediscover) | Rejected for identity: a setter would need network access, error handling, and a partial-failure state. No caller needs it. |
 | Rebuild with a constructor | Chosen for every identity change. It reuses existing constructors. |
 | Immutable snapshots | Chosen for discovery results, handles, and Python views. |
-| Make the fields private at once | Rejected: it breaks the downstream example, the SDK's tests, and extension crates without a deprecation period. |
+| Make the fields private at once | Chosen, because no release contains the fields ([#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)). With a release, it would have broken downstream crates without a deprecation period. |
 | A shared client trait or base type | Rejected: no caller needs it, and #97 already adds the generic constructors and methods that downstream crates asked for. |
 
 ### Tradeoffs
@@ -356,7 +356,8 @@ No release contains these changes yet; the SDK has no tagged release.
   client that already exists. The replacement is one constructor call, which
   sends one more service-info request.
 - **Migration cost.** Downstream code that assigns or reads fields must
-  change once. The deprecation release gives compiler warnings first.
+  change once. Only code built against an unreleased Git revision can use
+  them, and it gets compile errors, not deprecation warnings first.
 - **Unchanged snapshots.** A client does not notice that its service changed
   after discovery. `Discovered::refresh` covers callers that need fresh
   capabilities; other clients are rebuilt.
@@ -399,7 +400,7 @@ proposals for the follow-ups.
 | A DRS reference names the root that received the request | `lib/tests/drs_resolution.rs`: `reference_root_is_transport_root`. Build a DRS whose transport root differs from a stale client configuration, receive a 202 response from the mock server at the transport root, and compare the reference's `api_root` with that root. Keep `immediate_200_and_resume_validation`, which rejects a reference for another root. |
 | `configuration()` is the transport's configuration | Unit tests in `tes`, `wes`, and `drs`: `configuration_is_transport_configuration`, with a transport from `Transport::with_timeouts` and a non-default API root. |
 | Discovery results stay together | `lib/tests/capabilities.rs`: `refresh_replaces_service_and_snapshot_together`; the existing `discovery_caches_raw_extensions_and_refreshes_once` stays. |
-| Fields cannot change after construction | `compile_fail` documentation tests on `TES`, `DRS`, `Discovered`, and `Transport` that assign a field, after the breaking release. |
+| Fields cannot change after construction | `compile_fail` documentation tests on `TES`, `WES`, `DRS`, `Discovered`, and `Transport` that assign a field. |
 | A Python view describes one JSON value | Rust tests in the `ga4gh` crate for each view class: build from JSON with an unknown field and an explicit `null`, then compare each accessor, `json()`, and the submitted body with `raw`. Python tests: `test_tes.py::test_task_accessors_match_json`, `test_wes.py::test_run_sends_request_json`. |
 | `AsyncTES` uses one transport | `tes_async.rs` unit test `lazy_client_shares_transport`: a transport with a custom user agent reaches the mock server for discovery and for `create`. |
 | Downstream code builds with the accessors | `make downstream` (CI job `downstream`) after the example is updated. |
@@ -414,8 +415,8 @@ follow-up.
 | --- | --- | --- |
 | [#292](https://github.com/ga4gh/ga4gh-sdk/issues/292): build DRS resolution references from the transport root | Client state; correctness fix | — |
 | [#293](https://github.com/ga4gh/ga4gh-sdk/issues/293): add accessors to the TES, WES, DRS, `Discovered`, and `Transport` types | Client state; additive | #100 for the discovered service type |
-| [#294](https://github.com/ga4gh/ga4gh-sdk/issues/294): deprecate and then make private the client, `Discovered`, and `Transport` fields | Client state; breaking | #293; #100; #97 |
-| [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295): make Python typed and raw views read-only for extension crates | Python views; additive, then breaking | — |
+| [#294](https://github.com/ga4gh/ga4gh-sdk/issues/294): make the client, `Discovered`, and `Transport` fields private (without a deprecation release, [#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)) | Client state; breaking | #293; #100; #97 |
+| [#295](https://github.com/ga4gh/ga4gh-sdk/issues/295): make Python typed and raw views read-only for extension crates (fields private, [#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)) | Python views; breaking for extension crates | — |
 | [#296](https://github.com/ga4gh/ga4gh-sdk/issues/296): connect `AsyncTES` with its own transport | Python views; correctness fix | — |
 
 Explicit deferrals and decisions without a change:
