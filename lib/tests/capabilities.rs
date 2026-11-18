@@ -123,7 +123,6 @@ fn config_below(root: &str) -> Configuration {
 }
 
 #[tokio::test]
-#[allow(deprecated)] // compares the accessors with the fields
 async fn discovered_accessors_read_client_and_snapshot() {
     let mut info = service("tes");
     info["id"] = json!("org.example.accessors");
@@ -139,11 +138,8 @@ async fn discovered_accessors_read_client_and_snapshot() {
         .await
         .unwrap();
 
-    assert!(std::ptr::eq(discovered.client(), &discovered.client));
-    assert!(std::ptr::eq(
-        discovered.capabilities(),
-        &discovered.capabilities
-    ));
+    // `Deref` reaches the same client as the accessor.
+    assert!(std::ptr::eq(discovered.client(), &*discovered));
     assert_eq!(discovered.client().configuration().base_path, root);
     // `Deref` still reaches the client's accessors.
     assert_eq!(

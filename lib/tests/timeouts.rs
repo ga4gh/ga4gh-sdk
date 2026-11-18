@@ -35,6 +35,9 @@ enum Reply {
     After(Duration, &'static str),
     /// Answers with the service info of this artifact, such as `tes`, after a delay.
     ServiceInfo(Duration, &'static str),
+    /// Answers the server's first request with the service info of this
+    /// artifact at once, and later requests after the delay.
+    ServiceInfoSlowAfterFirst(Duration, &'static str),
     /// Reads the request, then keeps the connection open without answering.
     Never,
 }
@@ -109,7 +112,7 @@ async fn serve(routes: Vec<(&'static str, Reply)>) -> Server {
                 let Some(path) = read_request(&mut socket).await else {
                     return;
                 };
-                counter.fetch_add(1, Ordering::SeqCst);
+                let earlier = counter.fetch_add(1, Ordering::SeqCst);
                 let reply = routes
                     .iter()
                     .find(|(route, _)| path.starts_with(route))
@@ -117,6 +120,10 @@ async fn serve(routes: Vec<(&'static str, Reply)>) -> Server {
                 let answer = match reply {
                     Some(Reply::After(delay, body)) => Some((delay, body.to_owned())),
                     Some(Reply::ServiceInfo(delay, artifact)) => {
+                        Some((delay, service_info(artifact)))
+                    }
+                    Some(Reply::ServiceInfoSlowAfterFirst(delay, artifact)) => {
+                        let delay = if earlier == 0 { Duration::ZERO } else { delay };
                         Some((delay, service_info(artifact)))
                     }
                     _ => None,
@@ -153,6 +160,13 @@ fn config(url: &str, timeouts: Timeouts) -> Configuration {
 
 fn slow_service_info(artifact: &'static str) -> Vec<(&'static str, Reply)> {
     vec![("/service-info", Reply::ServiceInfo(DELAY, artifact))]
+}
+
+fn slow_after_first(artifact: &'static str) -> Vec<(&'static str, Reply)> {
+    vec![(
+        "/service-info",
+        Reply::ServiceInfoSlowAfterFirst(DELAY, artifact),
+    )]
 }
 
 // Creates the client of `artifact` with `new`, and for TES and WES also with
@@ -292,23 +306,29 @@ async fn refresh_uses_the_discovery_timeout() {
         .await
         .unwrap();
     tes.refresh().await.unwrap();
-    // Shortens the limit through the deprecated fields: no supported path
-    // changes a client's configuration after construction.
-    #[allow(deprecated)]
-    {
-        tes.client.transport.config.timeouts.discovery = SHORT;
-    }
-    assert!(tes.refresh().await.is_err());
 
     let server = serve(slow_service_info("wes")).await;
     let mut wes = WES::discover(&config(&server.url, timeouts), LONG)
         .await
         .unwrap();
     wes.refresh().await.unwrap();
-    #[allow(deprecated)]
-    {
-        wes.client.transport.config.timeouts.discovery = SHORT;
-    }
+
+    // A client is fixed after construction, so a shorter limit needs a
+    // client whose service answers discovery at once and refresh slowly.
+    let short = Timeouts {
+        discovery: SHORT,
+        ..Default::default()
+    };
+    let server = serve(slow_after_first("tes")).await;
+    let mut tes = TES::discover(&config(&server.url, short), LONG)
+        .await
+        .unwrap();
+    assert!(tes.refresh().await.is_err());
+
+    let server = serve(slow_after_first("wes")).await;
+    let mut wes = WES::discover(&config(&server.url, short), LONG)
+        .await
+        .unwrap();
     assert!(wes.refresh().await.is_err());
 }
 

@@ -301,16 +301,15 @@ impl CapabilitySnapshot {
 ///
 /// Read the parts with [`client`](Self::client) (or `Deref`) and
 /// [`capabilities`](Self::capabilities), or split the wrapper with
-/// [`into_parts`](Self::into_parts). The public fields are deprecated and
-/// become private in a later release: an assignment to one of them would
-/// separate the client from the snapshot of its service. The
+/// [`into_parts`](Self::into_parts). The fields are private: an assignment
+/// to one of them would separate the client from the snapshot of its
+/// service. The
 /// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md#migration)
-/// lists the replacements.
+/// lists the replacements of the former public fields.
 ///
-/// With `#![deny(deprecated)]`, assigning a field fails to compile:
+/// Assigning a field fails to compile:
 ///
-/// ```compile_fail
-/// #![deny(deprecated)]
+/// ```compile_fail,E0616
 /// use ga4gh_sdk::clients::{capabilities::Discovered, tes::TES};
 /// fn swap(discovered: &mut Discovered<TES>, client: TES) {
 ///     discovered.client = client;
@@ -319,18 +318,11 @@ impl CapabilitySnapshot {
 #[derive(Debug)]
 pub struct Discovered<T> {
     /// The client, also reached through `Deref` and [`Self::client`].
-    #[deprecated(
-        note = "use `client()`, `Deref`, or `into_parts()`; this field will become private"
-    )]
-    pub client: T,
-    /// The service-info response that the client was built from; also
-    /// returned by [`Self::capabilities`].
-    #[deprecated(note = "use `capabilities()` or `into_parts()`; this field will become private")]
-    pub capabilities: CapabilitySnapshot,
+    client: T,
+    /// The service-info response that the client was built from; returned
+    /// by [`Self::capabilities`].
+    capabilities: CapabilitySnapshot,
 }
-// The accessors, `Deref`, the constructors, and `refresh` are the only code
-// that reads or sets the deprecated fields.
-#[allow(deprecated)]
 impl<T> Discovered<T> {
     /// The client, also reached through `Deref`.
     pub fn client(&self) -> &T {
@@ -358,7 +350,6 @@ impl<T> Discovered<T> {
         }
     }
 }
-#[allow(deprecated)]
 impl<T> Deref for Discovered<T> {
     type Target = T;
     fn deref(&self) -> &T {
@@ -470,8 +461,6 @@ impl Discovered<TES> {
     /// # Errors
     ///
     /// Fails if the request fails or the response isn't a TES service info.
-    // Replaces both deprecated fields in one step
-    #[allow(deprecated)]
     pub async fn refresh(&mut self) -> crate::Result<()> {
         let transport = self.client.transport();
         let (service, snapshot) = discover(transport, "tes", self.capabilities.max_age).await?;
@@ -498,8 +487,6 @@ impl Discovered<WES> {
     /// # Errors
     ///
     /// Fails if the request fails or the response isn't a WES service info.
-    // Replaces both deprecated fields in one step
-    #[allow(deprecated)]
     pub async fn refresh(&mut self) -> crate::Result<()> {
         let transport = self.client.transport();
         let (service, snapshot) = discover(transport, "wes", self.capabilities.max_age).await?;

@@ -340,15 +340,14 @@ fn warn_plain_http_credential_once() {
 ///
 /// The configuration is fixed after construction: read it with
 /// [`configuration`](Self::configuration), and build a new transport for
-/// other values. The public `config` field is deprecated and becomes private
-/// in a later release, because the HTTP client of [`new`](Self::new) copies
-/// its connect and request timeouts at construction (see the
+/// other values. The `config` field is private, because the HTTP client of
+/// [`new`](Self::new) copies its connect and request timeouts at
+/// construction (see the
 /// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md#migration)).
 ///
-/// With `#![deny(deprecated)]`, assigning the field fails to compile:
+/// Assigning the field fails to compile:
 ///
-/// ```compile_fail
-/// #![deny(deprecated)]
+/// ```compile_fail,E0616
 /// use ga4gh_sdk::utils::transport::Transport;
 /// fn retime(transport: &mut Transport) {
 ///     transport.config.timeouts.request = std::time::Duration::from_secs(1);
@@ -357,10 +356,8 @@ fn warn_plain_http_credential_once() {
 #[derive(Clone)]
 pub struct Transport {
     /// The configuration whose API root, credentials and time limits the
-    /// transport uses.
-    #[deprecated(note = "use `configuration()`; build a new transport to change the \
-                configuration; this field will become private")]
-    pub config: Configuration,
+    /// transport uses; returned by [`Self::configuration`].
+    config: Configuration,
     client: reqwest::Client,
     apply_configured_auth: bool,
 }
@@ -422,8 +419,6 @@ impl Transport {
         Self::assemble(config, client, true)
     }
 
-    // The only place that sets the deprecated field
-    #[allow(deprecated)]
     fn assemble(config: &Configuration, client: Client, apply_configured_auth: bool) -> Self {
         Self {
             config: config.clone(),
@@ -444,7 +439,6 @@ impl Transport {
     /// or [`with_client_and_configured_auth`](Self::with_client_and_configured_auth),
     /// the injected HTTP client's own connect and request timeouts, redirect
     /// policy, and default headers apply instead of what this reports.
-    #[allow(deprecated)]
     pub fn configuration(&self) -> &Configuration {
         &self.config
     }
@@ -1059,7 +1053,6 @@ mod tests {
     /// `configuration()` is the transport's own configuration for every
     /// constructor, including recorded timeouts and a non-default API root.
     #[test]
-    #[allow(deprecated)] // compares the accessor with the field
     fn configuration_is_the_transports_configuration() {
         let root = "https://example.org/custom/ga4gh/tes/v9/";
         let config = Configuration::new(Url::parse(root).unwrap());

@@ -105,12 +105,6 @@ macro_rules! assert_constructed {
                 $artifact
             );
             assert_eq!(client.discovered_service_info().id, "org.example.constructors");
-            // Downstream code may still read the deprecated copy: it must
-            // match the transport's configuration on every path.
-            #[allow(deprecated)]
-            let copy = &client.config;
-            assert_eq!(copy.base_path, $config.base_path, "{}", $artifact);
-            assert_eq!(copy.user_agent, $config.user_agent, "{}", $artifact);
         )+
     }};
 }

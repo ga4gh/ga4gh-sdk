@@ -149,14 +149,13 @@ fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<s
 /// with [`with_transport`](Self::with_transport), to change its API root,
 /// credentials, HTTP client, or time limits. Read its state with
 /// [`configuration`](Self::configuration), [`transport`](Self::transport),
-/// and [`discovered_service_info`](Self::discovered_service_info); the public
-/// fields are deprecated and become private in a later release (see the
+/// and [`discovered_service_info`](Self::discovered_service_info); its
+/// fields are private (see the
 /// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md)).
 ///
-/// With `#![deny(deprecated)]`, assigning a field fails to compile:
+/// Assigning a field fails to compile:
 ///
-/// ```compile_fail
-/// #![deny(deprecated)]
+/// ```compile_fail,E0616
 /// use ga4gh_sdk::clients::{serviceinfo::models::Service, wes::WES};
 /// fn swap_wes(wes: &mut WES, service: Service) {
 ///     wes.service = service;
@@ -164,27 +163,12 @@ fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<s
 /// ```
 #[derive(Debug)]
 pub struct WES {
-    /// A copy of the transport's configuration, made when the client was
-    /// built. Requests don't read it, so it can differ from what they
-    /// use; read [`Self::configuration`] instead.
-    #[allow(dead_code)]
-    #[deprecated(
-        note = "use `configuration()`, which reads the transport's configuration; \
-                requests never read this copy, and it will be removed"
-    )]
-    pub config: Configuration,
-    /// The service info that the client read when it was built; also
-    /// returned by [`Self::discovered_service_info`].
-    #[deprecated(note = "use `discovered_service_info()`; this field will become private")]
-    pub service: Service,
-    /// The transport that sends the client's requests; also returned by
+    /// The service info that the client read when it was built; returned by
+    /// [`Self::discovered_service_info`].
+    service: Service,
+    /// The transport that sends the client's requests; returned by
     /// [`Self::transport`].
-    #[deprecated(
-        note = "use `transport()`; for another transport, build a client with \
-                `WES::with_transport`, or with `WES::without_discovery` to keep \
-                the service info; this field will become private"
-    )]
-    pub transport: Transport,
+    transport: Transport,
 }
 
 impl WES {
@@ -234,18 +218,12 @@ impl WES {
     /// service type; [`with_artifact`](Self::with_artifact) does.
     ///
     /// This replaces building a `WES` from its fields.
-    // The only place that sets the deprecated fields
-    #[allow(deprecated)]
     pub fn without_discovery(transport: Transport, service: Service) -> Self {
-        WES {
-            config: transport.configuration().clone(),
-            transport,
-            service,
-        }
+        WES { transport, service }
     }
 
     /// The configuration of the client's transport: the value that requests
-    /// read, not the separate `config` copy. See
+    /// read. See
     /// [`Transport::configuration`] for what it determines, and for the
     /// settings of an injected HTTP client that apply instead.
     pub fn configuration(&self) -> &Configuration {
@@ -254,7 +232,6 @@ impl WES {
 
     /// The transport that sends the client's requests, for example to share
     /// it with a client for an added endpoint.
-    #[allow(deprecated)]
     pub fn transport(&self) -> &Transport {
         &self.transport
     }
@@ -263,7 +240,6 @@ impl WES {
     /// snapshot: the client does not fetch it again. Within the SDK, only
     /// `Discovered::refresh` replaces it, together with the capability
     /// snapshot.
-    #[allow(deprecated)]
     pub fn discovered_service_info(&self) -> &Service {
         &self.service
     }
@@ -1038,7 +1014,6 @@ mod tests {
     /// discovered service, below a non-default API root and with timeouts
     /// from `Transport::with_timeouts`.
     #[tokio::test]
-    #[allow(deprecated)] // compares the accessors with the fields
     async fn configuration_is_transport_configuration() {
         let _m = mock("GET", "/accessors/custom/wes/v9/service-info")
             .with_status(200)
@@ -1059,7 +1034,7 @@ mod tests {
         let request = std::time::Duration::from_secs(7);
         let transport = Transport::with_timeouts(&config, connect, request).unwrap();
 
-        let mut client = WES::with_transport(transport).await.unwrap();
+        let client = WES::with_transport(transport).await.unwrap();
 
         assert_eq!(client.configuration().base_path.as_str(), root);
         assert_eq!(client.configuration().timeouts.connect, connect);
@@ -1074,9 +1049,5 @@ mod tests {
             client.discovered_service_info(),
             &client.service
         ));
-
-        // The accessor reads the transport, not the separate `config` copy.
-        client.config.base_path = url::Url::parse("https://stale.example/").unwrap();
-        assert_eq!(client.configuration().base_path.as_str(), root);
     }
 }
