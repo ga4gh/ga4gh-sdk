@@ -180,6 +180,27 @@ async fn immediate_200_and_resume_validation() {
 }
 
 #[tokio::test]
+async fn reference_root_is_transport_root() {
+    // Regression for #292: the reference names the root of the transport
+    // that received the request, including a non-default path.
+    let root = format!("{}/custom/ga4gh/drs/v9", server_url());
+    let config = Configuration::new(url::Url::parse(&root).unwrap());
+    let client = DRS::without_discovery(Transport::new(&config), Service::default());
+    let request = mock("GET", "/custom/ga4gh/drs/v9/objects/id")
+        .with_status(202)
+        .with_header("retry-after", "1")
+        .expect(1)
+        .create();
+    let error = client.get_object_raw("id").await.unwrap_err();
+    let pending = error
+        .downcast_ref::<PendingResolution>()
+        .expect("202 is pending");
+    request.assert();
+    assert_eq!(pending.reference.api_root, format!("{root}/"));
+    assert_eq!(pending.reference.endpoint, "objects/id");
+}
+
+#[tokio::test]
 async fn resume_accepts_equivalent_api_root_with_trailing_slash() {
     let root = format!("{}/ga4gh/drs/v1", server_url());
     let first_config = Configuration::new(url::Url::parse(&root).unwrap());

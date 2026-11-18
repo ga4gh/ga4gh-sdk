@@ -168,6 +168,16 @@ fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<s
 ///     wes.transport = transport;
 /// }
 /// ```
+///
+/// The accessors read them:
+///
+/// ```
+/// use ga4gh_sdk::clients::{serviceinfo::models::Service, wes::WES};
+/// use ga4gh_sdk::utils::transport::Transport;
+/// fn read(wes: &WES) -> (&Transport, &Service) {
+///     (wes.transport(), wes.discovered_service_info())
+/// }
+/// ```
 #[derive(Debug)]
 pub struct WES {
     /// The service info that the client read when it was built; returned by

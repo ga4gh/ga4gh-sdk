@@ -26,6 +26,11 @@ use tokio::{
 const SHORT: Duration = Duration::from_millis(150);
 const DELAY: Duration = Duration::from_millis(600);
 const LONG: Duration = Duration::from_secs(5);
+/// The discovery limit of the refresh test: long enough for a fast loopback
+/// answer, and well below `SLOW_REFRESH`.
+const REFRESH_LIMIT: Duration = Duration::from_secs(1);
+/// The delay of the refresh answers in the refresh test.
+const SLOW_REFRESH: Duration = Duration::from_secs(3);
 const NATIVE_WES_INFO: &str = r#"{"version":"9.3.0","workflow_type_versions":{"CWL":{"workflow_type_version":["v1.2"]}},"supported_wes_versions":["1.0.0"],"supported_filesystem_protocols":["file"],"workflow_engine_versions":{"toil":"9.3.0"},"default_workflow_engine_parameters":[],"system_state_counts":{},"tags":{}}"#;
 
 /// How the test server answers one request.
@@ -165,7 +170,7 @@ fn slow_service_info(artifact: &'static str) -> Vec<(&'static str, Reply)> {
 fn slow_after_first(artifact: &'static str) -> Vec<(&'static str, Reply)> {
     vec![(
         "/service-info",
-        Reply::ServiceInfoSlowAfterFirst(DELAY, artifact),
+        Reply::ServiceInfoSlowAfterFirst(SLOW_REFRESH, artifact),
     )]
 }
 
@@ -315,23 +320,28 @@ async fn refresh_uses_the_discovery_timeout() {
 
     // A client is fixed after construction, so a shorter limit needs a
     // client whose service answers discovery at once and refresh slowly.
+    // The refresh gives up at the limit, before the slow answer arrives;
+    // the server sees only the discovery and the refresh request.
     let short = Timeouts {
-        discovery: SHORT,
+        discovery: REFRESH_LIMIT,
         ..Default::default()
     };
     let server = serve(slow_after_first("tes")).await;
     let mut tes = TES::discover(&config(&server.url, short), LONG)
         .await
         .unwrap();
+    let start = std::time::Instant::now();
     assert!(tes.refresh().await.is_err());
-    // Discovery and the refresh only: the failure is the slow second answer.
+    assert!(start.elapsed() < SLOW_REFRESH, "{:?}", start.elapsed());
     assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 
     let server = serve(slow_after_first("wes")).await;
     let mut wes = WES::discover(&config(&server.url, short), LONG)
         .await
         .unwrap();
+    let start = std::time::Instant::now();
     assert!(wes.refresh().await.is_err());
+    assert!(start.elapsed() < SLOW_REFRESH, "{:?}", start.elapsed());
     assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 }
 

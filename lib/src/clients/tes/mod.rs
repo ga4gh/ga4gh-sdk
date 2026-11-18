@@ -203,6 +203,16 @@ impl Task {
 ///     tes.service = service;
 /// }
 /// ```
+///
+/// The accessors read them:
+///
+/// ```
+/// use ga4gh_sdk::clients::{serviceinfo::models::Service, tes::TES};
+/// use ga4gh_sdk::utils::transport::Transport;
+/// fn read(tes: &TES) -> (&Transport, &Service) {
+///     (tes.transport(), tes.discovered_service_info())
+/// }
+/// ```
 #[derive(Debug)]
 pub struct TES {
     /// The service info that the client read when it was built; returned by

@@ -325,6 +325,18 @@ impl CapabilitySnapshot {
 ///     discovered.capabilities = snapshot;
 /// }
 /// ```
+///
+/// The accessors read them:
+///
+/// ```
+/// use ga4gh_sdk::clients::{
+///     capabilities::{CapabilitySnapshot, Discovered},
+///     tes::TES,
+/// };
+/// fn read(discovered: &Discovered<TES>) -> (&TES, &CapabilitySnapshot) {
+///     (discovered.client(), discovered.capabilities())
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Discovered<T> {
     /// The client, also reached through `Deref` and [`Self::client`].

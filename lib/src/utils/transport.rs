@@ -353,6 +353,15 @@ fn warn_plain_http_credential_once() {
 ///     transport.config.timeouts.request = std::time::Duration::from_secs(1);
 /// }
 /// ```
+///
+/// The accessor reads it:
+///
+/// ```
+/// use ga4gh_sdk::utils::transport::Transport;
+/// fn read(transport: &Transport) -> std::time::Duration {
+///     transport.configuration().timeouts.request
+/// }
+/// ```
 #[derive(Clone)]
 pub struct Transport {
     /// The configuration whose API root, credentials and time limits the

@@ -47,6 +47,16 @@ use serde::de::DeserializeOwned;
 ///     drs.service = service;
 /// }
 /// ```
+///
+/// The accessors read them:
+///
+/// ```
+/// use ga4gh_sdk::clients::{drs::DRS, serviceinfo::models::Service};
+/// use ga4gh_sdk::utils::transport::Transport;
+/// fn read(drs: &DRS) -> (&Transport, &Service) {
+///     (drs.transport(), drs.discovered_service_info())
+/// }
+/// ```
 #[derive(Debug)]
 pub struct DRS {
     /// The service info that the client read when it was built; returned by
