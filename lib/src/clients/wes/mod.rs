@@ -144,19 +144,48 @@ fn paging_params(page_token: Option<String>, page_size: Option<i64>) -> Option<s
 }
 
 /// The main struct for interacting with a WES service.
+///
+/// A client is immutable after construction: build a new one, for example
+/// with [`with_transport`](Self::with_transport), to change its API root,
+/// credentials, HTTP client, or time limits. Read its state with
+/// [`configuration`](Self::configuration), [`transport`](Self::transport),
+/// and [`discovered_service_info`](Self::discovered_service_info); its
+/// fields are private (see the
+/// [client state ownership record](https://github.com/ga4gh/ga4gh-sdk/blob/main/docs/state_ownership.md)).
+///
+/// Assigning a field fails to compile:
+///
+/// ```compile_fail,E0616
+/// use ga4gh_sdk::clients::{serviceinfo::models::Service, wes::WES};
+/// fn swap_wes(wes: &mut WES, service: Service) {
+///     wes.service = service;
+/// }
+/// ```
+///
+/// ```compile_fail,E0616
+/// use ga4gh_sdk::{clients::wes::WES, utils::transport::Transport};
+/// fn swap_transport(wes: &mut WES, transport: Transport) {
+///     wes.transport = transport;
+/// }
+/// ```
+///
+/// The accessors read them:
+///
+/// ```
+/// use ga4gh_sdk::clients::{serviceinfo::models::Service, wes::WES};
+/// use ga4gh_sdk::utils::transport::Transport;
+/// fn read(wes: &WES) -> (&Transport, &Service) {
+///     (wes.transport(), wes.discovered_service_info())
+/// }
+/// ```
 #[derive(Debug)]
 pub struct WES {
-    /// A copy of the transport's configuration, made when the client was
-    /// built. Requests don't read it, so it can differ from what they
-    /// use; read [`Self::configuration`] instead.
-    #[allow(dead_code)]
-    pub config: Configuration,
-    /// The service info that the client read when it was built; also
-    /// returned by [`Self::discovered_service_info`].
-    pub service: Service,
-    /// The transport that sends the client's requests; also returned by
+    /// The service info that the client read when it was built; returned by
+    /// [`Self::discovered_service_info`].
+    service: Service,
+    /// The transport that sends the client's requests; returned by
     /// [`Self::transport`].
-    pub transport: Transport,
+    transport: Transport,
 }
 
 impl WES {
@@ -197,19 +226,25 @@ impl WES {
             .and_then(|body| service_from_info(from_str(&body)?))
             .map_err(|source| DiscoveryError { api: "WES", source })?;
         crate::clients::serviceinfo::check_artifact(&service, artifact, "WES")?;
-        Ok(WES {
-            config: transport.config.clone(),
-            transport,
-            service,
-        })
+        Ok(Self::without_discovery(transport, service))
+    }
+
+    /// Creates a client from a transport and service info that the caller
+    /// already has, without a service-info request, for example in tests or
+    /// for a known deployment without usable discovery. It does not check the
+    /// service type; [`with_artifact`](Self::with_artifact) does.
+    ///
+    /// This replaces building a `WES` from its fields.
+    pub fn without_discovery(transport: Transport, service: Service) -> Self {
+        WES { transport, service }
     }
 
     /// The configuration of the client's transport: the value that requests
-    /// read, not the separate `config` copy. See
+    /// read. See
     /// [`Transport::configuration`] for what it determines, and for the
     /// settings of an injected HTTP client that apply instead.
     pub fn configuration(&self) -> &Configuration {
-        self.transport.configuration()
+        self.transport().configuration()
     }
 
     /// The transport that sends the client's requests, for example to share
@@ -261,7 +296,9 @@ impl WES {
         self.run_workflow_streaming(
             request,
             attachments,
-            &crate::utils::operation::Operation::new(self.transport.config.timeouts.submission),
+            &crate::utils::operation::Operation::new(
+                self.transport().configuration().timeouts.submission,
+            ),
         )
         .await
     }
@@ -273,7 +310,7 @@ impl WES {
         page_size: Option<i64>,
     ) -> crate::Result<RunListResponse> {
         let resp_str = self
-            .transport
+            .transport()
             .get("runs", paging_params(next_page_token, page_size))
             .await?;
         // Starter Kit WES 0.2.0 returns a bare array, while WES 1.0.1
@@ -303,7 +340,7 @@ impl WES {
     /// Gets a run's details as any type that deserializes from the server's
     /// run log JSON, as [`Run::log_as`] does.
     pub async fn get_run_as<T: DeserializeOwned>(&self, id: &str) -> crate::Result<T> {
-        Run::new(id.to_string(), self.transport.clone())
+        Run::new(id.to_string(), self.transport().clone())
             .log_as()
             .await
     }
@@ -377,11 +414,7 @@ mod tests {
         let config = crate::utils::configuration::config_with_markers();
         let transport = Transport::new(&config);
         let run = Run::new("123".to_string(), transport.clone());
-        let wes = WES {
-            config,
-            service: Service::default(),
-            transport,
-        };
+        let wes = WES::without_discovery(transport, Service::default());
         for output in [format!("{:?}", run), format!("{:?}", wes)] {
             assert!(!output.contains("SENTINEL"), "{output}");
         }
@@ -483,17 +516,16 @@ mod tests {
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
-        let wes = WES {
-            config,
-            service: Service {
+        let wes = WES::without_discovery(
+            transport,
+            Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
             },
-            transport,
-        };
+        );
 
         let result = wes.run_workflow(valid_request()).await;
         assert!(result.is_ok());
@@ -507,17 +539,16 @@ mod tests {
             .with_body("{}")
             .create();
         let config = Configuration::new(Url::parse(&server_url()).unwrap());
-        let wes = WES {
-            transport: Transport::new(&config),
-            config,
-            service: Service {
+        let wes = WES::without_discovery(
+            Transport::new(&config),
+            Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
             },
-        };
+        );
         assert!(wes.run_workflow(valid_request()).await.is_err());
     }
 
@@ -531,17 +562,16 @@ mod tests {
         let base = Url::parse(&format!("{}/wes-auth", server_url())).unwrap();
         let config = Configuration::new(base)
             .with_token_provider(crate::utils::auth::FixedToken("run-token"));
-        let wes = WES {
-            transport: Transport::new(&config),
-            config,
-            service: Service {
+        let wes = WES::without_discovery(
+            Transport::new(&config),
+            Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
             },
-        };
+        );
         let error = wes.run_workflow(valid_request()).await.unwrap_err();
         assert_eq!(
             error
@@ -564,17 +594,16 @@ mod tests {
             .with_body(r#"{"run_id":"uploaded"}"#)
             .create();
         let config = Configuration::new(Url::parse(&server_url()).unwrap());
-        let wes = WES {
-            transport: Transport::new(&config),
-            config,
-            service: Service {
+        let wes = WES::without_discovery(
+            Transport::new(&config),
+            Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
             },
-        };
+        );
         let request = RunRequest {
             workflow_url: "workflow.cwl".to_string(),
             ..valid_request()
@@ -673,11 +702,7 @@ mod tests {
         let mock_url = Url::parse(&server_url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
-        let wes = WES {
-            config,
-            service: Service::default(),
-            transport,
-        };
+        let wes = WES::without_discovery(transport, Service::default());
 
         let result = wes.list_runs(None, None).await;
         assert!(result.is_ok());
@@ -693,11 +718,7 @@ mod tests {
             .with_body(r#"[{"run_id":"123","state":"COMPLETE"}]"#)
             .create();
         let config = Configuration::new(Url::parse(&server_url()).unwrap());
-        let wes = WES {
-            transport: Transport::new(&config),
-            config,
-            service: Service::default(),
-        };
+        let wes = WES::without_discovery(Transport::new(&config), Service::default());
         let list = wes.list_runs(None, None).await.unwrap();
         let runs = list.runs.unwrap();
         assert_eq!(runs.len(), 1);
@@ -717,11 +738,7 @@ mod tests {
             .create();
         let config =
             Configuration::new(Url::parse(&format!("{}/ga4gh/wes/v1/", server_url())).unwrap());
-        let wes = WES {
-            transport: Transport::new(&config),
-            config,
-            service: Service::default(),
-        };
+        let wes = WES::without_discovery(Transport::new(&config), Service::default());
         assert!(wes
             .list_runs(Some("a+b&c".to_string()), Some(5))
             .await
@@ -738,11 +755,7 @@ mod tests {
         let mock_url = Url::parse(&server_url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
-        let wes = WES {
-            config,
-            service: Service::default(),
-            transport,
-        };
+        let wes = WES::without_discovery(transport, Service::default());
 
         let result = wes.get_run("123").await;
         assert!(result.is_ok());
@@ -751,17 +764,16 @@ mod tests {
 
     fn wes_for(base: &str) -> WES {
         let config = Configuration::new(Url::parse(base).unwrap());
-        WES {
-            transport: Transport::new(&config),
-            config,
-            service: Service {
+        WES::without_discovery(
+            Transport::new(&config),
+            Service {
                 r#type: Box::new(ServiceType {
                     artifact: "wes".to_string(),
                     ..Default::default()
                 }),
                 ..Service::default()
             },
-        }
+        )
     }
 
     #[tokio::test]
@@ -994,7 +1006,7 @@ mod tests {
             .with_body("list unavailable")
             .create();
         let wes = wes_for(&base);
-        let run = Run::new("gone".to_string(), wes.transport.clone());
+        let run = Run::new("gone".to_string(), wes.transport().clone());
         let errors = [
             (run.status().await.unwrap_err(), 404, "status not found"),
             (run.cancel().await.unwrap_err(), 409, "already finished"),
@@ -1039,7 +1051,7 @@ mod tests {
         let request = std::time::Duration::from_secs(7);
         let transport = Transport::with_timeouts(&config, connect, request).unwrap();
 
-        let mut client = WES::with_transport(transport).await.unwrap();
+        let client = WES::with_transport(transport).await.unwrap();
 
         assert_eq!(client.configuration().base_path.as_str(), root);
         assert_eq!(client.configuration().timeouts.connect, connect);
@@ -1054,9 +1066,5 @@ mod tests {
             client.discovered_service_info(),
             &client.service
         ));
-
-        // The accessor reads the transport, not the separate `config` copy.
-        client.config.base_path = url::Url::parse("https://stale.example/").unwrap();
-        assert_eq!(client.configuration().base_path.as_str(), root);
     }
 }

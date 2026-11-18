@@ -153,11 +153,11 @@ impl DRS {
     /// The reference of `endpoint` at this client's API root, without
     /// credentials, query or fragment.
     ///
-    /// The API root is the base path of [`DRS::transport`], which sends the
-    /// requests, not of [`DRS::config`], so a reference always names the
-    /// service that received the request.
+    /// The API root is the base path of [`DRS::configuration`], the
+    /// transport's configuration, so a reference always names the service
+    /// that received the request.
     pub fn resolution_reference(&self, endpoint: String) -> ResolutionReference {
-        let mut root = self.transport.config.base_path.clone();
+        let mut root = self.configuration().base_path.clone();
         let _ = root.set_username("");
         let _ = root.set_password(None);
         root.set_query(None);
@@ -203,7 +203,7 @@ impl DRS {
             return Err("DRS resolution reference belongs to another API root".into());
         }
         let response = self
-            .transport
+            .transport()
             .request_response(reqwest::Method::GET, &reference.endpoint, None, None)
             .await?;
         if let Some(seconds) = deferred_delay(&response)? {

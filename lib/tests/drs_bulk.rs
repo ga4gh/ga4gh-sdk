@@ -14,11 +14,7 @@ use serde_json::{json, Value};
 use std::{collections::BTreeSet, time::Duration};
 fn client(path: &str) -> DRS {
     let config = Configuration::new(url::Url::parse(&format!("{}{path}", server_url())).unwrap());
-    DRS {
-        transport: Transport::new(&config),
-        config,
-        service: Service::default(),
-    }
+    DRS::without_discovery(Transport::new(&config), Service::default())
 }
 fn budget() -> Operation {
     Operation::new(Duration::from_secs(5))
@@ -266,11 +262,7 @@ async fn configured_service_limit_and_concurrency_are_enforced() {
         }
     });
     let config = Configuration::new(url::Url::parse(&format!("http://{address}")).unwrap());
-    let client = DRS {
-        transport: Transport::new(&config),
-        config,
-        service: Service::default(),
-    };
+    let client = DRS::without_discovery(Transport::new(&config), Service::default());
     let mut policy = BulkPolicy::default()
         .with_service_info(&json!({"maxBulkRequestLength":1}))
         .unwrap();
@@ -296,13 +288,14 @@ async fn credential_contexts_and_global_request_bound_are_isolated() {
     for (client, token) in [(&mut a, "Bearer context-a"), (&mut b, "Bearer context-b")] {
         let mut headers = ga4gh_sdk::reqwest::header::HeaderMap::new();
         headers.insert("authorization", token.parse().unwrap());
-        client.transport = Transport::with_client(
-            &client.config,
+        let transport = Transport::with_client(
+            client.configuration(),
             ga4gh_sdk::reqwest::Client::builder()
                 .default_headers(headers)
                 .build()
                 .unwrap(),
         );
+        *client = DRS::without_discovery(transport, client.discovered_service_info().clone());
     }
     let request_a = mock("POST", "/context-a/objects")
         .match_header("authorization", "Bearer context-a")

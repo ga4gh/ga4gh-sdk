@@ -998,8 +998,22 @@ used) when updating `ga4gh`. Migrate removed PyO3 APIs such as `PyObject`,
 `Bound::cast`, respectively; see the [PyO3 migration guide](https://pyo3.rs/v0.30.1/migration).
 The `inner` field of each client and handle class holds the
 library type (for `PyAsyncTES`, a `LazyTES` that connects on first use); result classes
-have accessors instead (see [Result classes](#result-classes)). The TES calls
-that the sync and the async classes share are public functions in `clients::tes`, such as
+have accessors instead (see [Result classes](#result-classes)).
+Read the state of a library client through its accessors, such as
+`self.inner.transport()` and `self.inner.configuration()` of `PyTES`: its
+fields, and those of `Discovered` and `Transport`, are private (see the
+[replacements](../docs/state_ownership.md#migration)). The Python getters,
+such as `TES.config` and `TES.transport`, don't change:
+
+```rust
+// Before: read the former public field
+let transport = self.inner.transport.clone();
+// After
+let transport = self.inner.transport().clone();
+let root = &self.inner.configuration().base_path;
+```
+
+The TES calls that the sync and the async classes share are public functions in `clients::tes`, such as
 `get_task()` and `task_status()`; an async extension method can run them with
 `clients::tes_async::spawn_io` inside `clients::tes_async::future_into_py`, as
 `clients::tes_async` does.

@@ -128,7 +128,7 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             // Not Run::log: keep the server's JSON fields that the SDK
             // models lack. The output renderer escapes terminal controls.
             let path = format!("runs/{}", urlencode(id));
-            Ok(match wes.transport.get(&path, None).await {
+            Ok(match wes.transport().get(&path, None).await {
                 Ok(log) => CommandOutput::json(log),
                 Err(error) => CommandOutput::failure(error),
             })
@@ -364,7 +364,7 @@ pub async fn export_all(
             return Ok(std::process::ExitCode::FAILURE);
         }
     };
-    let pager = Pager::new(&wes.transport, ServiceKind::Wes, query.into(), options)
+    let pager = Pager::new(wes.transport(), ServiceKind::Wes, query.into(), options)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     crate::tes::write_jsonl(pager, stdout, stderr).await
 }

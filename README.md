@@ -38,10 +38,16 @@ construction. `TES`, `WES`, `DRS`, and `TRS` have these accessors (on `TRS`,
 `discovered_service_info()` returns an `Option`, as a `TRS` client can be
 built without discovery), and `Transport::configuration()` returns a
 transport's configuration. To change the API root, credentials, or HTTP
-client, build a new client, for example with `with_transport`. The public
-`config`, `service`, and `transport` fields of `TES`, `WES`, and `DRS` remain
-for now; see the
-[client state ownership record](docs/state_ownership.md).
+client, build a new client, for example with `with_transport`.
+`without_discovery(transport, service)` builds a `TES`, `WES`, or `DRS`
+client from values the caller already has, without a service-info request,
+as `TRS::without_discovery` does.
+
+The `service` and `transport` fields of `TES`, `WES`, and `DRS`, the
+`client` and `capabilities` fields of `Discovered`, and the `config` field
+of `Transport` are private, and the `config` copy of `TES`, `WES`, and `DRS`
+is gone. The [client state ownership record](docs/state_ownership.md#migration)
+lists the replacement of each former public field.
 
 ### Migration notes
 

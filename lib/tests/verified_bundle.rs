@@ -72,17 +72,16 @@ fn source(
 }
 fn wes(base: &str) -> WES {
     let config = Configuration::new(url::Url::parse(base).unwrap());
-    WES {
-        transport: Transport::new(&config),
-        config,
-        service: Service {
+    WES::without_discovery(
+        Transport::new(&config),
+        Service {
             r#type: Box::new(ServiceType {
                 artifact: "wes".into(),
                 ..Default::default()
             }),
             ..Default::default()
         },
-    }
+    )
 }
 
 #[tokio::test]
@@ -495,7 +494,7 @@ async fn real_toil_executes_verified_nested_cwl_bundle() {
     .unwrap();
     let wes = wes(&url);
     let service: Value =
-        serde_json::from_str(&wes.transport.get("service-info", None).await.unwrap()).unwrap();
+        serde_json::from_str(&wes.transport().get("service-info", None).await.unwrap()).unwrap();
     assert_eq!(service["version"], "9.3.0");
     let submitted = prepared.submit(&wes, &operation()).await.unwrap();
     let mut wait = WaitOptions::new(Duration::from_secs(180));
@@ -504,7 +503,7 @@ async fn real_toil_executes_verified_nested_cwl_bundle() {
     assert_eq!(result.outcome, WaitOutcome::Complete, "{result:?}");
     let log = submitted.run.log().await.unwrap();
     let raw = wes
-        .transport
+        .transport()
         .get(&format!("runs/{}", submitted.run.id), None)
         .await
         .unwrap();
