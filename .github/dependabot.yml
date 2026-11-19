@@ -4,6 +4,24 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Rust crates in the workspace's `Cargo.lock`, including those of the
+  # Python bindings. Semver-compatible updates come as one PR; each
+  # incompatible update, such as a new 0.x minor version, comes on its own.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        update-types:
+          - minor
+          - patch
+  # Python packages in `python/pyproject.toml`: the build backend and the
+  # exact versions of the `docs` dependency group
+  - package-ecosystem: pip
+    directory: /python
+    schedule:
+      interval: weekly
   # Hook revisions in `.pre-commit-config.yaml`
   - package-ecosystem: pre-commit
     directory: /
