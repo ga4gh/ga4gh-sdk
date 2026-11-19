@@ -152,7 +152,8 @@ public packages.
 
 The `ga4gh/ga4gh-sdk` repository already has `pypi` and `testpypi`
 environments limited to `v*` tags. Both require approval by
-`pavelnikonorov` or `uniqueg` and prevent self-approval; neither needs secrets.
+`pavelnikonorov` or `uniqueg`; on `pypi`, the maintainer who pushed the tag
+may approve the deployment, too. Neither needs secrets.
 Two tag rulesets allow only those two users to create `v*` tags and prevent
 updates or deletion. Verify these protections before each release. The CLI
 binaries and the GitHub release need no environment and no secret. The binary
@@ -202,10 +203,9 @@ confirmed.
 
 3. Approve the deployment to `pypi` in the workflow run once the wheels,
    CLI binaries and image are built and checked, about 45 minutes after the
-   tag push. The approver must be a maintainer other than the one who pushed
-   the tag: the environment prevents self-approval, and GitHub counts the
-   person who pushed the tag as the one who triggered the run. Agree on both
-   people before you push the tag; the run waits until someone approves.
+   tag push. Either maintainer may approve, including the one who pushed the
+   tag. Nothing is published until someone approves, and the run waits for
+   up to 30 days.
 4. When the run has finished, check the image tag and its attestation. Until
    the package is public (step 6), log in first:
 
