@@ -318,7 +318,7 @@ becomes `tes.transport()` and `task.inner` becomes `task.inner()`. The
 
 ### Status
 
-No release contains these changes yet; the SDK has no tagged release.
+The first release, 0.1.0, contains these changes.
 
 - Done (additive): the accessors
   ([#293](https://github.com/ga4gh/ga4gh-sdk/issues/293)) and

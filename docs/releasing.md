@@ -146,9 +146,7 @@ On the first push, GitHub creates the `ga4gh-cli` package, connected to this
 repository. Check after the first release that the package is public (the
 package's settings on GitHub, **Change visibility**) and that it inherits
 access from the repository; organization settings can restrict who creates
-public packages. Then replace the sentence starting "No release
-includes the image yet" in `docs/container-image.md` with the first version
-that includes the image.
+public packages.
 
 ## One-time setup
 
@@ -203,12 +201,19 @@ confirmed.
    ```
 
 3. Approve the deployment to `pypi` in the workflow run once the wheels,
-   CLI binaries and image are built and checked.
-4. When the run has finished, check the image tag and its attestation:
+   CLI binaries and image are built and checked, about 45 minutes after the
+   tag push. The approver must be a maintainer other than the one who pushed
+   the tag: the environment prevents self-approval, and GitHub counts the
+   person who pushed the tag as the one who triggered the run. Agree on both
+   people before you push the tag; the run waits until someone approves.
+4. When the run has finished, check the image tag and its attestation. Until
+   the package is public (step 6), log in first:
 
    ```sh
-   docker buildx imagetools inspect ghcr.io/ga4gh/ga4gh-cli:0.2.0
-   gh attestation verify oci://ghcr.io/ga4gh/ga4gh-cli:0.2.0 --repo ga4gh/ga4gh-sdk
+   version=VERSION   # for example 0.2.0
+   gh auth token | docker login ghcr.io --username YOUR_USERNAME --password-stdin
+   docker buildx imagetools inspect "ghcr.io/ga4gh/ga4gh-cli:$version"
+   gh attestation verify "oci://ghcr.io/ga4gh/ga4gh-cli:$version" --repo ga4gh/ga4gh-sdk
    ```
 
 5. Open the draft release, add the curated notes above GitHub's generated
