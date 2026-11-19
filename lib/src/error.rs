@@ -113,7 +113,17 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Http(error) => error.fmt(f),
-            Self::Transport(error) => error.fmt(f),
+            Self::Transport(error) => {
+                // reqwest's message leaves out the cause, such as a refused
+                // connection or a failed body stream: add it, as reqwest 0.11 did.
+                error.fmt(f)?;
+                let mut cause = error.source();
+                while let Some(error) = cause {
+                    write!(f, ": {error}")?;
+                    cause = error.source();
+                }
+                Ok(())
+            }
             Self::Endpoint(error) => error.fmt(f),
             Self::Parse(error) => error.fmt(f),
             Self::Configuration(error) | Self::Other(error) => error.fmt(f),
@@ -296,6 +306,28 @@ mod tests {
             .unwrap_err();
         let boxed: BoxError = Box::new(error);
         assert!(matches!(Error::from(boxed), Error::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn test_transport_errors_display_their_cause() {
+        // A port that refuses connections: bind, read the port, close.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let error = reqwest::Client::new()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap_err();
+        let message = Error::from(error).to_string();
+        assert!(
+            message.starts_with(&format!(
+                "error sending request for url (http://{address}/): "
+            )),
+            "{message}"
+        );
+        // The operating system's reason, such as "Connection refused (os error 111)"
+        assert!(message.contains("os error"), "{message}");
     }
 
     #[test]

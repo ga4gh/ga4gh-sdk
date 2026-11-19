@@ -406,6 +406,12 @@ struct DeviceAuthorization {
 
 /// An HTTP client for the provider: no redirects, so that codes and tokens
 /// reach only the endpoints of the discovery document.
+/// The message of a request error with its cause, such as a refused connection,
+/// which reqwest leaves out of its own message.
+fn with_cause(error: reqwest::Error) -> ga4gh_sdk::Error {
+    ga4gh_sdk::Error::from(error)
+}
+
 fn http_client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -416,11 +422,9 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
 /// Reads the discovery document and checks its issuer and endpoints.
 async fn discover(client: &reqwest::Client, settings: &OidcSettings) -> anyhow::Result<Endpoints> {
     let url = settings.discovery_url()?;
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| anyhow::anyhow!("OpenID Connect discovery failed: {error}"))?;
+    let response = client.get(url).send().await.map_err(|error| {
+        anyhow::anyhow!("OpenID Connect discovery failed: {}", with_cause(error))
+    })?;
     let status = response.status();
     if !status.is_success() {
         anyhow::bail!("OpenID Connect discovery failed with HTTP status {status}");
@@ -473,7 +477,7 @@ async fn token_request(
         .form(form)
         .send()
         .await
-        .map_err(|error| anyhow::anyhow!("The token request failed: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("The token request failed: {}", with_cause(error)))?;
     let status = response.status();
     let body: Value = response.json().await.map_err(|_| {
         anyhow::anyhow!("The token response (HTTP status {status}) is not valid JSON")
@@ -557,7 +561,12 @@ async fn device_flow(
         ])
         .send()
         .await
-        .map_err(|error| anyhow::anyhow!("The device authorization request failed: {error}"))?;
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "The device authorization request failed: {}",
+                with_cause(error)
+            )
+        })?;
     let status = response.status();
     if !status.is_success() {
         anyhow::bail!("The device authorization request failed with HTTP status {status}");
@@ -1070,6 +1079,29 @@ mod tests {
         .unwrap()
         .to_string();
         assert!(error.contains("expired"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_discovery_request_names_its_cause() {
+        // Bind a free port and release it, so that connections to it are refused.
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let error = discover(
+            &http_client().unwrap(),
+            &settings(&format!("http://127.0.0.1:{port}")),
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            error.starts_with("OpenID Connect discovery failed: "),
+            "{error}"
+        );
+        // The cause, such as "Connection refused (os error 111)"
+        assert!(error.contains("os error"), "{error}");
     }
 
     #[tokio::test]

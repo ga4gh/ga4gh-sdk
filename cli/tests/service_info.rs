@@ -334,6 +334,8 @@ fn a_refused_connection_is_an_error() {
     let config = json!({"TES": {"base_path": format!("http://127.0.0.1:{port}/")}});
     let output = run(&config, &["service-info", "--service", "TES"]);
     assert_failure(&output, "Error requesting service-info of section 'TES'");
+    // The cause, such as "Connection refused (os error 111)"
+    assert!(stderr(&output).contains("os error"), "{}", stderr(&output));
 }
 
 #[test]

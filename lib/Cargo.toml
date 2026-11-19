@@ -34,10 +34,13 @@ num-bigint = { version = "0.4", optional = true }
 num-rational = { version = "0.4", optional = true }
 jsonschema = { version = "0.61", default-features = false, optional = true }
 
+# `charset`, `http2` and `system-proxy` keep what reqwest 0.11 always did:
+# decode response text by its charset, offer HTTP/2 and use the system proxy
+# settings of macOS and Windows. The TLS backend comes from the features below.
 [dependencies.reqwest]
-version = "^0.11"
+version = "0.12"
 default-features = false
-features = ["json", "multipart", "stream"]
+features = ["json", "multipart", "stream", "charset", "http2", "system-proxy"]
 
 [dev-dependencies]
 mockito = "0.31"

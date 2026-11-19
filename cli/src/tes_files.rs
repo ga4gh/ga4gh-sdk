@@ -604,7 +604,12 @@ async fn download_http(
     let client = reqwest::Client::builder()
         .connect_timeout(config.timeouts.connect)
         .build()
-        .map_err(|error| anyhow::anyhow!("Can't create an HTTP client: {error}"))?;
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "Can't create an HTTP client: {}",
+                ga4gh_sdk::Error::from(error)
+            )
+        })?;
     // `connect_timeout` ends after connection establishment. Bound the wait
     // for response headers too; `next_chunk` handles later body stalls.
     let response = tokio::time::timeout(config.timeouts.request, client.get(url.clone()).send())
@@ -615,7 +620,13 @@ async fn download_http(
                 config.timeouts.request.as_secs_f64()
             )
         })?
-        .map_err(|error| anyhow::anyhow!("Request to {shown} failed: {}", error.without_url()))?;
+        .map_err(|error| {
+            // With the cause, which reqwest leaves out of its message
+            anyhow::anyhow!(
+                "Request to {shown} failed: {}",
+                ga4gh_sdk::Error::from(error.without_url())
+            )
+        })?;
     let status = response.status();
     if !status.is_success() {
         anyhow::bail!("{shown} returned HTTP {status}");
