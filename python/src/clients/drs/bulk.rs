@@ -12,10 +12,10 @@ use pyo3::types::{PyMapping, PyString};
 use pyo3::IntoPyObjectExt;
 use serde_json::Value;
 
-/// Limits of `DRS.get_bulk_objects()` and `DRS.get_bulk_access_urls()`.
+/// Limits of the bulk calls of `DRS`.
 ///
 /// Negative counts and negative or non-finite delays raise `ValueError` when the
-/// policy is built; the other limits are checked when a bulk call starts.
+/// policy is built; the other limits are checked when a call starts.
 #[pyclass(name = "BulkPolicy", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyBulkPolicy {
@@ -69,8 +69,19 @@ impl PyBulkPolicy {
         })
     }
 
-    /// A copy of the policy that also keeps to the `maxBulkRequestLength` of a service's
-    /// service info (a `dict` or JSON text), if it has one.
+    /// Gives a copy that also keeps to the service's `maxBulkRequestLength`.
+    ///
+    /// Args:
+    ///     service_info: The service info, as a `dict` or JSON text, for example
+    ///         `json.loads(drs.transport.get("service-info"))`.
+    ///
+    /// Returns:
+    ///     A new policy, with the same limits if the service info has no
+    ///     `maxBulkRequestLength`.
+    ///
+    /// Raises:
+    ///     ValueError: `service_info` isn't JSON, or its `maxBulkRequestLength` is
+    ///         invalid.
     fn with_service_info(&self, service_info: &Bound<'_, PyAny>) -> PyResult<Self> {
         let raw = to_json(service_info, "service info")?;
         let inner = self
@@ -200,6 +211,7 @@ impl PyBulkOutcome {
 
 #[pymethods]
 impl PyBulkOutcome {
+    /// The requested object ID.
     #[getter]
     fn object_id(&self) -> String {
         self.object_id.clone()
@@ -211,8 +223,7 @@ impl PyBulkOutcome {
         self.access_id.clone()
     }
 
-    /// The `DrsObject`s or `BulkAccessURL`s that the server returned for the ID; one, if all
-    /// went well.
+    /// The results that the server returned for the ID; one, if all went well.
     #[getter]
     fn resolved(&self, py: Python<'_>) -> Vec<Py<PyAny>> {
         self.resolved
@@ -263,8 +274,7 @@ impl PyBulkOutcome {
     }
 }
 
-/// The result of a bulk call: one `BulkOutcome` per distinct requested ID (or ID pair),
-/// sorted by ID, and the problems with the server's answers that belong to no ID.
+/// The outcomes, unattributed problems, and observed reply shapes of a bulk call.
 #[pyclass(name = "BulkReport", module = "ga4gh_sdk", subclass)]
 pub struct PyBulkReport {
     pub outcomes: Vec<Py<PyBulkOutcome>>,
@@ -304,6 +314,7 @@ impl PyBulkReport {
 
 #[pymethods]
 impl PyBulkReport {
+    /// One outcome per distinct requested ID (or ID pair), sorted by ID.
     #[getter]
     fn outcomes(&self, py: Python<'_>) -> Vec<Py<PyBulkOutcome>> {
         self.outcomes
@@ -312,12 +323,13 @@ impl PyBulkReport {
             .collect()
     }
 
+    /// Problems with the server's answers that belong to no ID.
     #[getter]
     fn diagnostics(&self) -> Vec<String> {
         self.diagnostics.clone()
     }
 
-    /// Reply shapes observed across the call, for example `standard` or `gen3`.
+    /// Reply shapes seen across the call: `standard` and, for objects, `gen3`.
     #[getter]
     fn dialects(&self) -> Vec<String> {
         self.dialects.clone()

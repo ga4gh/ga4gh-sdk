@@ -12,9 +12,12 @@ the [supported surface](README.md#supported-surface). Decide whether Python
 should expose the new behavior now; update the wrapper, table, and examples, or
 record that it remains Rust-only. Give every new class and member a docstring in
 `ga4gh_sdk.pyi` (Google style), from which the Python API reference is
-generated; keep it consistent with the Rust doc comment that `help()` shows,
-as no test compares the two. Do not infer full Rust/Python feature parity from
-a successful build.
+generated, and the same text, word for word, as the Rust doc comment that
+`help()` shows (or the docstring in the Python source of the classes defined in
+Python, such as `TesState`). `tests/test_stubs.py` fails on any difference and
+prints it. Rust-only notes for extension crates go on the fields, such as
+`inner`, not on the class or method. Do not infer full Rust/Python feature
+parity from a successful build.
 
 Trace the user path through Python arguments, the PyO3 wrapper, the Rust client,
 and the HTTP request or response. Keep endpoint paths relative to the configured

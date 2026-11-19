@@ -8,11 +8,13 @@ use pyo3::types::{PyDict, PyTuple, PyType};
 use reqwest::multipart::{Form, Part};
 use std::borrow::Cow;
 
-/// Sends requests below the configured API root.
+/// Sends requests below the configured API root and returns response bodies as text.
 ///
-/// `params` is a `dict` or a JSON object string of query parameters; list values repeat the
-/// parameter. `data` is a JSON string or any JSON-serialisable object. Responses are returned as
-/// text. Subclass it to add helpers for further endpoints.
+/// Subclass it to add helpers for further endpoints. In all methods, `endpoint` is
+/// relative to the API root, such as `tasks/123`; encode IDs that you put into it, for
+/// example with `urllib.parse.quote(task_id, safe="")`. `params` holds query parameters,
+/// as a mapping or a JSON object string: values are strings, numbers, booleans or lists
+/// of these, a list repeats the parameter, and `None` or an empty list leaves it out.
 #[pyclass(name = "Transport", module = "ga4gh_sdk", subclass)]
 pub struct PyTransport {
     pub inner: Transport,
@@ -40,6 +42,18 @@ impl PyTransport {
         Self::new(py_config)
     }
 
+    /// Sends a `GET` request.
+    ///
+    /// Args:
+    ///     endpoint: The path below the API root.
+    ///     params: Query parameters.
+    ///
+    /// Returns:
+    ///     The response body.
+    ///
+    /// Raises:
+    ///     ValueError: `params` holds an unsupported value.
+    ///     RuntimeError: The request failed or the server answered with an error status.
     #[pyo3(signature = (endpoint, params=None))]
     pub fn get(
         &self,
@@ -54,6 +68,20 @@ impl PyTransport {
         })
     }
 
+    /// Sends a `POST` request with a JSON body.
+    ///
+    /// Args:
+    ///     endpoint: The path below the API root.
+    ///     data: Any object that `json.dumps` accepts; a `str` is taken as JSON text,
+    ///         so pass `json.dumps(text)` to send a JSON string.
+    ///     params: Query parameters.
+    ///
+    /// Returns:
+    ///     The response body.
+    ///
+    /// Raises:
+    ///     ValueError: `data` or `params` is invalid.
+    ///     RuntimeError: The request failed or the server answered with an error status.
     #[pyo3(signature = (endpoint, data=None, params=None))]
     pub fn post(
         &self,
@@ -70,6 +98,19 @@ impl PyTransport {
         })
     }
 
+    /// Sends a `PUT` request with a JSON body.
+    ///
+    /// Args:
+    ///     endpoint: The path below the API root.
+    ///     data: Any object that `json.dumps` accepts; a `str` is taken as JSON text.
+    ///     params: Query parameters.
+    ///
+    /// Returns:
+    ///     The response body.
+    ///
+    /// Raises:
+    ///     ValueError: `data` or `params` is invalid.
+    ///     RuntimeError: The request failed or the server answered with an error status.
     #[pyo3(signature = (endpoint, data, params=None))]
     pub fn put(
         &self,
@@ -86,6 +127,18 @@ impl PyTransport {
         })
     }
 
+    /// Sends a `DELETE` request.
+    ///
+    /// Args:
+    ///     endpoint: The path below the API root.
+    ///     params: Query parameters.
+    ///
+    /// Returns:
+    ///     The response body.
+    ///
+    /// Raises:
+    ///     ValueError: `params` holds an unsupported value.
+    ///     RuntimeError: The request failed or the server answered with an error status.
     #[pyo3(signature = (endpoint, params=None))]
     pub fn delete(
         &self,
@@ -100,11 +153,25 @@ impl PyTransport {
         })
     }
 
-    /// Sends a `multipart/form-data` POST request.
+    /// Sends a `multipart/form-data` `POST` request.
     ///
-    /// `fields` is a list of `(name, value)` text parts. `files` is a list of
-    /// `(name, filename, content)` or `(name, filename, content_type)` tuples, where
-    /// `content` is `bytes`. Names may repeat, as for WES `workflow_attachment`.
+    /// Names may repeat, as for WES `workflow_attachment`. To start a WES run, use
+    /// `WES.run()` instead.
+    ///
+    /// Args:
+    ///     endpoint: The path below the API root.
+    ///     fields: `(name, value)` text parts.
+    ///     files: `(name, filename, content)` or `(name, filename, content, content_type)`
+    ///         file parts, with `content` as `bytes`.
+    ///     params: Query parameters.
+    ///
+    /// Returns:
+    ///     The response body.
+    ///
+    /// Raises:
+    ///     TypeError: An argument has the wrong type, such as a `dict` for `fields`.
+    ///     ValueError: A value is invalid.
+    ///     RuntimeError: The request failed or the server answered with an error status.
     #[pyo3(signature = (endpoint, fields=None, files=None, params=None))]
     pub fn post_multipart(
         &self,

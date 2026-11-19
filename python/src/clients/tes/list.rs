@@ -86,12 +86,13 @@ impl PyListTasksParams {
         })
     }
 
+    /// The start of the tasks' names.
     #[getter]
     fn name_prefix(&self) -> Option<String> {
         self.inner.name_prefix.clone()
     }
 
-    /// The state filter as a `TesState`, or `None`.
+    /// The state filter.
     #[getter]
     fn state(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.inner
@@ -100,26 +101,31 @@ impl PyListTasksParams {
             .transpose()
     }
 
+    /// Tag keys that the tasks have.
     #[getter]
     fn tag_key(&self) -> Option<Vec<String>> {
         self.inner.tag_key.clone()
     }
 
+    /// Values of the tags in `tag_key`, paired by position.
     #[getter]
     fn tag_value(&self) -> Option<Vec<String>> {
         self.inner.tag_value.clone()
     }
 
+    /// The most tasks on the page.
     #[getter]
     fn page_size(&self) -> Option<i32> {
         self.inner.page_size
     }
 
+    /// The token of the page to get.
     #[getter]
     fn page_token(&self) -> Option<String> {
         self.inner.page_token.clone()
     }
 
+    /// The view of the tasks, in uppercase.
     #[getter]
     fn view(&self) -> Option<String> {
         self.inner.view.map(|view| view.as_str().to_owned())
@@ -163,22 +169,24 @@ impl PyTesListTasksResponse {
 
 #[pymethods]
 impl PyTesListTasksResponse {
+    /// The tasks of the page.
     #[getter]
     pub fn tasks(&self) -> Vec<PyTesTask> {
         self.tasks.clone()
     }
 
+    /// The token of the next page, for `ListTasksParams(page_token=...)`.
     #[getter]
     pub fn next_page_token(&self) -> Option<String> {
         self.inner().next_page_token.clone()
     }
 
-    /// The response as JSON text, as received.
+    /// Gives the response as JSON text, as received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The response as a new `dict`, as received.
+    /// Gives the response as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }

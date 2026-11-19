@@ -467,8 +467,9 @@ asyncio.run(main())
 
 The package ships type stubs (`ga4gh_sdk.pyi`, with a `py.typed` marker), so editors and
 type checkers such as mypy see every class and method. Their docstrings are the
-[Python API reference](api.md). `tests/test_stubs.py` checks that the stubs declare and
-document every class and member of the module.
+[Python API reference](api.md), and `help()` shows the same docstrings. `tests/test_stubs.py`
+checks that the stubs declare and document every class and member of the module, and that
+their docstrings match those of the module.
 
 ## Using WES
 

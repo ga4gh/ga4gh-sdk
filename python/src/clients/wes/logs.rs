@@ -10,6 +10,8 @@ use pyo3::prelude::*;
 use serde_json::Value;
 
 /// A run's details, with its request, state, logs and outputs, as returned by the server.
+///
+/// Keeps the run's full JSON, including fields that the WES models don't know.
 #[pyclass(name = "RunLog", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyRunLog {
@@ -37,51 +39,55 @@ impl PyRunLog {
 
 #[pymethods]
 impl PyRunLog {
+    /// The run's ID.
     #[getter]
     fn run_id(&self) -> Option<String> {
         self.inner().run_id.clone()
     }
 
-    /// The run's request as a `RunRequest`, or `None` if it is missing or doesn't fit.
+    /// The run's request, or `None` if it is missing or doesn't fit the WES models.
     #[getter]
     fn request(&self) -> Option<PyRunRequest> {
         self.inner().request.as_ref()?;
         PyRunRequest::parse(self.raw().get("request")?.clone()).ok()
     }
 
-    /// The run's state as a `WesState`; `UNKNOWN` if the run has none or one
-    /// that WES 1.1 does not define.
+    /// The run's state; `UNKNOWN` if it has none or one that WES 1.1 doesn't define.
     #[getter]
     fn state(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         state_to_python(py, self.inner().state.unwrap_or_default())
     }
 
+    /// The log of the workflow engine, such as its command, times and exit code.
     #[getter]
     fn run_log(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "run_log")
     }
 
+    /// The URL of the run's task list (WES 1.1).
     #[getter]
     fn task_logs_url(&self) -> Option<String> {
         self.inner().task_logs_url.clone()
     }
 
+    /// The run's task logs, as `dict`s; WES 1.1 lists them with `Run.tasks()`.
     #[getter]
     fn task_logs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "task_logs")
     }
 
+    /// The run's outputs, as JSON values.
     #[getter]
     fn outputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "outputs")
     }
 
-    /// The run as JSON text, as received.
+    /// Gives the run as JSON text, as received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The run as a new `dict`, as received.
+    /// Gives the run as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }
@@ -122,62 +128,72 @@ impl PyTaskLog {
 
 #[pymethods]
 impl PyTaskLog {
+    /// The task's ID.
     #[getter]
     fn id(&self) -> String {
         self.inner().id.clone()
     }
 
+    /// The task's name.
     #[getter]
     fn name(&self) -> String {
         self.inner().name.clone()
     }
 
+    /// The command that the task ran.
     #[getter]
     fn cmd(&self) -> Option<Vec<String>> {
         self.inner().cmd.clone()
     }
 
+    /// When the task started, as an RFC 3339 timestamp.
     #[getter]
     fn start_time(&self) -> Option<String> {
         self.inner().start_time.clone()
     }
 
+    /// When the task ended, as an RFC 3339 timestamp.
     #[getter]
     fn end_time(&self) -> Option<String> {
         self.inner().end_time.clone()
     }
 
+    /// The URL of the task's standard output.
     #[getter]
     fn stdout(&self) -> Option<String> {
         self.inner().stdout.clone()
     }
 
+    /// The URL of the task's standard error.
     #[getter]
     fn stderr(&self) -> Option<String> {
         self.inner().stderr.clone()
     }
 
+    /// The task's exit code.
     #[getter]
     fn exit_code(&self) -> Option<i32> {
         self.inner().exit_code
     }
 
+    /// System messages about the task, such as errors.
     #[getter]
     fn system_logs(&self) -> Option<Vec<String>> {
         self.inner().system_logs.clone()
     }
 
+    /// The URI of the task in a TES, if it ran on one.
     #[getter]
     fn tes_uri(&self) -> Option<String> {
         self.inner().tes_uri.clone()
     }
 
-    /// The task as JSON text, as received.
+    /// Gives the task as JSON text, as received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The task as a new `dict`, as received.
+    /// Gives the task as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }
