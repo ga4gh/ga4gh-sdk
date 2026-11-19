@@ -548,6 +548,8 @@ fn an_interrupted_download_leaves_no_file() {
     let message = stderr(&output);
     assert_eq!(output.status.code(), Some(1), "{message}");
     assert!(message.contains("interrupted after 12 bytes"), "{message}");
+    // With the cause, such as hyper's "end of file before message length reached"
+    assert!(message.contains("end of file"), "{message}");
     assert!(entries(&dir).is_empty(), "{:?}", entries(&dir));
 }
 

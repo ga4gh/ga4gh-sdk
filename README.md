@@ -128,13 +128,16 @@ All models now keep what their spec doesn't define (see
   reject `Unrecognized` values that are empty, `.` or `..`.
 - `TesTask::new(executors)` now sets `executors`; it used to ignore them.
 
-The SDK uses reqwest 0.12 instead of 0.11. `ga4gh_sdk::reqwest` re-exports
-0.12, and `Transport::with_client` and `with_client_and_configured_auth` take
-a reqwest 0.12 `Client`: build it with `ga4gh_sdk::reqwest`, or move your own
-`reqwest` dependency to 0.12. Its header, method and status types come from
-`http` 1. The Python wheels now verify TLS certificates with rustls 0.23. The
-CLI's S3 downloads in `tes save` now use OpenSSL, like its other requests. A
-`Transport` error still names its cause, such as a refused connection.
+The SDK uses reqwest 0.12 instead of 0.11:
+
+- `ga4gh_sdk::reqwest` re-exports 0.12, and `Transport::with_client` and
+  `with_client_and_configured_auth` take a reqwest 0.12 `Client`. Build it
+  with `ga4gh_sdk::reqwest`, or move your own `reqwest` dependency to 0.12.
+  Its header, method and status types come from `http` 1.
+- The Python wheels verify TLS certificates with rustls 0.23. The CLI's S3
+  downloads in `tes save` use OpenSSL, like its other requests.
+- Charset decoding, HTTP/2 and the system proxy settings work as before, and
+  a `Transport` error still names its cause, such as a refused connection.
 
 A service-info response that isn't valid UTF-8 is now an error of
 `ServiceInfo::get`, `get_at`, the discovery of `TES::new`, `WES::new` and

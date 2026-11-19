@@ -406,12 +406,6 @@ struct DeviceAuthorization {
 
 /// An HTTP client for the provider: no redirects, so that codes and tokens
 /// reach only the endpoints of the discovery document.
-/// The message of a request error with its cause, such as a refused connection,
-/// which reqwest leaves out of its own message.
-fn with_cause(error: reqwest::Error) -> ga4gh_sdk::Error {
-    ga4gh_sdk::Error::from(error)
-}
-
 fn http_client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -423,7 +417,10 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
 async fn discover(client: &reqwest::Client, settings: &OidcSettings) -> anyhow::Result<Endpoints> {
     let url = settings.discovery_url()?;
     let response = client.get(url).send().await.map_err(|error| {
-        anyhow::anyhow!("OpenID Connect discovery failed: {}", with_cause(error))
+        anyhow::anyhow!(
+            "OpenID Connect discovery failed: {}",
+            ga4gh_sdk::Error::from(error)
+        )
     })?;
     let status = response.status();
     if !status.is_success() {
@@ -477,7 +474,12 @@ async fn token_request(
         .form(form)
         .send()
         .await
-        .map_err(|error| anyhow::anyhow!("The token request failed: {}", with_cause(error)))?;
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "The token request failed: {}",
+                ga4gh_sdk::Error::from(error)
+            )
+        })?;
     let status = response.status();
     let body: Value = response.json().await.map_err(|_| {
         anyhow::anyhow!("The token response (HTTP status {status}) is not valid JSON")
@@ -564,7 +566,7 @@ async fn device_flow(
         .map_err(|error| {
             anyhow::anyhow!(
                 "The device authorization request failed: {}",
-                with_cause(error)
+                ga4gh_sdk::Error::from(error)
             )
         })?;
     let status = response.status();
@@ -1100,7 +1102,7 @@ mod tests {
             error.starts_with("OpenID Connect discovery failed: "),
             "{error}"
         );
-        // The cause, such as "Connection refused (os error 111)"
+        // The cause, which on every OS ends in "(os error <code>)"
         assert!(error.contains("os error"), "{error}");
     }
 

@@ -55,6 +55,11 @@ pub enum Error {
     Http(HttpError),
     /// A request couldn't be sent, or its response couldn't be read, for
     /// example because of a connection failure or the HTTP client's timeout.
+    ///
+    /// Its message already ends with the causes, such as a refused
+    /// connection, and [`source`](StdError::source) returns them, too. A
+    /// reporter that prints the source chain, such as `anyhow`'s `{:#}`, shows
+    /// them twice; print the message alone instead.
     Transport(reqwest::Error),
     /// A path or API root that can't be used for a request.
     Endpoint(EndpointError),
@@ -326,7 +331,7 @@ mod tests {
             )),
             "{message}"
         );
-        // The operating system's reason, such as "Connection refused (os error 111)"
+        // The cause, which on every OS ends in "(os error <code>)"
         assert!(message.contains("os error"), "{message}");
     }
 

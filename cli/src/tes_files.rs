@@ -640,7 +640,7 @@ async fn download_http(
         let chunk = chunk.map_err(|error| {
             anyhow::anyhow!(
                 "Download from {shown} was interrupted after {written} bytes: {}",
-                error.without_url()
+                ga4gh_sdk::Error::from(error.without_url())
             )
         })?;
         file.write_all(&chunk)?;
