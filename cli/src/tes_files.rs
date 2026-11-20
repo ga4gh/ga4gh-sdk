@@ -621,7 +621,7 @@ async fn download_http(
             )
         })?
         .map_err(|error| {
-            // With the cause, which reqwest leaves out of its message
+            // Keep the URL redacted and classify the transport failure.
             anyhow::anyhow!(
                 "Request to {shown} failed: {}",
                 ga4gh_sdk::Error::from(error.without_url())

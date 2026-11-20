@@ -136,8 +136,9 @@ The SDK uses reqwest 0.12 instead of 0.11:
   Its header, method and status types come from `http` 1.
 - The Python wheels verify TLS certificates with rustls 0.23. The CLI's S3
   downloads in `tes save` use OpenSSL, like its other requests.
-- Charset decoding, HTTP/2 and the system proxy settings work as before, and
-  a `Transport` error still names its cause, such as a refused connection.
+- Charset decoding, HTTP/2 and the system proxy settings work as before.
+  A `Transport` error reports a safe failure category by default; its
+  `reqwest::Error` and source chain remain available for explicit inspection.
 
 A service-info response that isn't valid UTF-8 is now an error of
 `ServiceInfo::get`, `get_at`, the discovery of `TES::new`, `WES::new` and

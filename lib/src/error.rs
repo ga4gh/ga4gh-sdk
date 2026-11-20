@@ -44,11 +44,11 @@ pub type BoxError = Box<dyn StdError + Send + Sync>;
 
 /// An error of the SDK.
 ///
-/// Each variant displays as the error it holds. Errors of other types, such
+/// Most variants display as the error they hold; [`Error::Transport`] displays
+/// only a safe failure category. Errors of other types, such
 /// as [`OperationError`](crate::utils::operation::OperationError), are kept in
 /// [`Error::Other`]; [`Error::downcast_ref`] finds the error of a given type in
 /// any variant. More variants may be added, so a `match` needs a wildcard arm.
-#[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
     /// The service answered with an unsuccessful HTTP status.
@@ -56,10 +56,10 @@ pub enum Error {
     /// A request couldn't be sent, or its response couldn't be read, for
     /// example because of a connection failure or the HTTP client's timeout.
     ///
-    /// Its message already ends with the causes, such as a refused
-    /// connection, and [`source`](StdError::source) returns them, too. A
-    /// reporter that prints the source chain, such as `anyhow`'s `{:#}`, shows
-    /// them twice; print the message alone instead.
+    /// Its default formatting classifies the failure without displaying the URL
+    /// or source text, which may contain credentials or caller-provided data.
+    /// Inspect the contained `reqwest::Error` and its sources explicitly for
+    /// detailed diagnostics.
     Transport(reqwest::Error),
     /// A path or API root that can't be used for a request.
     Endpoint(EndpointError),
@@ -72,6 +72,22 @@ pub enum Error {
     UnexpectedService(String),
     /// Any other error.
     Other(BoxError),
+}
+
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Http(error) => f.debug_tuple("Http").field(error).finish(),
+            Self::Transport(_) => f.debug_tuple("Transport").field(&self.to_string()).finish(),
+            Self::Endpoint(error) => f.debug_tuple("Endpoint").field(error).finish(),
+            Self::Parse(error) => f.debug_tuple("Parse").field(error).finish(),
+            Self::Configuration(error) => f.debug_tuple("Configuration").field(error).finish(),
+            Self::UnexpectedService(message) => {
+                f.debug_tuple("UnexpectedService").field(message).finish()
+            }
+            Self::Other(error) => f.debug_tuple("Other").field(error).finish(),
+        }
+    }
 }
 
 impl Error {
@@ -118,17 +134,22 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Http(error) => error.fmt(f),
-            Self::Transport(error) => {
-                // reqwest's message leaves out the cause, such as a refused
-                // connection or a failed body stream: add it, as reqwest 0.11 did.
-                error.fmt(f)?;
-                let mut cause = error.source();
-                while let Some(error) = cause {
-                    write!(f, ": {error}")?;
-                    cause = error.source();
-                }
-                Ok(())
+            Self::Transport(error) if error.is_timeout() => f.write_str("HTTP request timed out"),
+            Self::Transport(error) if error.is_connect() => f.write_str("HTTP connection failed"),
+            Self::Transport(error) if error.is_builder() => {
+                f.write_str("HTTP client configuration failed")
             }
+            Self::Transport(error) if error.is_redirect() => f.write_str("HTTP redirect failed"),
+            Self::Transport(error) if error.is_status() => match error.status() {
+                Some(status) => write!(f, "HTTP response returned status {status}"),
+                None => f.write_str("HTTP response returned an unsuccessful status"),
+            },
+            Self::Transport(error) if error.is_body() => {
+                f.write_str("HTTP request or response body failed")
+            }
+            Self::Transport(error) if error.is_decode() => f.write_str("HTTP response body failed"),
+            Self::Transport(error) if error.is_request() => f.write_str("HTTP request failed"),
+            Self::Transport(_) => f.write_str("HTTP transport failed"),
             Self::Endpoint(error) => error.fmt(f),
             Self::Parse(error) => error.fmt(f),
             Self::Configuration(error) | Self::Other(error) => error.fmt(f),
@@ -138,8 +159,8 @@ impl fmt::Display for Error {
 }
 
 impl StdError for Error {
-    // Each variant displays as its error, so the chain continues with that
-    // error's source, as for `#[error(transparent)]`.
+    // Keep the underlying cause available even when default formatting is
+    // intentionally safer than the contained error's Display implementation.
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         self.inner()?.source()
     }
@@ -314,25 +335,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_transport_errors_display_their_cause() {
+    async fn test_transport_errors_classify_without_displaying_url_or_cause() {
         // A port that refuses connections: bind, read the port, close.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         drop(listener);
         let error = reqwest::Client::new()
-            .get(format!("http://{address}/"))
+            .get(format!("http://{address}/?token=SENTINEL"))
             .send()
             .await
             .unwrap_err();
-        let message = Error::from(error).to_string();
-        assert!(
-            message.starts_with(&format!(
-                "error sending request for url (http://{address}/): "
-            )),
-            "{message}"
-        );
-        // The cause, which on every OS ends in "(os error <code>)"
-        assert!(message.contains("os error"), "{message}");
+        let error = Error::from(error);
+        assert_eq!(error.to_string(), "HTTP connection failed");
+        let debug = format!("{error:?}");
+        assert!(debug.contains("HTTP connection failed"), "{debug}");
+        assert!(!debug.contains("SENTINEL"), "{debug}");
+        assert!(std::error::Error::source(&error).is_some());
+        assert!(error.downcast_ref::<reqwest::Error>().is_some());
     }
 
     #[test]

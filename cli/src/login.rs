@@ -407,10 +407,16 @@ struct DeviceAuthorization {
 /// An HTTP client for the provider: no redirects, so that codes and tokens
 /// reach only the endpoints of the discovery document.
 fn http_client() -> anyhow::Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+    reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(REQUEST_TIMEOUT)
-        .build()?)
+        .build()
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "OpenID Connect HTTP client setup failed: {}",
+                ga4gh_sdk::Error::from(error)
+            )
+        })
 }
 
 /// Reads the discovery document and checks its issuer and endpoints.
@@ -1084,7 +1090,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_failed_discovery_request_names_its_cause() {
+    async fn a_failed_discovery_request_names_its_category() {
         // Bind a free port and release it, so that connections to it are refused.
         let port = {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1102,8 +1108,8 @@ mod tests {
             error.starts_with("OpenID Connect discovery failed: "),
             "{error}"
         );
-        // The cause, which on every OS ends in "(os error <code>)"
-        assert!(error.contains("os error"), "{error}");
+        assert!(error.contains("HTTP connection failed"), "{error}");
+        assert!(!error.contains("os error"), "{error}");
     }
 
     #[tokio::test]

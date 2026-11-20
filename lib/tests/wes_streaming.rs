@@ -202,10 +202,11 @@ async fn reader_failure_and_invalid_paths_are_actionable_without_replay() {
         )
         .await
         .unwrap_err();
-    assert!(
-        error.to_string().contains("injected reader failure"),
-        "{error}"
-    );
+    let ambiguous = error
+        .downcast_ref::<ga4gh_sdk::utils::operation::AmbiguousSubmissionError>()
+        .expect("a failed streamed submission has an uncertain remote outcome");
+    assert_eq!(ambiguous.reason, "HTTP request failed");
+    assert!(!error.to_string().contains("injected reader failure"));
     server.await.unwrap();
     for filename in [
         "../escape",
