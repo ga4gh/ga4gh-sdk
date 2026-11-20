@@ -204,8 +204,8 @@ confirmed.
 3. Approve the deployment to `pypi` in the workflow run once the wheels,
    CLI binaries and image are built and checked, about 45 minutes after the
    tag push. Either maintainer may approve, including the one who pushed the
-   tag. Nothing is published until someone approves, and the run waits for
-   up to 30 days.
+   tag. The PyPI upload and versioned image tag wait for this approval; the
+   run waits for up to 30 days.
 4. When the run has finished, check the image tag and its attestation. Until
    the package is public (step 6), log in first:
 

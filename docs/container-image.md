@@ -21,10 +21,11 @@ executors.
 | Base | Debian 13 (`trixie-slim`), with OpenSSL 3 and the Debian CA certificates |
 | Provenance | A [GitHub build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations) for each published image |
 
-The [Release workflow](../.github/workflows/release.yml) publishes the image
-for each version tag from 0.1.0 on (see the
-[release guide](releasing.md#cli-image)). To run an unreleased revision,
-build the image yourself (see [Building the image](#building-the-image)).
+The [Release workflow](../.github/workflows/release.yml) tags the image for
+upstream PyPI releases starting with `v0.1.0` (see the
+[release guide](releasing.md#cli-image)). Upstream TestPyPI rehearsals do not
+get a versioned image tag. To run an unreleased revision, build the image
+yourself (see [Building the image](#building-the-image)).
 
 Use a version and pin its digest, so that every run uses exactly the same
 image:
