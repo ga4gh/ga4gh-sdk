@@ -13,17 +13,6 @@ all-features = true
 
 [advisories]
 ignore = [
-    # The TLS stack of the Python wheels: reqwest 0.11 -> rustls 0.21 ->
-    # rustls-webpki 0.101, an end-of-life line. Fixed by the move to reqwest
-    # 0.12 (#307); remove these entries with it.
-    { id = "RUSTSEC-2026-0382", reason = "rustls-webpki 0.101 may accept distrusted intermediates; fixed by reqwest 0.12 (#307)" },
-    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101 URI name constraints; needs a constrained CA that issues wrongly; fixed by reqwest 0.12 (#307)" },
-    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101 wildcard name constraints; needs a constrained CA that issues wrongly; fixed by reqwest 0.12 (#307)" },
-    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101 CRL parsing panic; the SDK configures no CRLs; fixed by reqwest 0.12 (#307)" },
-    { id = "RUSTSEC-2026-0346", reason = "rustls 0.21 Debug of client session values; the SDK sets no custom session store and doesn't log them; fixed by reqwest 0.12 (#307)" },
-    { id = "RUSTSEC-2026-0349", reason = "rustls 0.21 key exchange downgrade of later connections; fixed by reqwest 0.12 (#307)" },
-    { id = "RUSTSEC-2026-0258", reason = "h2 0.3 through reqwest 0.11; fixed by reqwest 0.12 (#307), which uses h2 0.4" },
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 1 is unmaintained; only reqwest 0.11 uses it; gone with reqwest 0.12 (#307)" },
     # quick-xml 0.38 through object_store 0.12, which parses S3 responses in
     # the CLI's `tes save`. A malicious S3 endpoint could slow down or exhaust
     # the memory of that one command. Remove when object_store depends on
