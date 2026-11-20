@@ -110,15 +110,16 @@ async fn cancellation_after_submission_starts_is_ambiguous_without_replay() {
 
 #[tokio::test]
 async fn definite_http_rejection_preserves_status_and_body_without_replay() {
+    let mut server = mockito::Server::new_async().await;
     for streamed in [false, true] {
-        let rejection = mockito::mock("POST", "/tasks")
+        let rejection = server
+            .mock("POST", "/tasks")
             .with_status(403)
             .with_body("permission denied")
             .expect(1)
             .create();
-        let transport = Transport::new(&Configuration::new(
-            url::Url::parse(&mockito::server_url()).unwrap(),
-        ));
+        let transport =
+            Transport::new(&Configuration::new(url::Url::parse(&server.url()).unwrap()));
         let mut options = RequestOptions::new(Duration::from_secs(10));
         options.retry.max_attempts = 3;
         let error = submit(&transport, &options, streamed).await.unwrap_err();

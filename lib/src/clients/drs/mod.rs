@@ -230,7 +230,6 @@ impl DRS {
 mod tests {
     use super::*;
     use crate::clients::serviceinfo::models::ServiceType;
-    use mockito::{mock, server_url};
 
     #[test]
     fn test_clients_can_move_between_threads() {
@@ -250,7 +249,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_new_uses_drs_service_info_path() {
-        let _m = mock("GET", "/ga4gh/drs/v1/service-info")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/ga4gh/drs/v1/service-info")
             .with_status(200)
             .with_body(
                 serde_json::json!({
@@ -265,19 +266,21 @@ mod tests {
             .create();
 
         let config =
-            Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
+            Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server.url())).unwrap());
         let drs = DRS::new(&config).await.unwrap();
         assert_eq!(drs.discovered_service_info().r#type.artifact, "drs");
     }
 
     #[tokio::test]
     async fn discovery_error_retains_http_status_and_api_root_hint() {
-        let _m = mock("GET", "/bad-root/service-info")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/bad-root/service-info")
             .with_status(404)
             .with_body("missing")
             .create();
         let config =
-            Configuration::new(url::Url::parse(&format!("{}/bad-root", server_url())).unwrap());
+            Configuration::new(url::Url::parse(&format!("{}/bad-root", server.url())).unwrap());
         let error = DRS::new(&config).await.unwrap_err();
         assert!(error
             .to_string()
@@ -290,6 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_object() {
+        let mut server = mockito::Server::new_async().await;
         let object_id = "123";
         let response_body = r#"{
             "id": "123",
@@ -299,13 +303,14 @@ mod tests {
             "checksums": []
         }"#;
 
-        let _m = mock("GET", "/ga4gh/drs/v1/objects/123")
+        let _m = server
+            .mock("GET", "/ga4gh/drs/v1/objects/123")
             .with_status(200)
             .with_body(response_body)
             .create();
 
         let mock_url =
-            url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).expect("Invalid URL");
+            url::Url::parse(&format!("{}/ga4gh/drs/v1", server.url())).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
@@ -329,6 +334,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_access_url() {
+        let mut server = mockito::Server::new_async().await;
         let object_id = "123";
         let access_id = "access123";
         let response_body = r#"{
@@ -336,13 +342,14 @@ mod tests {
             "headers": ["Authorization: Basic Z2E0Z2g6ZHJz"]
         }"#;
 
-        let _m = mock("GET", "/ga4gh/drs/v1/objects/123/access/access123")
+        let _m = server
+            .mock("GET", "/ga4gh/drs/v1/objects/123/access/access123")
             .with_status(200)
             .with_body(response_body)
             .create();
 
         let mock_url =
-            url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).expect("Invalid URL");
+            url::Url::parse(&format!("{}/ga4gh/drs/v1", server.url())).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
@@ -369,9 +376,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_ids_are_encoded_as_path_segments() {
+        let mut server = mockito::Server::new_async().await;
         let object_id = "a/b ?#";
         let access_id = "x/y ?#";
-        let _object = mock("GET", "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23")
+        let _object = server
+            .mock("GET", "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23")
             .with_status(200)
             .with_body(
                 serde_json::json!({
@@ -384,16 +393,17 @@ mod tests {
                 .to_string(),
             )
             .create();
-        let _access = mock(
-            "GET",
-            "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23/access/x%2Fy%20%3F%23",
-        )
-        .with_status(200)
-        .with_body(r#"{"url":"https://example.org/data"}"#)
-        .create();
+        let _access = server
+            .mock(
+                "GET",
+                "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23/access/x%2Fy%20%3F%23",
+            )
+            .with_status(200)
+            .with_body(r#"{"url":"https://example.org/data"}"#)
+            .create();
 
         let config =
-            Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server_url())).unwrap());
+            Configuration::new(url::Url::parse(&format!("{}/ga4gh/drs/v1", server.url())).unwrap());
         let drs = DRS::without_discovery(Transport::new(&config), Service::default());
         assert_eq!(drs.get_object(object_id).await.unwrap().id, object_id);
         assert_eq!(
@@ -404,11 +414,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_drs_methods_under_api_root_with_both_slash_forms() {
+        let mut server = mockito::Server::new_async().await;
         let object_id = "a/b ?#";
         let access_id = "x/y ?#";
         for suffix in ["", "/"] {
             let prefix = "/proxy/ga4gh/drs/v1";
-            let _service = mock("GET", format!("{prefix}/service-info").as_str())
+            let _service = server
+                .mock("GET", format!("{prefix}/service-info").as_str())
                 .with_status(200)
                 .with_body(
                     serde_json::json!({
@@ -421,36 +433,38 @@ mod tests {
                     .to_string(),
                 )
                 .create();
-            let _object = mock(
-                "GET",
-                format!("{prefix}/objects/{}", urlencode(object_id)).as_str(),
-            )
-            .with_status(200)
-            .with_body(
-                serde_json::json!({
-                    "id": object_id,
-                    "self_uri": "drs://example.org/object",
-                    "size": 1,
-                    "created_time": "2023-01-01T00:00:00Z",
-                    "checksums": []
-                })
-                .to_string(),
-            )
-            .create();
-            let _access = mock(
-                "GET",
-                format!(
-                    "{prefix}/objects/{}/access/{}",
-                    urlencode(object_id),
-                    urlencode(access_id)
+            let _object = server
+                .mock(
+                    "GET",
+                    format!("{prefix}/objects/{}", urlencode(object_id)).as_str(),
                 )
-                .as_str(),
-            )
-            .with_status(200)
-            .with_body(r#"{"url":"https://example.org/data"}"#)
-            .create();
+                .with_status(200)
+                .with_body(
+                    serde_json::json!({
+                        "id": object_id,
+                        "self_uri": "drs://example.org/object",
+                        "size": 1,
+                        "created_time": "2023-01-01T00:00:00Z",
+                        "checksums": []
+                    })
+                    .to_string(),
+                )
+                .create();
+            let _access = server
+                .mock(
+                    "GET",
+                    format!(
+                        "{prefix}/objects/{}/access/{}",
+                        urlencode(object_id),
+                        urlencode(access_id)
+                    )
+                    .as_str(),
+                )
+                .with_status(200)
+                .with_body(r#"{"url":"https://example.org/data"}"#)
+                .create();
 
-            let base = url::Url::parse(&format!("{}{prefix}{suffix}", server_url())).unwrap();
+            let base = url::Url::parse(&format!("{}{prefix}{suffix}", server.url())).unwrap();
             let drs = DRS::new(&Configuration::new(base)).await.unwrap();
             assert_eq!(drs.get_object(object_id).await.unwrap().id, object_id);
             assert_eq!(
@@ -462,12 +476,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_info_error_keeps_status_and_404_hint() {
+        let mut server = mockito::Server::new_async().await;
         for (status, path) in [(404, "/missing/drs/v1"), (503, "/unavailable/drs/v1")] {
-            let _service = mock("GET", format!("{path}/service-info").as_str())
+            let _service = server
+                .mock("GET", format!("{path}/service-info").as_str())
                 .with_status(status)
                 .with_body("service failure")
                 .create();
-            let base = url::Url::parse(&format!("{}{path}", server_url())).unwrap();
+            let base = url::Url::parse(&format!("{}{path}", server.url())).unwrap();
             let error = DRS::new(&Configuration::new(base))
                 .await
                 .unwrap_err()
@@ -483,7 +499,9 @@ mod tests {
     /// from `Transport::with_timeouts`.
     #[tokio::test]
     async fn configuration_is_transport_configuration() {
-        let _m = mock("GET", "/accessors/custom/drs/v9/service-info")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/accessors/custom/drs/v9/service-info")
             .with_status(200)
             .with_body(
                 serde_json::json!({
@@ -496,7 +514,7 @@ mod tests {
                 .to_string(),
             )
             .create();
-        let root = format!("{}/accessors/custom/drs/v9/", server_url());
+        let root = format!("{}/accessors/custom/drs/v9/", server.url());
         let config = Configuration::new(url::Url::parse(&root).unwrap());
         let connect = std::time::Duration::from_secs(3);
         let request = std::time::Duration::from_secs(7);

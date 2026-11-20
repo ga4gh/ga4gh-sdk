@@ -83,7 +83,6 @@ impl ServiceRegistry {
 mod tests {
     use super::*;
     use crate::utils::transport::HttpError;
-    use mockito::mock;
     use serde_json::{json, Value};
     use url::Url;
 
@@ -98,20 +97,22 @@ mod tests {
         })
     }
 
-    fn registry(prefix: &str) -> ServiceRegistry {
-        let base = Url::parse(&format!("{}{prefix}", mockito::server_url())).unwrap();
+    fn registry(server: &mockito::ServerGuard, prefix: &str) -> ServiceRegistry {
+        let base = Url::parse(&format!("{}{prefix}", server.url())).unwrap();
         ServiceRegistry::new(&Configuration::new(base))
     }
 
     #[tokio::test]
     async fn list_services_under_api_root_with_or_without_trailing_slash() {
-        let _m = mock("GET", "/list/ga4gh/registry/v1/services")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/list/ga4gh/registry/v1/services")
             .with_status(200)
             .with_body(json!([service("org.example.tes", "tes")]).to_string())
             .expect(2)
             .create();
         for suffix in ["", "/"] {
-            let services = registry(&format!("/list/ga4gh/registry/v1{suffix}"))
+            let services = registry(&server, &format!("/list/ga4gh/registry/v1{suffix}"))
                 .list_services()
                 .await
                 .unwrap();
@@ -125,14 +126,16 @@ mod tests {
 
     #[tokio::test]
     async fn extra_fields_are_kept() {
+        let mut server = mockito::Server::new_async().await;
         let mut body = service("org.example.wes", "wes");
         body["sync"] = json!({"enabled": true});
         body["organization"]["logo"] = json!("https://example.org/logo.png");
-        let _m = mock("GET", "/extra/services")
+        let _m = server
+            .mock("GET", "/extra/services")
             .with_status(200)
             .with_body(json!([body]).to_string())
             .create();
-        let services = registry("/extra").list_services().await.unwrap();
+        let services = registry(&server, "/extra").list_services().await.unwrap();
         assert_eq!(services[0].id, "org.example.wes");
         assert_eq!(services[0].extra["sync"], json!({"enabled": true}));
         assert_eq!(serde_json::to_value(&services[0]).unwrap(), body);
@@ -140,32 +143,46 @@ mod tests {
 
     #[tokio::test]
     async fn get_service_encodes_the_id_as_one_segment() {
-        let _m = mock("GET", "/get/services/a%2Fb%20c%3F")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/get/services/a%2Fb%20c%3F")
             .with_status(200)
             .with_body(service("a/b c?", "drs").to_string())
             .create();
-        let service = registry("/get").get_service("a/b c?").await.unwrap();
+        let service = registry(&server, "/get")
+            .get_service("a/b c?")
+            .await
+            .unwrap();
         assert_eq!(service.id, "a/b c?");
         _m.assert();
     }
 
     #[tokio::test]
     async fn get_service_rejects_dot_segment_ids() {
+        let server = mockito::Server::new_async().await;
         for id in [".", ".."] {
-            let error = registry("/dots").get_service(id).await.unwrap_err();
+            let error = registry(&server, "/dots")
+                .get_service(id)
+                .await
+                .unwrap_err();
             assert!(error.to_string().contains("dot segments"), "{error}");
         }
-        let error = registry("/dots").get_service("").await.unwrap_err();
+        let error = registry(&server, "/dots")
+            .get_service("")
+            .await
+            .unwrap_err();
         assert_eq!(error.to_string(), "service ID must not be empty");
     }
 
     #[tokio::test]
     async fn get_service_reports_not_found() {
-        let _m = mock("GET", "/missing/services/unknown")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/missing/services/unknown")
             .with_status(404)
             .with_body(r#"{"status":404,"title":"Not found"}"#)
             .create();
-        let error = registry("/missing")
+        let error = registry(&server, "/missing")
             .get_service("unknown")
             .await
             .unwrap_err();
@@ -176,7 +193,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_service_types() {
-        let _m = mock("GET", "/types/v1/services/types")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/types/v1/services/types")
             .with_status(200)
             .with_body(
                 json!([
@@ -186,7 +205,10 @@ mod tests {
                 .to_string(),
             )
             .create();
-        let types = registry("/types/v1/").list_service_types().await.unwrap();
+        let types = registry(&server, "/types/v1/")
+            .list_service_types()
+            .await
+            .unwrap();
         let mut wes = models::ServiceType::new("org.ga4gh".into(), "wes".into(), "1.1.0".into());
         // A field that the spec doesn't define is kept, even if it is called `extra`.
         wes.extra.insert("extra".into(), json!(1));
@@ -201,23 +223,30 @@ mod tests {
 
     #[tokio::test]
     async fn service_info_of_the_registry() {
+        let mut server = mockito::Server::new_async().await;
         let mut body = service("org.example.registry", "service-registry");
         body.as_object_mut().unwrap().remove("url");
-        let _m = mock("GET", "/info/service-info")
+        let _m = server
+            .mock("GET", "/info/service-info")
             .with_status(200)
             .with_body(body.to_string())
             .create();
-        let info = registry("/info").service_info().await.unwrap();
+        let info = registry(&server, "/info").service_info().await.unwrap();
         assert_eq!(info.r#type.artifact, "service-registry");
     }
 
     #[tokio::test]
     async fn server_errors_keep_status_and_body() {
-        let _m = mock("GET", "/fail/services")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/fail/services")
             .with_status(500)
             .with_body("registry down")
             .create();
-        let error = registry("/fail").list_services().await.unwrap_err();
+        let error = registry(&server, "/fail")
+            .list_services()
+            .await
+            .unwrap_err();
         let http = error.downcast_ref::<HttpError>().unwrap();
         assert_eq!(http.status, 500);
         assert_eq!(http.body, "registry down");
@@ -225,6 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_bodies_are_errors() {
+        let mut server = mockito::Server::new_async().await;
         let mut without_url = service("org.example.tes", "tes");
         without_url.as_object_mut().unwrap().remove("url");
         for (prefix, body) in [
@@ -232,11 +262,12 @@ mod tests {
             ("/invalid-shape", json!({"services": []}).to_string()),
             ("/invalid-url", json!([without_url]).to_string()),
         ] {
-            let _m = mock("GET", format!("{prefix}/services").as_str())
+            let _m = server
+                .mock("GET", format!("{prefix}/services").as_str())
                 .with_status(200)
                 .with_body(body)
                 .create();
-            let error = registry(prefix).list_services().await.unwrap_err();
+            let error = registry(&server, prefix).list_services().await.unwrap_err();
             assert!(matches!(error, crate::Error::Parse(_)), "{prefix}: {error}");
             assert!(error.downcast_ref::<serde_json::Error>().is_some());
         }

@@ -1,6 +1,6 @@
 use ga4gh_sdk::utils::configuration::{AuthError, BasicAuth, Configuration};
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
-use mockito::{mock, Matcher};
+use mockito::Matcher;
 use reqwest::{header, multipart::Form, Client, Method, StatusCode};
 use std::sync::Mutex;
 use url::Url;
@@ -23,21 +23,24 @@ impl log::Log for WarningLogger {
     fn flush(&self) {}
 }
 
-fn config(path: &str) -> Configuration {
-    Configuration::new(Url::parse(&format!("{}{path}", mockito::server_url())).unwrap())
+fn config(server: &mockito::ServerGuard, path: &str) -> Configuration {
+    Configuration::new(Url::parse(&format!("{}{path}", server.url())).unwrap())
 }
 
 #[tokio::test]
 async fn configured_basic_is_sent_to_discovery_and_multipart() {
-    let discovery = mock("GET", "/basic/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let discovery = server
+        .mock("GET", "/basic/service-info")
         .match_header("authorization", "Basic YWxpY2U6cHc=")
         .with_body("ok")
         .create();
-    let submission = mock("POST", "/basic/runs")
+    let submission = server
+        .mock("POST", "/basic/runs")
         .match_header("authorization", "Basic YWxpY2U6cHc=")
         .with_body("ok")
         .create();
-    let config = config("/basic").with_basic_auth(BasicAuth {
+    let config = config(&server, "/basic").with_basic_auth(BasicAuth {
         username: "alice".into(),
         password: Some("pw".into()),
     });
@@ -62,7 +65,8 @@ async fn configured_basic_is_sent_to_discovery_and_multipart() {
 
 #[tokio::test]
 async fn configured_bearer_is_sent_on_all_standard_methods() {
-    let config = config("/bearer").with_oauth_access_token("test-token".into());
+    let mut server = mockito::Server::new_async().await;
+    let config = config(&server, "/bearer").with_oauth_access_token("test-token".into());
     let transport = Transport::new(&config);
     for (method, endpoint) in [
         (Method::GET, "get"),
@@ -70,7 +74,8 @@ async fn configured_bearer_is_sent_on_all_standard_methods() {
         (Method::PUT, "put"),
         (Method::DELETE, "delete"),
     ] {
-        let call = mock(method.as_str(), format!("/bearer/{endpoint}").as_str())
+        let call = server
+            .mock(method.as_str(), format!("/bearer/{endpoint}").as_str())
             .match_header("authorization", "Bearer test-token")
             .with_body("ok")
             .create();
@@ -85,8 +90,9 @@ async fn configured_bearer_is_sent_on_all_standard_methods() {
 
 #[tokio::test]
 async fn invalid_or_conflicting_sources_fail_before_network_io() {
-    let request = mock("GET", "/invalid/objects").expect(0).create();
-    let mut config = config("/invalid").with_oauth_access_token("secret-token".into());
+    let mut server = mockito::Server::new_async().await;
+    let request = server.mock("GET", "/invalid/objects").expect(0).create();
+    let mut config = config(&server, "/invalid").with_oauth_access_token("secret-token".into());
     config.bearer_access_token = Some("another-token".into());
     let error = Transport::new(&config)
         .get("objects", None)
@@ -113,12 +119,16 @@ async fn invalid_or_conflicting_sources_fail_before_network_io() {
 
 #[tokio::test]
 async fn basic_control_characters_fail_before_network_io_without_leaking_values() {
-    let request = mock("GET", "/basic-invalid/objects").expect(0).create();
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("GET", "/basic-invalid/objects")
+        .expect(0)
+        .create();
     for (username, password, field) in [
         ("alice\nSENTINEL", "safe", "username"),
         ("alice", "secret\rSENTINEL", "password"),
     ] {
-        let config = config("/basic-invalid").with_basic_auth(BasicAuth {
+        let config = config(&server, "/basic-invalid").with_basic_auth(BasicAuth {
             username: username.into(),
             password: Some(password.into()),
         });
@@ -170,14 +180,16 @@ fn configured_credentials_warn_once_for_remote_plain_http_without_sending() {
 
 #[tokio::test]
 async fn server_echoing_the_credential_cannot_put_it_in_error_diagnostics() {
+    let mut server = mockito::Server::new_async().await;
     const TOKEN: &str = "SENTINEL_TOKEN";
     let body = format!("Authorization: Bearer {TOKEN}");
-    let request = mock("GET", "/echo/error")
+    let request = server
+        .mock("GET", "/echo/error")
         .match_header("authorization", format!("Bearer {TOKEN}").as_str())
         .with_status(401)
         .with_body(&body)
         .create();
-    let config = config("/echo").with_bearer_access_token(TOKEN.into());
+    let config = config(&server, "/echo").with_bearer_access_token(TOKEN.into());
     let error = Transport::new(&config)
         .get("error", None)
         .await
@@ -194,13 +206,15 @@ async fn server_echoing_the_credential_cannot_put_it_in_error_diagnostics() {
 
 #[tokio::test]
 async fn authorized_requests_do_not_follow_same_origin_redirects_outside_root() {
-    let first = mock("GET", "/root/start")
+    let mut server = mockito::Server::new_async().await;
+    let first = server
+        .mock("GET", "/root/start")
         .match_header("authorization", "Bearer secret-token")
         .with_status(302)
         .with_header("location", "/outside")
         .create();
-    let outside = mock("GET", "/outside").expect(0).create();
-    let mut config = config("/root");
+    let outside = server.mock("GET", "/outside").expect(0).create();
+    let mut config = config(&server, "/root");
     config.bearer_access_token = Some("secret-token".into());
     let error = Transport::new(&config)
         .get("start", None)
@@ -216,15 +230,17 @@ async fn authorized_requests_do_not_follow_same_origin_redirects_outside_root() 
 
 #[tokio::test]
 async fn authenticated_requests_do_not_follow_cross_origin_or_replay_submissions() {
+    let mut server = mockito::Server::new_async().await;
     let second_origin = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     second_origin.set_nonblocking(true).unwrap();
     let location = format!("http://{}/stolen", second_origin.local_addr().unwrap());
-    let first = mock("GET", "/root/cross-origin")
+    let first = server
+        .mock("GET", "/root/cross-origin")
         .match_header("authorization", "Bearer secret-token")
         .with_status(302)
         .with_header("location", &location)
         .create();
-    let mut config = config("/root");
+    let mut config = config(&server, "/root");
     config.bearer_access_token = Some("secret-token".into());
     let error = Transport::new(&config)
         .get("cross-origin", None)
@@ -240,13 +256,14 @@ async fn authenticated_requests_do_not_follow_cross_origin_or_replay_submissions
     );
     first.assert();
 
-    let submission = mock("POST", "/root/runs")
+    let submission = server
+        .mock("POST", "/root/runs")
         .match_header("authorization", "Bearer secret-token")
         .with_status(307)
         .with_header("location", "/root/runs-again")
         .expect(1)
         .create();
-    let replay = mock("POST", "/root/runs-again").expect(0).create();
+    let replay = server.mock("POST", "/root/runs-again").expect(0).create();
     let error = Transport::new(&config)
         .post("runs", None)
         .await
@@ -261,26 +278,30 @@ async fn authenticated_requests_do_not_follow_cross_origin_or_replay_submissions
 
 #[tokio::test]
 async fn caller_owned_client_keeps_its_header_and_needs_opt_in_for_config_auth() {
+    let mut server = mockito::Server::new_async().await;
     let mut headers = header::HeaderMap::new();
     headers.insert(
         header::AUTHORIZATION,
         header::HeaderValue::from_static("Bearer caller-token"),
     );
     let client = Client::builder().default_headers(headers).build().unwrap();
-    let caller = mock("GET", "/injected/objects")
+    let caller = server
+        .mock("GET", "/injected/objects")
         .match_header("authorization", "Bearer caller-token")
         .with_body("ok")
         .create();
-    let no_config_auth = config("/injected");
+    let no_config_auth = config(&server, "/injected");
     let transport = Transport::with_client(&no_config_auth, client.clone());
     assert_eq!(transport.get("objects", None).await.unwrap(), "ok");
     caller.assert();
 
-    let redirect = mock("GET", "/injected/redirect")
+    let redirect = server
+        .mock("GET", "/injected/redirect")
         .with_status(302)
         .with_header("location", "/injected/followed")
         .create();
-    let followed = mock("GET", "/injected/followed")
+    let followed = server
+        .mock("GET", "/injected/followed")
         .match_header("authorization", "Bearer caller-token")
         .with_body("followed")
         .create();
@@ -288,7 +309,7 @@ async fn caller_owned_client_keeps_its_header_and_needs_opt_in_for_config_auth()
     redirect.assert();
     followed.assert();
 
-    let blocked = mock("GET", "/injected/blocked").expect(0).create();
+    let blocked = server.mock("GET", "/injected/blocked").expect(0).create();
     let with_config_auth = no_config_auth.with_oauth_access_token("sdk-token".into());
     let transport = Transport::with_client(&with_config_auth, client.clone());
     let error = transport.get("blocked", None).await.unwrap_err();
@@ -298,7 +319,8 @@ async fn caller_owned_client_keeps_its_header_and_needs_opt_in_for_config_auth()
     ));
     blocked.assert();
 
-    let opted_in = mock("GET", "/injected/opted-in")
+    let opted_in = server
+        .mock("GET", "/injected/opted-in")
         .match_header("authorization", "Bearer sdk-token")
         .with_body("ok")
         .create();
@@ -309,12 +331,14 @@ async fn caller_owned_client_keeps_its_header_and_needs_opt_in_for_config_auth()
 
 #[tokio::test]
 async fn unauthenticated_request_does_not_gain_an_authorization_header() {
-    let request = mock("GET", "/anonymous/objects")
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("GET", "/anonymous/objects")
         .match_header("authorization", Matcher::Missing)
         .with_body("ok")
         .create();
     assert_eq!(
-        Transport::new(&config("/anonymous"))
+        Transport::new(&config(&server, "/anonymous"))
             .get("objects", None)
             .await
             .unwrap(),
@@ -325,12 +349,17 @@ async fn unauthenticated_request_does_not_gain_an_authorization_header() {
 
 #[tokio::test]
 async fn sdk_owned_anonymous_client_also_reports_redirects_without_following_them() {
-    let redirect = mock("GET", "/anonymous/redirect")
+    let mut server = mockito::Server::new_async().await;
+    let redirect = server
+        .mock("GET", "/anonymous/redirect")
         .with_status(301)
         .with_header("location", "/anonymous/elsewhere")
         .create();
-    let destination = mock("GET", "/anonymous/elsewhere").expect(0).create();
-    let error = Transport::new(&config("/anonymous"))
+    let destination = server
+        .mock("GET", "/anonymous/elsewhere")
+        .expect(0)
+        .create();
+    let error = Transport::new(&config(&server, "/anonymous"))
         .get("redirect", None)
         .await
         .unwrap_err();

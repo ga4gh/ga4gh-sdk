@@ -8,12 +8,18 @@ use ga4gh_sdk::clients::wes::WES;
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::Transport;
 use ga4gh_sdk::Error;
-use mockito::{mock, server_url, Matcher, Mock};
+use mockito::{Matcher, Mock};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-fn service_info(path: &str, group: &str, artifact: &str) -> Mock {
-    mock("GET", format!("{path}/service-info").as_str())
+fn service_info(
+    server: &mut mockito::ServerGuard,
+    path: &str,
+    group: &str,
+    artifact: &str,
+) -> Mock {
+    server
+        .mock("GET", format!("{path}/service-info").as_str())
         .with_body(
             json!({
                 "id": "org.example.service",
@@ -27,9 +33,9 @@ fn service_info(path: &str, group: &str, artifact: &str) -> Mock {
         .create()
 }
 
-fn transport(path: &str) -> Transport {
+fn transport(server: &mockito::ServerGuard, path: &str) -> Transport {
     Transport::new(&Configuration::new(
-        url::Url::parse(&format!("{}{path}", server_url())).unwrap(),
+        url::Url::parse(&format!("{}{path}", server.url())).unwrap(),
     ))
 }
 
@@ -50,15 +56,18 @@ struct Labelled {
 
 #[tokio::test]
 async fn tes_sends_and_reads_downstream_types() {
-    let _info = service_info("/generic/tes", "org.ga4gh", "tes");
-    let created = mock("POST", "/generic/tes/tasks")
+    let mut server = mockito::Server::new_async().await;
+    let _info = service_info(&mut server, "/generic/tes", "org.ga4gh", "tes");
+    let created = server
+        .mock("POST", "/generic/tes/tasks")
         .match_body(Matcher::PartialJson(json!({"label": "blue"})))
         .with_body(r#"{"id":"task-1"}"#)
         .create();
-    let _fetched = mock("GET", "/generic/tes/tasks/task-1?view=BASIC")
+    let _fetched = server
+        .mock("GET", "/generic/tes/tasks/task-1?view=BASIC")
         .with_body(r#"{"id":"task-1","executors":[],"label":"blue"}"#)
         .create();
-    let tes = TES::with_transport(transport("/generic/tes"))
+    let tes = TES::with_transport(transport(&server, "/generic/tes"))
         .await
         .unwrap();
     let task = LabelledTask {
@@ -82,8 +91,9 @@ async fn tes_sends_and_reads_downstream_types() {
 
 #[tokio::test]
 async fn tes_create_as_rejects_values_that_are_not_tasks() {
-    let _info = service_info("/generic/invalid", "org.ga4gh", "tes");
-    let tes = TES::with_transport(transport("/generic/invalid"))
+    let mut server = mockito::Server::new_async().await;
+    let _info = service_info(&mut server, "/generic/invalid", "org.ga4gh", "tes");
+    let tes = TES::with_transport(transport(&server, "/generic/invalid"))
         .await
         .unwrap();
     let error = tes.create_as(&json!({"name": 1})).await.unwrap_err();
@@ -92,12 +102,15 @@ async fn tes_create_as_rejects_values_that_are_not_tasks() {
 
 #[tokio::test]
 async fn wes_and_drs_read_downstream_types() {
-    let _wes_info = service_info("/generic/wes", "org.ga4gh", "wes");
-    let _run = mock("GET", "/generic/wes/runs/run-1")
+    let mut server = mockito::Server::new_async().await;
+    let _wes_info = service_info(&mut server, "/generic/wes", "org.ga4gh", "wes");
+    let _run = server
+        .mock("GET", "/generic/wes/runs/run-1")
         .with_body(r#"{"run_id":"run-1","state":"QUEUED","label":"green"}"#)
         .create();
-    let _drs_info = service_info("/generic/drs", "org.ga4gh", "drs");
-    let _object = mock("GET", "/generic/drs/objects/object-1")
+    let _drs_info = service_info(&mut server, "/generic/drs", "org.ga4gh", "drs");
+    let _object = server
+        .mock("GET", "/generic/drs/objects/object-1")
         .with_body(r#"{"id":"object-1","label":"red"}"#)
         .create();
 
@@ -106,7 +119,7 @@ async fn wes_and_drs_read_downstream_types() {
         run_id: String,
         label: String,
     }
-    let wes = WES::with_transport(transport("/generic/wes"))
+    let wes = WES::with_transport(transport(&server, "/generic/wes"))
         .await
         .unwrap();
     let run: Run = wes.get_run_as("run-1").await.unwrap();
@@ -114,7 +127,7 @@ async fn wes_and_drs_read_downstream_types() {
         (run.run_id.as_str(), run.label.as_str()),
         ("run-1", "green")
     );
-    let drs = DRS::with_transport(transport("/generic/drs"))
+    let drs = DRS::with_transport(transport(&server, "/generic/drs"))
         .await
         .unwrap();
     let object: Labelled = drs.get_object_as("object-1").await.unwrap();
@@ -126,21 +139,27 @@ async fn wes_and_drs_read_downstream_types() {
 
 #[tokio::test]
 async fn generic_reads_report_parse_and_pending_errors() {
-    let _tes_info = service_info("/edge/tes", "org.ga4gh", "tes");
-    let _task = mock("GET", "/edge/tes/tasks/task-1?view=BASIC")
+    let mut server = mockito::Server::new_async().await;
+    let _tes_info = service_info(&mut server, "/edge/tes", "org.ga4gh", "tes");
+    let _task = server
+        .mock("GET", "/edge/tes/tasks/task-1?view=BASIC")
         .with_body(r#"{"id":"task-1","executors":[]}"#)
         .create();
-    let _run = mock("GET", "/edge/wes/runs/run-1")
+    let _run = server
+        .mock("GET", "/edge/wes/runs/run-1")
         .with_body(r#"{"run_id":"run-1","label":"green"}"#)
         .create();
-    let _drs_info = service_info("/edge/drs", "org.ga4gh", "drs");
-    let _pending = mock("GET", "/edge/drs/objects/object-1")
+    let _drs_info = service_info(&mut server, "/edge/drs", "org.ga4gh", "drs");
+    let _pending = server
+        .mock("GET", "/edge/drs/objects/object-1")
         .with_status(202)
         .with_header("Retry-After", "1")
         .create();
 
     // The task has no `label`, which `Labelled` requires.
-    let tes = TES::with_transport(transport("/edge/tes")).await.unwrap();
+    let tes = TES::with_transport(transport(&server, "/edge/tes"))
+        .await
+        .unwrap();
     let error = tes
         .get_as::<Labelled>(TesView::Basic, "task-1")
         .await
@@ -151,10 +170,13 @@ async fn generic_reads_report_parse_and_pending_errors() {
     struct Run {
         label: String,
     }
-    let run = ga4gh_sdk::clients::wes::Run::new("run-1".to_owned(), transport("/edge/wes"));
+    let run =
+        ga4gh_sdk::clients::wes::Run::new("run-1".to_owned(), transport(&server, "/edge/wes"));
     assert_eq!(run.log_as::<Run>().await.unwrap().label, "green");
 
-    let drs = DRS::with_transport(transport("/edge/drs")).await.unwrap();
+    let drs = DRS::with_transport(transport(&server, "/edge/drs"))
+        .await
+        .unwrap();
     let error = drs.get_object_as::<Labelled>("object-1").await.unwrap_err();
     assert!(
         error
@@ -166,14 +188,16 @@ async fn generic_reads_report_parse_and_pending_errors() {
 
 #[tokio::test]
 async fn clients_accept_the_artifact_they_are_given() {
-    let _tes = service_info("/artifact/tes", "org.example", "labelled-tes");
-    let _wes = service_info("/artifact/wes", "org.example", "labelled-wes");
-    let _drs = service_info("/artifact/drs", "org.example", "labelled-drs");
-    let created = mock("POST", "/artifact/tes/tasks")
+    let mut server = mockito::Server::new_async().await;
+    let _tes = service_info(&mut server, "/artifact/tes", "org.example", "labelled-tes");
+    let _wes = service_info(&mut server, "/artifact/wes", "org.example", "labelled-wes");
+    let _drs = service_info(&mut server, "/artifact/drs", "org.example", "labelled-drs");
+    let created = server
+        .mock("POST", "/artifact/tes/tasks")
         .with_body(r#"{"id":"task-2"}"#)
         .create();
 
-    let tes = TES::with_artifact(transport("/artifact/tes"), "labelled-tes")
+    let tes = TES::with_artifact(transport(&server, "/artifact/tes"), "labelled-tes")
         .await
         .unwrap();
     assert_eq!(
@@ -187,10 +211,11 @@ async fn clients_accept_the_artifact_they_are_given() {
     )]);
     assert_eq!(tes.create(task).await.unwrap().id, "task-2");
     created.assert();
-    let started = mock("POST", "/artifact/wes/runs")
+    let started = server
+        .mock("POST", "/artifact/wes/runs")
         .with_body(r#"{"run_id":"run-2"}"#)
         .create();
-    let wes = WES::with_artifact(transport("/artifact/wes"), "labelled-wes")
+    let wes = WES::with_artifact(transport(&server, "/artifact/wes"), "labelled-wes")
         .await
         .unwrap();
     let mut request = ga4gh_sdk::clients::wes::models::RunRequest::new(
@@ -202,24 +227,25 @@ async fn clients_accept_the_artifact_they_are_given() {
     assert_eq!(wes.run_workflow(request).await.unwrap().id, "run-2");
     started.assert();
     // `with_artifact` accepts any group; `with_transport` needs `org.ga4gh`.
-    DRS::with_artifact(transport("/artifact/drs"), "labelled-drs")
+    DRS::with_artifact(transport(&server, "/artifact/drs"), "labelled-drs")
         .await
         .unwrap();
 }
 
 #[tokio::test]
 async fn clients_reject_other_artifacts() {
-    let _tes = service_info("/other/tes", "org.ga4gh", "tes");
-    let _drs = service_info("/other/drs", "org.example", "drs");
+    let mut server = mockito::Server::new_async().await;
+    let _tes = service_info(&mut server, "/other/tes", "org.ga4gh", "tes");
+    let _drs = service_info(&mut server, "/other/drs", "org.example", "drs");
 
     let errors = [
-        TES::with_artifact(transport("/other/tes"), "labelled-tes")
+        TES::with_artifact(transport(&server, "/other/tes"), "labelled-tes")
             .await
             .unwrap_err(),
-        WES::with_artifact(transport("/other/tes"), "labelled-wes")
+        WES::with_artifact(transport(&server, "/other/tes"), "labelled-wes")
             .await
             .unwrap_err(),
-        DRS::with_artifact(transport("/other/tes"), "labelled-drs")
+        DRS::with_artifact(transport(&server, "/other/tes"), "labelled-drs")
             .await
             .unwrap_err(),
     ];
@@ -234,11 +260,11 @@ async fn clients_reject_other_artifacts() {
         );
     }
     // The default artifacts keep their messages, and DRS keeps its group.
-    let error = TES::with_artifact(transport("/other/drs"), "tes")
+    let error = TES::with_artifact(transport(&server, "/other/drs"), "tes")
         .await
         .unwrap_err();
     assert_eq!(error.to_string(), "The endpoint is not an instance of TES");
-    let error = DRS::with_transport(transport("/other/drs"))
+    let error = DRS::with_transport(transport(&server, "/other/drs"))
         .await
         .unwrap_err();
     assert_eq!(error.to_string(), "The endpoint is not an instance of DRS");

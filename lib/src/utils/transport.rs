@@ -1037,7 +1037,7 @@ mod tests {
     use super::is_plain_http_to_remote;
     use crate::utils::configuration::Configuration;
     use crate::utils::transport::{urlencode, EndpointError, HttpStatusError, Transport};
-    use mockito::{mock, Matcher};
+    use mockito::Matcher;
     use url::Url;
 
     #[test]
@@ -1179,10 +1179,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_request() {
-        let base_url_str = mockito::server_url();
+        let mut mock_server = mockito::Server::new_async().await;
+        let base_url_str = mock_server.url();
         let base_url = Url::parse(&base_url_str).expect("Failed to parse mock server URL");
 
-        let _m = mock("GET", "/test")
+        let _m = mock_server
+            .mock("GET", "/test")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"message": "success"}"#)
@@ -1199,14 +1201,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_repeated_query_parameters() {
-        let _request = mock("GET", "/tasks")
+        let mut server = mockito::Server::new_async().await;
+        let _request = server
+            .mock("GET", "/tasks")
             .match_query(Matcher::Exact(
                 "page_size=10&tag_key=team+a&tag_key=other&tag_value=x%2Fy&tag_value=z".to_owned(),
             ))
             .with_status(200)
             .with_body("ok")
             .create();
-        let config = Configuration::new(Url::parse(&mockito::server_url()).unwrap());
+        let config = Configuration::new(Url::parse(&server.url()).unwrap());
         let params = serde_json::json!({
             "tag_key": ["team a", "other"],
             "tag_value": ["x/y", "z"],
@@ -1227,7 +1231,7 @@ mod tests {
         use crate::utils::configuration::{AuthError, Configuration};
         use crate::utils::operation::ReplaySafety;
         use crate::utils::transport::{HttpError, RequestOptions, Transport};
-        use mockito::{mock, Matcher};
+        use mockito::Matcher;
         use std::error::Error;
         use std::sync::{Arc, Mutex};
         use std::time::{Duration, Instant};
@@ -1271,27 +1275,43 @@ mod tests {
             }
         }
 
-        fn base(root: &str) -> Url {
-            Url::parse(&format!("{}/{root}", mockito::server_url())).unwrap()
+        fn base(server: &mockito::ServerGuard, root: &str) -> Url {
+            Url::parse(&format!("{}/{root}", server.url())).unwrap()
         }
 
         /// A transport below `/<root>` of the mock server, with `provider`.
-        fn transport(root: &str, provider: &Arc<Recording>) -> Transport {
+        fn transport(
+            server: &mockito::ServerGuard,
+            root: &str,
+            provider: &Arc<Recording>,
+        ) -> Transport {
             Transport::new(
-                &Configuration::new(base(root)).with_shared_token_provider(provider.clone()),
+                &Configuration::new(base(server, root))
+                    .with_shared_token_provider(provider.clone()),
             )
         }
 
         #[tokio::test]
         async fn test_sends_the_token_for_every_method() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording::default());
-            let transport = transport("auth-methods", &provider);
+            let transport = transport(&server, "auth-methods", &provider);
             let mocks = [
-                mock("GET", "/auth-methods/a").match_header("authorization", "Bearer token-1"),
-                mock("POST", "/auth-methods/b").match_header("authorization", "Bearer token-2"),
-                mock("PUT", "/auth-methods/c").match_header("authorization", "Bearer token-3"),
-                mock("DELETE", "/auth-methods/d").match_header("authorization", "Bearer token-4"),
-                mock("POST", "/auth-methods/e").match_header("authorization", "Bearer token-5"),
+                server
+                    .mock("GET", "/auth-methods/a")
+                    .match_header("authorization", "Bearer token-1"),
+                server
+                    .mock("POST", "/auth-methods/b")
+                    .match_header("authorization", "Bearer token-2"),
+                server
+                    .mock("PUT", "/auth-methods/c")
+                    .match_header("authorization", "Bearer token-3"),
+                server
+                    .mock("DELETE", "/auth-methods/d")
+                    .match_header("authorization", "Bearer token-4"),
+                server
+                    .mock("POST", "/auth-methods/e")
+                    .match_header("authorization", "Bearer token-5"),
             ]
             .map(|mock| mock.with_status(200).with_body("ok").expect(1).create());
             transport.get("a", None).await.unwrap();
@@ -1303,18 +1323,20 @@ mod tests {
             for mock in mocks {
                 mock.assert();
             }
-            let expected = vec![(base("auth-methods").to_string(), false); 5];
+            let expected = vec![(base(&server, "auth-methods").to_string(), false); 5];
             assert_eq!(provider.calls(), expected);
         }
 
         #[tokio::test]
         async fn test_sends_no_header_without_a_provider() {
-            let request = mock("GET", "/auth-none/a")
+            let mut server = mockito::Server::new_async().await;
+            let request = server
+                .mock("GET", "/auth-none/a")
                 .match_header("authorization", Matcher::Missing)
                 .with_status(200)
                 .expect(1)
                 .create();
-            Transport::new(&Configuration::new(base("auth-none")))
+            Transport::new(&Configuration::new(base(&server, "auth-none")))
                 .get("a", None)
                 .await
                 .unwrap();
@@ -1323,14 +1345,16 @@ mod tests {
 
         #[tokio::test]
         async fn test_configured_audience_and_reuse() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording {
                 lifetime: Some(Duration::from_secs(60)),
                 ..Default::default()
             });
-            let config = Configuration::new(base("auth-reuse"))
+            let config = Configuration::new(base(&server, "auth-reuse"))
                 .with_shared_token_provider(provider.clone())
                 .with_token_audience("tes".to_owned());
-            let request = mock("GET", "/auth-reuse/a")
+            let request = server
+                .mock("GET", "/auth-reuse/a")
                 .match_header("authorization", "Bearer token-1")
                 .with_status(200)
                 .expect(2)
@@ -1347,17 +1371,20 @@ mod tests {
 
         #[tokio::test]
         async fn test_replays_a_get_once_after_401() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording {
                 lifetime: Some(Duration::from_secs(60)),
                 ..Default::default()
             });
-            let transport = transport("auth-replay", &provider);
-            let rejected = mock("GET", "/auth-replay/a")
+            let transport = transport(&server, "auth-replay", &provider);
+            let rejected = server
+                .mock("GET", "/auth-replay/a")
                 .match_header("authorization", "Bearer token-1")
                 .with_status(401)
                 .expect(1)
                 .create();
-            let accepted = mock("GET", "/auth-replay/a")
+            let accepted = server
+                .mock("GET", "/auth-replay/a")
                 .match_header("authorization", "Bearer token-2")
                 .with_status(200)
                 .with_body("ok")
@@ -1368,7 +1395,7 @@ mod tests {
             assert_eq!(transport.get("a", None).await.unwrap(), "ok");
             rejected.assert();
             accepted.assert();
-            let root = base("auth-replay").to_string();
+            let root = base(&server, "auth-replay").to_string();
             assert_eq!(provider.calls(), [(root.clone(), false), (root, true)]);
         }
 
@@ -1468,9 +1495,11 @@ mod tests {
 
         #[tokio::test]
         async fn test_replays_only_once() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording::default());
-            let transport = transport("auth-twice", &provider);
-            let rejected = mock("GET", "/auth-twice/a")
+            let transport = transport(&server, "auth-twice", &provider);
+            let rejected = server
+                .mock("GET", "/auth-twice/a")
                 .with_status(401)
                 .with_body("denied")
                 .expect(2)
@@ -1484,9 +1513,11 @@ mod tests {
 
         #[tokio::test]
         async fn test_never_replays_a_submission() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording::default());
-            let transport = transport("auth-submit", &provider);
-            let rejected = mock("POST", "/auth-submit/a")
+            let transport = transport(&server, "auth-submit", &provider);
+            let rejected = server
+                .mock("POST", "/auth-submit/a")
                 .with_status(401)
                 .expect(2)
                 .create();
@@ -1504,14 +1535,17 @@ mod tests {
 
         #[tokio::test]
         async fn test_replay_follows_the_replay_safety() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording::default());
-            let transport = transport("auth-policy", &provider);
-            let rejected = mock("POST", "/auth-policy/lookup")
+            let transport = transport(&server, "auth-policy", &provider);
+            let rejected = server
+                .mock("POST", "/auth-policy/lookup")
                 .match_header("authorization", "Bearer token-1")
                 .with_status(401)
                 .expect(1)
                 .create();
-            let accepted = mock("POST", "/auth-policy/lookup")
+            let accepted = server
+                .mock("POST", "/auth-policy/lookup")
                 .match_header("authorization", "Bearer token-2")
                 .with_status(200)
                 .with_body("ok")
@@ -1528,7 +1562,8 @@ mod tests {
             rejected.assert();
             accepted.assert();
 
-            let submission = mock("POST", "/auth-policy/submit")
+            let submission = server
+                .mock("POST", "/auth-policy/submit")
                 .with_status(401)
                 .expect(1)
                 .create();
@@ -1543,17 +1578,20 @@ mod tests {
 
         #[tokio::test]
         async fn test_rejected_submission_drops_the_reused_token() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording {
                 lifetime: Some(Duration::from_secs(60)),
                 ..Default::default()
             });
-            let transport = transport("auth-drop", &provider);
-            let rejected = mock("POST", "/auth-drop/a")
+            let transport = transport(&server, "auth-drop", &provider);
+            let rejected = server
+                .mock("POST", "/auth-drop/a")
                 .match_header("authorization", "Bearer token-1")
                 .with_status(401)
                 .expect(1)
                 .create();
-            let accepted = mock("POST", "/auth-drop/a")
+            let accepted = server
+                .mock("POST", "/auth-drop/a")
                 .match_header("authorization", "Bearer token-2")
                 .with_status(200)
                 .expect(1)
@@ -1562,11 +1600,12 @@ mod tests {
             transport.post("a", None).await.unwrap();
             rejected.assert();
             accepted.assert();
-            let root = base("auth-drop").to_string();
+            let root = base(&server, "auth-drop").to_string();
             assert_eq!(provider.calls(), [(root.clone(), false), (root, true)]);
 
             // The same after `send_once`, as TES and WES submissions use it.
-            let rejected = mock("POST", "/auth-drop/once")
+            let rejected = server
+                .mock("POST", "/auth-drop/once")
                 .match_header("authorization", "Bearer token-2")
                 .with_status(401)
                 .expect(1)
@@ -1590,7 +1629,8 @@ mod tests {
             assert!(provider.calls()[2].1);
 
             // And after `post_multipart`.
-            let rejected = mock("POST", "/auth-drop/form")
+            let rejected = server
+                .mock("POST", "/auth-drop/form")
                 .match_header("authorization", "Bearer token-3")
                 .with_status(401)
                 .expect(1)
@@ -1608,13 +1648,14 @@ mod tests {
 
         #[tokio::test]
         async fn test_slow_provider_is_not_an_ambiguous_submission() {
+            let mut server = mockito::Server::new_async().await;
             use crate::utils::operation::{AmbiguousSubmissionError, OperationError};
             let provider = Arc::new(Recording {
                 delay: Some(Duration::from_secs(5)),
                 ..Default::default()
             });
-            let transport = transport("auth-slow", &provider);
-            let request = mock("POST", "/auth-slow/a").expect(0).create();
+            let transport = transport(&server, "auth-slow", &provider);
+            let request = server.mock("POST", "/auth-slow/a").expect(0).create();
             let options = RequestOptions::new(Duration::from_millis(50));
             let error = transport
                 .request_with_policy(reqwest::Method::POST, "a", None, None, &options)
@@ -1630,12 +1671,13 @@ mod tests {
 
         #[tokio::test]
         async fn test_provider_failure_sends_nothing() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording {
                 fail: true,
                 ..Default::default()
             });
-            let transport = transport("auth-fail", &provider);
-            let request = mock("GET", "/auth-fail/a").expect(0).create();
+            let transport = transport(&server, "auth-fail", &provider);
+            let request = server.mock("GET", "/auth-fail/a").expect(0).create();
             let error = transport.get("a", None).await.unwrap_err();
             let message = error.to_string();
             let error = error.downcast_ref::<TokenProviderError>().unwrap();
@@ -1655,14 +1697,15 @@ mod tests {
 
         #[tokio::test]
         async fn test_invalid_tokens_are_not_sent_or_shown() {
+            let mut server = mockito::Server::new_async().await;
             for token in ["", "SENTINEL\nTOKEN", "SENTINEL TOKEN"] {
                 let provider = Arc::new(Recording {
                     token: Some(token),
                     lifetime: Some(Duration::from_secs(60)),
                     ..Default::default()
                 });
-                let transport = transport("auth-invalid", &provider);
-                let request = mock("GET", "/auth-invalid/a").expect(0).create();
+                let transport = transport(&server, "auth-invalid", &provider);
+                let request = server.mock("GET", "/auth-invalid/a").expect(0).create();
                 let error = transport.get("a", None).await.unwrap_err();
                 assert!(
                     !format!("{error} {error:?}").contains("SENTINEL"),
@@ -1684,9 +1727,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_conflicting_credentials_send_nothing() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording::default());
-            let request = mock("GET", "/auth-conflict/a").expect(0).create();
-            let config = Configuration::new(base("auth-conflict"))
+            let request = server.mock("GET", "/auth-conflict/a").expect(0).create();
+            let config = Configuration::new(base(&server, "auth-conflict"))
                 .with_shared_token_provider(provider.clone())
                 .with_oauth_access_token("SENTINEL_OAUTH".to_owned());
             let error = Transport::new(&config).get("a", None).await.unwrap_err();
@@ -1695,7 +1739,7 @@ mod tests {
                 error.downcast_ref::<AuthConflictError>().unwrap().sources,
                 ["oauth_access_token"]
             );
-            let mut url = base("auth-conflict");
+            let mut url = base(&server, "auth-conflict");
             url.set_username("alice").unwrap();
             let config = Configuration::new(url).with_shared_token_provider(provider.clone());
             let error = Transport::new(&config).get("a", None).await.unwrap_err();
@@ -1706,8 +1750,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_provider_header_replaces_a_client_default() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording::default());
-            let request = mock("GET", "/auth-client/a")
+            let request = server
+                .mock("GET", "/auth-client/a")
                 .match_header("authorization", "Bearer token-1")
                 .match_header("x-client", "kept")
                 .with_status(200)
@@ -1720,8 +1766,8 @@ mod tests {
                 .default_headers(headers)
                 .build()
                 .unwrap();
-            let config =
-                Configuration::new(base("auth-client")).with_shared_token_provider(provider);
+            let config = Configuration::new(base(&server, "auth-client"))
+                .with_shared_token_provider(provider);
             let error = Transport::with_client(&config, client.clone())
                 .get("a", None)
                 .await
@@ -1736,9 +1782,11 @@ mod tests {
 
         #[tokio::test]
         async fn test_authorized_request_builder_sends_once() {
+            let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording::default());
-            let transport = transport("auth-builder", &provider);
-            let request = mock("PATCH", "/auth-builder/a")
+            let transport = transport(&server, "auth-builder", &provider);
+            let request = server
+                .mock("PATCH", "/auth-builder/a")
                 .match_header("authorization", "Bearer token-1")
                 .with_status(401)
                 .expect(1)
@@ -1757,8 +1805,9 @@ mod tests {
 
         #[tokio::test]
         async fn synchronous_builder_rejects_a_token_provider() {
+            let server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording::default());
-            let transport = transport("auth-sync-builder", &provider);
+            let transport = transport(&server, "auth-sync-builder", &provider);
             let error = transport
                 .request_builder(reqwest::Method::GET, "a")
                 .unwrap_err();
@@ -1771,14 +1820,18 @@ mod tests {
 
         #[tokio::test]
         async fn request_build_failure_is_not_an_ambiguous_submission() {
+            let mut server = mockito::Server::new_async().await;
             use crate::utils::operation::AmbiguousSubmissionError;
 
             let provider = Arc::new(Recording::default());
-            let config = Configuration::new(base("auth-build-error"))
+            let config = Configuration::new(base(&server, "auth-build-error"))
                 .with_shared_token_provider(provider.clone())
                 .with_user_agent("invalid\nagent".into());
             let transport = Transport::new(&config);
-            let request = mock("POST", "/auth-build-error/tasks").expect(0).create();
+            let request = server
+                .mock("POST", "/auth-build-error/tasks")
+                .expect(0)
+                .create();
             let options = RequestOptions::new(Duration::from_secs(2));
             let error = transport
                 .request_with_policy(reqwest::Method::POST, "tasks", None, None, &options)

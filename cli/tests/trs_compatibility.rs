@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use mockito::{mock, Matcher};
+use mockito::Matcher;
 use serde_json::json;
 use std::{
     fs,
@@ -8,13 +8,13 @@ use std::{
 };
 use tempfile::TempDir;
 
-fn run(prefix: &str, args: &[&str]) -> Output {
+fn run(server: &mockito::ServerGuard, prefix: &str, args: &[&str]) -> Output {
     let home = TempDir::new().unwrap();
     let dir = home.path().join(".ga4gh-cli");
     fs::create_dir(&dir).unwrap();
     fs::write(
         dir.join("config.json"),
-        json!({"TRS":{"base_path":format!("{}/{prefix}", mockito::server_url())}}).to_string(),
+        json!({"TRS":{"base_path":format!("{}/{prefix}", server.url())}}).to_string(),
     )
     .unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
@@ -38,22 +38,26 @@ fn info(version: &str) -> String {
 
 #[test]
 fn tag_filter_requires_discovery_support_or_an_explicit_override() {
-    let discovery = mock("GET", "/cli-compat-tags/service-info")
+    let mut server = mockito::Server::new();
+    let discovery = server
+        .mock("GET", "/cli-compat-tags/service-info")
         .with_status(200)
         .with_body(info("2.0.1"))
         .expect(2)
         .create();
-    let tools = mock("GET", "/cli-compat-tags/tools")
+    let tools = server
+        .mock("GET", "/cli-compat-tags/tools")
         .match_query(Matcher::UrlEncoded("tags".into(), "genomics".into()))
         .with_status(200)
         .with_body("[]")
         .expect(1)
         .create();
-    let denied = run("cli-compat-tags", &["tools", "--tag", "genomics"]);
+    let denied = run(&server, "cli-compat-tags", &["tools", "--tag", "genomics"]);
     assert!(!denied.status.success());
     assert!(denied.stdout.is_empty());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("tags"));
     let allowed = run(
+        &server,
         "cli-compat-tags",
         &["tools", "--tag", "genomics", "--tag-filter", "enabled"],
     );
@@ -72,12 +76,21 @@ fn tag_filter_requires_discovery_support_or_an_explicit_override() {
 
 #[test]
 fn strict_mode_rejects_unknown_declarations_without_tools_request() {
-    let discovery = mock("GET", "/cli-compat-strict/service-info")
+    let mut server = mockito::Server::new();
+    let discovery = server
+        .mock("GET", "/cli-compat-strict/service-info")
         .with_status(200)
         .with_body(info("2.1.0"))
         .create();
-    let tools = mock("GET", "/cli-compat-strict/tools").expect(0).create();
-    let output = run("cli-compat-strict", &["--api-version", "strict", "tools"]);
+    let tools = server
+        .mock("GET", "/cli-compat-strict/tools")
+        .expect(0)
+        .create();
+    let output = run(
+        &server,
+        "cli-compat-strict",
+        &["--api-version", "strict", "tools"],
+    );
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("not recognized"));
@@ -87,15 +100,19 @@ fn strict_mode_rejects_unknown_declarations_without_tools_request() {
 
 #[test]
 fn strict_mode_keeps_unusual_optional_metadata_on_a_known_version() {
-    let discovery = mock("GET", "/cli-compat-strict-known/service-info")
+    let mut server = mockito::Server::new();
+    let discovery = server
+        .mock("GET", "/cli-compat-strict-known/service-info")
         .with_status(200)
         .with_body(info("2.0.2"))
         .create();
-    let version = mock("GET", "/cli-compat-strict-known/tools/t/versions/v1")
+    let version = server
+        .mock("GET", "/cli-compat-strict-known/tools/t/versions/v1")
         .with_status(200)
         .with_body(r#"{"id":"v1","url":"https://example.org","description":{"extension":42}}"#)
         .create();
     let output = run(
+        &server,
         "cli-compat-strict-known",
         &["--api-version", "strict", "version", "t", "v1"],
     );
@@ -114,13 +131,20 @@ fn strict_mode_keeps_unusual_optional_metadata_on_a_known_version() {
 
 #[test]
 fn no_discovery_requires_explicit_version_before_network_io() {
-    let discovery = mock("GET", "/cli-compat-no-version/service-info")
+    let mut server = mockito::Server::new();
+    let discovery = server
+        .mock("GET", "/cli-compat-no-version/service-info")
         .expect(0)
         .create();
-    let tools = mock("GET", "/cli-compat-no-version/tools")
+    let tools = server
+        .mock("GET", "/cli-compat-no-version/tools")
         .expect(0)
         .create();
-    let output = run("cli-compat-no-version", &["--no-discovery", "tools"]);
+    let output = run(
+        &server,
+        "cli-compat-no-version",
+        &["--no-discovery", "tools"],
+    );
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires --api-version"));
     discovery.assert();
@@ -129,10 +153,13 @@ fn no_discovery_requires_explicit_version_before_network_io() {
 
 #[test]
 fn both_profiles_keep_optional_description_in_output() {
-    let discovery = mock("GET", "/cli-compat-profile/service-info")
+    let mut server = mockito::Server::new();
+    let discovery = server
+        .mock("GET", "/cli-compat-profile/service-info")
         .expect(0)
         .create();
-    let version = mock("GET", "/cli-compat-profile/tools/t/versions/v1")
+    let version = server
+        .mock("GET", "/cli-compat-profile/tools/t/versions/v1")
         .with_status(200)
         .with_body(r#"{"id":"v1","url":"https://example.org","description":{"extension":42}}"#)
         .expect(2)
@@ -145,7 +172,7 @@ fn both_profiles_keep_optional_description_in_output() {
         "t",
         "v1",
     ];
-    let old = run("cli-compat-profile", &args);
+    let old = run(&server, "cli-compat-profile", &args);
     assert!(
         old.status.success(),
         "{}",
@@ -156,6 +183,7 @@ fn both_profiles_keep_optional_description_in_output() {
         json!({"extension":42})
     );
     let new = run(
+        &server,
         "cli-compat-profile",
         &[
             "--no-discovery",

@@ -171,12 +171,12 @@ impl From<DiscoveryError> for crate::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockito::mock;
     use models::ServiceType;
     use url::Url;
 
     #[tokio::test]
     async fn test_get_service_info_success() {
+        let mut server = mockito::Server::new_async().await;
         // Arrange
         let service_type = ServiceType::new(
             "group".to_string(),
@@ -186,7 +186,8 @@ mod tests {
         let service_organization =
             models::ServiceOrganization::new("org_name".to_string(), "org_url".to_string());
 
-        let _m = mock("GET", "/service-info")
+        let _m = server
+            .mock("GET", "/service-info")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -201,7 +202,7 @@ mod tests {
             )
             .create();
 
-        let mock_url = Url::parse(&mockito::server_url()).unwrap();
+        let mock_url = Url::parse(&server.url()).unwrap();
         let config = Configuration::new(mock_url);
         let service_info = ServiceInfo::new(&config).unwrap();
 
@@ -217,8 +218,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_service_info_failure() {
+        let mut server = mockito::Server::new_async().await;
         // Arrange
-        let _m = mock("GET", "/service-info")
+        let _m = server
+            .mock("GET", "/service-info")
             .with_status(500)
             .with_header("content-type", "application/json")
             .with_body(
@@ -228,7 +231,7 @@ mod tests {
             )
             .create();
 
-        let mock_url = Url::parse(&mockito::server_url()).unwrap();
+        let mock_url = Url::parse(&server.url()).unwrap();
         let config = Configuration::new(mock_url);
         let service_info = ServiceInfo::new(&config).unwrap();
 
@@ -241,19 +244,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_raw_returns_the_body_as_received() {
+        let mut server = mockito::Server::new_async().await;
         let body = r#"{"id":"i","big":123456789012345678901234567890,"f":1.00}"#;
-        let _m = mock("GET", "/raw/v1/service-info")
+        let _m = server
+            .mock("GET", "/raw/v1/service-info")
             .with_status(200)
             .with_body(body)
             .create();
-        let base = Url::parse(&format!("{}/raw/v1/", mockito::server_url())).unwrap();
+        let base = Url::parse(&format!("{}/raw/v1/", server.url())).unwrap();
         let client = ServiceInfo::new(&Configuration::new(base)).unwrap();
         assert_eq!(client.get_raw().await.unwrap(), body);
 
-        let _error = mock("GET", "/raw-error/service-info")
+        let _error = server
+            .mock("GET", "/raw-error/service-info")
             .with_status(503)
             .create();
-        let base = Url::parse(&format!("{}/raw-error", mockito::server_url())).unwrap();
+        let base = Url::parse(&format!("{}/raw-error", server.url())).unwrap();
         let client = ServiceInfo::new(&Configuration::new(base)).unwrap();
         let error = client.get_raw().await.unwrap_err();
         assert_eq!(
@@ -266,8 +272,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_service_info_under_api_root() {
+        let mut server = mockito::Server::new_async().await;
         for suffix in ["", "/"] {
-            let _m = mock("GET", "/proxy/tes/v1/service-info")
+            let _m = server
+                .mock("GET", "/proxy/tes/v1/service-info")
                 .with_status(200)
                 .with_body(
                     serde_json::json!({
@@ -280,8 +288,7 @@ mod tests {
                     .to_string(),
                 )
                 .create();
-            let base =
-                Url::parse(&format!("{}/proxy/tes/v1{suffix}", mockito::server_url())).unwrap();
+            let base = Url::parse(&format!("{}/proxy/tes/v1{suffix}", server.url())).unwrap();
             let client = ServiceInfo::new(&Configuration::new(base)).unwrap();
             assert_eq!(client.get().await.unwrap().name, "Example TES");
         }

@@ -9,7 +9,6 @@
 
 use ga4gh_cli::{command, dispatch_with_config, CliContext};
 use ga4gh_sdk::utils::configuration::Configuration;
-use mockito::mock;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Read;
@@ -70,8 +69,8 @@ fn run(config: &Value, args: &[&str]) -> Output {
     output
 }
 
-fn root(prefix: &str) -> String {
-    format!("{}{prefix}", mockito::server_url())
+fn root(server: &mockito::ServerGuard, prefix: &str) -> String {
+    format!("{}{prefix}", server.url())
 }
 
 fn stdout(output: &Output) -> String {
@@ -95,15 +94,17 @@ fn assert_failure(output: &Output, expected: &str) {
 
 #[test]
 fn prints_the_service_info_of_a_built_in_section_with_its_credential() {
+    let mut server = mockito::Server::new();
     let body = service_info("tes");
-    let info = mock("GET", "/si-built-in/ga4gh/tes/v1/service-info")
+    let info = server
+        .mock("GET", "/si-built-in/ga4gh/tes/v1/service-info")
         .match_header("authorization", "Bearer SENTINEL_TOKEN")
         .with_body(body.to_string())
         .expect(2)
         .create();
     for suffix in ["", "/"] {
         let config = json!({"TES": {
-            "base_path": format!("{}{suffix}", root("/si-built-in/ga4gh/tes/v1")),
+            "base_path": format!("{}{suffix}", root(&server, "/si-built-in/ga4gh/tes/v1")),
             "oauth_access_token": "SENTINEL_TOKEN",
         }});
         let output = run(&config, &["service-info", "--service", "TES"]);
@@ -117,11 +118,13 @@ fn prints_the_service_info_of_a_built_in_section_with_its_credential() {
 
 #[test]
 fn values_keep_their_spelling_and_order() {
+    let mut server = mockito::Server::new();
     let body = r#"{"zz":1,"id":"org.example.tes","name":"Example","type":{"group":"org.ga4gh","artifact":"tes","version":"1.1.0"},"organization":{"name":"Example","url":"https://example.org"},"version":"1.0.0","description":null,"big":123456789012345678901234567890,"f":1.00}"#;
-    let _info = mock("GET", "/si-spelling/service-info")
+    let _info = server
+        .mock("GET", "/si-spelling/service-info")
         .with_body(body)
         .create();
-    let config = json!({"TES": {"base_path": root("/si-spelling")}});
+    let config = json!({"TES": {"base_path": root(&server, "/si-spelling")}});
     let output = run(&config, &["service-info", "--service", "TES"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(stdout(&output), body);
@@ -139,16 +142,18 @@ fn help_describes_the_command() {
 
 #[test]
 fn reads_a_custom_section_of_the_selected_profile() {
-    let info = mock("GET", "/si-profile/staging/service-info")
+    let mut server = mockito::Server::new();
+    let info = server
+        .mock("GET", "/si-profile/staging/service-info")
         .match_header("authorization", "Basic Y2xpOlNFTlRJTkVMX1BBU1M=")
         .with_body(service_info("my-service").to_string())
         .create();
     let config = json!({
         "default_profile": "local",
         "profiles": {
-            "local": {"MY_SERVICE": {"base_path": root("/si-profile/local")}},
+            "local": {"MY_SERVICE": {"base_path": root(&server, "/si-profile/local")}},
             "staging": {"MY_SERVICE": {
-                "base_path": root("/si-profile/staging"),
+                "base_path": root(&server, "/si-profile/staging"),
                 "basic_auth": {"username": "cli", "password": "SENTINEL_PASS"},
             }}
         }
@@ -171,13 +176,15 @@ fn reads_a_custom_section_of_the_selected_profile() {
 
 #[test]
 fn server_text_is_escaped_and_still_round_trips() {
+    let mut server = mockito::Server::new();
     let mut body = service_info("tes");
     body["name"] = json!("a\u{1b}[2K\rb\u{9b}");
     body["organization"]["name"] = json!("right\u{202e}left\u{2028}next");
-    let _info = mock("GET", "/si-escape/service-info")
+    let _info = server
+        .mock("GET", "/si-escape/service-info")
         .with_body(body.to_string())
         .create();
-    let config = json!({"TES": {"base_path": root("/si-escape")}});
+    let config = json!({"TES": {"base_path": root(&server, "/si-escape")}});
     let output = run(&config, &["service-info", "--service", "TES"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let text = stdout(&output);
@@ -242,14 +249,16 @@ fn a_missing_section_or_service_option_fails_before_a_request() {
 
 #[test]
 fn http_errors_report_the_status_without_the_body() {
+    let mut server = mockito::Server::new();
     for status in [401, 404, 500] {
         let prefix = format!("/si-error-{status}");
-        let _info = mock("GET", format!("{prefix}/service-info").as_str())
+        let _info = server
+            .mock("GET", format!("{prefix}/service-info").as_str())
             .with_status(status)
             .with_body("\u{1b}[2K\rforged line")
             .create();
         let config = json!({"DRS": {
-            "base_path": root(&prefix),
+            "base_path": root(&server, &prefix),
             "bearer_access_token": "SENTINEL_BEARER",
         }});
         let output = run(&config, &["service-info", "--service", "DRS"]);
@@ -267,6 +276,7 @@ fn http_errors_report_the_status_without_the_body() {
 
 #[test]
 fn malformed_json_or_a_non_object_is_an_error() {
+    let mut server = mockito::Server::new();
     for (name, body) in [
         ("not-json", "<html>not service info</html>".to_owned()),
         ("array", "[]".to_owned()),
@@ -274,10 +284,11 @@ fn malformed_json_or_a_non_object_is_an_error() {
         ("trailing", "{} trailing".to_owned()),
     ] {
         let prefix = format!("/si-malformed-{name}");
-        let _info = mock("GET", format!("{prefix}/service-info").as_str())
+        let _info = server
+            .mock("GET", format!("{prefix}/service-info").as_str())
             .with_body(body)
             .create();
-        let config = json!({"TRS": {"base_path": root(&prefix)}});
+        let config = json!({"TRS": {"base_path": root(&server, &prefix)}});
         let output = run(&config, &["service-info", "--service", "TRS"]);
         assert_failure(&output, "Invalid service info from section 'TRS'");
     }
@@ -285,13 +296,15 @@ fn malformed_json_or_a_non_object_is_an_error() {
 
 #[test]
 fn the_raw_command_keeps_numbers_that_the_typed_model_cannot_hold() {
+    let mut server = mockito::Server::new();
     // The command reads a JSON object; `ServiceInfo::get` uses serde_json::Value
     // for extensions, which cannot represent this number.
     let body = r#"{"id":"i","name":"n","type":{"group":"g","artifact":"a","version":"1"},"organization":{"name":"o","url":"u"},"version":"1","x":1e400}"#;
-    let _info = mock("GET", "/si-out-of-range/service-info")
+    let _info = server
+        .mock("GET", "/si-out-of-range/service-info")
         .with_body(body)
         .create();
-    let config = json!({"TES": {"base_path": root("/si-out-of-range")}});
+    let config = json!({"TES": {"base_path": root(&server, "/si-out-of-range")}});
     let output = run(&config, &["service-info", "--service", "TES"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(output.stderr.is_empty());
@@ -300,6 +313,7 @@ fn the_raw_command_keeps_numbers_that_the_typed_model_cannot_hold() {
 
 #[test]
 fn prints_native_wes_service_info_without_generic_discovery_fields() {
+    let mut server = mockito::Server::new();
     // WES::new accepts this WES 1.0 shape, even though ServiceInfo::get cannot
     // decode it into the generic Service model.
     let body = json!({
@@ -312,11 +326,12 @@ fn prints_native_wes_service_info_without_generic_discovery_fields() {
         "system_state_counts": {},
         "tags": {}
     });
-    let response = mock("GET", "/si-native-wes/service-info")
+    let response = server
+        .mock("GET", "/si-native-wes/service-info")
         .with_body(body.to_string())
         .expect(1)
         .create();
-    let config = json!({"WES": {"base_path": root("/si-native-wes")}});
+    let config = json!({"WES": {"base_path": root(&server, "/si-native-wes")}});
     let output = run(&config, &["service-info", "--service", "WES"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(output.stderr.is_empty());
@@ -368,10 +383,13 @@ fn the_discovery_timeout_applies() {
 
 #[tokio::test]
 async fn dispatch_with_config_uses_the_supplied_configuration() {
-    let info = mock("GET", "/si-dispatch/ga4gh/wes/v1/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let info = server
+        .mock("GET", "/si-dispatch/ga4gh/wes/v1/service-info")
         .with_body(service_info("wes").to_string())
         .create();
-    let config = Configuration::new(Url::parse(&root("/si-dispatch/ga4gh/wes/v1")).unwrap());
+    let config =
+        Configuration::new(Url::parse(&root(&server, "/si-dispatch/ga4gh/wes/v1")).unwrap());
     let matches = command()
         .try_get_matches_from(["ga4gh-cli", "service-info", "--service", "WES"])
         .unwrap();
@@ -388,7 +406,9 @@ async fn dispatch_with_config_uses_the_supplied_configuration() {
 
 #[tokio::test]
 async fn context_dispatch_reads_the_section_of_the_selected_profile() {
-    let info = mock("GET", "/si-context-dispatch/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let info = server
+        .mock("GET", "/si-context-dispatch/service-info")
         .with_body(service_info("my-service").to_string())
         .create();
     let dir = TempDir::new().unwrap();
@@ -397,7 +417,7 @@ async fn context_dispatch_reads_the_section_of_the_selected_profile() {
         &path,
         json!({"profiles": {
             "default": {"MY_SERVICE": {"base_path": "http://127.0.0.1:9/"}},
-            "other": {"MY_SERVICE": {"base_path": root("/si-context-dispatch")}}
+            "other": {"MY_SERVICE": {"base_path": root(&server, "/si-context-dispatch")}}
         }})
         .to_string(),
     )
@@ -427,14 +447,16 @@ async fn context_dispatch_reads_the_section_of_the_selected_profile() {
 
 #[tokio::test]
 async fn context_dispatch_to_reads_the_section_of_its_own_file() {
-    let info = mock("GET", "/si-context/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let info = server
+        .mock("GET", "/si-context/service-info")
         .with_body(service_info("my-service").to_string())
         .create();
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("config.json");
     fs::write(
         &path,
-        json!({"MY_SERVICE": {"base_path": root("/si-context")}}).to_string(),
+        json!({"MY_SERVICE": {"base_path": root(&server, "/si-context")}}).to_string(),
     )
     .unwrap();
     let context = CliContext::new("other-cli", "1.0.0").with_config_path(&path);

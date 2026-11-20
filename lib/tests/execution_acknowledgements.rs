@@ -8,11 +8,11 @@ use ga4gh_sdk::{
         acknowledgement::AcknowledgementError, configuration::Configuration, transport::Transport,
     },
 };
-use mockito::{mock, server_url};
 
 #[tokio::test]
 async fn malformed_tes_acknowledgements_never_return_handles_or_replay() {
-    let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+    let mut server = mockito::Server::new_async().await;
+    let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
     let tes = TES::without_discovery(
         Transport::new(&config),
         Service {
@@ -31,7 +31,8 @@ async fn malformed_tes_acknowledgements_never_return_handles_or_replay() {
         "null",
         "invalid",
     ] {
-        let request = mock("POST", "/tasks")
+        let request = server
+            .mock("POST", "/tasks")
             .with_status(200)
             .with_body(body)
             .expect(1)
@@ -48,7 +49,8 @@ async fn malformed_tes_acknowledgements_never_return_handles_or_replay() {
 
 #[tokio::test]
 async fn raw_tes_creation_preserves_extensions_and_rejects_missing_id() {
-    let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+    let mut server = mockito::Server::new_async().await;
+    let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
     let tes = TES::without_discovery(
         Transport::new(&config),
         Service {
@@ -64,7 +66,8 @@ async fn raw_tes_creation_preserves_extensions_and_rejects_missing_id() {
         "extension_field": {"kept": true}
     });
     let expected_body = body.to_string();
-    let request = mock("POST", "/tasks")
+    let request = server
+        .mock("POST", "/tasks")
         .match_body(expected_body.as_str())
         .with_status(200)
         .with_body("{}")
@@ -78,18 +81,21 @@ async fn raw_tes_creation_preserves_extensions_and_rejects_missing_id() {
 
 #[tokio::test]
 async fn opaque_tes_id_survives_creation_and_later_requests() {
+    let mut server = mockito::Server::new_async().await;
     let id = "\"opaque / % id\"";
-    let create = mock("POST", "/tasks")
+    let create = server
+        .mock("POST", "/tasks")
         .with_status(200)
         .with_body(serde_json::json!({"id":id}).to_string())
         .expect(1)
         .create();
-    let status = mock("GET", "/tasks/%22opaque%20%2F%20%25%20id%22?view=MINIMAL")
+    let status = server
+        .mock("GET", "/tasks/%22opaque%20%2F%20%25%20id%22?view=MINIMAL")
         .with_status(200)
         .with_body(r#"{"state":"COMPLETE","executors":[]}"#)
         .expect(1)
         .create();
-    let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+    let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
     let tes = TES::without_discovery(
         Transport::new(&config),
         Service {
@@ -109,7 +115,8 @@ async fn opaque_tes_id_survives_creation_and_later_requests() {
 
 #[tokio::test]
 async fn wes_cancel_requires_the_exact_requested_id_without_replay() {
-    let transport = Transport::new(&Configuration::new(url::Url::parse(&server_url()).unwrap()));
+    let mut server = mockito::Server::new_async().await;
+    let transport = Transport::new(&Configuration::new(url::Url::parse(&server.url()).unwrap()));
     let run = Run::new("target-run".into(), transport);
     for body in [
         "{}",
@@ -118,7 +125,8 @@ async fn wes_cancel_requires_the_exact_requested_id_without_replay() {
         r#"{"run_id":null}"#,
         r#"{"run_id":5}"#,
     ] {
-        let request = mock("POST", "/runs/target-run/cancel")
+        let request = server
+            .mock("POST", "/runs/target-run/cancel")
             .with_status(200)
             .with_body(body)
             .expect(1)
@@ -131,7 +139,8 @@ async fn wes_cancel_requires_the_exact_requested_id_without_replay() {
             .is_some());
         request.assert();
     }
-    let request = mock("POST", "/runs/target-run/cancel")
+    let request = server
+        .mock("POST", "/runs/target-run/cancel")
         .with_status(200)
         .with_body(r#"{"run_id":"target-run"}"#)
         .expect(1)
@@ -145,8 +154,9 @@ async fn wes_cancel_requires_the_exact_requested_id_without_replay() {
 
 #[tokio::test]
 async fn wes_creation_validates_once_and_preserves_opaque_ids() {
+    let mut server = mockito::Server::new_async().await;
     use ga4gh_sdk::clients::wes::{models::RunRequest, WES};
-    let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+    let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
     let wes = WES::without_discovery(
         Transport::new(&config),
         Service {
@@ -171,7 +181,8 @@ async fn wes_creation_validates_once_and_preserves_opaque_ids() {
         r#"{"run_id":""}"#,
         "invalid",
     ] {
-        let submission = mock("POST", "/runs")
+        let submission = server
+            .mock("POST", "/runs")
             .with_status(200)
             .with_body(body)
             .expect(1)
@@ -185,7 +196,8 @@ async fn wes_creation_validates_once_and_preserves_opaque_ids() {
         submission.assert();
     }
     let id = "\"opaque / % id\"";
-    let submission = mock("POST", "/runs")
+    let submission = server
+        .mock("POST", "/runs")
         .with_status(200)
         .with_body(serde_json::json!({"run_id":id}).to_string())
         .expect(1)

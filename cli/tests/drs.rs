@@ -3,7 +3,7 @@
 // The CLI locates its config through HOME, which Windows does not use.
 #![cfg(unix)]
 
-use mockito::{mock, Mock};
+use mockito::Mock;
 use serde_json::{json, Value};
 use std::fs;
 use std::process::{Command, Output};
@@ -37,8 +37,9 @@ fn run(home: &TempDir, args: &[&str]) -> Output {
     command.output().unwrap()
 }
 
-fn service_info() -> Mock {
-    mock("GET", "/ga4gh/drs/v1/service-info")
+fn service_info(server: &mut mockito::ServerGuard) -> Mock {
+    server
+        .mock("GET", "/ga4gh/drs/v1/service-info")
         .with_status(200)
         .with_body(
             json!({
@@ -67,7 +68,8 @@ fn stdout_json(output: &Output) -> Value {
 
 #[test]
 fn get_and_access_print_json_and_encode_ids() {
-    let service = service_info();
+    let mut server = mockito::Server::new();
+    let service = service_info(&mut server);
     let object_id = "a/b ?#";
     let access_id = "x/y ?#";
     let object_body = json!({
@@ -80,7 +82,8 @@ fn get_and_access_print_json_and_encode_ids() {
         "vendor_field": {"kept": true},
     })
     .to_string();
-    let object = mock("GET", "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23")
+    let object = server
+        .mock("GET", "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23")
         .with_status(200)
         .with_body(&object_body)
         .create();
@@ -90,14 +93,15 @@ fn get_and_access_print_json_and_encode_ids() {
         "vendor_field": {"kept": true},
     })
     .to_string();
-    let access = mock(
-        "GET",
-        "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23/access/x%2Fy%20%3F%23",
-    )
-    .with_status(200)
-    .with_body(&access_body)
-    .create();
-    let home = home_with_drs_config(&format!("{}/ga4gh/drs/v1", mockito::server_url()));
+    let access = server
+        .mock(
+            "GET",
+            "/ga4gh/drs/v1/objects/a%2Fb%20%3F%23/access/x%2Fy%20%3F%23",
+        )
+        .with_status(200)
+        .with_body(&access_body)
+        .create();
+    let home = home_with_drs_config(&format!("{}/ga4gh/drs/v1", server.url()));
 
     let get_output = run(&home, &["drs", "get", object_id]);
     let metadata = stdout_json(&get_output);
@@ -131,16 +135,19 @@ fn missing_drs_config_and_access_argument_are_errors() {
 
 #[test]
 fn service_failures_have_nonzero_exit_codes() {
-    let service = service_info();
-    let object = mock("GET", "/ga4gh/drs/v1/objects/missing")
+    let mut server = mockito::Server::new();
+    let service = service_info(&mut server);
+    let object = server
+        .mock("GET", "/ga4gh/drs/v1/objects/missing")
         .with_status(404)
         .with_body("object not found")
         .create();
-    let access = mock("GET", "/ga4gh/drs/v1/objects/known/access/missing")
+    let access = server
+        .mock("GET", "/ga4gh/drs/v1/objects/known/access/missing")
         .with_status(404)
         .with_body("access not found")
         .create();
-    let home = home_with_drs_config(&format!("{}/ga4gh/drs/v1", mockito::server_url()));
+    let home = home_with_drs_config(&format!("{}/ga4gh/drs/v1", server.url()));
 
     for (args, expected) in [
         (vec!["drs", "get", "missing"], "object not found"),
@@ -163,16 +170,19 @@ fn service_failures_have_nonzero_exit_codes() {
 
 #[test]
 fn pending_drs_responses_have_nonzero_exit_codes() {
-    let service = service_info();
-    let object = mock("GET", "/ga4gh/drs/v1/objects/pending")
+    let mut server = mockito::Server::new();
+    let service = service_info(&mut server);
+    let object = server
+        .mock("GET", "/ga4gh/drs/v1/objects/pending")
         .with_status(202)
         .with_header("retry-after", "2")
         .create();
-    let access = mock("GET", "/ga4gh/drs/v1/objects/known/access/pending")
+    let access = server
+        .mock("GET", "/ga4gh/drs/v1/objects/known/access/pending")
         .with_status(202)
         .with_header("retry-after", "2")
         .create();
-    let home = home_with_drs_config(&format!("{}/ga4gh/drs/v1", mockito::server_url()));
+    let home = home_with_drs_config(&format!("{}/ga4gh/drs/v1", server.url()));
 
     for args in [
         vec!["drs", "get", "pending"],
@@ -190,7 +200,9 @@ fn pending_drs_responses_have_nonzero_exit_codes() {
 
 #[test]
 fn server_text_is_omitted_from_errors() {
-    let _service = mock("GET", "/escape/ga4gh/drs/v1/service-info")
+    let mut server = mockito::Server::new();
+    let _service = server
+        .mock("GET", "/escape/ga4gh/drs/v1/service-info")
         .with_status(200)
         .with_body(
             json!({
@@ -203,11 +215,12 @@ fn server_text_is_omitted_from_errors() {
             .to_string(),
         )
         .create();
-    let _object = mock("GET", "/escape/ga4gh/drs/v1/objects/missing")
+    let _object = server
+        .mock("GET", "/escape/ga4gh/drs/v1/objects/missing")
         .with_status(404)
         .with_body("gone\u{1b}[2K\nforged")
         .create();
-    let home = home_with_drs_config(&format!("{}/escape/ga4gh/drs/v1", mockito::server_url()));
+    let home = home_with_drs_config(&format!("{}/escape/ga4gh/drs/v1", server.url()));
     let output = run(&home, &["drs", "get", "missing"]);
     assert_eq!(output.status.code(), Some(1));
     let message = String::from_utf8_lossy(&output.stderr);

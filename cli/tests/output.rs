@@ -6,7 +6,7 @@
 // The CLI finds its config file through `HOME`, which Windows doesn't use.
 #![cfg(unix)]
 
-use mockito::{mock, Matcher, Mock};
+use mockito::{Matcher, Mock};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Write;
@@ -134,7 +134,7 @@ impl Home {
     }
 }
 
-fn service_info_mock(path: &str) -> Mock {
+fn service_info_mock(server: &mut mockito::ServerGuard, path: &str) -> Mock {
     let service_info = json!({
         "id": "org.example.tes",
         "name": "Mock",
@@ -142,7 +142,8 @@ fn service_info_mock(path: &str) -> Mock {
         "organization": {"name": "Example", "url": "https://example.org"},
         "version": "1.0.0",
     });
-    mock("GET", path)
+    server
+        .mock("GET", path)
         .with_status(200)
         .with_body(service_info.to_string())
         .create()
@@ -158,37 +159,43 @@ fn stderr(output: &Output) -> String {
 
 #[test]
 fn test_output_on_success() {
+    let mut server = mockito::Server::new();
     let task = json!({"id": TASK_ID, "state": "COMPLETE", "executors": [], "vendor_field": {"kept": true}});
     let task_json = task.to_string();
     let prefix = "/ga4gh/tes/v1";
     let _mocks = [
-        service_info_mock("/ga4gh/tes/v1/service-info"),
-        mock("POST", "/ga4gh/tes/v1/tasks")
+        service_info_mock(&mut server, "/ga4gh/tes/v1/service-info"),
+        server
+            .mock("POST", "/ga4gh/tes/v1/tasks")
             .with_status(200)
             .with_body(json!({"id": TASK_ID}).to_string())
             .create(),
-        mock(
-            "GET",
-            Matcher::Regex(r"^/ga4gh/tes/v1/tasks(\?.*)?$".to_string()),
-        )
-        .with_status(200)
-        .with_body(json!({"tasks": [task]}).to_string())
-        .create(),
-        mock("GET", "/ga4gh/tes/v1/tasks/t1?view=FULL")
+        server
+            .mock(
+                "GET",
+                Matcher::Regex(r"^/ga4gh/tes/v1/tasks(\?.*)?$".to_string()),
+            )
+            .with_status(200)
+            .with_body(json!({"tasks": [task]}).to_string())
+            .create(),
+        server
+            .mock("GET", "/ga4gh/tes/v1/tasks/t1?view=FULL")
             .with_status(200)
             .with_body(task_json.clone())
             .create(),
-        mock("GET", "/ga4gh/tes/v1/tasks/t1?view=MINIMAL")
+        server
+            .mock("GET", "/ga4gh/tes/v1/tasks/t1?view=MINIMAL")
             .with_status(200)
             .with_body(task.to_string())
             .create(),
-        mock("POST", "/ga4gh/tes/v1/tasks/t1:cancel")
+        server
+            .mock("POST", "/ga4gh/tes/v1/tasks/t1:cancel")
             .with_status(200)
             .with_body("{}")
             .create(),
     ];
 
-    let base_path = format!("{}{prefix}", mockito::server_url());
+    let base_path = format!("{}{prefix}", server.url());
     for config in [
         config_with_fields(&base_path),
         config_without_auth(&base_path),
@@ -226,18 +233,17 @@ fn task_with_extension_fields() -> Value {
 
 #[test]
 fn create_forwards_the_parsed_task_json_unchanged() {
+    let mut server = mockito::Server::new();
     let task = task_with_extension_fields();
-    let _service = service_info_mock("/raw-task/service-info");
-    let create = mock("POST", "/raw-task/tasks")
+    let _service = service_info_mock(&mut server, "/raw-task/service-info");
+    let create = server
+        .mock("POST", "/raw-task/tasks")
         .match_body(Matcher::Json(task.clone()))
         .with_status(200)
         .with_body(json!({"id": TASK_ID}).to_string())
         .expect(3)
         .create();
-    let home = Home::new(&config_with_fields(&format!(
-        "{}/raw-task",
-        mockito::server_url()
-    )));
+    let home = Home::new(&config_with_fields(&format!("{}/raw-task", server.url())));
     let file = home.path().join("extended.json");
     // The CLI doesn't promise to keep whitespace or key order, only the
     // parsed JSON structure.
@@ -258,15 +264,18 @@ fn create_forwards_the_parsed_task_json_unchanged() {
 
 #[test]
 fn invalid_task_input_fails_before_any_request() {
-    let requests = mock("GET", Matcher::Regex(r"^/invalid-task".into()))
+    let mut server = mockito::Server::new();
+    let requests = server
+        .mock("GET", Matcher::Regex(r"^/invalid-task".into()))
         .expect(0)
         .create();
-    let posts = mock("POST", Matcher::Regex(r"^/invalid-task".into()))
+    let posts = server
+        .mock("POST", Matcher::Regex(r"^/invalid-task".into()))
         .expect(0)
         .create();
     let home = Home::new(&config_with_fields(&format!(
         "{}/invalid-task",
-        mockito::server_url()
+        server.url()
     )));
     let cases = [
         (r#"{"executors": ["#.to_owned(), "Failed to parse JSON"),
@@ -296,8 +305,10 @@ fn invalid_task_input_fails_before_any_request() {
 
 #[test]
 fn list_sends_repeated_tags_and_displays_next_page_token() {
-    let _service = service_info_mock("/ga4gh/tes/v1/service-info");
-    let list = mock("GET", "/ga4gh/tes/v1/tasks")
+    let mut server = mockito::Server::new();
+    let _service = service_info_mock(&mut server, "/ga4gh/tes/v1/service-info");
+    let list = server
+        .mock("GET", "/ga4gh/tes/v1/tasks")
         .match_query(Matcher::Exact(
             "page_token=first+page&tag_key=alpha&tag_key=beta&tag_value=x%2Fy&tag_value=z"
                 .to_owned(),
@@ -311,7 +322,7 @@ fn list_sends_repeated_tags_and_displays_next_page_token() {
             .to_string(),
         )
         .create();
-    let base_path = format!("{}/ga4gh/tes/v1", mockito::server_url());
+    let base_path = format!("{}/ga4gh/tes/v1", server.url());
     let home = Home::new(&config_with_fields(&base_path));
     let output = home.run(
         &[
@@ -338,22 +349,25 @@ fn list_sends_repeated_tags_and_displays_next_page_token() {
 
 #[test]
 fn test_output_on_error_response() {
+    let mut mock_server = mockito::Server::new();
     for status in [401, 404, 500] {
         // A server can echo a credential in an error response.
         let body = format!("mock failure {status}: SENTINEL_PASSWORD");
         let _mocks = [
-            service_info_mock("/service-info"),
-            mock("POST", Matcher::Any)
+            service_info_mock(&mut mock_server, "/service-info"),
+            mock_server
+                .mock("POST", Matcher::Any)
                 .with_status(status)
                 .with_body(&body)
                 .create(),
-            mock("GET", Matcher::Regex(r"^/tasks".to_string()))
+            mock_server
+                .mock("GET", Matcher::Regex(r"^/tasks".to_string()))
                 .with_status(status)
                 .with_body(&body)
                 .create(),
         ];
 
-        let base_path = mockito::server_url();
+        let base_path = mock_server.url();
         for config in [
             config_with_fields(&base_path),
             config_without_auth(&base_path),
@@ -376,11 +390,13 @@ fn test_output_on_error_response() {
 
 #[test]
 fn service_info_404_keeps_api_root_hint() {
-    let _service_info = mock("GET", "/service-info")
+    let mut server = mockito::Server::new();
+    let _service_info = server
+        .mock("GET", "/service-info")
         .with_status(404)
         .with_body("service missing")
         .create();
-    let home = Home::new(&config_with_fields(&mockito::server_url()));
+    let home = Home::new(&config_with_fields(&server.url()));
     let task_file = home.path().join("task.json");
     let output = home.run(&["tes", "create", task_file.to_str().unwrap()], None);
     assert_eq!(output.status.code(), Some(1));
@@ -396,13 +412,15 @@ fn service_info_404_keeps_api_root_hint() {
 
 #[test]
 fn canceling_terminal_task_reports_server_conflict() {
+    let mut server = mockito::Server::new();
     for state in ["COMPLETE", "SYSTEM_ERROR"] {
         let body = format!("task already {state}");
-        let _cancel = mock("POST", "/tasks/t1:cancel")
+        let _cancel = server
+            .mock("POST", "/tasks/t1:cancel")
             .with_status(409)
             .with_body(&body)
             .create();
-        let home = Home::new(&config_with_fields(&mockito::server_url()));
+        let home = Home::new(&config_with_fields(&server.url()));
         let output = home.run(&["tes", "cancel", TASK_ID], None);
         assert_eq!(output.status.code(), Some(1));
         assert!(stdout(&output).is_empty());
@@ -450,17 +468,20 @@ fn test_output_with_invalid_base_path() {
 
 #[test]
 fn all_jsonl_streams_records_and_reports_a_failed_later_page_on_stderr() {
-    let _service = service_info_mock("/service-info");
-    let first = mock("GET", "/tasks")
+    let mut server = mockito::Server::new();
+    let _service = service_info_mock(&mut server, "/service-info");
+    let first = server
+        .mock("GET", "/tasks")
         .with_body(r#"{"tasks":[{"id":"one","custom":true}],"next_page_token":"a+/ %"}"#)
         .expect(1)
         .create();
-    let second = mock("GET", "/tasks")
+    let second = server
+        .mock("GET", "/tasks")
         .match_query(Matcher::UrlEncoded("page_token".into(), "a+/ %".into()))
         .with_status(503)
         .expect(1)
         .create();
-    let home = Home::new(&config_with_fields(&mockito::server_url()));
+    let home = Home::new(&config_with_fields(&server.url()));
     let output = home.run(&["tes", "list", "--all", "--format", "jsonl"], None);
     assert!(!output.status.success());
     let lines = stdout(&output);
@@ -480,13 +501,16 @@ fn all_jsonl_streams_records_and_reports_a_failed_later_page_on_stderr() {
 
 #[test]
 fn all_jsonl_exports_complete_pages_without_table_or_diagnostics() {
-    let _service = service_info_mock("/export/service-info");
-    let first = mock("GET", "/export/tasks")
+    let mut server = mockito::Server::new();
+    let _service = service_info_mock(&mut server, "/export/service-info");
+    let first = server
+        .mock("GET", "/export/tasks")
         .match_query(Matcher::UrlEncoded("view".into(), "BASIC".into()))
         .with_body(r#"{"tasks":[{"id":"one"}],"next_page_token":"next"}"#)
         .expect(1)
         .create();
-    let second = mock("GET", "/export/tasks")
+    let second = server
+        .mock("GET", "/export/tasks")
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("view".into(), "BASIC".into()),
             Matcher::UrlEncoded("page_token".into(), "next".into()),
@@ -494,10 +518,7 @@ fn all_jsonl_exports_complete_pages_without_table_or_diagnostics() {
         .with_body(r#"{"tasks":[{"id":"two"}]}"#)
         .expect(1)
         .create();
-    let home = Home::new(&config_with_fields(&format!(
-        "{}/export",
-        mockito::server_url()
-    )));
+    let home = Home::new(&config_with_fields(&format!("{}/export", server.url())));
     let output = home.run(
         &["tes", "list", "--all", "--format", "jsonl", "-w", "basic"],
         None,
@@ -521,11 +542,13 @@ fn all_jsonl_exports_complete_pages_without_table_or_diagnostics() {
 
 #[test]
 fn malformed_creation_acknowledgements_fail_once_with_empty_stdout() {
-    let _service = service_info_mock("/service-info");
-    let home = Home::new(&config_with_fields(&mockito::server_url()));
+    let mut server = mockito::Server::new();
+    let _service = service_info_mock(&mut server, "/service-info");
+    let home = Home::new(&config_with_fields(&server.url()));
     let task = home.path().join("task.json");
     for body in ["{}", r#"{"id":null}"#, r#"{"id":4}"#, r#"{"id":""}"#] {
-        let request = mock("POST", "/tasks")
+        let request = server
+            .mock("POST", "/tasks")
             .with_status(200)
             .with_body(body)
             .expect(1)
@@ -556,13 +579,16 @@ fn assert_escaped(text: &str) {
 
 #[test]
 fn server_text_is_escaped_in_text_output() {
+    let mut server = mockito::Server::new();
     let prefix = "/escape";
-    let _service = service_info_mock("/escape/service-info");
-    let _create = mock("POST", "/escape/tasks")
+    let _service = service_info_mock(&mut server, "/escape/service-info");
+    let _create = server
+        .mock("POST", "/escape/tasks")
         .with_status(200)
         .with_body(json!({"id": CONTROL_ID}).to_string())
         .create();
-    let _list = mock("GET", Matcher::Regex(r"^/escape/tasks(\?.*)?$".into()))
+    let _list = server
+        .mock("GET", Matcher::Regex(r"^/escape/tasks(\?.*)?$".into()))
         .with_status(200)
         .with_body(
             json!({
@@ -573,28 +599,28 @@ fn server_text_is_escaped_in_text_output() {
         )
         .create();
     // Later requests use the original ID, not the escaped one.
-    let status = mock(
-        "GET",
-        format!("{prefix}/tasks/{CONTROL_ID_PATH}?view=MINIMAL").as_str(),
-    )
-    .with_status(200)
-    .with_body(json!({"id": CONTROL_ID, "state": "RUNNING"}).to_string())
-    .create();
-    let cancel = mock(
-        "POST",
-        format!("{prefix}/tasks/{CONTROL_ID_PATH}:cancel").as_str(),
-    )
-    .with_status(200)
-    .with_body(json!({"note": "ok\u{1b}[31m"}).to_string())
-    .create();
-    let _failure = mock("GET", "/escape/tasks/broken?view=FULL")
+    let status = server
+        .mock(
+            "GET",
+            format!("{prefix}/tasks/{CONTROL_ID_PATH}?view=MINIMAL").as_str(),
+        )
+        .with_status(200)
+        .with_body(json!({"id": CONTROL_ID, "state": "RUNNING"}).to_string())
+        .create();
+    let cancel = server
+        .mock(
+            "POST",
+            format!("{prefix}/tasks/{CONTROL_ID_PATH}:cancel").as_str(),
+        )
+        .with_status(200)
+        .with_body(json!({"note": "ok\u{1b}[31m"}).to_string())
+        .create();
+    let _failure = server
+        .mock("GET", "/escape/tasks/broken?view=FULL")
         .with_status(500)
         .with_body("down\u{1b}]0;title\u{7}")
         .create();
-    let home = Home::new(&config_with_fields(&format!(
-        "{}{prefix}",
-        mockito::server_url()
-    )));
+    let home = Home::new(&config_with_fields(&format!("{}{prefix}", server.url())));
     let task_file = home.path().join("task.json");
 
     let created = home.run(&["tes", "create", task_file.to_str().unwrap()], None);
@@ -638,22 +664,25 @@ fn server_text_is_escaped_in_text_output() {
 
 #[test]
 fn create_json_recovers_the_opaque_id_for_followup_requests() {
-    let _service = service_info_mock("/create-json/service-info");
-    let _create = mock("POST", "/create-json/tasks")
+    let mut server = mockito::Server::new();
+    let _service = service_info_mock(&mut server, "/create-json/service-info");
+    let _create = server
+        .mock("POST", "/create-json/tasks")
         .with_status(200)
         .with_body(json!({"id": CONTROL_ID}).to_string())
         .create();
-    let status = mock(
-        "GET",
-        format!("/create-json/tasks/{CONTROL_ID_PATH}?view=MINIMAL").as_str(),
-    )
-    .with_status(200)
-    .with_body(json!({"id": CONTROL_ID, "state": "RUNNING"}).to_string())
-    .expect(1)
-    .create();
+    let status = server
+        .mock(
+            "GET",
+            format!("/create-json/tasks/{CONTROL_ID_PATH}?view=MINIMAL").as_str(),
+        )
+        .with_status(200)
+        .with_body(json!({"id": CONTROL_ID, "state": "RUNNING"}).to_string())
+        .expect(1)
+        .create();
     let home = Home::new(&config_with_fields(&format!(
         "{}/create-json",
-        mockito::server_url()
+        server.url()
     )));
 
     let created = home.run(
@@ -681,23 +710,26 @@ fn create_json_recovers_the_opaque_id_for_followup_requests() {
 
 #[test]
 fn json_output_keeps_server_values() {
-    let _service = service_info_mock("/escape-json/service-info");
+    let mut server = mockito::Server::new();
+    let _service = service_info_mock(&mut server, "/escape-json/service-info");
     let task = json!({"id": CONTROL_ID, "state": "QUEUED", "name": "a\u{202E}b"});
     let body = task.to_string();
-    let _get = mock(
-        "GET",
-        format!("/escape-json/tasks/{CONTROL_ID_PATH}?view=FULL").as_str(),
-    )
-    .with_status(200)
-    .with_body(&body)
-    .create();
-    let _list = mock("GET", "/escape-json/tasks")
+    let _get = server
+        .mock(
+            "GET",
+            format!("/escape-json/tasks/{CONTROL_ID_PATH}?view=FULL").as_str(),
+        )
+        .with_status(200)
+        .with_body(&body)
+        .create();
+    let _list = server
+        .mock("GET", "/escape-json/tasks")
         .with_status(200)
         .with_body(json!({"tasks": [task.clone()]}).to_string())
         .create();
     let home = Home::new(&config_with_fields(&format!(
         "{}/escape-json",
-        mockito::server_url()
+        server.url()
     )));
 
     let got = home.run(&["tes", "get", CONTROL_ID, "FULL"], None);
@@ -716,15 +748,14 @@ fn json_output_keeps_server_values() {
 
 #[test]
 fn get_reports_a_body_that_is_not_json() {
-    let _service = service_info_mock("/escape-raw/service-info");
-    let _get = mock("GET", "/escape-raw/tasks/t1?view=FULL")
+    let mut server = mockito::Server::new();
+    let _service = service_info_mock(&mut server, "/escape-raw/service-info");
+    let _get = server
+        .mock("GET", "/escape-raw/tasks/t1?view=FULL")
         .with_status(200)
         .with_body("\u{1b}]0;title\u{7}ok")
         .create();
-    let home = Home::new(&config_with_fields(&format!(
-        "{}/escape-raw",
-        mockito::server_url()
-    )));
+    let home = Home::new(&config_with_fields(&format!("{}/escape-raw", server.url())));
     let output = home.run(&["tes", "get", TASK_ID, "FULL"], None);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty(), "{}", stdout(&output));
@@ -735,14 +766,13 @@ fn get_reports_a_body_that_is_not_json() {
 
 #[test]
 fn log_messages_omit_untrusted_server_error_body() {
-    let _service = mock("GET", "/escape-log/service-info")
+    let mut server = mockito::Server::new();
+    let _service = server
+        .mock("GET", "/escape-log/service-info")
         .with_status(500)
         .with_body("down\u{202E}x\nforged")
         .create();
-    let home = Home::new(&config_with_fields(&format!(
-        "{}/escape-log",
-        mockito::server_url()
-    )));
+    let home = Home::new(&config_with_fields(&format!("{}/escape-log", server.url())));
     for log_level in LOG_LEVELS {
         let output = home.run(&["tes", "list"], log_level);
         assert_eq!(output.status.code(), Some(1), "{log_level:?}");
@@ -762,22 +792,25 @@ fn log_messages_omit_untrusted_server_error_body() {
 
 #[test]
 fn undefined_states_read_as_unknown_except_in_get_and_jsonl() {
-    let _service = service_info_mock("/undefined-state/service-info");
+    let mut server = mockito::Server::new();
+    let _service = service_info_mock(&mut server, "/undefined-state/service-info");
     let task = json!({"id": TASK_ID, "state": "SUSPENDED"});
     let body = task.to_string();
-    let _task = mock("GET", "/undefined-state/tasks/t1")
+    let _task = server
+        .mock("GET", "/undefined-state/tasks/t1")
         .match_query(Matcher::Any)
         .with_status(200)
         .with_body(&body)
         .create();
-    let _list = mock("GET", "/undefined-state/tasks")
+    let _list = server
+        .mock("GET", "/undefined-state/tasks")
         .match_query(Matcher::Any)
         .with_status(200)
         .with_body(json!({"tasks": [task]}).to_string())
         .create();
     let home = Home::new(&config_with_fields(&format!(
         "{}/undefined-state",
-        mockito::server_url()
+        server.url()
     )));
 
     let state = home.run(&["tes", "status", TASK_ID], None);

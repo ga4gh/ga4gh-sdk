@@ -91,21 +91,24 @@ fn resume_descriptor_is_credential_free_and_checked() {
 }
 #[tokio::test]
 async fn real_waiter_retries_poll_and_fetches_failure_logs_once() {
-    use mockito::{mock, server_url};
-    let first = mock("GET", "/tasks/id?view=MINIMAL")
+    let mut server = mockito::Server::new_async().await;
+    let first = server
+        .mock("GET", "/tasks/id?view=MINIMAL")
         .with_status(503)
         .expect(1)
         .create();
-    let status = mock("GET", "/tasks/id?view=MINIMAL")
+    let status = server
+        .mock("GET", "/tasks/id?view=MINIMAL")
         .with_body(r#"{"state":"SYSTEM_ERROR"}"#)
         .expect(1)
         .create();
-    let log = mock("GET", "/tasks/id?view=FULL")
+    let log = server
+        .mock("GET", "/tasks/id?view=FULL")
         .with_body(r#"{"state":"SYSTEM_ERROR","logs":[{"system_logs":["failed"]}]}"#)
         .expect(1)
         .create();
-    let cancel = mock("POST", "/tasks/id:cancel").expect(0).create();
-    let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+    let cancel = server.mock("POST", "/tasks/id:cancel").expect(0).create();
+    let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
     let task = Task::new("id".into(), Transport::new(&config));
     let mut options = WaitOptions::new(Duration::from_secs(3));
     options.retry.max_attempts = 2;
@@ -122,17 +125,19 @@ async fn real_waiter_retries_poll_and_fetches_failure_logs_once() {
 
 #[tokio::test]
 async fn cancellation_acknowledgement_is_not_terminal_cancellation() {
+    let mut server = mockito::Server::new_async().await;
     use ga4gh_sdk::clients::wes::Run;
-    use mockito::{mock, server_url};
-    let ack = mock("POST", "/runs/id/cancel")
+    let ack = server
+        .mock("POST", "/runs/id/cancel")
         .with_body(r#"{"run_id":"id"}"#)
         .expect(1)
         .create();
-    let status = mock("GET", "/runs/id/status")
+    let status = server
+        .mock("GET", "/runs/id/status")
         .with_body(r#"{"run_id":"id","state":"CANCELING"}"#)
         .expect(1)
         .create();
-    let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+    let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
     let run = Run::new("id".into(), Transport::new(&config));
     let result = run
         .cancel_and_wait(&WaitOptions::new(Duration::from_millis(100)))

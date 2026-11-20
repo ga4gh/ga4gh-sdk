@@ -13,7 +13,6 @@ use ga4gh_sdk::{
     reqwest,
     utils::{configuration::Configuration, transport::Transport},
 };
-use mockito::{mock, server_url};
 use serde_json::json;
 use std::time::Duration;
 
@@ -30,9 +29,9 @@ fn info(artifact: &str, id: &str) -> serde_json::Value {
 
 /// A configuration for the API root `/<root>/` on the mock server, with a
 /// user agent that only this configuration sends.
-fn config_below(root: &str) -> Configuration {
+fn config_below(server: &mockito::ServerGuard, root: &str) -> Configuration {
     let mut config =
-        Configuration::new(url::Url::parse(&format!("{}/{root}/", server_url())).unwrap());
+        Configuration::new(url::Url::parse(&format!("{}/{root}/", server.url())).unwrap());
     config.user_agent = Some(format!("client-state/{root}"));
     config
 }
@@ -111,13 +110,15 @@ macro_rules! assert_constructed {
 
 #[tokio::test]
 async fn every_constructor_reads_the_transports_configuration() {
+    let mut server = mockito::Server::new_async().await;
     for artifact in ["tes", "wes", "drs"] {
         let root = format!("constructors/ga4gh/{artifact}/v1");
-        let _info = mock("GET", format!("/{root}/service-info").as_str())
+        let _info = server
+            .mock("GET", format!("/{root}/service-info").as_str())
             .match_header("user-agent", format!("client-state/{root}").as_str())
             .with_body(info(artifact, "org.example.constructors").to_string())
             .create();
-        let config = config_below(&root);
+        let config = config_below(&server, &root);
         let transport = Transport::new(&config);
         let max_age = Duration::from_secs(60);
         match artifact {
@@ -189,10 +190,12 @@ fn injected_client() -> reqwest::Client {
 /// the original transport and replaces service and snapshot together.
 macro_rules! assert_refresh_keeps_transport {
     ($client:ident, $artifact:expr) => {{
+        let mut server = mockito::Server::new_async().await;
         let root = format!("refresh-transport/ga4gh/{}/v1", $artifact);
-        let config = config_below(&root);
+        let config = config_below(&server, &root);
         let path = format!("/{root}/service-info");
-        let first = mock("GET", path.as_str())
+        let first = server
+            .mock("GET", path.as_str())
             .match_header("x-client", "injected")
             .with_body(info($artifact, "first").to_string())
             .expect(1)
@@ -204,11 +207,12 @@ macro_rules! assert_refresh_keeps_transport {
         .await
         .unwrap();
         first.assert();
-        drop(first);
+        first.remove();
         assert_eq!(discovered.client().discovered_service_info().id, "first");
         assert_eq!(discovered.capabilities().raw["id"], "first");
 
-        let second = mock("GET", path.as_str())
+        let second = server
+            .mock("GET", path.as_str())
             .match_header("x-client", "injected")
             .with_body(info($artifact, "second").to_string())
             .expect(1)

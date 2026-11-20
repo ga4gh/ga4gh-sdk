@@ -391,28 +391,29 @@ pub async fn wait_task_send(task: Task, settings: WaitSettings) -> WaitEnd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockito::{mock, Matcher, Mock};
+    use mockito::{Matcher, Mock};
     use url::Url;
 
     /// The user agent of the transport that a test gives the client.
     const OWNED_AGENT: &str = "owned-transport";
 
     /// A configuration for the API root `/<root>/ga4gh/tes/v1` on the mock server.
-    fn config(root: &str) -> Configuration {
-        let root = format!("{}/{root}/ga4gh/tes/v1", mockito::server_url());
+    fn config(server: &mockito::ServerGuard, root: &str) -> Configuration {
+        let root = format!("{}/{root}/ga4gh/tes/v1", server.url());
         Configuration::new(Url::parse(&root).unwrap())
     }
 
     /// A client built with a transport whose user agent is [`OWNED_AGENT`].
-    fn client_with_owned_transport(root: &str) -> PyAsyncTES {
-        let config = config(root).with_user_agent(OWNED_AGENT.to_owned());
+    fn client_with_owned_transport(server: &mockito::ServerGuard, root: &str) -> PyAsyncTES {
+        let config = config(server, root).with_user_agent(OWNED_AGENT.to_owned());
         PyAsyncTES::with_transport(Transport::new(&config))
     }
 
     /// A mock of the service info of a TES beneath `root` that expects one request with
     /// [`OWNED_AGENT`]; call `create()` on it to serve it.
-    fn service_info(root: &str, status: usize) -> Mock {
-        mock("GET", format!("/{root}/ga4gh/tes/v1/service-info").as_str())
+    fn service_info(server: &mut mockito::ServerGuard, root: &str, status: usize) -> Mock {
+        server
+            .mock("GET", format!("/{root}/ga4gh/tes/v1/service-info").as_str())
             .match_header("user-agent", OWNED_AGENT)
             .with_status(status)
             .with_body(
@@ -430,26 +431,29 @@ mod tests {
 
     #[tokio::test]
     async fn lazy_client_shares_transport() {
-        let info = service_info("shared-transport", 200).create();
-        let created = mock("POST", "/shared-transport/ga4gh/tes/v1/tasks")
+        let mut server = mockito::Server::new_async().await;
+        let info = service_info(&mut server, "shared-transport", 200).create();
+        let created = server
+            .mock("POST", "/shared-transport/ga4gh/tes/v1/tasks")
             .match_header("user-agent", OWNED_AGENT)
             .match_body(Matcher::Json(serde_json::json!({"executors": []})))
             .with_status(200)
             .with_body(r#"{"id":"task-1"}"#)
             .expect(1)
             .create();
-        let fetched = mock(
-            "GET",
-            "/shared-transport/ga4gh/tes/v1/tasks/task-1?view=MINIMAL",
-        )
-        .match_header("user-agent", OWNED_AGENT)
-        .with_status(200)
-        .with_body(r#"{"id":"task-1","state":"QUEUED"}"#)
-        .expect(1)
-        .create();
-        let mut client = client_with_owned_transport("shared-transport");
+        let fetched = server
+            .mock(
+                "GET",
+                "/shared-transport/ga4gh/tes/v1/tasks/task-1?view=MINIMAL",
+            )
+            .match_header("user-agent", OWNED_AGENT)
+            .with_status(200)
+            .with_body(r#"{"id":"task-1","state":"QUEUED"}"#)
+            .expect(1)
+            .create();
+        let mut client = client_with_owned_transport(&server, "shared-transport");
         // A Rust extension can still change the public copy; the client doesn't read it.
-        client.config = config("shared-transport");
+        client.config = config(&server, "shared-transport");
         let (tes, transport) = client.connection();
 
         let connected_client = connected(&tes, &transport).await.unwrap();
@@ -472,8 +476,9 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_first_calls_connect_once_with_the_transport() {
-        let info = service_info("concurrent-transport", 200).create();
-        let client = client_with_owned_transport("concurrent-transport");
+        let mut server = mockito::Server::new_async().await;
+        let info = service_info(&mut server, "concurrent-transport", 200).create();
+        let client = client_with_owned_transport(&server, "concurrent-transport");
         let (tes, transport) = client.connection();
 
         let (first, second) =
@@ -485,9 +490,10 @@ mod tests {
 
     #[tokio::test]
     async fn failed_connection_is_retried_with_the_same_transport() {
-        let client = client_with_owned_transport("retried-transport");
+        let mut server = mockito::Server::new_async().await;
+        let client = client_with_owned_transport(&server, "retried-transport");
         let (tes, transport) = client.connection();
-        let failed = service_info("retried-transport", 500).create();
+        let failed = service_info(&mut server, "retried-transport", 500).create();
 
         let error = connected(&tes, &transport).await.err().unwrap();
 
@@ -496,8 +502,8 @@ mod tests {
             error.starts_with("Failed to create TES instance"),
             "{error}"
         );
-        drop(failed);
-        let info = service_info("retried-transport", 200).create();
+        failed.remove();
+        let info = service_info(&mut server, "retried-transport", 200).create();
 
         connected(&tes, &transport).await.unwrap();
 
@@ -506,15 +512,16 @@ mod tests {
 
     #[tokio::test]
     async fn client_with_transport_connects_with_the_injected_http_client() {
+        let mut server = mockito::Server::new_async().await;
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("x-http-client", "injected".parse().unwrap());
         let http = reqwest::Client::builder()
             .default_headers(headers)
             .build()
             .unwrap();
-        let config = config("injected-client").with_user_agent(OWNED_AGENT.to_owned());
+        let config = config(&server, "injected-client").with_user_agent(OWNED_AGENT.to_owned());
         let client = PyAsyncTES::with_transport(Transport::with_client(&config, http));
-        let info = service_info("injected-client", 200)
+        let info = service_info(&mut server, "injected-client", 200)
             .match_header("x-http-client", "injected")
             .create();
         let (tes, transport) = client.connection();

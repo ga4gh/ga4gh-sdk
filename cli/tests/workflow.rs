@@ -98,21 +98,24 @@ fn cli_output_projection_keeps_complete_with_missing_delivery() {
 
 #[test]
 fn explicit_cli_submission_uploads_the_reviewed_request_once() {
+    let mut server = mockito::Server::new();
     let temp = tempfile::tempdir().unwrap();
     let config_dir = temp.path().join(".ga4gh-cli");
     std::fs::create_dir(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
-        json!({"WES":{"base_path":format!("{}/cli-wes",mockito::server_url()),"oauth_access_token":"cli-fixture-token"}}).to_string(),
+        json!({"WES":{"base_path":format!("{}/cli-wes",server.url()),"oauth_access_token":"cli-fixture-token"}}).to_string(),
     )
     .unwrap();
     let info = json!({"workflow_type_versions":{"CWL":{"workflow_type_version":["v1.2"]}},"supported_wes_versions":["1.0.0"],"supported_filesystem_protocols":["file"],"workflow_engine_versions":{},"default_workflow_engine_parameters":[],"system_state_counts":{},"tags":{}});
-    let service = mockito::mock("GET", "/cli-wes/service-info")
+    let service = server
+        .mock("GET", "/cli-wes/service-info")
         .match_header("authorization", "Bearer cli-fixture-token")
         .with_body(info.to_string())
         .expect(1)
         .create();
-    let submission = mockito::mock("POST", "/cli-wes/runs")
+    let submission = server
+        .mock("POST", "/cli-wes/runs")
         .match_header("authorization", "Bearer cli-fixture-token")
         .match_body(mockito::Matcher::Regex("Sequence QC".into()))
         .with_body(r#"{"run_id":"cli-qc-run"}"#)
@@ -157,6 +160,7 @@ fn explicit_cli_submission_uploads_the_reviewed_request_once() {
 
 #[tokio::test]
 async fn downstream_workflow_submission_uses_supplied_config() {
+    let mut server = mockito::Server::new_async().await;
     let info = json!({
         "workflow_type_versions": {"CWL": {"workflow_type_version": ["v1.2"]}},
         "supported_wes_versions": ["1.0.0"],
@@ -166,19 +170,20 @@ async fn downstream_workflow_submission_uses_supplied_config() {
         "system_state_counts": {},
         "tags": {}
     });
-    let service = mockito::mock("GET", "/injected-wes/service-info")
+    let service = server
+        .mock("GET", "/injected-wes/service-info")
         .match_header("authorization", "Bearer injected-token")
         .with_body(info.to_string())
         .expect(1)
         .create();
-    let submission = mockito::mock("POST", "/injected-wes/runs")
+    let submission = server
+        .mock("POST", "/injected-wes/runs")
         .match_header("authorization", "Bearer injected-token")
         .with_body(r#"{"run_id":"injected-run"}"#)
         .expect(1)
         .create();
-    let config =
-        Configuration::new(Url::parse(&format!("{}/injected-wes", mockito::server_url())).unwrap())
-            .with_oauth_access_token("injected-token".into());
+    let config = Configuration::new(Url::parse(&format!("{}/injected-wes", server.url())).unwrap())
+        .with_oauth_access_token("injected-token".into());
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let schema = root.join("examples/sequence-qc/profile.json");
     let request = root.join("examples/sequence-qc/request.json");
@@ -210,9 +215,10 @@ async fn downstream_workflow_submission_uses_supplied_config() {
 
 #[tokio::test]
 async fn workflow_submit_reports_failed_oidc_refresh_before_sending() {
+    let mut server = mockito::Server::new_async().await;
     let temp = tempfile::tempdir().unwrap();
-    let issuer = format!("{}/workflow-idp", mockito::server_url());
-    let wes_root = format!("{}/workflow-wes", mockito::server_url());
+    let issuer = format!("{}/workflow-idp", server.url());
+    let wes_root = format!("{}/workflow-wes", server.url());
     let config_path = temp.path().join("config.json");
     std::fs::write(
         &config_path,
@@ -243,7 +249,8 @@ async fn workflow_submit_reports_failed_oidc_refresh_before_sending() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&token_store, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
-    let refresh = mockito::mock("POST", "/workflow-idp/token")
+    let refresh = server
+        .mock("POST", "/workflow-idp/token")
         .match_body(mockito::Matcher::UrlEncoded(
             "refresh_token".into(),
             "expired-refresh".into(),
@@ -252,12 +259,11 @@ async fn workflow_submit_reports_failed_oidc_refresh_before_sending() {
         .with_body(r#"{"error":"invalid_grant"}"#)
         .expect(1)
         .create();
-    let service = mockito::mock("GET", "/workflow-wes/service-info")
+    let service = server
+        .mock("GET", "/workflow-wes/service-info")
         .expect(0)
         .create();
-    let submission = mockito::mock("POST", "/workflow-wes/runs")
-        .expect(0)
-        .create();
+    let submission = server.mock("POST", "/workflow-wes/runs").expect(0).create();
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let schema = root.join("examples/sequence-qc/profile.json");

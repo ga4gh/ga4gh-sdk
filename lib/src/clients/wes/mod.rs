@@ -398,8 +398,7 @@ pub(crate) fn service_from_info(raw: serde_json::Value) -> crate::Result<Service
 mod tests {
     use super::*;
     use crate::clients::serviceinfo::models::ServiceType;
-    use mockito::server_url;
-    use mockito::{mock, Matcher};
+    use mockito::Matcher;
     use url::Url;
 
     #[test]
@@ -443,8 +442,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_uses_configured_api_prefix() {
+        let mut server = mockito::Server::new_async().await;
         for suffix in ["", "/"] {
-            let _service_info = mock("GET", "/ga4gh/wes/v1/service-info")
+            let _service_info = server
+                .mock("GET", "/ga4gh/wes/v1/service-info")
                 .with_status(200)
                 .with_body(
                     serde_json::json!({
@@ -457,7 +458,8 @@ mod tests {
                     .to_string(),
                 )
                 .create();
-            let _create = mock("POST", "/ga4gh/wes/v1/runs")
+            let _create = server
+                .mock("POST", "/ga4gh/wes/v1/runs")
                 .match_header(
                     "content-type",
                     Matcher::Regex("^multipart/form-data; boundary=".to_string()),
@@ -465,12 +467,13 @@ mod tests {
                 .with_status(200)
                 .with_body(r#"{"run_id":"abc"}"#)
                 .create();
-            let _status = mock("GET", "/ga4gh/wes/v1/runs/abc/status")
+            let _status = server
+                .mock("GET", "/ga4gh/wes/v1/runs/abc/status")
                 .with_status(200)
                 .with_body(r#"{"run_id":"abc","state":"COMPLETE"}"#)
                 .create();
 
-            let base = Url::parse(&format!("{}/ga4gh/wes/v1{suffix}", server_url())).unwrap();
+            let base = Url::parse(&format!("{}/ga4gh/wes/v1{suffix}", server.url())).unwrap();
             let wes = WES::new(&Configuration::new(base)).await.unwrap();
             let run = wes.run_workflow(valid_request()).await.unwrap();
             assert_eq!(run.status().await.unwrap(), State::Complete);
@@ -479,12 +482,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_info_error_keeps_status_and_404_hint() {
+        let mut server = mockito::Server::new_async().await;
         for (status, path) in [(404, "/missing/wes/v1"), (503, "/unavailable/wes/v1")] {
-            let _service = mock("GET", format!("{path}/service-info").as_str())
+            let _service = server
+                .mock("GET", format!("{path}/service-info").as_str())
                 .with_status(status)
                 .with_body("service failure")
                 .create();
-            let base = Url::parse(&format!("{}{path}", server_url())).unwrap();
+            let base = Url::parse(&format!("{}{path}", server.url())).unwrap();
             let error = WES::new(&Configuration::new(base))
                 .await
                 .unwrap_err()
@@ -497,7 +502,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_create() {
-        let _m = mock("POST", "/runs")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/runs")
             .match_header(
                 "content-type",
                 Matcher::Regex("^multipart/form-data; boundary=".to_string()),
@@ -512,7 +519,7 @@ mod tests {
             .with_body(r#"{"run_id": "123"}"#)
             .create();
 
-        let mock_url = Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = Url::parse(&server.url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
@@ -534,11 +541,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_rejects_missing_run_id() {
-        let _m = mock("POST", "/runs")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/runs")
             .with_status(200)
             .with_body("{}")
             .create();
-        let config = Configuration::new(Url::parse(&server_url()).unwrap());
+        let config = Configuration::new(Url::parse(&server.url()).unwrap());
         let wes = WES::without_discovery(
             Transport::new(&config),
             Service {
@@ -554,12 +563,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_run_sends_the_provider_token_once() {
-        let rejected = mock("POST", "/wes-auth/runs")
+        let mut server = mockito::Server::new_async().await;
+        let rejected = server
+            .mock("POST", "/wes-auth/runs")
             .match_header("authorization", "Bearer run-token")
             .with_status(401)
             .expect(1)
             .create();
-        let base = Url::parse(&format!("{}/wes-auth", server_url())).unwrap();
+        let base = Url::parse(&format!("{}/wes-auth", server.url())).unwrap();
         let config = Configuration::new(base)
             .with_token_provider(crate::utils::auth::FixedToken("run-token"));
         let wes = WES::without_discovery(
@@ -585,7 +596,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_uploads_workflow_attachment() {
-        let _m = mock("POST", "/runs")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/runs")
             .match_body(Matcher::Regex(
                 "name=\"workflow_attachment\"; filename=\"workflow.cwl\"[\\s\\S]*cwlVersion"
                     .to_string(),
@@ -593,7 +606,7 @@ mod tests {
             .with_status(200)
             .with_body(r#"{"run_id":"uploaded"}"#)
             .create();
-        let config = Configuration::new(Url::parse(&server_url()).unwrap());
+        let config = Configuration::new(Url::parse(&server.url()).unwrap());
         let wes = WES::without_discovery(
             Transport::new(&config),
             Service {
@@ -623,12 +636,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_status() {
-        let _m = mock("GET", "/runs/123/status")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/runs/123/status")
             .with_status(200)
             .with_body(r#"{"run_id": "123", "state": "COMPLETE"}"#)
             .create();
 
-        let mock_url = Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = Url::parse(&server.url()).expect("Invalid URL");
         let transport = Transport::new(&Configuration::new(mock_url));
         let run = Run::new("123".to_string(), transport);
 
@@ -639,19 +654,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_id_is_encoded_as_path_segment() {
-        let _status = mock("GET", "/ga4gh/wes/v1/runs/a%2Fb%20%3F%23/status")
+        let mut server = mockito::Server::new_async().await;
+        let _status = server
+            .mock("GET", "/ga4gh/wes/v1/runs/a%2Fb%20%3F%23/status")
             .with_status(200)
             .with_body(r#"{"run_id":"a/b ?#","state":"COMPLETE"}"#)
             .create();
-        let _log = mock("GET", "/ga4gh/wes/v1/runs/a%2Fb%20%3F%23")
+        let _log = server
+            .mock("GET", "/ga4gh/wes/v1/runs/a%2Fb%20%3F%23")
             .with_status(200)
             .with_body(r#"{"run_id":"a/b ?#","state":"COMPLETE"}"#)
             .create();
-        let _cancel = mock("POST", "/ga4gh/wes/v1/runs/a%2Fb%20%3F%23/cancel")
+        let _cancel = server
+            .mock("POST", "/ga4gh/wes/v1/runs/a%2Fb%20%3F%23/cancel")
             .with_status(200)
             .with_body(r#"{"run_id":"a/b ?#"}"#)
             .create();
-        let base = Url::parse(&format!("{}/ga4gh/wes/v1/", server_url())).unwrap();
+        let base = Url::parse(&format!("{}/ga4gh/wes/v1/", server.url())).unwrap();
         let run = Run::new(
             "a/b ?#".to_string(),
             Transport::new(&Configuration::new(base)),
@@ -666,12 +685,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_cancel() {
-        let _m = mock("POST", "/runs/123/cancel")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/runs/123/cancel")
             .with_status(200)
             .with_body(r#"{"run_id": "123"}"#)
             .create();
 
-        let mock_url = Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = Url::parse(&server.url()).expect("Invalid URL");
         let transport = Transport::new(&Configuration::new(mock_url));
         let run = Run::new("123".to_string(), transport);
 
@@ -682,11 +703,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_starter_kit_unimplemented_cancel_is_explicit() {
-        let _m = mock("POST", "/runs/123/cancel")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/runs/123/cancel")
             .with_status(200)
             .with_body("null")
             .create();
-        let config = Configuration::new(Url::parse(&server_url()).unwrap());
+        let config = Configuration::new(Url::parse(&server.url()).unwrap());
         let run = Run::new("123".to_string(), Transport::new(&config));
         let err = run.cancel().await.unwrap_err();
         assert!(err.to_string().contains("cancellation cannot be confirmed"));
@@ -694,12 +717,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_list_runs() {
-        let _m = mock("GET", "/runs")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/runs")
             .with_status(200)
             .with_body(r#"{"runs": [], "next_page_token": ""}"#)
             .create();
 
-        let mock_url = Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = Url::parse(&server.url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let wes = WES::without_discovery(transport, Service::default());
@@ -713,11 +738,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_starter_kit_list_runs_array() {
-        let _m = mock("GET", "/runs")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/runs")
             .with_status(200)
             .with_body(r#"[{"run_id":"123","state":"COMPLETE"}]"#)
             .create();
-        let config = Configuration::new(Url::parse(&server_url()).unwrap());
+        let config = Configuration::new(Url::parse(&server.url()).unwrap());
         let wes = WES::without_discovery(Transport::new(&config), Service::default());
         let list = wes.list_runs(None, None).await.unwrap();
         let runs = list.runs.unwrap();
@@ -728,7 +755,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_encodes_page_token() {
-        let _m = mock("GET", "/ga4gh/wes/v1/runs")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/ga4gh/wes/v1/runs")
             .match_query(Matcher::AllOf(vec![
                 Matcher::Regex("(^|&)page_token=a%2Bb%26c(&|$)".to_string()),
                 Matcher::Regex("(^|&)page_size=5(&|$)".to_string()),
@@ -737,7 +766,7 @@ mod tests {
             .with_body(r#"{"runs":[]}"#)
             .create();
         let config =
-            Configuration::new(Url::parse(&format!("{}/ga4gh/wes/v1/", server_url())).unwrap());
+            Configuration::new(Url::parse(&format!("{}/ga4gh/wes/v1/", server.url())).unwrap());
         let wes = WES::without_discovery(Transport::new(&config), Service::default());
         assert!(wes
             .list_runs(Some("a+b&c".to_string()), Some(5))
@@ -747,12 +776,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_get_run() {
-        let _m = mock("GET", "/runs/123")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/runs/123")
             .with_status(200)
             .with_body(r#"{"run_id": "123", "state": "COMPLETE"}"#)
             .create();
 
-        let mock_url = Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = Url::parse(&server.url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let wes = WES::without_discovery(transport, Service::default());
@@ -778,7 +809,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_sends_tags_and_engine_parameters_as_json() {
-        let _m = mock("POST", "/runs")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/runs")
             .match_body(Matcher::AllOf(vec![
                 Matcher::Regex(r#"name="tags"\r\n\r\n\{"project":"biohackathon"\}"#.to_string()),
                 Matcher::Regex(
@@ -796,7 +829,7 @@ mod tests {
             ..valid_request()
         };
         assert_eq!(
-            wes_for(&server_url())
+            wes_for(&server.url())
                 .run_workflow(request)
                 .await
                 .unwrap()
@@ -807,7 +840,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_sends_extra_fields_as_form_parts() {
-        let _m = mock("POST", "/extra-fields/runs")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/extra-fields/runs")
             .match_body(Matcher::AllOf(vec![
                 Matcher::Regex(r#"name="x_queue"\r\n\r\nlong"#.to_string()),
                 Matcher::Regex(r#"name="x_limits"\r\n\r\n\{"cpus":2\}"#.to_string()),
@@ -820,7 +855,7 @@ mod tests {
         request
             .extra
             .insert("x_limits".to_string(), json!({ "cpus": 2 }));
-        let wes = wes_for(&format!("{}/extra-fields", server_url()));
+        let wes = wes_for(&format!("{}/extra-fields", server.url()));
         assert_eq!(wes.run_workflow(request).await.unwrap().id, "extra");
 
         // An extra field must not replace a part of the request.
@@ -834,7 +869,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_rejects_empty_required_fields() {
-        let wes = wes_for(&server_url());
+        let server = mockito::Server::new_async().await;
+        let wes = wes_for(&server.url());
         for (field, request) in [
             (
                 "workflow_type",
@@ -872,11 +908,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_wes_list_runs_reads_status_and_summary_items() {
-        let _m = mock("GET", "/ga4gh/wes/v1/runs")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server.mock("GET", "/ga4gh/wes/v1/runs")
             .with_status(200)
             .with_body(r#"{"runs":[{"run_id":"1","state":"PREEMPTED"},{"run_id":"2","state":"COMPLETE","tags":{"a":"b"}}],"next_page_token":"next"}"#)
             .create();
-        let wes = wes_for(&format!("{}/ga4gh/wes/v1", server_url()));
+        let wes = wes_for(&format!("{}/ga4gh/wes/v1", server.url()));
         let list = wes.list_runs(None, None).await.unwrap();
         let runs = list.runs.unwrap();
         assert_eq!(runs[0].state, Some(State::Preempted));
@@ -886,7 +923,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_list_tasks() {
-        let _m = mock("GET", "/ga4gh/wes/v1/runs/a%2Fb/tasks")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server.mock("GET", "/ga4gh/wes/v1/runs/a%2Fb/tasks")
             .match_query(Matcher::AllOf(vec![
                 Matcher::Regex("(^|&)page_token=a%2Bb%26c(&|$)".to_string()),
                 Matcher::Regex("(^|&)page_size=2(&|$)".to_string()),
@@ -894,7 +932,7 @@ mod tests {
             .with_status(200)
             .with_body(r#"{"task_logs":[{"id":"t1","name":"align","exit_code":0}],"next_page_token":"next"}"#)
             .create();
-        let base = Url::parse(&format!("{}/ga4gh/wes/v1", server_url())).unwrap();
+        let base = Url::parse(&format!("{}/ga4gh/wes/v1", server.url())).unwrap();
         let run = Run::new("a/b".to_string(), Transport::new(&Configuration::new(base)));
         let list = run
             .list_tasks(Some("a+b&c".to_string()), Some(2))
@@ -908,14 +946,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_list_tasks_without_paging() {
-        let _m = mock("GET", "/runs/123/tasks")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/runs/123/tasks")
             .match_query(Matcher::Missing)
             .with_status(200)
             .with_body(r#"{"task_logs":[]}"#)
             .create();
         let run = Run::new(
             "123".to_string(),
-            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+            Transport::new(&Configuration::new(Url::parse(&server.url()).unwrap())),
         );
         assert!(run
             .list_tasks(None, None)
@@ -928,22 +968,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_list_tasks_rejects_invalid_body() {
-        let _m = mock("GET", "/runs/bad/tasks")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/runs/bad/tasks")
             .with_status(200)
             .with_body(r#"{"task_logs":[{"name":"no id"}]}"#)
             .create();
         let run = Run::new(
             "bad".to_string(),
-            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+            Transport::new(&Configuration::new(Url::parse(&server.url()).unwrap())),
         );
         assert!(run.list_tasks(None, None).await.is_err());
     }
 
     #[tokio::test]
     async fn test_run_task_methods_reject_invalid_ids() {
+        let server = mockito::Server::new_async().await;
         let run = Run::new(
             "123".to_string(),
-            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+            Transport::new(&Configuration::new(Url::parse(&server.url()).unwrap())),
         );
         let err = run.get_task("").await.unwrap_err();
         assert_eq!(err.to_string(), "task ID must not be empty");
@@ -961,13 +1004,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_get_task() {
-        let _m = mock("GET", "/ga4gh/wes/v1/runs/123/tasks/t%2F1")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/ga4gh/wes/v1/runs/123/tasks/t%2F1")
             .with_status(200)
             .with_body(
                 r#"{"id":"t/1","name":"align","tes_uri":"https://tes.example.org/v1/tasks/x"}"#,
             )
             .create();
-        let base = Url::parse(&format!("{}/ga4gh/wes/v1/", server_url())).unwrap();
+        let base = Url::parse(&format!("{}/ga4gh/wes/v1/", server.url())).unwrap();
         let run = Run::new("123".to_string(), Transport::new(&Configuration::new(base)));
         let task = run.get_task("t/1").await.unwrap();
         assert_eq!(task.id, "t/1");
@@ -979,29 +1024,35 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_get_task_reports_http_errors() {
-        let _m = mock("GET", "/runs/123/tasks/missing")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/runs/123/tasks/missing")
             .with_status(404)
             .with_body(r#"{"msg":"not found","status_code":404}"#)
             .create();
         let run = Run::new(
             "123".to_string(),
-            Transport::new(&Configuration::new(Url::parse(&server_url()).unwrap())),
+            Transport::new(&Configuration::new(Url::parse(&server.url()).unwrap())),
         );
         let err = run.get_task("missing").await.unwrap_err();
         assert!(err.to_string().contains("404"), "{err}");
     }
     #[tokio::test]
     async fn test_run_and_list_errors_keep_the_http_error() {
-        let base = format!("{}/http-errors", server_url());
-        let _status = mock("GET", "/http-errors/runs/gone/status")
+        let mut server = mockito::Server::new_async().await;
+        let base = format!("{}/http-errors", server.url());
+        let _status = server
+            .mock("GET", "/http-errors/runs/gone/status")
             .with_status(404)
             .with_body("status not found")
             .create();
-        let _cancel = mock("POST", "/http-errors/runs/gone/cancel")
+        let _cancel = server
+            .mock("POST", "/http-errors/runs/gone/cancel")
             .with_status(409)
             .with_body("already finished")
             .create();
-        let _list = mock("GET", "/http-errors/runs")
+        let _list = server
+            .mock("GET", "/http-errors/runs")
             .with_status(503)
             .with_body("list unavailable")
             .create();
@@ -1032,7 +1083,9 @@ mod tests {
     /// from `Transport::with_timeouts`.
     #[tokio::test]
     async fn configuration_is_transport_configuration() {
-        let _m = mock("GET", "/accessors/custom/wes/v9/service-info")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/accessors/custom/wes/v9/service-info")
             .with_status(200)
             .with_body(
                 serde_json::json!({
@@ -1045,7 +1098,7 @@ mod tests {
                 .to_string(),
             )
             .create();
-        let root = format!("{}/accessors/custom/wes/v9/", server_url());
+        let root = format!("{}/accessors/custom/wes/v9/", server.url());
         let config = Configuration::new(url::Url::parse(&root).unwrap());
         let connect = std::time::Duration::from_secs(3);
         let request = std::time::Duration::from_secs(7);

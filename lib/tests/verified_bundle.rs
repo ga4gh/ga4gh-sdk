@@ -9,7 +9,7 @@ use ga4gh_sdk::{
     },
     utils::{configuration::Configuration, operation::Operation, transport::Transport},
 };
-use mockito::{mock, server_url, Mock};
+use mockito::Mock;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
@@ -31,6 +31,7 @@ fn request() -> BundleRequest {
     }
 }
 fn source(
+    server: &mut mockito::ServerGuard,
     prefix: &str,
     main: &str,
     tool: &str,
@@ -43,29 +44,33 @@ fn source(
   {"path":"tools/echo.cwl","file_type":"SECONDARY_DESCRIPTOR","checksum":{"type":"sha-256","checksum":hash(tool.as_bytes())}}
  ]));
     let mocks = vec![
-        mock("GET", path.as_str())
+        server
+            .mock("GET", path.as_str())
             .with_body(r#"{"id":"1","is_production":false,"meta_version":"rev-A"}"#)
             .create(),
-        mock("GET", format!("{path}/CWL/files").as_str())
+        server
+            .mock("GET", format!("{path}/CWL/files").as_str())
             .with_body(list.to_string())
             .create(),
-        mock("GET", format!("{path}/CWL/descriptor").as_str())
+        server
+            .mock("GET", format!("{path}/CWL/descriptor").as_str())
             .with_body(
                 primary
                     .unwrap_or_else(|| json!({"content":main}))
                     .to_string(),
             )
             .create(),
-        mock(
-            "GET",
-            format!("{path}/CWL/descriptor/tools%2Fecho.cwl").as_str(),
-        )
-        .with_body(json!({"content":tool}).to_string())
-        .create(),
+        server
+            .mock(
+                "GET",
+                format!("{path}/CWL/descriptor/tools%2Fecho.cwl").as_str(),
+            )
+            .with_body(json!({"content":tool}).to_string())
+            .create(),
     ];
     (
         Transport::new(&Configuration::new(
-            url::Url::parse(&format!("{}{prefix}", server_url())).unwrap(),
+            url::Url::parse(&format!("{}{prefix}", server.url())).unwrap(),
         )),
         mocks,
     )
@@ -86,11 +91,12 @@ fn wes(base: &str) -> WES {
 
 #[tokio::test]
 async fn verified_staged_bytes_arrive_at_wes_with_relative_paths_and_safe_provenance() {
+    let mut mock_server = mockito::Server::new_async().await;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
-    let (registry, _mocks) = source("/verified", MAIN, TOOL, None, None);
+    let (registry, _mocks) = source(&mut mock_server, "/verified", MAIN, TOOL, None, None);
     let prepared = PreparedBundle::prepare(
         &registry,
         request(),
@@ -196,7 +202,8 @@ async fn verified_staged_bytes_arrive_at_wes_with_relative_paths_and_safe_proven
 
 #[tokio::test]
 async fn unsafe_missing_external_dynamic_and_checksum_failures_submit_nothing() {
-    let submission = mock("POST", "/runs").expect(0).create();
+    let mut server = mockito::Server::new_async().await;
+    let submission = server.mock("POST", "/runs").expect(0).create();
     let cases = vec![
         (
             MAIN.replace("tools/echo.cwl", "tools/missing.cwl"),
@@ -237,7 +244,14 @@ async fn unsafe_missing_external_dynamic_and_checksum_failures_submit_nothing() 
         ),
     ];
     for (index, (main, list, wrapper)) in cases.into_iter().enumerate() {
-        let (registry, _mocks) = source(&format!("/bad{index}"), &main, TOOL, list, wrapper);
+        let (registry, _mocks) = source(
+            &mut server,
+            &format!("/bad{index}"),
+            &main,
+            TOOL,
+            list,
+            wrapper,
+        );
         assert!(
             PreparedBundle::prepare(
                 &registry,
@@ -256,7 +270,8 @@ async fn unsafe_missing_external_dynamic_and_checksum_failures_submit_nothing() 
 
 #[tokio::test]
 async fn mutable_version_changes_manifest_while_prepared_bytes_stay_immutable() {
-    let (registry, mocks) = source("/mutable", MAIN, TOOL, None, None);
+    let mut server = mockito::Server::new_async().await;
+    let (registry, mocks) = source(&mut server, "/mutable", MAIN, TOOL, None, None);
     let first = PreparedBundle::prepare(
         &registry,
         request(),
@@ -266,9 +281,9 @@ async fn mutable_version_changes_manifest_while_prepared_bytes_stay_immutable() 
     )
     .await
     .unwrap();
-    drop(mocks);
+    mocks.iter().for_each(mockito::Mock::remove);
     let changed = format!("{TOOL}\n# changed behind the same version\n");
-    let (registry, _mocks) = source("/mutable", MAIN, &changed, None, None);
+    let (registry, _mocks) = source(&mut server, "/mutable", MAIN, &changed, None, None);
     let second = PreparedBundle::prepare(
         &registry,
         request(),
@@ -302,25 +317,30 @@ async fn mutable_version_changes_manifest_while_prepared_bytes_stay_immutable() 
 
 #[tokio::test]
 async fn import_include_graph_and_explicit_url_fetch_policy() {
+    let mut server = mockito::Server::new_async().await;
     let tool=TOOL.replace("baseCommand: echo","baseCommand: echo\ndoc:\n  $include: ../docs/help.txt\nlabel:\n  $import: ../labels/title.yaml");
     let listing = json!([{"path":"main.cwl","file_type":"PRIMARY_DESCRIPTOR"},{"path":"tools/echo.cwl","file_type":"SECONDARY_DESCRIPTOR"},{"path":"docs/help.txt","file_type":"OTHER"},{"path":"labels/title.yaml","file_type":"OTHER"}]);
-    let (registry, _mocks) = source("/graph", MAIN, &tool, Some(listing), None);
-    let help = mock(
-        "GET",
-        "/graph/tools/workflow/versions/1/CWL/descriptor/docs%2Fhelp.txt",
-    )
-    .with_body(
-        json!({"url":format!("{}/content/help?signature=SIGNED_SECRET",server_url())}).to_string(),
-    )
-    .expect(2)
-    .create();
-    let label = mock(
-        "GET",
-        "/graph/tools/workflow/versions/1/CWL/descriptor/labels%2Ftitle.yaml",
-    )
-    .with_body(r#"{"content":"A title"}"#)
-    .create();
-    let download = mock("GET", "/content/help?signature=SIGNED_SECRET")
+    let (registry, _mocks) = source(&mut server, "/graph", MAIN, &tool, Some(listing), None);
+    let help = server
+        .mock(
+            "GET",
+            "/graph/tools/workflow/versions/1/CWL/descriptor/docs%2Fhelp.txt",
+        )
+        .with_body(
+            json!({"url":format!("{}/content/help?signature=SIGNED_SECRET",server.url())})
+                .to_string(),
+        )
+        .expect(2)
+        .create();
+    let label = server
+        .mock(
+            "GET",
+            "/graph/tools/workflow/versions/1/CWL/descriptor/labels%2Ftitle.yaml",
+        )
+        .with_body(r#"{"content":"A title"}"#)
+        .create();
+    let download = server
+        .mock("GET", "/content/help?signature=SIGNED_SECRET")
         .with_body("included help")
         .expect(1)
         .create();
@@ -333,7 +353,7 @@ async fn import_include_graph_and_explicit_url_fetch_policy() {
     )
     .await
     .is_err());
-    let fetcher = AnonymousFetcher::new([server_url()]).unwrap();
+    let fetcher = AnonymousFetcher::new([server.url()]).unwrap();
     let prepared = PreparedBundle::prepare(
         &registry,
         request(),
@@ -354,14 +374,22 @@ async fn import_include_graph_and_explicit_url_fetch_policy() {
 
 #[tokio::test]
 async fn imported_workflow_steps_cannot_hide_external_run_dependencies() {
+    let mut server = mockito::Server::new_async().await;
     let main = MAIN.replace(INLINE_STEPS, "steps:\n  - $import: steps/echo.yml");
     assert_ne!(main, MAIN);
     let listing = json!([
         {"path":"main.cwl","file_type":"PRIMARY_DESCRIPTOR"},
         {"path":"steps/echo.yml","file_type":"OTHER"}
     ]);
-    let (registry, _mocks) = source("/imported-step", &main, TOOL, Some(listing), None);
-    let step = mock(
+    let (registry, _mocks) = source(
+        &mut server,
+        "/imported-step",
+        &main,
+        TOOL,
+        Some(listing),
+        None,
+    );
+    let step = server.mock(
         "GET",
         "/imported-step/tools/workflow/versions/1/CWL/descriptor/steps%2Fecho.yml",
     )
@@ -381,6 +409,7 @@ async fn imported_workflow_steps_cannot_hide_external_run_dependencies() {
 
 #[tokio::test]
 async fn imported_workflow_step_stages_its_local_run() {
+    let mut server = mockito::Server::new_async().await;
     let main = MAIN.replace(INLINE_STEPS, "steps:\n  - $import: steps/echo.yml");
     assert_ne!(main, MAIN);
     let listing = json!([
@@ -388,8 +417,8 @@ async fn imported_workflow_step_stages_its_local_run() {
         {"path":"steps/echo.yml","file_type":"SECONDARY_DESCRIPTOR"},
         {"path":"tools/echo.cwl","file_type":"OTHER"}
     ]);
-    let (registry, _mocks) = source("/local-step", &main, TOOL, Some(listing), None);
-    let step = mock(
+    let (registry, _mocks) = source(&mut server, "/local-step", &main, TOOL, Some(listing), None);
+    let step = server.mock(
         "GET",
         "/local-step/tools/workflow/versions/1/CWL/descriptor/steps%2Fecho.yml",
     )
@@ -418,14 +447,15 @@ async fn imported_workflow_step_stages_its_local_run() {
 
 #[tokio::test]
 async fn imported_steps_collection_cannot_hide_external_runs() {
+    let mut server = mockito::Server::new_async().await;
     let main = MAIN.replace(INLINE_STEPS, "steps:\n  $import: steps/all.yml");
     assert_ne!(main, MAIN);
     let listing = json!([
         {"path":"main.cwl","file_type":"PRIMARY_DESCRIPTOR"},
         {"path":"steps/all.yml","file_type":"OTHER"}
     ]);
-    let (registry, _mocks) = source("/step-list", &main, TOOL, Some(listing), None);
-    let steps = mock(
+    let (registry, _mocks) = source(&mut server, "/step-list", &main, TOOL, Some(listing), None);
+    let steps = server.mock(
         "GET",
         "/step-list/tools/workflow/versions/1/CWL/descriptor/steps%2Fall.yml",
     )
@@ -481,8 +511,9 @@ async fn anonymous_fetch_errors_do_not_expose_signed_url_queries() {
 #[tokio::test]
 #[ignore = "requires a named running Toil WES deployment via GA4GH_TOIL_WES_URL"]
 async fn real_toil_executes_verified_nested_cwl_bundle() {
+    let mut server = mockito::Server::new_async().await;
     let url = std::env::var("GA4GH_TOIL_WES_URL").expect("set GA4GH_TOIL_WES_URL");
-    let (registry, _mocks) = source("/toil-trs", MAIN, TOOL, None, None);
+    let (registry, _mocks) = source(&mut server, "/toil-trs", MAIN, TOOL, None, None);
     let prepared = PreparedBundle::prepare(
         &registry,
         request(),
@@ -522,7 +553,9 @@ async fn real_toil_executes_verified_nested_cwl_bundle() {
 
 #[tokio::test]
 async fn unsupported_checksums_are_explicitly_unverified_only_when_opted_in() {
+    let mut server = mockito::Server::new_async().await;
     let (registry, _mocks) = source(
+        &mut server,
         "/unsupported-opt-in",
         MAIN,
         TOOL,

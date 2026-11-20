@@ -3,7 +3,7 @@
 // The CLI finds its config file through `HOME`, which Windows doesn't use.
 #![cfg(unix)]
 
-use mockito::{mock, Matcher, Mock};
+use mockito::{Matcher, Mock};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Write;
@@ -11,11 +11,11 @@ use std::process::{Command, Output, Stdio};
 use tempfile::TempDir;
 
 /// A home directory whose config file has a `WES` section for `prefix`.
-fn home_with_wes_config(prefix: &str) -> TempDir {
+fn home_with_wes_config(server: &mockito::ServerGuard, prefix: &str) -> TempDir {
     let home = TempDir::new().unwrap();
     let directory = home.path().join(".ga4gh-cli");
     fs::create_dir(&directory).unwrap();
-    let base_path = format!("{}{prefix}", mockito::server_url());
+    let base_path = format!("{}{prefix}", server.url());
     fs::write(
         directory.join("config.json"),
         json!({"WES": {"base_path": base_path}}).to_string(),
@@ -63,8 +63,9 @@ fn run_with_stdin(home: &TempDir, args: &[&str], input: &str) -> Output {
     child.wait_with_output().unwrap()
 }
 
-fn service_info(prefix: &str) -> Mock {
-    mock("GET", format!("{prefix}/service-info").as_str())
+fn service_info(server: &mut mockito::ServerGuard, prefix: &str) -> Mock {
+    server
+        .mock("GET", format!("{prefix}/service-info").as_str())
         .with_status(200)
         .with_body(
             json!({
@@ -112,9 +113,11 @@ const RUN_ARGS: [&str; 6] = [
 
 #[test]
 fn run_submits_a_multipart_request_and_prints_the_run_id() {
+    let mut server = mockito::Server::new();
     let prefix = "/run/ga4gh/wes/v1";
-    let _service = service_info(prefix);
-    let submit = mock("POST", format!("{prefix}/runs").as_str())
+    let _service = service_info(&mut server, prefix);
+    let submit = server
+        .mock("POST", format!("{prefix}/runs").as_str())
         .match_header(
             "content-type",
             Matcher::Regex("^multipart/form-data; boundary=".into()),
@@ -137,7 +140,7 @@ fn run_submits_a_multipart_request_and_prints_the_run_id() {
         .with_body(r#"{"run_id":"run-1"}"#)
         .expect(1)
         .create();
-    let home = home_with_wes_config(prefix);
+    let home = home_with_wes_config(&server, prefix);
     fs::create_dir(home.path().join("tools")).unwrap();
     fs::write(home.path().join("tools/step.cwl"), "cwlVersion: v1.2\n").unwrap();
     fs::write(home.path().join("params.json"), r#"{"reads": "a.fastq"}"#).unwrap();
@@ -166,23 +169,26 @@ fn run_submits_a_multipart_request_and_prints_the_run_id() {
 
 #[test]
 fn run_json_recovers_the_opaque_id_for_followup_requests() {
+    let mut server = mockito::Server::new();
     let prefix = "/run-json/ga4gh/wes/v1";
-    let _service = service_info(prefix);
+    let _service = service_info(&mut server, prefix);
     let run_id = "r1\u{1b}[2K\nforged";
-    let submit = mock("POST", format!("{prefix}/runs").as_str())
+    let submit = server
+        .mock("POST", format!("{prefix}/runs").as_str())
         .with_status(200)
         .with_body(json!({"run_id": run_id}).to_string())
         .expect(1)
         .create();
-    let status = mock(
-        "GET",
-        format!("{prefix}/runs/r1%1B%5B2K%0Aforged/status").as_str(),
-    )
-    .with_status(200)
-    .with_body(json!({"run_id": run_id, "state": "RUNNING"}).to_string())
-    .expect(1)
-    .create();
-    let home = home_with_wes_config(prefix);
+    let status = server
+        .mock(
+            "GET",
+            format!("{prefix}/runs/r1%1B%5B2K%0Aforged/status").as_str(),
+        )
+        .with_status(200)
+        .with_body(json!({"run_id": run_id, "state": "RUNNING"}).to_string())
+        .expect(1)
+        .create();
+    let home = home_with_wes_config(&server, prefix);
     let mut args = RUN_ARGS.to_vec();
     args.extend(["v1.2", "--format", "json"]);
     let output = run(&home, &args);
@@ -203,9 +209,11 @@ fn run_json_recovers_the_opaque_id_for_followup_requests() {
 
 #[test]
 fn run_reads_params_inline_from_stdin_or_defaults_to_an_empty_object() {
+    let mut server = mockito::Server::new();
     let prefix = "/params/ga4gh/wes/v1";
-    let _service = service_info(prefix);
-    let with_params = mock("POST", format!("{prefix}/runs").as_str())
+    let _service = service_info(&mut server, prefix);
+    let with_params = server
+        .mock("POST", format!("{prefix}/runs").as_str())
         .match_body(Matcher::Regex(
             r#"name="workflow_params"\s+\{"n":1\}\s"#.into(),
         ))
@@ -213,13 +221,14 @@ fn run_reads_params_inline_from_stdin_or_defaults_to_an_empty_object() {
         .with_body(r#"{"run_id":"with-params"}"#)
         .expect(2)
         .create();
-    let without_params = mock("POST", format!("{prefix}/runs").as_str())
+    let without_params = server
+        .mock("POST", format!("{prefix}/runs").as_str())
         .match_body(Matcher::Regex(r#"name="workflow_params"\s+\{\}\s"#.into()))
         .with_status(200)
         .with_body(r#"{"run_id":"empty-params"}"#)
         .expect(1)
         .create();
-    let home = home_with_wes_config(prefix);
+    let home = home_with_wes_config(&server, prefix);
 
     let mut inline = RUN_ARGS.to_vec();
     inline.extend(["v1.2", "--params", r#"{"n": 1}"#]);
@@ -244,8 +253,9 @@ fn run_reads_params_inline_from_stdin_or_defaults_to_an_empty_object() {
 
 #[test]
 fn run_input_errors_are_reported_before_any_request() {
+    let mock_server = mockito::Server::new();
     // No mocks: any request to the server would fail with a different message.
-    let home = home_with_wes_config("/input-errors/ga4gh/wes/v1");
+    let home = home_with_wes_config(&mock_server, "/input-errors/ga4gh/wes/v1");
     fs::write(home.path().join("list.json"), "[1, 2]").unwrap();
     fs::write(home.path().join("broken.json"), "{").unwrap();
     let with = |extra: &[&'static str]| {
@@ -295,7 +305,8 @@ fn run_input_errors_are_reported_before_any_request() {
 
 #[test]
 fn run_requires_type_and_version_and_missing_config_is_an_error() {
-    let home = home_with_wes_config("/usage/ga4gh/wes/v1");
+    let server = mockito::Server::new();
+    let home = home_with_wes_config(&server, "/usage/ga4gh/wes/v1");
     let usage = run(&home, &RUN_ARGS[..5]);
     assert_eq!(usage.status.code(), Some(2));
     assert!(
@@ -319,14 +330,16 @@ fn run_requires_type_and_version_and_missing_config_is_an_error() {
 
 #[test]
 fn run_reports_rejected_submissions_and_wrong_services() {
+    let mut server = mockito::Server::new();
     let prefix = "/rejected/ga4gh/wes/v1";
-    let _service = service_info(prefix);
-    let submit = mock("POST", format!("{prefix}/runs").as_str())
+    let _service = service_info(&mut server, prefix);
+    let submit = server
+        .mock("POST", format!("{prefix}/runs").as_str())
         .with_status(400)
         .with_body(r#"{"msg":"unsupported workflow type","status_code":400}"#)
         .expect(1)
         .create();
-    let home = home_with_wes_config(prefix);
+    let home = home_with_wes_config(&server, prefix);
     let mut args = RUN_ARGS.to_vec();
     args.push("v1.2");
     let output = run(&home, &args);
@@ -336,8 +349,9 @@ fn run_reports_rejected_submissions_and_wrong_services() {
     assert!(!stderr(&output).contains("unsupported workflow type"));
     submit.assert();
 
-    let missing = home_with_wes_config("/no-wes-here");
-    let _not_found = mock("GET", "/no-wes-here/service-info")
+    let missing = home_with_wes_config(&server, "/no-wes-here");
+    let _not_found = server
+        .mock("GET", "/no-wes-here/service-info")
         .with_status(404)
         .create();
     let output = run(&missing, &args);
@@ -351,9 +365,11 @@ fn run_reports_rejected_submissions_and_wrong_services() {
 
 #[test]
 fn list_prints_a_table_with_the_next_page_token() {
+    let mut server = mockito::Server::new();
     let prefix = "/list/ga4gh/wes/v1";
-    let _service = service_info(prefix);
-    let list = mock("GET", format!("{prefix}/runs").as_str())
+    let _service = service_info(&mut server, prefix);
+    let list = server
+        .mock("GET", format!("{prefix}/runs").as_str())
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page_size".into(), "2".into()),
             Matcher::UrlEncoded("page_token".into(), "a+/ %".into()),
@@ -372,7 +388,7 @@ fn list_prints_a_table_with_the_next_page_token() {
         )
         .expect(1)
         .create();
-    let home = home_with_wes_config(prefix);
+    let home = home_with_wes_config(&server, prefix);
     let output = run(&home, &["wes", "list", "-p", "2", "-t", "a+/ %"]);
     assert_success(&output);
     assert_eq!(
@@ -388,19 +404,22 @@ fn list_prints_a_table_with_the_next_page_token() {
 
 #[test]
 fn list_all_streams_jsonl_and_rejects_mixed_formats() {
+    let mut server = mockito::Server::new();
     let prefix = "/export/ga4gh/wes/v1";
-    let _service = service_info(prefix);
-    let first = mock("GET", format!("{prefix}/runs").as_str())
+    let _service = service_info(&mut server, prefix);
+    let first = server
+        .mock("GET", format!("{prefix}/runs").as_str())
         .match_query(Matcher::Missing)
         .with_body(r#"{"runs":[{"run_id":"one","custom":true}],"next_page_token":"next"}"#)
         .expect(1)
         .create();
-    let second = mock("GET", format!("{prefix}/runs").as_str())
+    let second = server
+        .mock("GET", format!("{prefix}/runs").as_str())
         .match_query(Matcher::UrlEncoded("page_token".into(), "next".into()))
         .with_body(r#"{"runs":[{"run_id":"two"}]}"#)
         .expect(1)
         .create();
-    let home = home_with_wes_config(prefix);
+    let home = home_with_wes_config(&server, prefix);
     let output = run(&home, &["wes", "list", "--all", "--format", "jsonl"]);
     assert_success(&output);
     let records = stdout(&output)
@@ -454,8 +473,9 @@ fn list_all_streams_jsonl_and_rejects_mixed_formats() {
 
 #[test]
 fn get_status_and_cancel_encode_ids_and_print_results() {
+    let mut server = mockito::Server::new();
     let prefix = "/run-id/ga4gh/wes/v1";
-    let _service = service_info(prefix);
+    let _service = service_info(&mut server, prefix);
     let run_id = "a/b ?#";
     let log_body = json!({
         "run_id": run_id,
@@ -464,28 +484,31 @@ fn get_status_and_cancel_encode_ids_and_print_results() {
         "vendor_field": {"kept": true},
     })
     .to_string();
-    let log = mock("GET", format!("{prefix}/runs/a%2Fb%20%3F%23").as_str())
+    let log = server
+        .mock("GET", format!("{prefix}/runs/a%2Fb%20%3F%23").as_str())
         .with_status(200)
         .with_body(&log_body)
         .expect(1)
         .create();
-    let status = mock(
-        "GET",
-        format!("{prefix}/runs/a%2Fb%20%3F%23/status").as_str(),
-    )
-    .with_status(200)
-    .with_body(json!({"run_id": run_id, "state": "COMPLETE"}).to_string())
-    .expect(1)
-    .create();
-    let cancel = mock(
-        "POST",
-        format!("{prefix}/runs/a%2Fb%20%3F%23/cancel").as_str(),
-    )
-    .with_status(200)
-    .with_body(json!({"run_id": run_id}).to_string())
-    .expect(1)
-    .create();
-    let home = home_with_wes_config(prefix);
+    let status = server
+        .mock(
+            "GET",
+            format!("{prefix}/runs/a%2Fb%20%3F%23/status").as_str(),
+        )
+        .with_status(200)
+        .with_body(json!({"run_id": run_id, "state": "COMPLETE"}).to_string())
+        .expect(1)
+        .create();
+    let cancel = server
+        .mock(
+            "POST",
+            format!("{prefix}/runs/a%2Fb%20%3F%23/cancel").as_str(),
+        )
+        .with_status(200)
+        .with_body(json!({"run_id": run_id}).to_string())
+        .expect(1)
+        .create();
+    let home = home_with_wes_config(&server, prefix);
 
     let get = run(&home, &["wes", "get", run_id]);
     assert_success(&get);
@@ -503,25 +526,30 @@ fn get_status_and_cancel_encode_ids_and_print_results() {
 
 #[test]
 fn service_failures_have_nonzero_exit_codes() {
+    let mut server = mockito::Server::new();
     let prefix = "/failures/ga4gh/wes/v1";
-    let _service = service_info(prefix);
-    let _log = mock("GET", format!("{prefix}/runs/missing").as_str())
+    let _service = service_info(&mut server, prefix);
+    let _log = server
+        .mock("GET", format!("{prefix}/runs/missing").as_str())
         .with_status(404)
         .with_body("run not found")
         .create();
-    let _status = mock("GET", format!("{prefix}/runs/missing/status").as_str())
+    let _status = server
+        .mock("GET", format!("{prefix}/runs/missing/status").as_str())
         .with_status(404)
         .with_body("status not found")
         .create();
-    let _cancel = mock("POST", format!("{prefix}/runs/done/cancel").as_str())
+    let _cancel = server
+        .mock("POST", format!("{prefix}/runs/done/cancel").as_str())
         .with_status(200)
         .with_body("null")
         .create();
-    let _list = mock("GET", format!("{prefix}/runs").as_str())
+    let _list = server
+        .mock("GET", format!("{prefix}/runs").as_str())
         .with_status(503)
         .with_body("list unavailable")
         .create();
-    let home = home_with_wes_config(prefix);
+    let home = home_with_wes_config(&server, prefix);
     for (args, expected) in [
         (vec!["wes", "get", "missing"], "404"),
         (vec!["wes", "status", "missing"], "404"),
@@ -544,9 +572,11 @@ fn service_failures_have_nonzero_exit_codes() {
 
 #[test]
 fn list_all_escapes_server_text_in_records_and_errors() {
+    let mut server = mockito::Server::new();
     let prefix = "/export-escape/ga4gh/wes/v1";
-    let _service = service_info(prefix);
-    let first = mock("GET", format!("{prefix}/runs").as_str())
+    let _service = service_info(&mut server, prefix);
+    let first = server
+        .mock("GET", format!("{prefix}/runs").as_str())
         .match_query(Matcher::Missing)
         .with_body(
             json!({"runs": [{"run_id": "a\u{202E}b\u{9b}c"}], "next_page_token": "n\u{9b}x"})
@@ -554,13 +584,14 @@ fn list_all_escapes_server_text_in_records_and_errors() {
         )
         .expect(1)
         .create();
-    let second = mock("GET", format!("{prefix}/runs").as_str())
+    let second = server
+        .mock("GET", format!("{prefix}/runs").as_str())
         .match_query(Matcher::UrlEncoded("page_token".into(), "n\u{9b}x".into()))
         .with_status(503)
         .with_body("down\u{1b}]0;title\u{7}")
         .expect(1)
         .create();
-    let home = home_with_wes_config(prefix);
+    let home = home_with_wes_config(&server, prefix);
     let output = run(&home, &["wes", "list", "--all", "--format", "jsonl"]);
     assert_eq!(output.status.code(), Some(1));
     let records = stdout(&output);
@@ -584,7 +615,8 @@ fn list_all_escapes_server_text_in_records_and_errors() {
 
 #[test]
 fn empty_run_ids_are_usage_errors() {
-    let home = home_with_wes_config("/empty-id/ga4gh/wes/v1");
+    let server = mockito::Server::new();
+    let home = home_with_wes_config(&server, "/empty-id/ga4gh/wes/v1");
     for command in ["get", "status", "cancel"] {
         let output = run(&home, &["wes", command, ""]);
         assert_eq!(output.status.code(), Some(2), "{command}");
@@ -594,23 +626,27 @@ fn empty_run_ids_are_usage_errors() {
 
 #[test]
 fn undefined_states_read_as_unknown_except_in_get_and_jsonl() {
+    let mut server = mockito::Server::new();
     let prefix = "/undefined-state/ga4gh/wes/v1";
-    let _service = service_info(prefix);
+    let _service = service_info(&mut server, prefix);
     let log_body = json!({"run_id": "r1", "state": "SUSPENDED"}).to_string();
-    let _log = mock("GET", format!("{prefix}/runs/r1").as_str())
+    let _log = server
+        .mock("GET", format!("{prefix}/runs/r1").as_str())
         .with_status(200)
         .with_body(&log_body)
         .create();
-    let _status = mock("GET", format!("{prefix}/runs/r1/status").as_str())
+    let _status = server
+        .mock("GET", format!("{prefix}/runs/r1/status").as_str())
         .with_status(200)
         .with_body(&log_body)
         .create();
-    let _list = mock("GET", format!("{prefix}/runs").as_str())
+    let _list = server
+        .mock("GET", format!("{prefix}/runs").as_str())
         .match_query(Matcher::Any)
         .with_status(200)
         .with_body(json!({"runs": [{"run_id": "r1", "state": "SUSPENDED"}]}).to_string())
         .create();
-    let home = home_with_wes_config(prefix);
+    let home = home_with_wes_config(&server, prefix);
 
     let state = run(&home, &["wes", "status", "r1"]);
     assert_success(&state);
