@@ -52,39 +52,42 @@ impl PyRunSummary {
 
 #[pymethods]
 impl PyRunSummary {
+    /// The run's ID.
     #[getter]
     fn run_id(&self) -> String {
         self.inner().run_id.clone()
     }
 
-    /// The run's state as a `WesState`; `UNKNOWN` if the run has none or one
-    /// that WES 1.1 does not define.
+    /// The run's state; `UNKNOWN` if it has none or one that WES 1.1 doesn't define.
     #[getter]
     fn state(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         state_to_python(py, self.inner().state.unwrap_or_default())
     }
 
+    /// When the run started, as an RFC 3339 timestamp.
     #[getter]
     fn start_time(&self) -> Option<String> {
         self.inner().start_time.clone()
     }
 
+    /// When the run ended, as an RFC 3339 timestamp.
     #[getter]
     fn end_time(&self) -> Option<String> {
         self.inner().end_time.clone()
     }
 
+    /// Key-value tags of the run.
     #[getter]
     fn tags(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "tags")
     }
 
-    /// The run as JSON text, as received.
+    /// Gives the run as JSON text, as received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The run as a new `dict`, as received.
+    /// Gives the run as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }
@@ -138,22 +141,24 @@ impl PyRunListResponse {
 
 #[pymethods]
 impl PyRunListResponse {
+    /// The runs of the page.
     #[getter]
     pub fn runs(&self) -> Vec<PyRunSummary> {
         self.runs.clone()
     }
 
+    /// The token of the next page, for `WES.list(page_token=...)`.
     #[getter]
     pub fn next_page_token(&self) -> Option<String> {
         self.inner().next_page_token.clone()
     }
 
-    /// The response as JSON text, as received.
+    /// Gives the response as JSON text, as received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The response as a new `dict`, as received.
+    /// Gives the response as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }
@@ -194,22 +199,24 @@ impl PyTaskListResponse {
 
 #[pymethods]
 impl PyTaskListResponse {
+    /// The tasks of the page.
     #[getter]
     pub fn task_logs(&self) -> Vec<PyTaskLog> {
         self.task_logs.clone()
     }
 
+    /// The token of the next page, for `Run.tasks(page_token=...)`.
     #[getter]
     pub fn next_page_token(&self) -> Option<String> {
         self.inner().next_page_token.clone()
     }
 
-    /// The response as JSON text, as received.
+    /// Gives the response as JSON text, as received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The response as a new `dict`, as received.
+    /// Gives the response as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }

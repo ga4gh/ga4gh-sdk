@@ -7,8 +7,7 @@ use pyo3::types::PyDict;
 use pyo3::IntoPyObjectExt;
 use serde_json::Value;
 
-/// The server is still preparing an object or access URL: ask again after `retry_after`
-/// seconds.
+/// The server is still preparing an answer: ask again after `retry_after` seconds.
 ///
 /// `api_root` and `endpoint` say what to ask for; they hold no credentials.
 #[pyclass(name = "PendingResolution", module = "ga4gh_sdk", subclass)]
@@ -25,8 +24,7 @@ impl PyPendingResolution {
         self.inner.reference.api_root.clone()
     }
 
-    /// The endpoint to ask again, below `api_root`. For a bulk call, it is `objects` or
-    /// `objects/access`; call `get_bulk_objects()` or `get_bulk_access_urls()` again.
+    /// The endpoint to ask again; for a bulk call, call the bulk method again.
     #[getter]
     fn endpoint(&self) -> String {
         self.inner.reference.endpoint.clone()
@@ -38,7 +36,7 @@ impl PyPendingResolution {
         self.inner.retry_after_secs
     }
 
-    /// The pending state as a new `dict` with `api_root`, `endpoint` and `retry_after`.
+    /// Gives `api_root`, `endpoint` and `retry_after` as a new `dict`.
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
         dict.set_item("api_root", self.api_root())?;

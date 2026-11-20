@@ -15,12 +15,11 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 use std::path::PathBuf;
 
-/// A WES client. Subclass it to add endpoints, using `self.transport`.
-///
-/// The public `inner` preserves the Rust extension API and is safe to share
-/// between Python threads while synchronous requests release the GIL.
+/// A WES client (WES 1.1). Subclass it to add endpoints, using `self.transport`.
 #[pyclass(name = "WES", module = "ga4gh_sdk", subclass)]
 pub struct PyWES {
+    /// The library client, for Rust extension crates. It is safe to share between Python
+    /// threads while synchronous requests release the GIL.
     pub inner: WES,
 }
 
@@ -70,15 +69,31 @@ impl PyWES {
         }
     }
 
-    /// Starts a workflow run and returns a `Run` for it.
+    /// Starts a workflow run.
     ///
-    /// `request` is a `RunRequest`, a `dict` (or other mapping), or the path of a JSON file as
-    /// `str` or `os.PathLike`. A `str` is always a path; pass JSON text as
-    /// `RunRequest.from_json(text)`. `attachments` maps filenames (relative paths) to
-    /// contents as `bytes` or file paths (`os.PathLike`); a list of `(filename, content)`
-    /// pairs works too. Files are streamed, not read into memory. Request fields that the WES
-    /// models don't know are sent as further form parts; `workflow_attachment` raises
-    /// `ValueError`.
+    /// `workflow_type`, `workflow_type_version`, `workflow_url` and `workflow_params` are
+    /// required. Request fields that the WES models don't know are sent as further form
+    /// parts. The upload and the answer must finish within the `submission` time limit.
+    /// If starting fails after submission, the server may have started the run; don't
+    /// retry automatically.
+    ///
+    /// Args:
+    ///     request: A `RunRequest`, a `dict` (or other mapping), or the path of a JSON
+    ///         file as `str` or `os.PathLike`. A `str` is always a path; pass JSON text
+    ///         as `RunRequest.from_json(text)`.
+    ///     attachments: Filenames (relative paths with `/`, such as `tools/echo.cwl`)
+    ///         mapped to contents as `bytes` or to file paths (`os.PathLike`), which are
+    ///         streamed; or a list of `(filename, content)` pairs.
+    ///
+    /// Returns:
+    ///     The run.
+    ///
+    /// Raises:
+    ///     ValueError: The request or an attachment name is invalid, a `str` starts with
+    ///         `{` (after whitespace), or the request has a `workflow_attachment` field
+    ///         (pass files with `attachments`).
+    ///     OSError: A request or attachment file can't be read.
+    ///     RuntimeError: The request failed or the response doesn't fit the WES models.
     #[pyo3(signature = (request, attachments=None))]
     pub fn run(
         &self,
@@ -120,6 +135,18 @@ impl PyWES {
     }
 
     /// Lists runs, one page at a time.
+    ///
+    /// A bare array of runs, as WES 0.2.0 servers send it, becomes a page without a token.
+    ///
+    /// Args:
+    ///     page_size: The most runs on the page.
+    ///     page_token: The `next_page_token` of the previous page.
+    ///
+    /// Returns:
+    ///     The page.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed or the response doesn't fit the WES models.
     #[pyo3(signature = (page_size=None, page_token=None))]
     pub fn list(
         &self,
@@ -136,7 +163,17 @@ impl PyWES {
         )?)
     }
 
-    /// Gets a run's details, with its request, state, logs and outputs, as a `RunLog`.
+    /// Gets a run's details, like `Run(id, wes.transport).log()`.
+    ///
+    /// Args:
+    ///     id: The run's ID.
+    ///
+    /// Returns:
+    ///     The run's details.
+    ///
+    /// Raises:
+    ///     ValueError: `id` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed or the response doesn't fit the WES models.
     pub fn get(&self, py: Python<'_>, id: &str) -> PyResult<PyRunLog> {
         get_run_log(py, self.inner.transport(), id)
     }

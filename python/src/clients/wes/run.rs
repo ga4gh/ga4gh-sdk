@@ -52,6 +52,7 @@ impl PyRun {
         Self::new(id, transport)
     }
 
+    /// The run's ID.
     #[getter]
     fn id(&self) -> String {
         self.inner.id.clone()
@@ -65,7 +66,13 @@ impl PyRun {
         }
     }
 
-    /// The run's current state, as a `WesState`.
+    /// Gets the run's current state.
+    ///
+    /// Returns:
+    ///     The state.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed.
     pub fn status(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let state = io(py, |rt| {
             rt.block_on(self.inner.status())
@@ -74,7 +81,10 @@ impl PyRun {
         state_to_python(py, state)
     }
 
-    /// Asks the server to cancel the run. Returns `None`.
+    /// Asks the server to cancel the run.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed.
     pub fn cancel(&self, py: Python<'_>) -> PyResult<()> {
         io(py, |rt| {
             rt.block_on(self.inner.cancel())
@@ -83,12 +93,28 @@ impl PyRun {
         })
     }
 
-    /// The run's details, with its request, state, logs and outputs, as a `RunLog`.
+    /// Gets the run's details, with its request, state, logs and outputs.
+    ///
+    /// Returns:
+    ///     The run's details.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed or the response doesn't fit the WES models.
     pub fn log(&self, py: Python<'_>) -> PyResult<PyRunLog> {
         get_run_log(py, &self.inner.transport, &self.inner.id)
     }
 
     /// Lists the run's tasks, one page at a time (WES 1.1).
+    ///
+    /// Args:
+    ///     page_size: The most tasks on the page.
+    ///     page_token: The `next_page_token` of the previous page.
+    ///
+    /// Returns:
+    ///     The page.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed or the response doesn't fit the WES models.
     #[pyo3(signature = (page_size=None, page_token=None))]
     pub fn tasks(
         &self,
@@ -110,6 +136,16 @@ impl PyRun {
     }
 
     /// Gets one of the run's tasks (WES 1.1).
+    ///
+    /// Args:
+    ///     task_id: The task's ID.
+    ///
+    /// Returns:
+    ///     The task.
+    ///
+    /// Raises:
+    ///     ValueError: `task_id` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed or the response doesn't fit the WES models.
     pub fn task(&self, py: Python<'_>, task_id: &str) -> PyResult<PyTaskLog> {
         require_id(task_id, "task ID")?;
         let endpoint = format!(

@@ -54,6 +54,19 @@ fn call_token_provider(
     Ok(AccessToken::new(token).reusable_until(until))
 }
 
+/// The API root and settings for connecting to a GA4GH service.
+///
+/// `from_file()` reads a section of `~/.ga4gh-cli/config.json`, named by a
+/// `ServiceType` or by a `str`; in a file with profiles it reads the default
+/// profile. `get_extra()` returns the section's other keys.
+/// `set_timeouts()` and `get_timeouts()` set and give the time limits of
+/// requests in seconds; clients and transports read them when they are built.
+/// `set_token_provider()` sets a callable that gives a bearer token for each
+/// request.
+///
+/// Set one source of credentials before building a client: Basic credentials, an
+/// OAuth or a generic bearer token, or a token provider. Clients and `Transport` take
+/// the settings when they are built, so later changes don't affect them.
 #[pyclass(name = "Configuration", module = "ga4gh_sdk", subclass)]
 pub struct PyConfiguration {
     pub inner: Configuration,
@@ -83,6 +96,13 @@ impl PyConfiguration {
         Self::new(base_path)
     }
 
+    /// Replaces the API root.
+    ///
+    /// Args:
+    ///     base_path: The new API root, including the service's path prefix.
+    ///
+    /// Raises:
+    ///     ValueError: `base_path` is not a valid URL.
     pub fn set_base_path(&mut self, base_path: String) -> PyResult<()> {
         let url = Url::parse(&base_path)
             .map_err(|error| PyValueError::new_err(format!("Invalid base_path: {error}")))?;
@@ -90,27 +110,41 @@ impl PyConfiguration {
         Ok(())
     }
 
+    /// Gives the API root.
+    ///
+    /// Returns:
+    ///     The API root as a URL string.
     pub fn get_base_path(&mut self) -> String {
         self.inner.base_path.to_string()
     }
 
-    /// Set one Basic credential for clients built from this configuration.
+    /// Sets one Basic credential for clients built from this configuration.
+    ///
+    /// Args:
+    ///     username: The user name.
+    ///     password: The password, if any.
     #[pyo3(signature = (username, password=None))]
     pub fn set_basic_auth(&mut self, username: String, password: Option<String>) {
         self.inner.basic_auth = Some(BasicAuth { username, password });
     }
 
-    /// Set one OAuth bearer token for clients built from this configuration.
+    /// Sets one OAuth bearer token for clients built from this configuration.
+    ///
+    /// Args:
+    ///     token: The access token, without the `Bearer ` prefix.
     pub fn set_oauth_access_token(&mut self, token: String) {
         self.inner.oauth_access_token = Some(token);
     }
 
-    /// Set one generic bearer token for clients built from this configuration.
+    /// Sets one generic bearer token for clients built from this configuration.
+    ///
+    /// Args:
+    ///     token: The token, without the `Bearer ` prefix.
     pub fn set_bearer_access_token(&mut self, token: String) {
         self.inner.bearer_access_token = Some(token);
     }
 
-    /// Remove configured Basic and bearer credentials before selecting another.
+    /// Removes every credential source, the token provider included.
     pub fn clear_auth(&mut self) {
         self.inner.basic_auth = None;
         self.inner.oauth_access_token = None;
@@ -120,8 +154,21 @@ impl PyConfiguration {
         self.inner.token_audience = None;
     }
 
-    /// Sets time limits of requests, in seconds; limits that aren't given stay as
-    /// they are. See `get_timeouts()`.
+    /// Sets time limits of requests, in seconds.
+    ///
+    /// Limits that aren't given stay as they are; if one value is invalid, none changes.
+    /// Clients and `Transport` read the limits when they are built, so set them first.
+    ///
+    /// Args:
+    ///     connect: Opening each connection (default 10).
+    ///     request: Each request that the other limits don't apply to (default 60).
+    ///     discovery: The service check when a client is built, and
+    ///         `TRS.service_info()` (default 10).
+    ///     submission: `TES.create()`, `AsyncTES.create()` and `WES.run()`, uploads
+    ///         included (default 300).
+    ///
+    /// Raises:
+    ///     ValueError: A limit is not a valid number of seconds.
     #[pyo3(signature = (*, connect=None, request=None, discovery=None, submission=None))]
     pub fn set_timeouts(
         &mut self,
@@ -146,23 +193,44 @@ impl PyConfiguration {
         Ok(())
     }
 
-    /// Returns the time limits of requests in seconds, as a `dict` with `connect`,
-    /// `request`, `discovery` and `submission`.
+    /// Gives the time limits of requests.
+    ///
+    /// Returns:
+    ///     The limits in seconds, by name: `connect`, `request`, `discovery` and
+    ///     `submission`.
     pub fn get_timeouts(&self) -> std::collections::BTreeMap<&'static str, f64> {
         self.inner.timeouts.as_seconds().into_iter().collect()
     }
 
-    /// Returns the other keys of the configuration file section as a `dict`.
+    /// Gives the keys of the configuration file section that the SDK doesn't use.
+    ///
+    /// The values are as they are in the file, so don't log them if they can hold
+    /// credentials.
+    ///
+    /// Returns:
+    ///     A new `dict` of the section's other keys; empty if the configuration
+    ///     wasn't read from a file.
     pub fn get_extra(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, &Value::Object(self.inner.extra.clone()))
     }
 
-    /// Gets a bearer token from `provider` for each request, in place of a static
-    /// credential; `None` removes the provider.
+    /// Gets a bearer token from `provider` for each request, in place of a static one.
     ///
-    /// `provider(audience)` is called with `audience`, or the API root if it is
-    /// `None`, and returns the token as a `str`, or a `(str, float)` tuple with the
-    /// seconds for which the SDK may reuse it. See the Python bindings guide.
+    /// Clients and `Transport` take the provider when they are built. After
+    /// `401 Unauthorized`, the SDK drops a reused token and asks the provider again; a
+    /// `GET` request is sent once more, submissions never. If the provider raises or
+    /// returns something else, the call raises `RuntimeError` and its request isn't sent.
+    /// Set the provider after `from_file()`, which replaces all settings.
+    ///
+    /// Args:
+    ///     provider: Called as `provider(audience)`; returns the token as a `str`, or a
+    ///         `(str, float)` tuple with the seconds for which the SDK may reuse it.
+    ///         `None` removes the provider.
+    ///     audience: The value passed to `provider`; by default, the API root.
+    ///
+    /// Raises:
+    ///     TypeError: `provider` is not callable.
+    ///     ValueError: `audience` is given without a provider.
     #[pyo3(signature = (provider, *, audience=None))]
     pub fn set_token_provider(
         &mut self,
@@ -187,10 +255,19 @@ impl PyConfiguration {
         Ok(())
     }
 
-    /// Reads a section of `~/.ga4gh-cli/config.json`: a `ServiceType`, or the name of
-    /// any other section as a `str`. It replaces all settings, including a token
-    /// provider. In a file with profiles, the section comes from its default
-    /// profile.
+    /// Reads a section of `~/.ga4gh-cli/config.json`.
+    ///
+    /// It replaces all settings, including a token provider. In a file with profiles, the
+    /// section comes from its default profile. A section can name an environment variable
+    /// for its token with `oauth_access_token_env` or `bearer_access_token_env`.
+    ///
+    /// Args:
+    ///     service_type: A `ServiceType`, or the name of any other section.
+    ///
+    /// Raises:
+    ///     FileNotFoundError: The file doesn't exist.
+    ///     ValueError: The section is missing, the file is malformed or a named
+    ///         environment variable is unset.
     pub fn from_file(&mut self, service_type: ServiceSection) -> PyResult<()> {
         self.inner = Configuration::from_file(service_type.into()).map_err(|error| {
             let message = error.to_string();

@@ -62,6 +62,7 @@ use crate::utils::configuration::PyConfiguration;
 use crate::utils::transport::PyTransport;
 
 /// A built-in section of the configuration file, for `Configuration.from_file()`.
+///
 /// Other sections are named by a `str`.
 #[pyclass(name = "ServiceType", module = "ga4gh_sdk", eq, eq_int)]
 #[derive(Clone, PartialEq, Eq)]
