@@ -40,6 +40,7 @@ impl PyTask {
         Self::new(id, transport)
     }
 
+    /// The task's ID.
     #[getter]
     fn id(&self) -> PyResult<String> {
         Ok(self.inner.id.clone())
@@ -53,28 +54,58 @@ impl PyTask {
         }
     }
 
-    /// The task's current state, as a `TesState`.
+    /// Gets the task's current state.
+    ///
+    /// Returns:
+    ///     The state.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed or the response has no state.
     pub fn status(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let state = io(py, |rt| rt.block_on(task_status(&self.inner)))?;
         state_to_python(py, state)
     }
 
-    /// Asks the server to cancel the task. Returns `None`.
+    /// Asks the server to cancel the task.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed.
     pub fn cancel(&self, py: Python<'_>) -> PyResult<()> {
         io(py, |rt| rt.block_on(cancel_task(&self.inner)))
     }
 
-    /// Waits until the task ends. Returns its final state as a `TesState`, or, with a
-    /// `view` (`"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case), the task in that view as
-    /// a `TesTask`.
+    /// Waits until the task ends; gives its final state, or the task in `view`.
     ///
     /// A task ends in `COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`, `CANCELED` or
-    /// `PREEMPTED`. Polls start `poll_interval` seconds apart; the interval doubles up to
-    /// `max_interval` (by default 10 seconds, or `poll_interval` if that's longer).
-    /// `timeout` is the time in seconds for the whole wait; `None` waits as long as it
-    /// takes. Raises `WaitTimeoutError` when the time runs out, `RuntimeError` if a poll
-    /// fails, and `ValueError` for invalid arguments. The wait releases the GIL, and
-    /// Ctrl-C stops it with `KeyboardInterrupt`. None of these cancels the task.
+    /// `PREEMPTED`. Polls ask for the minimal view and start `poll_interval` seconds
+    /// apart; the interval doubles after each poll. The wait releases the GIL; in the main
+    /// thread, Ctrl-C stops it with `KeyboardInterrupt`. Nothing here cancels the task:
+    /// call `cancel()` for that.
+    ///
+    /// Args:
+    ///     timeout: The most seconds for the whole wait; `None` waits as long as it takes.
+    ///     poll_interval: The seconds between the first polls.
+    ///     max_interval: The longest interval between polls; by default 10 seconds, or
+    ///         `poll_interval` if that's longer.
+    ///     view: `"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case, to get the ended task in
+    ///         that view instead of its state.
+    ///
+    /// Returns:
+    ///     The final state, or the ended task in `view`.
+    ///
+    /// Raises:
+    ///     WaitTimeoutError: The time ran out; the task goes on running.
+    ///     RuntimeError: A poll failed; polls are not retried.
+    ///     ValueError: An argument is invalid, such as a negative `timeout`, a
+    ///         `poll_interval` of 0 or a `max_interval` below `poll_interval`.
+    ///
+    /// Example:
+    ///     ```python
+    ///     try:
+    ///         state = task.wait(timeout=3600)
+    ///     except WaitTimeoutError as error:
+    ///         print(error.id, "still", error.last_state)
+    ///     ```
     #[pyo3(signature = (timeout=None, *, poll_interval=1.0, max_interval=None, view=None))]
     pub fn wait(
         &self,

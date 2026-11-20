@@ -13,11 +13,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 
 /// A TES client. Subclass it to add endpoints, using `self.transport`.
-///
-/// The public `inner` preserves the Rust extension API and is safe to share
-/// between Python threads while synchronous requests release the GIL.
 #[pyclass(name = "TES", module = "ga4gh_sdk", subclass)]
 pub struct PyTES {
+    /// The library client, for Rust extension crates. It is safe to share between Python
+    /// threads while synchronous requests release the GIL.
     pub inner: TES,
 }
 
@@ -66,24 +65,56 @@ impl PyTES {
         }
     }
 
-    /// Creates a task and returns a `Task` for it.
+    /// Creates a task.
     ///
-    /// `task` is a `TesTask`, a `dict` (or other JSON-serialisable object), or the path of a
-    /// JSON file as `str` or `os.PathLike`. A `str` is always a path; pass JSON text as
-    /// `TesTask.from_json(text)`. The task's JSON is sent as given, including fields that
-    /// the TES models don't know.
+    /// The task's JSON is sent as given, including fields that the TES models don't know.
+    /// If creation fails after submission, the server may have created the task; don't
+    /// retry automatically.
+    ///
+    /// Args:
+    ///     task: A `TesTask`, a `dict` (or other mapping), or the path of a JSON file as
+    ///         `str` or `os.PathLike`. A `str` is always a path; pass JSON text as
+    ///         `TesTask.from_json(text)`.
+    ///
+    /// Returns:
+    ///     The created task.
+    ///
+    /// Raises:
+    ///     ValueError: The task is invalid, or a `str` starts with `{`.
+    ///     OSError: The task file can't be read, for example `FileNotFoundError`.
+    ///     RuntimeError: The request failed or the response doesn't fit the TES models.
     pub fn create(&self, py: Python<'_>, task: &Bound<'_, PyAny>) -> PyResult<PyTask> {
         let task = task_to_create(task, "TES.create()")?;
         io(py, |rt| rt.block_on(create_task(&self.inner, task))).map(|inner| PyTask { inner })
     }
 
-    /// Gets a task. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case.
+    /// Gets a task.
+    ///
+    /// Args:
+    ///     view: `"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case.
+    ///     id: The task's ID.
+    ///
+    /// Returns:
+    ///     The task in that view.
+    ///
+    /// Raises:
+    ///     ValueError: `view` is not a TES view.
+    ///     RuntimeError: The request failed or the response doesn't fit the TES models.
     pub fn get(&self, py: Python<'_>, view: &str, id: &str) -> PyResult<PyTesTask> {
         let view = parse_view(view)?;
         io(py, |rt| rt.block_on(get_task(&self.inner, view, id)))
     }
 
     /// Lists tasks, one page at a time.
+    ///
+    /// Args:
+    ///     params: Filters and paging; by default, the first page of all tasks.
+    ///
+    /// Returns:
+    ///     The page.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed or the response doesn't fit the TES models.
     #[pyo3(signature = (params=None))]
     pub fn list(
         &self,

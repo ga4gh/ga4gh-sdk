@@ -69,8 +69,9 @@ use std::path::{Path, PathBuf};
 
 /// A TES task: one to create, or one as returned by the server.
 ///
-/// `json()` and `to_dict()` return the task's JSON as given or received, including fields
-/// that the TES models don't know (object keys may come back in another order).
+/// Keeps the task's full JSON, including fields that the TES models don't know. Missing
+/// fields are `None`. Nested values, such as executors, come as `dict`s and `list`s.
+/// Tasks can be pickled and copied.
 #[pyclass(name = "TesTask", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyTesTask {
@@ -143,10 +144,16 @@ impl PyTesTask {
         Self::from_python(task)
     }
 
-    /// Builds a task from a mapping, such as the result of `to_dict()`.
+    /// Builds a task from a `dict`, as `cls(task)`.
     ///
-    /// Like `from_json` and `from_file`, it calls `cls(task)`, so a subclass's further
-    /// constructor arguments need defaults.
+    /// Args:
+    ///     task: The task's JSON as a mapping.
+    ///
+    /// Returns:
+    ///     The task.
+    ///
+    /// Raises:
+    ///     ValueError: The task doesn't fit the TES models.
     #[classmethod]
     fn from_dict<'py>(
         cls: &Bound<'py, PyType>,
@@ -157,7 +164,16 @@ impl PyTesTask {
         cls.call1((dict,))
     }
 
-    /// Builds a task from JSON text, such as the result of `json()`.
+    /// Builds a task from JSON text.
+    ///
+    /// Args:
+    ///     text: The task as a JSON object.
+    ///
+    /// Returns:
+    ///     The task.
+    ///
+    /// Raises:
+    ///     ValueError: `text` isn't JSON, or the task doesn't fit the TES models.
     #[classmethod]
     #[pyo3(name = "from_json")]
     fn py_from_json<'py>(
@@ -167,7 +183,17 @@ impl PyTesTask {
         cls.call1((text,))
     }
 
-    /// Reads a task from a JSON file. `path` is a `str` or `os.PathLike`.
+    /// Reads a task from a JSON file.
+    ///
+    /// Args:
+    ///     path: The file's path.
+    ///
+    /// Returns:
+    ///     The task.
+    ///
+    /// Raises:
+    ///     OSError: The file can't be read, for example `FileNotFoundError`.
+    ///     ValueError: The file isn't JSON, or the task doesn't fit the TES models.
     #[classmethod]
     fn from_file<'py>(cls: &Bound<'py, PyType>, path: PathBuf) -> PyResult<Bound<'py, PyAny>> {
         let task = Self::from_path(cls.py(), &path)?;
@@ -185,13 +211,13 @@ impl PyTesTask {
         Ok((slf.get_type(), (raw,), state))
     }
 
+    /// The task's ID; `None` for a task that isn't created yet.
     #[getter]
     pub fn id(&self) -> Option<String> {
         self.inner().id.clone()
     }
 
-    /// The task's state as a `TesState`; `UNKNOWN` if the task has none or one that
-    /// TES 1.1 doesn't define.
+    /// The task's state; `UNKNOWN` if it has none or one that TES 1.1 doesn't define.
     #[getter]
     pub fn state(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         state_to_python(py, self.inner().state.unwrap_or_default())
@@ -203,62 +229,72 @@ impl PyTesTask {
         self.state(py)
     }
 
+    /// The task's name.
     #[getter]
     fn name(&self) -> Option<String> {
         self.inner().name.clone()
     }
 
+    /// The task's description.
     #[getter]
     fn description(&self) -> Option<String> {
         self.inner().description.clone()
     }
 
+    /// When the task was created, as an RFC 3339 timestamp.
     #[getter]
     fn creation_time(&self) -> Option<String> {
         self.inner().creation_time.clone()
     }
 
+    /// The files to put into the task's containers.
     #[getter]
     fn inputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "inputs")
     }
 
+    /// The files to keep from the task's containers.
     #[getter]
     fn outputs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "outputs")
     }
 
+    /// The resources that the task asks for, such as CPU cores and RAM.
     #[getter]
     fn resources(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "resources")
     }
 
+    /// The commands to run, in order, each with its container image.
     #[getter]
     fn executors(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "executors")
     }
 
+    /// Paths that the executors share.
     #[getter]
     fn volumes(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "volumes")
     }
 
+    /// Key-value tags of the task.
     #[getter]
     fn tags(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "tags")
     }
 
+    /// The task's logs, one per attempt (in the `BASIC` and `FULL` views).
     #[getter]
     fn logs(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "logs")
     }
 
-    /// The task as JSON text, as given or received.
+    /// Gives the task as JSON text, as given or received; keys may come in another order.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The task as a new `dict`, as given or received.
+    /// Gives the task as a new `dict`, as given or received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }

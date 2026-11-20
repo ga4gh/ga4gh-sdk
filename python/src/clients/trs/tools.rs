@@ -7,10 +7,10 @@ use ga4gh_sdk::clients::trs::models::{Tool, ToolVersion};
 use pyo3::prelude::*;
 use serde_json::Value;
 
-/// A tool version, as returned by the server.
+/// A tool version, as returned by a TRS, with its JSON.
 ///
-/// `json()` and `to_dict()` return the version as JSON, including fields that the TRS models
-/// don't know.
+/// `json()` and `to_dict()` return the version as JSON, including fields that the TRS
+/// models don't know.
 #[pyclass(name = "ToolVersion", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyToolVersion {
@@ -38,21 +38,25 @@ impl PyToolVersion {
 
 #[pymethods]
 impl PyToolVersion {
+    /// The version's ID.
     #[getter]
     fn id(&self) -> String {
         self.inner().id.clone()
     }
 
+    /// The version's URL in the registry.
     #[getter]
     fn url(&self) -> String {
         self.inner().url.clone()
     }
 
+    /// The version's name, such as a tag; some registries take it as its ID.
     #[getter]
     fn name(&self) -> Option<String> {
         self.inner().name.clone()
     }
 
+    /// The version's authors.
     #[getter]
     fn author(&self) -> Option<Vec<String>> {
         self.inner().author.clone()
@@ -64,11 +68,13 @@ impl PyToolVersion {
         self.inner().description().map(str::to_owned)
     }
 
+    /// Whether the version is meant for production use.
     #[getter]
     fn is_production(&self) -> Option<bool> {
         self.inner().is_production
     }
 
+    /// The container images of the version, as `dict`s.
     #[getter]
     fn images(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "images")
@@ -83,47 +89,54 @@ impl PyToolVersion {
             .map(|types| types.iter().map(ToString::to_string).collect())
     }
 
+    /// The language versions of the descriptors, by descriptor type.
     #[getter]
     fn descriptor_type_version(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "descriptor_type_version")
     }
 
+    /// Whether the version has container files, such as a Dockerfile.
     #[getter]
     fn containerfile(&self) -> Option<bool> {
         self.inner().containerfile
     }
 
+    /// The version of the version's metadata in the registry.
     #[getter]
     fn meta_version(&self) -> Option<String> {
         self.inner().meta_version.clone()
     }
 
+    /// Whether the version is verified.
     #[getter]
     fn verified(&self) -> Option<bool> {
         self.inner().verified
     }
 
+    /// Who verified the version.
     #[getter]
     fn verified_source(&self) -> Option<Vec<String>> {
         self.inner().verified_source.clone()
     }
 
+    /// Whether the version is signed.
     #[getter]
     fn signed(&self) -> Option<bool> {
         self.inner().signed
     }
 
+    /// Tools that the version includes, as TRS URIs or URLs.
     #[getter]
     fn included_apps(&self) -> Option<Vec<String>> {
         self.inner().included_apps.clone()
     }
 
-    /// The version as JSON text.
+    /// Gives the version as JSON text.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The version as a new `dict`.
+    /// Gives the version as a new `dict`.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }
@@ -136,10 +149,10 @@ impl PyToolVersion {
     }
 }
 
-/// A tool with its versions, as returned by the server.
+/// A tool with its versions, as returned by a TRS, with its JSON.
 ///
-/// `json()` and `to_dict()` return the tool as JSON, including fields that the TRS models
-/// don't know.
+/// `json()` and `to_dict()` return the tool as JSON, including fields that the TRS
+/// models don't know.
 #[pyclass(name = "Tool", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyTool {
@@ -167,26 +180,31 @@ impl PyTool {
 
 #[pymethods]
 impl PyTool {
+    /// The tool's ID.
     #[getter]
     fn id(&self) -> String {
         self.inner().id.clone()
     }
 
+    /// The tool's URL in the registry.
     #[getter]
     fn url(&self) -> String {
         self.inner().url.clone()
     }
 
+    /// Other IDs of the tool, such as DOIs.
     #[getter]
     fn aliases(&self) -> Option<Vec<String>> {
         self.inner().aliases.clone()
     }
 
+    /// The organization that publishes the tool.
     #[getter]
     fn organization(&self) -> String {
         self.inner().organization.clone()
     }
 
+    /// The tool's name.
     #[getter]
     fn name(&self) -> Option<String> {
         self.inner().name.clone()
@@ -198,27 +216,31 @@ impl PyTool {
         field(py, self.raw(), "toolclass")
     }
 
+    /// The tool's description.
     #[getter]
     fn description(&self) -> Option<String> {
         self.inner().description.clone()
     }
 
+    /// The version of the tool's metadata in the registry.
     #[getter]
     fn meta_version(&self) -> Option<String> {
         self.inner().meta_version.clone()
     }
 
+    /// Whether the tool has a checker tool.
     #[getter]
     fn has_checker(&self) -> Option<bool> {
         self.inner().has_checker
     }
 
+    /// The URL of the tool's checker tool.
     #[getter]
     fn checker_url(&self) -> Option<String> {
         self.inner().checker_url.clone()
     }
 
-    /// The tool's versions, as `ToolVersion`s.
+    /// The tool's versions.
     #[getter]
     fn versions(&self) -> PyResult<Vec<PyToolVersion>> {
         self.inner()
@@ -229,12 +251,12 @@ impl PyTool {
             .collect()
     }
 
-    /// The tool as JSON text.
+    /// Gives the tool as JSON text.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The tool as a new `dict`.
+    /// Gives the tool as a new `dict`.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }
