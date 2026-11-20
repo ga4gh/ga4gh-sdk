@@ -43,8 +43,9 @@ url = "2"
 Replace `<commit>` with the same commit SHA in both dependency entries.
 Use the same major versions of `clap` and `serde` as the SDK: the CLI hands
 out Clap 4 `Command`s, and the models implement Serde 1 traits. HTTP types
-are re-exported as `ga4gh_sdk::reqwest`, so a crate that needs them doesn't
-have to match the SDK's `reqwest` version.
+are re-exported as `ga4gh_sdk::reqwest` (reqwest 0.12), so a crate that needs
+them doesn't have to match the SDK's `reqwest` version. A `reqwest::Client`
+that you pass to `Transport::with_client` must come from that version.
 
 ## A client for an additional endpoint
 
