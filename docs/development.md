@@ -221,9 +221,9 @@ make site
 
 `python/tests/test_stubs.py`, which the `Python tests` job runs, checks that
 every class and member of the stubs has a docstring and that the `Args:`
-section of each method names all of its parameters. It also checks that each
-docstring of the stubs is the same as the runtime docstring that `help()`
-shows, which PyO3 builds from the Rust doc comment: change both together. It
+section of each method names all of its parameters. It also compares class,
+method and property docstrings from the stubs with those that `help()` shows,
+which PyO3 builds from the Rust doc comments: change both together. It
 leaves out `__init__` (PyO3 drops its doc comment), slots such as `__len__`,
 and attributes and enum members, which have no runtime docstring of their own.
 
