@@ -49,6 +49,22 @@ jobs:
       - name: Build CLI alone
         run: cargo build --locked -p ga4gh-cli
 
+  # Known advisories (RustSec) for the crates in `Cargo.lock`; accepted ones
+  # are listed with a reason in `deny.toml`.
+  advisories:
+    name: Advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Check advisories
+        run: cargo deny --locked check advisories
+
   python:
     name: Python tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
@@ -320,7 +336,7 @@ jobs:
 
   passed:
     name: CI passed
-    needs: [lint, test, build, python, wheels, binaries, image, integration, coverage, codecov, pre-commit, docs, downstream]
+    needs: [lint, test, build, advisories, python, wheels, binaries, image, integration, coverage, codecov, pre-commit, docs, downstream]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -339,8 +355,8 @@ jobs:
           for name, result in results.items():
               print(f'{name}: {result}')
           expected = {
-              'lint', 'test', 'build', 'python', 'wheels', 'binaries', 'image', 'integration',
-              'coverage', 'codecov', 'pre-commit', 'docs', 'downstream',
+              'lint', 'test', 'build', 'advisories', 'python', 'wheels', 'binaries', 'image',
+              'integration', 'coverage', 'codecov', 'pre-commit', 'docs', 'downstream',
           }
           expected_results = {name: 'success' for name in expected}
           if os.environ['EVENT_NAME'] == 'pull_request':

@@ -76,12 +76,11 @@ pub async fn connected(tes: &LazyTES, transport: &Transport) -> Result<Arc<TES>,
 
 /// A TES client for `asyncio`: `create`, `get` and `list` return awaitables.
 ///
-/// `AsyncTES(config)` doesn't contact the server; its first call checks the service, as
-/// `TES(config)` does. `await AsyncTES.connect(config)` checks it right away. Subclass it to
-/// add endpoints, using `self.transport`.
-///
-/// `transport` is the client's state: the built-in calls connect with it, and the `config`
-/// getter reads its configuration.
+/// The methods return `asyncio.Future`s of the running event loop, so they must be called
+/// from it. `AsyncTES(config)` doesn't contact the server; `await AsyncTES.connect(config)`
+/// first checks that `config` points at a TES service; otherwise the first call does.
+/// Invalid arguments raise when a method is called; failed requests raise `RuntimeError`
+/// when awaited. Cancelling an awaitable drops its request.
 #[pyclass(name = "AsyncTES", module = "ga4gh_sdk", subclass)]
 pub struct PyAsyncTES {
     /// The configuration that the client was built with, kept for compatibility. The SDK
@@ -132,10 +131,16 @@ impl PyAsyncTES {
         Ok(Self::new(config))
     }
 
-    /// Builds `cls(config, *args, **kwargs)` and gives it once it has checked the service.
+    /// Builds `cls(config, *args, **kwargs)`; gives it once it has checked the service.
     ///
-    /// The client is built at once, on the event loop's thread. The check raises
-    /// `RuntimeError` when awaited if it fails, like `TES(config)`.
+    /// Args:
+    ///     config: The service's configuration.
+    ///     *args: Further arguments of a subclass's constructor.
+    ///     **kwargs: Further keyword arguments of a subclass's constructor.
+    ///
+    /// Returns:
+    ///     A future of the client; it raises `RuntimeError` if the service isn't
+    ///     reachable or isn't a TES.
     #[classmethod]
     #[pyo3(signature = (config, *args, **kwargs))]
     fn connect<'py>(
@@ -160,7 +165,7 @@ impl PyAsyncTES {
         })
     }
 
-    /// The client's configuration: that of its transport.
+    /// The client's configuration.
     #[getter]
     fn config(&self) -> PyConfiguration {
         PyConfiguration {
@@ -168,7 +173,7 @@ impl PyAsyncTES {
         }
     }
 
-    /// The client's transport, for further endpoints.
+    /// A transport with the client's configuration; its methods are synchronous.
     #[getter]
     fn transport(&self) -> PyTransport {
         PyTransport {
@@ -176,7 +181,17 @@ impl PyAsyncTES {
         }
     }
 
-    /// Creates a task; gives an `AsyncTask` for it. Takes the same `task` as `TES.create()`.
+    /// Creates a task; takes the same `task` as `TES.create()`.
+    ///
+    /// Args:
+    ///     task: A `TesTask`, a `dict` (or other mapping), or the path of a JSON file.
+    ///
+    /// Returns:
+    ///     A future of the created task.
+    ///
+    /// Raises:
+    ///     ValueError: The task is invalid.
+    ///     OSError: The task file can't be read.
     pub fn create<'py>(&self, task: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let py = task.py();
         let task = task_to_create(task, "AsyncTES.create()")?;
@@ -191,8 +206,17 @@ impl PyAsyncTES {
         })
     }
 
-    /// Gets a task; gives a `TesTask`. `view` is `"MINIMAL"`, `"BASIC"` or `"FULL"`, in any
-    /// case; others raise `ValueError` when the method is called.
+    /// Gets a task.
+    ///
+    /// Args:
+    ///     view: `"MINIMAL"`, `"BASIC"` or `"FULL"`, in any case.
+    ///     id: The task's ID.
+    ///
+    /// Returns:
+    ///     A future of the task in that view.
+    ///
+    /// Raises:
+    ///     ValueError: `view` is not a TES view.
     pub fn get<'py>(
         &self,
         py: Python<'py>,
@@ -210,7 +234,13 @@ impl PyAsyncTES {
         })
     }
 
-    /// Lists tasks, one page at a time; gives a `ListTasksResponse`.
+    /// Lists tasks, one page at a time.
+    ///
+    /// Args:
+    ///     params: Filters and paging; by default, the first page of all tasks.
+    ///
+    /// Returns:
+    ///     A future of the page.
     #[pyo3(signature = (params=None))]
     pub fn list<'py>(
         &self,
@@ -229,7 +259,7 @@ impl PyAsyncTES {
     }
 }
 
-/// A TES task on the server, addressed by its ID, for `asyncio`: its methods return awaitables.
+/// A TES task on the server, addressed by its ID, for `asyncio`.
 #[pyclass(name = "AsyncTask", module = "ga4gh_sdk", subclass)]
 pub struct PyAsyncTask {
     pub inner: Task,
@@ -259,6 +289,7 @@ impl PyAsyncTask {
         Ok(Self::new(id, transport))
     }
 
+    /// The task's ID.
     #[getter]
     fn id(&self) -> String {
         self.inner.id.clone()
@@ -272,7 +303,10 @@ impl PyAsyncTask {
         }
     }
 
-    /// Gives the task's current state, as a `TesState`.
+    /// Gets the task's current state.
+    ///
+    /// Returns:
+    ///     A future of the state; it raises `RuntimeError` if the request fails.
     pub fn status<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let task = self.inner.clone();
         future_into_py(py, async move {
@@ -283,7 +317,10 @@ impl PyAsyncTask {
         })
     }
 
-    /// Asks the server to cancel the task; gives `None`.
+    /// Asks the server to cancel the task.
+    ///
+    /// Returns:
+    ///     A future of `None`; it raises `RuntimeError` if the request fails.
     pub fn cancel<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let task = self.inner.clone();
         future_into_py(py, async move {
@@ -294,12 +331,25 @@ impl PyAsyncTask {
         })
     }
 
-    /// Waits until the task ends; takes the same arguments as `Task.wait()` and gives the
-    /// same result.
+    /// Waits until the task ends, like `Task.wait()`.
     ///
-    /// Invalid arguments raise `ValueError` when the method is called. Cancelling the
-    /// awaiting coroutine stops polling; it doesn't cancel the task. Between polls, the
-    /// wait holds no call thread, so other async calls don't queue behind it.
+    /// Cancelling the awaiting coroutine stops polling; it doesn't cancel the task.
+    /// Between polls, the wait holds no call thread, so sleeping waits do not delay other
+    /// async calls.
+    ///
+    /// Args:
+    ///     timeout: The most seconds for the whole wait; `None` waits as long as it takes.
+    ///     poll_interval: The seconds between the first polls.
+    ///     max_interval: The longest interval between polls; by default 10 seconds, or
+    ///         `poll_interval` if that's longer.
+    ///     view: `"MINIMAL"`, `"BASIC"` or `"FULL"`, to get the ended task in that view.
+    ///
+    /// Returns:
+    ///     A future of the final state, or of the ended task in `view`. It raises
+    ///     `WaitTimeoutError` when the time runs out and `RuntimeError` if a poll fails.
+    ///
+    /// Raises:
+    ///     ValueError: An argument is invalid, when the method is called.
     #[pyo3(signature = (timeout=None, *, poll_interval=1.0, max_interval=None, view=None))]
     pub fn wait<'py>(
         &self,

@@ -528,7 +528,7 @@ fn an_interrupted_download_leaves_no_file() {
     });
     let prefix = "/save-interrupted";
     let task = json!({"id": "t1", "state": "COMPLETE", "logs": [{
-        "logs": [], "outputs": [{"url": format!("http://{address}/big.bin"), "path": "/o/big.bin", "size_bytes": "1000"}]
+        "logs": [], "outputs": [{"url": format!("http://{address}/big.bin?token=SENTINEL"), "path": "/o/big.bin", "size_bytes": "1000"}]
     }]});
     let _tes = tes_mocks(prefix, &task);
     let home = home_with_tes(prefix);
@@ -548,6 +548,9 @@ fn an_interrupted_download_leaves_no_file() {
     let message = stderr(&output);
     assert_eq!(output.status.code(), Some(1), "{message}");
     assert!(message.contains("interrupted after 12 bytes"), "{message}");
+    assert!(message.contains("HTTP response body failed"), "{message}");
+    assert!(!message.contains("end of file"), "{message}");
+    assert!(!message.contains("SENTINEL"), "{message}");
     assert!(entries(&dir).is_empty(), "{:?}", entries(&dir));
 }
 

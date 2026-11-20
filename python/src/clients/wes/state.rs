@@ -12,10 +12,10 @@ import enum
 
 
 class WesState(str, enum.Enum):
-    """The state of a WES run.
+    """The state of a WES run. Members are strings equal to the state's name.
 
-    Members are strings, so `WesState.RUNNING == "RUNNING"`, and `str()`, f-strings and
-    `json.dumps()` give the state's name. `WesState("RUNNING")` looks a state up by name.
+    `str()`, f-strings and `json.dumps()` give the state's name; `WesState("RUNNING")`
+    looks a state up by name.
     """
 
     __module__ = "ga4gh_sdk"
@@ -33,9 +33,18 @@ class WesState(str, enum.Enum):
     PREEMPTED = "PREEMPTED"
 
     def __str__(self):
+        """Gives the state's name."""
         return self.value
 
     def __format__(self, format_spec):
+        """Formats the state's name, as `str.__format__` does.
+
+        Args:
+            format_spec: The format specification, such as `">10"`.
+
+        Returns:
+            The formatted name.
+        """
         return format(self.value, format_spec)
 "#;
 

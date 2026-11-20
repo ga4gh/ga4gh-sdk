@@ -29,11 +29,15 @@ linked issues own current remediation status.
   cargo install cargo-llvm-cov --locked --version 0.9.1
   ```
 
+- For the advisory check:
+  [cargo-deny](https://github.com/EmbarkStudios/cargo-deny), with
+  `cargo install cargo-deny --locked --version 0.20.2` (see
+  [Dependency advisories](#dependency-advisories)).
 - For the hooks: [pre-commit](https://pre-commit.com/), for example with
   `python3 -m pip install 'pre-commit==4.7.0'` or `pipx install pre-commit`.
 
-CI uses the versions above (cargo-llvm-cov 0.9.1, pre-commit 4.7.0). They
-are pinned in [`ci.yml`](../.github/workflows/ci.yml) and Dependabot does not
+CI uses the versions above (cargo-llvm-cov 0.9.1, cargo-deny 0.20.2,
+pre-commit 4.7.0). They are pinned in [`ci.yml`](../.github/workflows/ci.yml) and Dependabot does not
 bump them, so update this guide when you change them.
 
 ## Make targets
@@ -185,7 +189,7 @@ Docs project is configured as described below, it serves `latest` from
 - [`.readthedocs.yaml`](../.readthedocs.yaml) configures the build on Read the
   Docs: the dependency group `docs` of
   [`python/pyproject.toml`](../python/pyproject.toml) (exact versions;
-  Dependabot doesn't bump them, so update them by hand), rustup for the
+  review each Dependabot update for new build warnings), rustup for the
   pinned toolchain, `cargo doc`, then MkDocs.
 
 A new guide needs an entry in `nav`; link to it with its relative path, as
@@ -217,7 +221,11 @@ make site
 
 `python/tests/test_stubs.py`, which the `Python tests` job runs, checks that
 every class and member of the stubs has a docstring and that the `Args:`
-section of each method names all of its parameters.
+section of each method names all of its parameters. It also compares class,
+method and property docstrings from the stubs with those that `help()` shows,
+which PyO3 builds from the Rust doc comments: change both together. It
+leaves out `__init__` (PyO3 drops its doc comment), slots such as `__len__`,
+and attributes and enum members, which have no runtime docstring of their own.
 
 The Griffe extension `docs/griffe_overloads.py` renders methods that the
 stubs declare only with `@overload`, such as `Task.wait`.
@@ -259,6 +267,7 @@ on pushes to `main` and on manual dispatch:
 | `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` with `-D warnings` |
 | `test` | Test | `cargo test --workspace --locked` |
 | `build` | Build | Lockfile check, standalone library and CLI builds |
+| `advisories` | Advisories | `cargo deny --locked check advisories` (see [Dependency advisories](#dependency-advisories)) |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
 | `wheels` | Python wheels | Full platform wheel and sdist matrix on `main` pushes and manual runs; skipped on PRs |
 | `binaries` | CLI binaries | Builds and runs `ga4gh-cli` on the six release platforms on `main` pushes and manual runs; skipped on PRs |
@@ -282,6 +291,30 @@ For a PR that changes packaging, native dependencies, supported platforms or the
 workflows, open **Actions → CI → Run workflow**, select the PR branch and run
 the full matrices before merging. Check the wheel, sdist and CLI binary jobs.
 The manual run builds artifacts but does not publish them.
+
+## Dependency advisories
+
+The `advisories` job checks every crate in `Cargo.lock`, with all features,
+against the [RustSec advisory database](https://rustsec.org/): known
+vulnerabilities, and crates marked unmaintained or unsound. It runs on every
+pull request and push to `main`, so a new advisory fails the next run even
+without a change to the dependencies. To run it locally with
+[cargo-deny](#prerequisites):
+
+```sh
+cargo deny --locked check advisories
+```
+
+When it fails, update the crate (`cargo update -p <crate>`, or a new version
+in a `Cargo.toml`). If no fixed version is usable yet, add the advisory ID
+to `ignore` in [`deny.toml`](../deny.toml) with a reason: why it doesn't
+affect the SDK, or what it waits for. cargo-deny warns about an entry that
+no longer matches; remove such entries.
+
+[Dependabot](../.github/dependabot.yml) opens weekly PRs for the crates
+(semver-compatible updates in one PR) and for `python/pyproject.toml`, besides
+GitHub Actions, pre-commit hooks and base images. It also raises security
+alerts for the repository.
 
 ## Issue and pull request templates
 

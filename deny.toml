@@ -1,0 +1,27 @@
+# cargo-deny configuration. CI runs `cargo deny --locked check advisories`
+# (the `advisories` job in `.github/workflows/ci.yml`); see
+# docs/development.md#dependency-advisories.
+#
+# Every ignored advisory has a reason: why it doesn't affect the SDK or why
+# there is no fix yet, and when to remove it. cargo-deny warns about an entry
+# that no longer matches; remove it then.
+
+[graph]
+# Include the optional rustls build of the Python wheels and the
+# integration-test features.
+all-features = true
+
+[advisories]
+ignore = [
+    # quick-xml 0.38 through object_store 0.12, which parses S3 responses in
+    # the CLI's `tes save`. A malicious S3 endpoint could slow down or exhaust
+    # the memory of that one command. Remove when object_store depends on
+    # quick-xml 0.41 or newer.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.38 via object_store: denial of service by a malicious S3 endpoint in `tes save` only; no object_store release with a fix" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.38 via object_store: denial of service by a malicious S3 endpoint in `tes save` only; no object_store release with a fix" },
+    # Unmaintained crates without a known vulnerability.
+    { id = "RUSTSEC-2024-0375", reason = "atty is unmaintained; only env_logger 0.9 of lib/src/utils/test_utils.rs uses it; remove with that module's move to tests" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, all versions; used by object_store; no replacement upstream yet" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime is unmaintained, all versions; used by object_store and env_logger 0.9; no replacement upstream yet" },
+    { id = "RUSTSEC-2020-0095", reason = "difference is unmaintained; a dev-dependency only (mockall 0.10 -> predicates 1)" },
+]

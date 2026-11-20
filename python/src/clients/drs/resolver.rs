@@ -24,6 +24,7 @@ pub struct PyAccessPlan {
 
 #[pymethods]
 impl PyAccessPlan {
+    /// The ID of the object.
     #[getter]
     fn object_id(&self) -> String {
         self.inner.object_id.clone()
@@ -35,18 +36,19 @@ impl PyAccessPlan {
         access_type_name(&self.inner.method)
     }
 
+    /// The region of the access method, such as `"us-east-1"`.
     #[getter]
     fn region(&self) -> Option<String> {
         self.inner.region.clone()
     }
 
+    /// The URL to fetch the object's bytes from.
     #[getter]
     fn url(&self) -> String {
         self.inner.url.to_string()
     }
 
-    /// The headers to send with a request to `url`, as `(name, value)` pairs (unlike the
-    /// `"Name: value"` strings of `AccessURL`).
+    /// `(name, value)` pairs, unlike the `"Name: value"` strings of `AccessURL`.
     #[getter]
     fn headers(&self) -> Vec<(String, String)> {
         self.inner
@@ -137,8 +139,21 @@ impl PyDrsResolver {
         })
     }
 
-    /// Asks the DRS service of `transport` for URIs with host `authority`. Returns the
-    /// resolver itself, for chaining.
+    /// Asks the DRS service of `transport` for URIs with host `authority`.
+    ///
+    /// Add services before sharing the resolver between threads.
+    ///
+    /// Args:
+    ///     authority: The host of the URIs, without a port.
+    ///     transport: A transport with the service's API root and settings.
+    ///
+    /// Returns:
+    ///     The resolver itself, for chaining.
+    ///
+    /// Raises:
+    ///     ValueError: `authority` is not a valid host, has a port or is an
+    ///         IPv6 literal.
+    ///     RuntimeError: Another thread is planning access with the resolver.
     fn with_service<'py>(
         slf: Bound<'py, Self>,
         authority: &str,
@@ -160,12 +175,22 @@ impl PyDrsResolver {
         Ok(slf)
     }
 
-    /// Asks once for the object of `uri` and, if needed, its access URL. Returns an
-    /// `AccessPlan`, or a `PendingResolution` if the server is still preparing an answer.
+    /// Asks once for the object of `uri` and, if needed, its access URL.
     ///
-    /// `protocols` and `regions` list the access method types and regions to choose from,
-    /// in order of preference; `method_index` picks one of the object's access methods
-    /// instead.
+    /// Args:
+    ///     uri: A hostname-based DRS URI.
+    ///     protocols: The access method types to choose from, such as `["https", "s3"]`,
+    ///         in order of preference.
+    ///     regions: The regions to choose from, in order of preference.
+    ///     method_index: The index of the access method to use, instead of choosing.
+    ///     timeout: The most seconds for all requests.
+    ///
+    /// Returns:
+    ///     The plan, or a `PendingResolution` if the server is still preparing an answer.
+    ///
+    /// Raises:
+    ///     ValueError: The URI or an argument is invalid.
+    ///     RuntimeError: A request failed or the object has no usable access method.
     #[pyo3(signature = (uri, protocols=None, regions=None, method_index=None, timeout=60.0))]
     pub fn access_plan_once(
         &self,
@@ -189,9 +214,26 @@ impl PyDrsResolver {
         }
     }
 
-    /// Like `access_plan_once()`, but waits as the server asks while it prepares an
-    /// answer. Gives up after `max_attempts` requests per step or `timeout` seconds in
-    /// all, with `RuntimeError`.
+    /// Plans access to the object of `uri`, waiting while the server prepares answers.
+    ///
+    /// Reads the object, picks an available access method and reads its access URL if the
+    /// method has none.
+    ///
+    /// Args:
+    ///     uri: A hostname-based DRS URI.
+    ///     protocols: The access method types to choose from, in order of preference.
+    ///     regions: The regions to choose from, in order of preference.
+    ///     method_index: The index of the access method to use, instead of choosing.
+    ///     timeout: The most seconds for all requests and waits.
+    ///     max_attempts: The most requests for each answer.
+    ///
+    /// Returns:
+    ///     The plan.
+    ///
+    /// Raises:
+    ///     ValueError: The URI or an argument is invalid.
+    ///     RuntimeError: A request failed, an answer wasn't ready in time, or the object
+    ///         has no usable access method.
     #[pyo3(signature = (
         uri, protocols=None, regions=None, method_index=None, timeout=60.0, max_attempts=5
     ))]

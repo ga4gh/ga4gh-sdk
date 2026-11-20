@@ -820,8 +820,8 @@ message on stderr and nothing on stdout:
   body; a 404 adds a hint to check that `base_path` is the section's API root;
 - malformed JSON or a JSON value that is not an object is reported as
   `Invalid service info from section '<SECTION>'`;
-- a connection failure or an exceeded `discovery` timeout is reported with
-  its cause.
+- a connection failure or an exceeded `discovery` timeout is reported by
+  category, without exposing the URL or lower-level source text.
 
 Credentials are never printed. A missing or empty `--service` is a usage error
 with exit code 2.

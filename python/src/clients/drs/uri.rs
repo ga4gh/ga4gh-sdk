@@ -49,7 +49,7 @@ impl PyDrsUri {
         self.inner.object_id.clone()
     }
 
-    /// The API root that the URI implies, `https://<authority>/ga4gh/drs/v1`.
+    /// Gives the API root that the URI implies, `https://<authority>/ga4gh/drs/v1`.
     fn default_api_root(&self) -> String {
         self.inner.default_api_root().to_string()
     }

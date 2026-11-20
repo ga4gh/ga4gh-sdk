@@ -17,10 +17,9 @@ use std::path::{Path, PathBuf};
 
 /// A WES run request: a workflow to run, with its parameters.
 ///
-/// `json()` and `to_dict()` return the request's JSON as given or received, including fields
-/// that the WES models don't know. `WES.run()` sends the fields of the WES `RunRequest` form,
-/// and fields that the WES models don't know as further form parts: strings as they are, other
-/// values as JSON.
+/// Keeps the request's full JSON, including fields that the WES models don't know.
+/// `WES.run()` sends those fields as further form parts: strings as they are, other
+/// values as JSON. Requests can be pickled and copied.
 #[pyclass(name = "RunRequest", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyRunRequest {
@@ -138,10 +137,16 @@ impl PyRunRequest {
         Self::from_python(request)
     }
 
-    /// Builds a request from a mapping, such as the result of `to_dict()`.
+    /// Builds a request from a `dict`, as `cls(request)`.
     ///
-    /// Like `from_json` and `from_file`, it calls `cls(request)`, so a subclass's further
-    /// constructor arguments need defaults.
+    /// Args:
+    ///     request: The request's JSON as a mapping.
+    ///
+    /// Returns:
+    ///     The request.
+    ///
+    /// Raises:
+    ///     ValueError: The request doesn't fit the WES models.
     #[classmethod]
     fn from_dict<'py>(
         cls: &Bound<'py, PyType>,
@@ -152,7 +157,16 @@ impl PyRunRequest {
         cls.call1((dict,))
     }
 
-    /// Builds a request from JSON text, such as the result of `json()`.
+    /// Builds a request from JSON text.
+    ///
+    /// Args:
+    ///     text: The request as a JSON object.
+    ///
+    /// Returns:
+    ///     The request.
+    ///
+    /// Raises:
+    ///     ValueError: `text` isn't JSON, or the request doesn't fit the WES models.
     #[classmethod]
     fn from_json<'py>(
         cls: &Bound<'py, PyType>,
@@ -161,7 +175,17 @@ impl PyRunRequest {
         cls.call1((text,))
     }
 
-    /// Reads a request from a JSON file. `path` is a `str` or `os.PathLike`.
+    /// Reads a request from a JSON file.
+    ///
+    /// Args:
+    ///     path: The file's path.
+    ///
+    /// Returns:
+    ///     The request.
+    ///
+    /// Raises:
+    ///     OSError: The file can't be read, for example `FileNotFoundError`.
+    ///     ValueError: The file isn't JSON, or the request doesn't fit the WES models.
     #[classmethod]
     fn from_file<'py>(cls: &Bound<'py, PyType>, path: PathBuf) -> PyResult<Bound<'py, PyAny>> {
         let request = Self::from_path(cls.py(), &path)?;
@@ -179,52 +203,60 @@ impl PyRunRequest {
         Ok((slf.get_type(), (raw,), state))
     }
 
+    /// The workflow language, such as `"CWL"`.
     #[getter]
     fn workflow_type(&self) -> String {
         self.inner().workflow_type.clone()
     }
 
+    /// The version of the workflow language, such as `"v1.2"`.
     #[getter]
     fn workflow_type_version(&self) -> String {
         self.inner().workflow_type_version.clone()
     }
 
+    /// The workflow's URL, or the filename of an attachment.
     #[getter]
     fn workflow_url(&self) -> String {
         self.inner().workflow_url.clone()
     }
 
+    /// The workflow's input parameters.
     #[getter]
     fn workflow_params(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "workflow_params")
     }
 
+    /// Key-value tags of the run.
     #[getter]
     fn tags(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "tags")
     }
 
+    /// The workflow engine to use.
     #[getter]
     fn workflow_engine(&self) -> Option<String> {
         self.inner().workflow_engine.clone()
     }
 
+    /// The version of the workflow engine.
     #[getter]
     fn workflow_engine_version(&self) -> Option<String> {
         self.inner().workflow_engine_version.clone()
     }
 
+    /// Parameters for the workflow engine.
     #[getter]
     fn workflow_engine_parameters(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "workflow_engine_parameters")
     }
 
-    /// The request as JSON text, as given or received.
+    /// Gives the request as JSON text, as given or received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The request as a new `dict`, as given or received.
+    /// Gives the request as a new `dict`, as given or received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }

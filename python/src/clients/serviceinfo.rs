@@ -4,6 +4,7 @@ use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 
+/// Reads a service's service info.
 #[pyclass(name = "ServiceInfo", module = "ga4gh_sdk", subclass)]
 pub struct PyServiceInfo {
     pub inner: ServiceInfo,
@@ -34,6 +35,14 @@ impl PyServiceInfo {
         Self::new(py_config)
     }
 
+    /// Reads the service info.
+    ///
+    /// Returns:
+    ///     The service info as formatted text (`"Service: ..."`), not as a typed model.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed, for example because of conflicting
+    ///         credentials, or the response is not a service info.
     pub fn get_service_info(&self, py: Python<'_>) -> PyResult<String> {
         crate::utils::runtime::io(py, |rt| {
             rt.block_on(self.inner.get())

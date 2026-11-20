@@ -22,10 +22,10 @@ import enum
 
 
 class TesState(str, enum.Enum):
-    """The state of a TES task.
+    """The state of a TES task. Members are strings equal to the state's name.
 
-    Members are strings, so `TesState.RUNNING == "RUNNING"`, and `str()`, f-strings and
-    `json.dumps()` give the state's name. `TesState("RUNNING")` looks a state up by name.
+    `str()`, f-strings and `json.dumps()` give the state's name; `TesState("RUNNING")`
+    looks a state up by name.
     """
 
     __module__ = "ga4gh_sdk"
@@ -43,9 +43,18 @@ class TesState(str, enum.Enum):
     CANCELING = "CANCELING"
 
     def __str__(self):
+        """Gives the state's name."""
         return self.value
 
     def __format__(self, format_spec):
+        """Formats the state's name, as `str.__format__` does.
+
+        Args:
+            format_spec: The format specification, such as `">10"`.
+
+        Returns:
+            The formatted name.
+        """
         return format(self.value, format_spec)
 "#;
 

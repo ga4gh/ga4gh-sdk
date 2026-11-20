@@ -8,8 +8,9 @@ use reqwest::header::HeaderMap;
 
 /// One page of tools from `TRS.list_tools()` or `TRS.next_tools_page()`.
 ///
-/// `next_page` is the URL of the next page that the server sent, or `None` on the last
-/// page; pass it to `TRS.next_tools_page()`.
+/// The paging properties hold the TRS paging headers, as `str`s, or `None` if the server
+/// didn't send them; a repeated header gives its first value. `len(page)` is the number
+/// of tools.
 #[pyclass(name = "ToolPage", module = "ga4gh_sdk", subclass)]
 pub struct PyToolPage {
     pub tools: Vec<PyTool>,
@@ -44,43 +45,45 @@ impl PyToolPage {
 
 #[pymethods]
 impl PyToolPage {
+    /// The tools of the page.
     #[getter]
     pub fn tools(&self) -> Vec<PyTool> {
         self.tools.clone()
     }
 
-    /// The URL of the next page (`next_page` header), or `None`.
+    /// The URL of the next page (`next_page` header); `None` on the last page.
     #[getter]
     pub fn next_page(&self) -> Option<String> {
         self.header("next_page")
     }
 
-    /// The URL of the last page (`last_page` header), or `None`.
+    /// The URL of the last page (`last_page` header).
     #[getter]
     pub fn last_page(&self) -> Option<String> {
         self.header("last_page")
     }
 
-    /// The URL of this page (`self_link` header), or `None`.
+    /// The URL of this page (`self_link` header).
     #[getter]
     pub fn self_link(&self) -> Option<String> {
         self.header("self_link")
     }
 
-    /// The offset of this page (`current_offset` header), as the server sent it, or `None`.
+    /// The offset of this page (`current_offset` header), as the server sent it.
     #[getter]
     pub fn current_offset(&self) -> Option<String> {
         self.header("current_offset")
     }
 
-    /// The page size (`current_limit` header), as the server sent it, or `None`.
+    /// The page size (`current_limit` header), as the server sent it.
     #[getter]
     pub fn current_limit(&self) -> Option<String> {
         self.header("current_limit")
     }
 
-    /// All response headers as a new `dict`, by lowercase name. Repeated headers are joined
-    /// with `", "`; headers whose values aren't text are left out.
+    /// All response headers by lowercase name; repeated ones joined with `", "`.
+    ///
+    /// They can hold cookies, so don't log them.
     #[pyo3(name = "headers")]
     pub fn headers_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
@@ -98,6 +101,7 @@ impl PyToolPage {
         Ok(dict)
     }
 
+    /// Gives the number of tools on the page.
     fn __len__(&self) -> usize {
         self.tools.len()
     }
