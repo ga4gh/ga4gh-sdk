@@ -37,7 +37,8 @@ pub mod utils;
 
 pub use error::{Error, Result};
 
-/// HTTP types used by the public transport API.
+/// HTTP types used by the public transport API: reqwest 0.12, whose `http`
+/// types are those of `http` 1.
 pub use reqwest;
 
 #[cfg(feature = "workflow-contracts")]
