@@ -30,7 +30,7 @@ percent-encoding = "2"
 # (`default-tls`): reqwest prefers it over the rustls that object_store enables.
 reqwest = { version = "0.12", features = ["stream"] }
 # S3 downloads, using object_store's AWS configuration and credential chain.
-object_store = { version = "0.12", default-features = false, features = ["aws"] }
+object_store = { version = "0.14", default-features = false, features = ["aws"] }
 
 [features]
 # Runs the CLI against Starter Kit WES; see tests/README.md.
