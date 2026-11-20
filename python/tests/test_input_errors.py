@@ -30,6 +30,12 @@ class InputErrorsTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     getattr(transport, method)(*args)
 
+    def test_transport_error_omits_query_and_source_text(self):
+        transport = Transport(Configuration("http://127.0.0.1:1"))
+        with self.assertRaises(RuntimeError) as caught:
+            transport.get("tasks?token=SENTINEL")
+        self.assertEqual(str(caught.exception), "GET request failed: HTTP connection failed")
+
     @unittest.skipUnless(os.name == "posix", "HOME controls the config path on Unix")
     def test_missing_configuration_names_file(self):
         with tempfile.TemporaryDirectory() as home, patch.dict("os.environ", {"HOME": home}):
