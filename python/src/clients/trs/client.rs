@@ -23,11 +23,17 @@ use pyo3::types::{PyBytes, PyDict, PyTuple, PyType};
 
 /// A TRS client (TRS 2.0.1 and 2.0.2).
 ///
-/// `TRS(config)` reads the service info and selects the TRS version to read responses with,
-/// as the Rust client does. Subclass it to add endpoints, using `self.transport`. The public
-/// `inner` preserves the Rust extension API.
+/// `api_version` is `"auto"`, `"strict"`, `"2.0.1"` or `"2.0.2"`; `tag_filter` is
+/// `"auto"`, `"enabled"` or `"disabled"`. `discovery=False` skips the service info and
+/// needs an explicit `api_version`.
+///
+/// IDs, version IDs and relative paths are sent unchanged, as one percent-encoded URL path
+/// segment each, so IDs such as Dockstore's `#workflow/github.com/org/repo` work. Empty
+/// values, `.` and `..` raise `ValueError` before a request. Failed requests, such as for
+/// a missing tool (404), and responses that don't fit the TRS models raise `RuntimeError`.
 #[pyclass(name = "TRS", module = "ga4gh_sdk", subclass)]
 pub struct PyTRS {
+    /// The library client, for Rust extension crates.
     pub inner: TRS,
 }
 
@@ -110,22 +116,25 @@ impl PyTRS {
             .map(str::to_owned)
     }
 
-    /// Where `api_version` comes from: `"declared"` (the service info), `"caller"` (the
-    /// `api_version` argument) or `"baseline"` (an unknown declared version; read as 2.0.1).
+    /// Where `api_version` comes from: `"declared"`, `"caller"` or `"baseline"`.
+    ///
+    /// `"baseline"` means that the service declared an unknown version, or none, and is
+    /// read as 2.0.1 without a check that this works.
     #[getter]
     fn version_source(&self) -> &'static str {
         source_name(self.inner.compatibility().selection().source())
     }
 
-    /// Whether `list_tools(tags=...)` may be sent: `"specified"` (TRS 2.0.2),
-    /// `"caller_enabled"`, or not: `"not_specified"`, `"caller_disabled"`, `"unknown"`.
+    /// Whether `list_tools(tags=...)` may be sent.
+    ///
+    /// It may if this is `"specified"` (TRS 2.0.2) or `"caller_enabled"`, and may not if
+    /// it is `"not_specified"`, `"caller_disabled"` or `"unknown"`.
     #[getter]
     fn tag_filter(&self) -> &'static str {
         support_name(self.inner.compatibility().tag_filter())
     }
 
-    /// The service info read when the client was built, as a `dict`, or `None` without
-    /// discovery.
+    /// The service info read when the client was built, or `None` without discovery.
     #[getter]
     fn discovered_service_info(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         match self.inner.discovered_service_info() {
@@ -134,13 +143,25 @@ impl PyTRS {
         }
     }
 
-    /// Reads the service info again, as a `dict`.
+    /// Reads the service info again.
+    ///
+    /// Returns:
+    ///     The service info as a `dict`.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed.
     pub fn service_info(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let service = request(py, "get service info", || self.inner.service_info())?;
         to_python(py, &to_raw(&service)?)
     }
 
-    /// Lists the tool classes of the registry, as `dict`s.
+    /// Lists the registry's tool classes.
+    ///
+    /// Returns:
+    ///     The tool classes as `dict`s, such as `{"id": "1", "name": "Workflow"}`.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed.
     pub fn list_tool_classes(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
         let classes = request(py, "list tool classes", || self.inner.list_tool_classes())?;
         classes
@@ -149,11 +170,34 @@ impl PyTRS {
             .collect()
     }
 
-    /// Lists tools, one page at a time, as a `ToolPage`.
+    /// Lists tools, one page at a time; unset filters are not sent.
     ///
-    /// All filters are optional. `tags` is a list of tags; the server returns tools with all
-    /// of them. `offset` is the server's start of the page, as a `str`; follow
-    /// `ToolPage.next_page` with `next_tools_page()` instead where the server sends it.
+    /// Requested filters are never dropped silently.
+    ///
+    /// Args:
+    ///     id: A tool ID.
+    ///     alias: An alias of a tool.
+    ///     tool_class: A tool class name, such as `"Workflow"`.
+    ///     descriptor_type: A descriptor type, such as `"CWL"`.
+    ///     registry: The image registry of the tools' containers.
+    ///     organization: The publishing organization.
+    ///     name: The image name.
+    ///     toolname: The tool's name.
+    ///     description: Text in the tool's description.
+    ///     author: An author.
+    ///     checker: Whether to list checker tools.
+    ///     tags: Tags that the tools have (TRS 2.0.2); sent as one comma-separated value.
+    ///     offset: Where the page starts, as the server's paging gives it.
+    ///     limit: The most tools on the page, between 1 and 2147483647.
+    ///
+    /// Returns:
+    ///     The first or requested page.
+    ///
+    /// Raises:
+    ///     ValueError: `limit` is out of range, `descriptor_type` is empty, `.` or `..`,
+    ///         a tag is empty or contains a comma, or `tags` is given while
+    ///         `tag_filter` doesn't allow it.
+    ///     RuntimeError: The request failed.
     #[pyo3(signature = (
         *, id=None, alias=None, tool_class=None, descriptor_type=None, registry=None,
         organization=None, name=None, toolname=None, description=None, author=None,
@@ -218,10 +262,21 @@ impl PyTRS {
         PyToolPage::new(page)
     }
 
-    /// Gets the page of tools at `next_page`, the URL that `ToolPage.next_page` gives.
+    /// Gets the page at `ToolPage.next_page`.
     ///
-    /// The URL must point to the tools endpoint of the client's API root; others raise
-    /// `RuntimeError` before a request, so credentials never go to another server.
+    /// Only URLs of the tools endpoint of the client's API root are followed, so
+    /// credentials never go to another server.
+    ///
+    /// Args:
+    ///     next_page: The `next_page` URL of the previous page.
+    ///
+    /// Returns:
+    ///     The next page.
+    ///
+    /// Raises:
+    ///     ValueError: `next_page` is empty.
+    ///     RuntimeError: The URL is not at the client's tools endpoint (before a request),
+    ///         or the request failed.
     pub fn next_tools_page(&self, py: Python<'_>, next_page: &str) -> PyResult<PyToolPage> {
         if next_page.is_empty() {
             return Err(PyValueError::new_err("next_page must not be empty"));
@@ -233,6 +288,16 @@ impl PyTRS {
     }
 
     /// Gets a tool, with its versions.
+    ///
+    /// Args:
+    ///     id: The tool's ID.
+    ///
+    /// Returns:
+    ///     The tool.
+    ///
+    /// Raises:
+    ///     ValueError: `id` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed, for example because the tool doesn't exist.
     pub fn get_tool(&self, py: Python<'_>, id: &str) -> PyResult<PyTool> {
         require_id(id, "tool ID")?;
         let tool = request(py, "get tool", || self.inner.get_tool(id))?;
@@ -240,6 +305,16 @@ impl PyTRS {
     }
 
     /// Lists the versions of a tool.
+    ///
+    /// Args:
+    ///     id: The tool's ID.
+    ///
+    /// Returns:
+    ///     The versions.
+    ///
+    /// Raises:
+    ///     ValueError: `id` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed.
     pub fn list_versions(&self, py: Python<'_>, id: &str) -> PyResult<Vec<PyToolVersion>> {
         require_id(id, "tool ID")?;
         let versions = request(py, "list tool versions", || self.inner.list_versions(id))?;
@@ -247,6 +322,17 @@ impl PyTRS {
     }
 
     /// Gets one version of a tool.
+    ///
+    /// Args:
+    ///     id: The tool's ID.
+    ///     version_id: The version's ID; some registries, such as Dockstore, take its name.
+    ///
+    /// Returns:
+    ///     The version.
+    ///
+    /// Raises:
+    ///     ValueError: An ID is empty, `.` or `..`.
+    ///     RuntimeError: The request failed.
     pub fn get_version(
         &self,
         py: Python<'_>,
@@ -260,11 +346,22 @@ impl PyTRS {
         PyToolVersion::new(version)
     }
 
-    /// Gets the primary descriptor of a tool version, or the file at `relative_path` below
-    /// it, as a `FileWrapper`.
+    /// Gets the primary descriptor, or the file at `relative_path` below it.
     ///
-    /// `descriptor_type` is a TRS descriptor type, such as `"CWL"`, or a `PLAIN_` type, such
-    /// as `"PLAIN_CWL"`, for which the server sends the bare file.
+    /// Args:
+    ///     id: The tool's ID.
+    ///     version_id: The version's ID.
+    ///     descriptor_type: A TRS descriptor type, such as `"CWL"`, `"WDL"`, `"NFL"`,
+    ///         `"GALAXY"` or `"SMK"`; or `"PLAIN_CWL"` and so on for the bare file, which
+    ///         comes as a `FileWrapper` with only `content`. Types are sent as given.
+    ///     relative_path: The path of another file, relative to the primary descriptor.
+    ///
+    /// Returns:
+    ///     The file.
+    ///
+    /// Raises:
+    ///     ValueError: An ID, `descriptor_type` or `relative_path` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed.
     #[pyo3(signature = (id, version_id, descriptor_type, relative_path=None))]
     pub fn get_descriptor(
         &self,
@@ -296,9 +393,20 @@ impl PyTRS {
         PyFileWrapper::new(file)
     }
 
-    /// Lists the test parameter files of a tool version, as `FileWrapper`s.
+    /// Lists the test parameter files of a tool version.
     ///
-    /// For `PLAIN_` types, a bare test file comes as one `FileWrapper` with only `content`.
+    /// Args:
+    ///     id: The tool's ID.
+    ///     version_id: The version's ID.
+    ///     descriptor_type: A descriptor type, such as `"CWL"`; for a `PLAIN_` type, a bare
+    ///         test file comes as one `FileWrapper` with only `content`.
+    ///
+    /// Returns:
+    ///     The test files.
+    ///
+    /// Raises:
+    ///     ValueError: An ID or `descriptor_type` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed.
     pub fn list_tests(
         &self,
         py: Python<'_>,
@@ -314,7 +422,19 @@ impl PyTRS {
         files.into_iter().map(PyFileWrapper::new).collect()
     }
 
-    /// Lists the files of a tool version with their paths and file types, as `ToolFile`s.
+    /// Lists the files of a tool version, with their paths and file types.
+    ///
+    /// Args:
+    ///     id: The tool's ID.
+    ///     version_id: The version's ID.
+    ///     descriptor_type: A descriptor type without `PLAIN_`, such as `"CWL"`.
+    ///
+    /// Returns:
+    ///     The files.
+    ///
+    /// Raises:
+    ///     ValueError: An ID or `descriptor_type` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed.
     pub fn list_files(
         &self,
         py: Python<'_>,
@@ -330,10 +450,24 @@ impl PyTRS {
         files.into_iter().map(PyToolFile::new).collect()
     }
 
-    /// Downloads all files of a tool version as one ZIP archive, as `bytes`.
+    /// Downloads the version's files as one ZIP archive of at most `limit` bytes.
     ///
-    /// The archive is read into memory, at most `limit` bytes (`None`: 64 MiB); a larger
-    /// archive, or a response that isn't a ZIP archive, raises `RuntimeError`.
+    /// The archive is read into memory; it isn't extracted or checked further.
+    ///
+    /// Args:
+    ///     id: The tool's ID.
+    ///     version_id: The version's ID.
+    ///     descriptor_type: A descriptor type without `PLAIN_`, such as `"CWL"`.
+    ///     limit: The most bytes to read; `None` means 64 MiB (67108864 bytes).
+    ///
+    /// Returns:
+    ///     The archive.
+    ///
+    /// Raises:
+    ///     ValueError: An ID or `descriptor_type` is empty, `.` or `..`, or `limit` is
+    ///         below 1.
+    ///     RuntimeError: The request failed, the archive is larger than `limit`, or the
+    ///         response isn't a ZIP archive.
     #[pyo3(signature = (id, version_id, descriptor_type, limit=None))]
     pub fn get_files_zip<'py>(
         &self,
@@ -357,8 +491,18 @@ impl PyTRS {
         Ok(PyBytes::new(py, &archive))
     }
 
-    /// Gets the container specifications, such as Dockerfiles, of a tool version, as
-    /// `FileWrapper`s.
+    /// Gets the container specifications, such as Dockerfiles, of a tool version.
+    ///
+    /// Args:
+    ///     id: The tool's ID.
+    ///     version_id: The version's ID.
+    ///
+    /// Returns:
+    ///     The container files.
+    ///
+    /// Raises:
+    ///     ValueError: An ID is empty, `.` or `..`.
+    ///     RuntimeError: The request failed.
     pub fn get_containerfiles(
         &self,
         py: Python<'_>,

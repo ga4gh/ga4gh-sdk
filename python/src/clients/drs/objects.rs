@@ -10,8 +10,8 @@ use serde_json::Value;
 
 /// A DRS object's metadata, as returned by the server.
 ///
-/// `json()` and `to_dict()` return the object's JSON as received, including fields that the
-/// DRS models don't know.
+/// Keeps the object's full JSON, including fields that the DRS models don't know.
+/// Nested values, such as `access_methods`, come as `dict`s and `list`s.
 #[pyclass(name = "DrsObject", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyDrsObject {
@@ -39,77 +39,91 @@ impl PyDrsObject {
 
 #[pymethods]
 impl PyDrsObject {
+    /// The object's ID.
     #[getter]
     fn id(&self) -> String {
         self.inner().id.clone()
     }
 
+    /// The object's name, such as a file name.
     #[getter]
     fn name(&self) -> Option<String> {
         self.inner().name.clone()
     }
 
+    /// The object's `drs://` URI.
     #[getter]
     fn self_uri(&self) -> String {
         self.inner().self_uri.clone()
     }
 
+    /// The object's size in bytes; for a bundle, the sum of its contents.
     #[getter]
     fn size(&self) -> i64 {
         self.inner().size
     }
 
+    /// When the object was created, as an RFC 3339 timestamp.
     #[getter]
     fn created_time(&self) -> String {
         self.inner().created_time.clone()
     }
 
+    /// When the object was last updated, as an RFC 3339 timestamp.
     #[getter]
     fn updated_time(&self) -> Option<String> {
         self.inner().updated_time.clone()
     }
 
+    /// The object's version, as the server names it.
     #[getter]
     fn version(&self) -> Option<String> {
         self.inner().version.clone()
     }
 
+    /// The object's media type, such as `"application/json"`.
     #[getter]
     fn mime_type(&self) -> Option<String> {
         self.inner().mime_type.clone()
     }
 
+    /// The object's checksums, as `dict`s with `type` and `checksum`.
     #[getter]
     fn checksums(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "checksums")
     }
 
+    /// The ways to fetch the object's bytes, as `dict`s with `type` and `access_id` or
+    /// `access_url`; `None` for a bundle.
     #[getter]
     fn access_methods(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "access_methods")
     }
 
+    /// For a bundle, the objects that it contains, as `dict`s.
     #[getter]
     fn contents(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "contents")
     }
 
+    /// A description of the object.
     #[getter]
     fn description(&self) -> Option<String> {
         self.inner().description.clone()
     }
 
+    /// Other names of the object.
     #[getter]
     fn aliases(&self) -> Option<Vec<String>> {
         self.inner().aliases.clone()
     }
 
-    /// The object as JSON text, as received.
+    /// Gives the object as JSON text, as received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The object as a new `dict`, as received.
+    /// Gives the object as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }
@@ -122,10 +136,10 @@ impl PyDrsObject {
     }
 }
 
-/// An access URL of a DRS object, as returned by the server.
+/// An access URL of a DRS object.
 ///
 /// The URL and headers may hold credentials, such as a signature or a bearer token, so
-/// `repr()` doesn't show them.
+/// `repr()` doesn't show them; don't log them either.
 #[pyclass(name = "AccessURL", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyAccessURL {
@@ -153,6 +167,7 @@ impl PyAccessURL {
 
 #[pymethods]
 impl PyAccessURL {
+    /// The URL to fetch the object's bytes from.
     #[getter]
     fn url(&self) -> String {
         self.inner().url.clone()
@@ -164,12 +179,12 @@ impl PyAccessURL {
         self.inner().headers.clone()
     }
 
-    /// The access URL as JSON text, as received.
+    /// Gives the access URL as JSON text, as received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The access URL as a new `dict`, as received.
+    /// Gives the access URL as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }
@@ -211,16 +226,19 @@ impl PyBulkAccessURL {
 
 #[pymethods]
 impl PyBulkAccessURL {
+    /// The ID of the object that the URL belongs to.
     #[getter]
     fn drs_object_id(&self) -> Option<String> {
         self.inner().drs_object_id.clone()
     }
 
+    /// The access ID that the URL belongs to.
     #[getter]
     fn drs_access_id(&self) -> Option<String> {
         self.inner().drs_access_id.clone()
     }
 
+    /// The URL to fetch the object's bytes from.
     #[getter]
     fn url(&self) -> String {
         self.inner().url.clone()
@@ -232,12 +250,12 @@ impl PyBulkAccessURL {
         self.inner().headers.clone()
     }
 
-    /// The entry as JSON text, as received.
+    /// Gives the entry as JSON text, as received.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The entry as a new `dict`, as received.
+    /// Gives the entry as a new `dict`, as received.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }

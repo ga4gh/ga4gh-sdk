@@ -18,12 +18,15 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 use serde_json::Value;
 
-/// A DRS client. Subclass it to add endpoints, using `self.transport`.
+/// A DRS client (DRS 1.4) for object metadata and access URLs.
 ///
-/// The public `inner` preserves the Rust extension API and is safe to share
-/// between Python threads while synchronous requests release the GIL.
+/// It reads metadata and access URLs, one at a time or in bulk, and never downloads
+/// object bytes. IDs are sent as one URL path segment each. Subclass it to add
+/// endpoints, using `self.transport`.
 #[pyclass(name = "DRS", module = "ga4gh_sdk", subclass)]
 pub struct PyDRS {
+    /// The library client, for Rust extension crates. It is safe to share between Python
+    /// threads while synchronous requests release the GIL.
     pub inner: DRS,
 }
 
@@ -161,24 +164,53 @@ impl PyDRS {
         }
     }
 
-    /// Gets an object's metadata as a `DrsObject`.
+    /// Gets an object's metadata.
     ///
-    /// If the server is still preparing the object, this raises `RuntimeError`; use
-    /// `get_object_once()` or `resolve_object()` to handle that case.
+    /// Args:
+    ///     object_id: The object's ID.
+    ///
+    /// Returns:
+    ///     The object.
+    ///
+    /// Raises:
+    ///     ValueError: `object_id` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed, the response doesn't fit the DRS models, or
+    ///         the server is still preparing the object; use `get_object_once()` or
+    ///         `resolve_object()` for that case.
     pub fn get_object(&self, py: Python<'_>, object_id: &str) -> PyResult<PyDrsObject> {
         let raw = self.ready(py, object_endpoint(object_id)?, "DRS object")?;
         PyDrsObject::from_json(raw)
     }
 
-    /// Gets the object's complete JSON as a `dict`, without model validation.
+    /// Gets an object's complete JSON, without checking it against the DRS models.
+    ///
     /// This also accepts provider extensions such as `created_time: null`.
+    ///
+    /// Args:
+    ///     object_id: The object's ID.
+    ///
+    /// Returns:
+    ///     The object's JSON as a `dict`.
+    ///
+    /// Raises:
+    ///     ValueError: `object_id` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed or the server is still preparing the object.
     pub fn get_object_raw(&self, py: Python<'_>, object_id: &str) -> PyResult<Py<PyAny>> {
         let raw = self.ready(py, object_endpoint(object_id)?, "DRS object")?;
         response_object(py, &raw)
     }
 
-    /// Asks once for an object: returns a `DrsObject`, or a `PendingResolution` if the
-    /// server is still preparing it.
+    /// Asks once for an object; a pending answer (`202 Accepted`) is not an error.
+    ///
+    /// Args:
+    ///     object_id: The object's ID.
+    ///
+    /// Returns:
+    ///     The object, or a `PendingResolution` if the server is still preparing it.
+    ///
+    /// Raises:
+    ///     ValueError: `object_id` is empty, `.` or `..`.
+    ///     RuntimeError: The request failed or the response doesn't fit the DRS models.
     pub fn get_object_once(&self, py: Python<'_>, object_id: &str) -> PyResult<Py<PyAny>> {
         let answer = self.once(py, object_endpoint(object_id)?, "DRS object")?;
         ready_or_pending(py, answer, PyDrsObject::from_json)
@@ -186,7 +218,20 @@ impl PyDRS {
 
     /// Gets an object, waiting as the server asks while it prepares the object.
     ///
-    /// Gives up after `max_attempts` requests or `timeout` seconds, with `RuntimeError`.
+    /// The wait blocks without the GIL; Ctrl-C takes effect after it returns.
+    ///
+    /// Args:
+    ///     object_id: The object's ID.
+    ///     timeout: The most seconds for all requests and waits.
+    ///     max_attempts: The most requests.
+    ///
+    /// Returns:
+    ///     The object.
+    ///
+    /// Raises:
+    ///     ValueError: `object_id`, `timeout` or `max_attempts` is invalid.
+    ///     RuntimeError: A request failed, or the object wasn't ready within `timeout`
+    ///         seconds or `max_attempts` requests.
     #[pyo3(signature = (object_id, timeout=60.0, max_attempts=5))]
     pub fn resolve_object(
         &self,
@@ -200,11 +245,20 @@ impl PyDRS {
         PyDrsObject::from_json(raw)
     }
 
-    /// Gets an access URL of an object as an `AccessURL`. `access_id` is the `access_id` of
-    /// one of the object's access methods.
+    /// Gets an access URL of an object.
     ///
-    /// If the server is still preparing the URL, this raises `RuntimeError`; use
-    /// `get_access_url_once()` or `resolve_access_url()` to handle that case.
+    /// Args:
+    ///     object_id: The object's ID.
+    ///     access_id: The `access_id` of one of the object's `access_methods`.
+    ///
+    /// Returns:
+    ///     The access URL.
+    ///
+    /// Raises:
+    ///     ValueError: An ID is empty, `.` or `..`.
+    ///     RuntimeError: The request failed, the response doesn't fit the DRS models, or
+    ///         the server is still preparing the URL; use `get_access_url_once()` or
+    ///         `resolve_access_url()` for that case.
     pub fn get_access_url(
         &self,
         py: Python<'_>,
@@ -215,7 +269,18 @@ impl PyDRS {
         PyAccessURL::from_json(raw)
     }
 
-    /// Gets the access URL's complete JSON as a `dict`, without model validation.
+    /// Gets an access URL's complete JSON, without checking it against the DRS models.
+    ///
+    /// Args:
+    ///     object_id: The object's ID.
+    ///     access_id: The `access_id` of one of the object's `access_methods`.
+    ///
+    /// Returns:
+    ///     The access URL's JSON as a `dict`.
+    ///
+    /// Raises:
+    ///     ValueError: An ID is empty, `.` or `..`.
+    ///     RuntimeError: The request failed or the server is still preparing the URL.
     pub fn get_access_url_raw(
         &self,
         py: Python<'_>,
@@ -226,8 +291,18 @@ impl PyDRS {
         response_object(py, &raw)
     }
 
-    /// Asks once for an access URL: returns an `AccessURL`, or a `PendingResolution` if the
-    /// server is still preparing it.
+    /// Asks once for an access URL; a pending answer is not an error.
+    ///
+    /// Args:
+    ///     object_id: The object's ID.
+    ///     access_id: The `access_id` of one of the object's `access_methods`.
+    ///
+    /// Returns:
+    ///     The access URL, or a `PendingResolution` if the server is still preparing it.
+    ///
+    /// Raises:
+    ///     ValueError: An ID is empty, `.` or `..`.
+    ///     RuntimeError: The request failed or the response doesn't fit the DRS models.
     pub fn get_access_url_once(
         &self,
         py: Python<'_>,
@@ -240,7 +315,19 @@ impl PyDRS {
 
     /// Gets an access URL, waiting as the server asks while it prepares the URL.
     ///
-    /// Gives up after `max_attempts` requests or `timeout` seconds, with `RuntimeError`.
+    /// Args:
+    ///     object_id: The object's ID.
+    ///     access_id: The `access_id` of one of the object's `access_methods`.
+    ///     timeout: The most seconds for all requests and waits.
+    ///     max_attempts: The most requests.
+    ///
+    /// Returns:
+    ///     The access URL.
+    ///
+    /// Raises:
+    ///     ValueError: An ID, `timeout` or `max_attempts` is invalid.
+    ///     RuntimeError: A request failed, or the URL wasn't ready within `timeout`
+    ///         seconds or `max_attempts` requests.
     #[pyo3(signature = (object_id, access_id, timeout=60.0, max_attempts=5))]
     pub fn resolve_access_url(
         &self,
@@ -255,11 +342,22 @@ impl PyDRS {
         PyAccessURL::from_json(raw)
     }
 
-    /// Gets the metadata of several objects with `POST objects` (DRS 1.4).
+    /// Gets the metadata of several objects with `POST objects`.
     ///
-    /// `ids` is an iterable of object IDs; repeated IDs are asked for once. Returns a
-    /// `BulkReport` whose outcomes hold `DrsObject`s. Failures of single IDs or requests
-    /// are in the outcomes; invalid IDs or policies raise `ValueError`.
+    /// Failures of single IDs and of requests are reported in the outcomes, not raised.
+    ///
+    /// Args:
+    ///     ids: The object IDs; repeated IDs are asked for once.
+    ///     passports: GA4GH Passport tokens to send in the request body.
+    ///     policy: Limits of the call; by default `BulkPolicy()`.
+    ///     timeout: The most seconds for the whole call.
+    ///
+    /// Returns:
+    ///     A report with one outcome per distinct ID, holding `DrsObject`s.
+    ///
+    /// Raises:
+    ///     ValueError: An ID, the policy or `timeout` is invalid. An invalid
+    ///         policy is rejected even without IDs.
     #[pyo3(signature = (ids, passports=None, policy=None, timeout=60.0))]
     pub fn get_bulk_objects(
         &self,
@@ -281,8 +379,22 @@ impl PyDRS {
         PyBulkReport::convert(py, report, PyDrsObject::parse)
     }
 
-    /// Like `get_bulk_objects()`, but each resolved entry is a complete JSON `dict`.
-    /// The library still correlates entries by ID and records reply dialects.
+    /// Like `get_bulk_objects()`, but each result is the complete JSON `dict`.
+    ///
+    /// Use it for objects that don't fit the DRS models, such as Gen3 objects with
+    /// `created_time: null`.
+    ///
+    /// Args:
+    ///     ids: The object IDs; repeated IDs are asked for once.
+    ///     passports: GA4GH Passport tokens to send in the request body.
+    ///     policy: Limits of the call; by default `BulkPolicy()`.
+    ///     timeout: The most seconds for the whole call.
+    ///
+    /// Returns:
+    ///     A report with one outcome per distinct ID, holding `dict`s.
+    ///
+    /// Raises:
+    ///     ValueError: An ID, the policy or `timeout` is invalid.
     #[pyo3(signature = (ids, passports=None, policy=None, timeout=60.0))]
     pub fn get_bulk_objects_raw(
         &self,
@@ -304,11 +416,22 @@ impl PyDRS {
         PyBulkReport::convert(py, report, |raw| raw_json(py, raw))
     }
 
-    /// Gets access URLs of several objects with `POST objects/access` (DRS 1.4).
+    /// Gets access URLs of several objects with `POST objects/access`.
     ///
-    /// `pairs` maps object IDs to access IDs, or is an iterable of `(object_id, access_id)`
-    /// pairs; each object may have one access ID per call. Returns a `BulkReport` whose
-    /// outcomes hold `BulkAccessURL`s.
+    /// Failures of single pairs and of requests are reported in the outcomes, not raised.
+    ///
+    /// Args:
+    ///     pairs: Object IDs mapped to access IDs, or `(object_id, access_id)` pairs;
+    ///         one access ID per object per call.
+    ///     passports: GA4GH Passport tokens to send in the request body.
+    ///     policy: Limits of the call; by default `BulkPolicy()`.
+    ///     timeout: The most seconds for the whole call.
+    ///
+    /// Returns:
+    ///     A report with one outcome per distinct pair, holding `BulkAccessURL`s.
+    ///
+    /// Raises:
+    ///     ValueError: A pair, the policy or `timeout` is invalid.
     #[pyo3(signature = (pairs, passports=None, policy=None, timeout=60.0))]
     pub fn get_bulk_access_urls(
         &self,
@@ -324,7 +447,20 @@ impl PyDRS {
         PyBulkReport::convert(py, report, PyBulkAccessURL::parse)
     }
 
-    /// Like `get_bulk_access_urls()`, but each resolved entry is a complete JSON `dict`.
+    /// Like `get_bulk_access_urls()`, but each result is the complete JSON `dict`.
+    ///
+    /// Args:
+    ///     pairs: Object IDs mapped to access IDs, or `(object_id, access_id)` pairs;
+    ///         one access ID per object per call.
+    ///     passports: GA4GH Passport tokens to send in the request body.
+    ///     policy: Limits of the call; by default `BulkPolicy()`.
+    ///     timeout: The most seconds for the whole call.
+    ///
+    /// Returns:
+    ///     A report with one outcome per distinct pair, holding `dict`s.
+    ///
+    /// Raises:
+    ///     ValueError: A pair, the policy or `timeout` is invalid.
     #[pyo3(signature = (pairs, passports=None, policy=None, timeout=60.0))]
     pub fn get_bulk_access_urls_raw(
         &self,

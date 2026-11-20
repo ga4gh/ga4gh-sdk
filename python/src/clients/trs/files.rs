@@ -9,8 +9,8 @@ use serde_json::Value;
 
 /// A descriptor, test or container file: its `content`, or a `url` to fetch it from.
 ///
-/// For `PLAIN_*` descriptor types, the server sends the bare file; it comes as a
-/// `FileWrapper` with only `content` set.
+/// For `PLAIN_*` descriptor types, only `content` is set. `repr()` shows the length of
+/// `content`, not the content.
 #[pyclass(name = "FileWrapper", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyFileWrapper {
@@ -38,16 +38,19 @@ impl PyFileWrapper {
 
 #[pymethods]
 impl PyFileWrapper {
+    /// The file's content.
     #[getter]
     fn content(&self) -> Option<String> {
         self.inner().content.clone()
     }
 
+    /// The URL to fetch the file from.
     #[getter]
     fn url(&self) -> Option<String> {
         self.inner().url.clone()
     }
 
+    /// The file's checksums, as `dict`s with `type` and `checksum`.
     #[getter]
     fn checksum(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "checksum")
@@ -59,12 +62,12 @@ impl PyFileWrapper {
         field(py, self.raw(), "image_type")
     }
 
-    /// The file as JSON text.
+    /// Gives the file as JSON text.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The file as a new `dict`.
+    /// Gives the file as a new `dict`.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }
@@ -82,7 +85,7 @@ impl PyFileWrapper {
     }
 }
 
-/// A file of a tool version, from `TRS.list_files()`: its path and file type.
+/// A file of a tool version, from `TRS.list_files()`.
 #[pyclass(name = "ToolFile", module = "ga4gh_sdk", subclass)]
 #[derive(Clone)]
 pub struct PyToolFile {
@@ -110,6 +113,7 @@ impl PyToolFile {
 
 #[pymethods]
 impl PyToolFile {
+    /// The file's path, relative to the primary descriptor.
     #[getter]
     fn path(&self) -> Option<String> {
         self.inner().path.clone()
@@ -121,17 +125,18 @@ impl PyToolFile {
         self.inner().file_type.as_ref().map(ToString::to_string)
     }
 
+    /// The file's checksum, as a `dict` with `type` and `checksum`.
     #[getter]
     fn checksum(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         field(py, self.raw(), "checksum")
     }
 
-    /// The file as JSON text.
+    /// Gives the file as JSON text.
     pub fn json(&self) -> String {
         self.raw().to_string()
     }
 
-    /// The file as a new `dict`.
+    /// Gives the file as a new `dict`.
     pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_python(py, self.raw())
     }

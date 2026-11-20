@@ -1,9 +1,11 @@
 """The type stubs in `ga4gh_sdk.pyi` match the module."""
 
 import ast
+import difflib
 import enum
 import inspect
 import re
+import types
 from pathlib import Path
 
 import pytest
@@ -192,3 +194,37 @@ def test_stub_documents_every_parameter(name):
     for function in documented_functions(stub_class_nodes()[name]):
         documented = sorted(documented_parameters(function))
         assert documented == signature_parameters(function), f"{name}.{function.name}"
+
+
+def runtime_docstrings(name):
+    """Maps the class and each documented stub method of a class to its two docstrings.
+
+    The values are `(stub, runtime)` pairs, keyed by `None` for the class and by method
+    name otherwise. `help()` shows the runtime docstrings: PyO3 builds them from the Rust
+    doc comments, and the classes defined in Python have them in their source. Left out
+    are `__init__`, whose docstring PyO3 doesn't keep (`help()` shows the class's
+    docstring), slots such as `__len__`, which have Python's own docstrings, and
+    attributes and enum members, which carry no docstring of their own at runtime.
+    """
+    node = stub_class_nodes()[name]
+    cls = getattr(ga4gh_sdk, name)
+    pairs = {None: (ast.get_docstring(node), inspect.getdoc(cls))}
+    for function in documented_functions(node):
+        member = vars(cls).get(function.name)
+        if function.name == "__init__" or isinstance(member, types.WrapperDescriptorType):
+            continue
+        doc = inspect.cleandoc(member.__doc__) if member.__doc__ else None
+        pairs[function.name] = (ast.get_docstring(function), doc)
+    return pairs
+
+
+@pytest.mark.parametrize("name", sorted(stub_class_nodes()))
+def test_runtime_docstrings_match_stub(name):
+    # The Python API reference shows the stub's docstrings and `help()` the runtime ones;
+    # copy a changed docstring to the Rust doc comment (or the Python source) word for word.
+    for member, (stub, runtime) in runtime_docstrings(name).items():
+        label = name if member is None else f"{name}.{member}"
+        diff = difflib.unified_diff(
+            (runtime or "").splitlines(), (stub or "").splitlines(), "runtime", "stub", lineterm=""
+        )
+        assert stub == runtime, f"{label}:\n" + "\n".join(diff)

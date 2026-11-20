@@ -2042,7 +2042,10 @@ class Task:
 class WaitTimeoutError(TimeoutError):
     """Raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
 
-    The task goes on running.
+    `id` is the task's ID, and `last_state` its last polled state as a `TesState`, or
+    `None` if no poll succeeded. The wait doesn't cancel the task, which may still be
+    running (if the time ran out while getting an ended task in a view, `last_state` is
+    its final state). Both are `None` on an error raised by other code.
     """
 
     id: str | None
