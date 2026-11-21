@@ -88,11 +88,9 @@ fn assert_error<T>(result: anyhow::Result<T>, expected: &str) {
     assert!(error.to_string().contains(expected), "{error}");
 }
 
-/// A writer that fails on writes that contain `needle` and keeps the rest.
-#[derive(Default)]
+/// A writer that fails on writes that contain `needle` and accepts the rest.
 struct FailingWriter {
     needle: &'static str,
-    written: Vec<u8>,
 }
 
 impl Write for FailingWriter {
@@ -100,7 +98,6 @@ impl Write for FailingWriter {
         if String::from_utf8_lossy(buf).contains(self.needle) {
             return Err(std::io::Error::other("closed"));
         }
-        self.written.extend_from_slice(buf);
         Ok(buf.len())
     }
 
@@ -324,9 +321,11 @@ async fn tes_export_returns_errors_of_the_diagnostics_stream() {
     ] {
         let sub = parse_sub(tes::command(), args);
         let mut stdout = Vec::new();
+        // Matches the checkpoint lines of `write_jsonl` ("Listing stopped
+        // at configured limit; resume checkpoint: " and "Resume checkpoint: "),
+        // but not the failure message before the latter.
         let mut stderr = FailingWriter {
             needle: "esume checkpoint",
-            ..Default::default()
         };
         assert_error(
             tes::export_all(&sub, &config, &mut stdout, &mut stderr).await,
@@ -686,6 +685,8 @@ async fn workflow_commands_report_invalid_inputs() {
 async fn workflow_submit_reports_unreadable_attachments() {
     let mut server = mockito::Server::new_async().await;
     let _info = service_info(&mut server, "", "wes").await;
+    // The attachment is read before the run is submitted.
+    let submission = server.mock("POST", "/runs").expect(0).create_async().await;
     let directory = tempfile::tempdir().unwrap();
     let missing = directory.path().join("main.cwl");
     let attachment = format!("main.cwl={}", missing.display());
@@ -708,4 +709,5 @@ async fn workflow_submit_reports_unreadable_attachments() {
     .await
     .unwrap();
     assert_failure(&output, "No such file");
+    submission.assert_async().await;
 }
