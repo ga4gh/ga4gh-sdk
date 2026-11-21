@@ -146,15 +146,14 @@ On the first push, GitHub creates the `ga4gh-cli` package, connected to this
 repository. Check after the first release that the package is public (the
 package's settings on GitHub, **Change visibility**) and that it inherits
 access from the repository; organization settings can restrict who creates
-public packages. Then replace the sentence starting "No release
-includes the image yet" in `docs/container-image.md` with the first version
-that includes the image.
+public packages.
 
 ## One-time setup
 
 The `ga4gh/ga4gh-sdk` repository already has `pypi` and `testpypi`
 environments limited to `v*` tags. Both require approval by
-`pavelnikonorov` or `uniqueg` and prevent self-approval; neither needs secrets.
+`pavelnikonorov` or `uniqueg`; on `pypi`, the maintainer who pushed the tag
+may approve the deployment, too. Neither needs secrets.
 Two tag rulesets allow only those two users to create `v*` tags and prevent
 updates or deletion. Verify these protections before each release. The CLI
 binaries and the GitHub release need no environment and no secret. The binary
@@ -203,12 +202,32 @@ confirmed.
    ```
 
 3. Approve the deployment to `pypi` in the workflow run once the wheels,
-   CLI binaries and image are built and checked.
-4. When the run has finished, check the image tag and its attestation:
+   CLI binaries and image are built and checked, about 45 minutes after the
+   tag push. Either maintainer may approve, including the one who pushed the
+   tag. The PyPI upload and versioned image tag wait for this approval; the
+   run waits for up to 30 days.
+4. When the run has finished, check the image tag and its attestation. Until
+   the package is public (step 6), your account needs access to the private
+   package and a classic personal access token (PAT) with the `read:packages`
+   scope. Use a temporary Docker configuration so the registry login is
+   removed after the checks. Enter the PAT when prompted; it will not appear
+   in shell history:
 
-   ```sh
-   docker buildx imagetools inspect ghcr.io/ga4gh/ga4gh-cli:0.2.0
-   gh attestation verify oci://ghcr.io/ga4gh/ga4gh-cli:0.2.0 --repo ga4gh/ga4gh-sdk
+   ```bash
+   (
+     set -e
+     export DOCKER_CONFIG
+     DOCKER_CONFIG="$(mktemp -d)"
+     trap 'rm -rf -- "$DOCKER_CONFIG"' EXIT
+     version=VERSION   # for example 0.2.0
+     printf 'GHCR read:packages PAT: ' >&2
+     read -r -s GHCR_TOKEN
+     printf '\n' >&2
+     printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io --username YOUR_USERNAME --password-stdin
+     unset GHCR_TOKEN
+     docker buildx imagetools inspect "ghcr.io/ga4gh/ga4gh-cli:$version"
+     gh attestation verify "oci://ghcr.io/ga4gh/ga4gh-cli:$version" --repo ga4gh/ga4gh-sdk
+   )
    ```
 
 5. Open the draft release, add the curated notes above GitHub's generated

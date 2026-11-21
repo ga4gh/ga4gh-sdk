@@ -21,13 +21,16 @@ executors.
 | Base | Debian 13 (`trixie-slim`), with OpenSSL 3 and the Debian CA certificates |
 | Provenance | A [GitHub build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations) for each published image |
 
-The [Release workflow](../.github/workflows/release.yml) publishes the image
-for each version tag (see the [release guide](releasing.md#cli-image)).
-No release includes the image yet; until one does, build the image yourself
-(see [Building the image](#building-the-image)).
+The [Release workflow](../.github/workflows/release.yml) tags the image for
+upstream PyPI releases starting with `v0.1.0` (see the
+[release guide](releasing.md#cli-image)). Upstream TestPyPI rehearsals do not
+get a versioned image tag. To run an unreleased revision, build the image
+yourself (see [Building the image](#building-the-image)).
 
 Use a version and pin its digest, so that every run uses exactly the same
-image:
+image. Until the package is public, your account needs package access and a
+GHCR login with a classic PAT scoped to `read:packages` (see step 4 of
+[Making a release](releasing.md#making-a-release)):
 
 ```sh
 docker buildx imagetools inspect ghcr.io/ga4gh/ga4gh-cli:0.2.0
@@ -49,8 +52,10 @@ at run time:
 - **Credentials:** keep them out of the image and out of task files. Put a
   token in the config file that you mount, or name an environment variable
   with `oauth_access_token_env` and pass that variable to the container
-  (`--env`, or a Kubernetes Secret). The CLI doesn't send credentials for
-  most commands yet (see [Authentication](../cli/README.md#authentication)).
+  (`--env`, or a Kubernetes Secret). Each service command sends the
+  configured credential to its service, including discovery and submission,
+  so treat the mounted file and the variable as live secrets (see
+  [Authentication](../cli/README.md#authentication)).
 - **Task files and outputs:** mount them under `/work`, the working
   directory, so that relative paths work. Mount output directories writable
   for the container's UID.

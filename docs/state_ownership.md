@@ -304,10 +304,11 @@ below avoids a breaking change without notice:
 3. **Breaking release.** Make the fields private. Release notes list each
    field with its replacement.
 
-The fields of this record were never in a release: the SDK has no tag, and
-no crate or Python package is published under its names. No downstream crate
-can depend on them through a release, so a deprecation release would warn
-nobody. The first release therefore ships steps 1 and 3 together
+The fields of this record were never public in a release: before 0.1.0, the
+SDK had no tag, and no crate or Python package was published under its names.
+No downstream crate could depend on them through a release, so a deprecation
+release would have warned nobody. The first release, 0.1.0, therefore ships
+steps 1 and 3 together
 ([#304](https://github.com/ga4gh/ga4gh-sdk/issues/304)): the accessors, and
 the fields already private. Its release notes list each former public field
 with its replacement (see [Migration](#migration)).
@@ -318,7 +319,7 @@ becomes `tes.transport()` and `task.inner` becomes `task.inner()`. The
 
 ### Status
 
-No release contains these changes yet; the SDK has no tagged release.
+The first release, 0.1.0, contains these changes.
 
 - Done (additive): the accessors
   ([#293](https://github.com/ga4gh/ga4gh-sdk/issues/293)) and

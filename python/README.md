@@ -8,7 +8,7 @@ from `python/` with the virtual environment active.
 
 ## Install from PyPI
 
-Once the first release is published, install it into a CPython 3.11+ environment:
+Install a release into a CPython 3.11+ environment:
 
 ```sh
 python -m pip install ga4gh-sdk
