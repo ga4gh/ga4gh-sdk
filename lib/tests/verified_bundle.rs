@@ -585,8 +585,9 @@ async fn unsupported_checksums_are_explicitly_unverified_only_when_opted_in() {
     assert!(!proof.verified);
 }
 
-/// Prepares the bundle that [`source`] serves under `prefix` with `options`
-/// and returns the error message; panics if preparation succeeds.
+/// Serves `main` and `tool` with [`source`] under `prefix`, prepares the
+/// bundle with `options` and returns the error message; panics if
+/// preparation succeeds.
 async fn prepare_error(
     server: &mut mockito::ServerGuard,
     prefix: &str,
@@ -601,6 +602,21 @@ async fn prepare_error(
         .err()
         .unwrap()
         .to_string()
+}
+
+/// Serves `main` with [`source`] under `prefix` and prepares the bundle
+/// with the default options; panics if preparation fails.
+async fn prepare_ok(server: &mut mockito::ServerGuard, prefix: &str, main: &str) -> PreparedBundle {
+    let (registry, _mocks) = source(server, prefix, main, TOOL, None, None);
+    PreparedBundle::prepare(
+        &registry,
+        request(),
+        &PreparationOptions::default(),
+        &operation(),
+        None,
+    )
+    .await
+    .unwrap()
 }
 
 #[tokio::test]
@@ -749,23 +765,7 @@ async fn equivalent_relative_paths_stage_the_listed_descriptor() {
     let mut server = mockito::Server::new_async().await;
     for (index, reference) in ["./tools/echo.cwl", "tools//echo.cwl"].iter().enumerate() {
         let main = MAIN.replace("tools/echo.cwl", reference);
-        let (registry, _mocks) = source(
-            &mut server,
-            &format!("/relative{index}"),
-            &main,
-            TOOL,
-            None,
-            None,
-        );
-        let prepared = PreparedBundle::prepare(
-            &registry,
-            request(),
-            &PreparationOptions::default(),
-            &operation(),
-            None,
-        )
-        .await
-        .unwrap();
+        let prepared = prepare_ok(&mut server, &format!("/relative{index}"), &main).await;
         let plan = prepared.request_plan();
         assert_eq!(plan.workflow_url, "main.cwl");
         assert_eq!(plan.workflow_type, "CWL");
@@ -789,16 +789,7 @@ async fn several_steps_and_inline_tools_stage_only_listed_references() {
         ),
     );
     assert_ne!(main, MAIN);
-    let (registry, _mocks) = source(&mut server, "/several", &main, TOOL, None, None);
-    let prepared = PreparedBundle::prepare(
-        &registry,
-        request(),
-        &PreparationOptions::default(),
-        &operation(),
-        None,
-    )
-    .await
-    .unwrap();
+    let prepared = prepare_ok(&mut server, "/several", &main).await;
     assert_eq!(
         prepared.staged_files().map(|(p, _)| p).collect::<Vec<_>>(),
         ["main.cwl", "tools/echo.cwl"]
@@ -832,7 +823,12 @@ async fn anonymous_fetch_rejects_error_statuses_and_oversized_bodies() {
         .fetch(&url("/large"), &operation(), 4)
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("limit"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("response exceeds body limit of 4 bytes"),
+        "{error}"
+    );
     missing.assert();
     large.assert();
 }
@@ -859,7 +855,13 @@ async fn anonymous_fetch_truncated_bodies_do_not_expose_signed_url_queries() {
         "http://{address}/descriptor?signature=SIGNED_SECRET"
     ))
     .unwrap();
-    let error = fetcher.fetch(&url, &operation(), 1024).await.unwrap_err();
+    let error = tokio::time::timeout(
+        Duration::from_secs(10),
+        fetcher.fetch(&url, &operation(), 1024),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
     server.await.unwrap();
     assert!(matches!(error, ga4gh_sdk::Error::Transport(_)), "{error:?}");
     assert!(!format!("{error}").contains("SIGNED_SECRET"));

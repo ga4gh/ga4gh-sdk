@@ -1,12 +1,30 @@
 #![cfg(feature = "workflow-contracts")]
-use ga4gh_sdk::clients::wes::models::RunRequest;
-use ga4gh_sdk::workflow::{InvocationIdentity, Pins, Profile};
+use ga4gh_sdk::clients::{
+    serviceinfo::models::{Service, ServiceType},
+    wes::{models::RunRequest, WorkflowAttachment, WES},
+};
+use ga4gh_sdk::utils::{configuration::Configuration, transport::Transport};
+use ga4gh_sdk::workflow::{results::ResultRecord, InvocationIdentity, Pins, Profile};
 use serde_json::{json, Value};
 fn schema() -> Value {
     json!({"$schema":"https://json-schema.org/draft/2020-12/schema", "type":"object", "$defs":{"choice":{"type":"string","enum":["fast","full"]}}, "properties":{"inputs":{"type":"object","properties":{"mode":{"$ref":"#/$defs/choice"},"nested":{"type":"object","properties":{"n":{"type":"integer"}},"required":["n"]}},"required":["mode","nested"]},"outputs":{"type":"object","properties":{"count":{"type":"integer"},"report":{"type":"string","format":"uri","contentMediaType":"text/html","x-ga4gh-ui-widget":"html-viewer"}},"required":["count","report"]}}})
 }
 fn profile(value: Value) -> Profile {
     Profile::from_slice(&serde_json::to_vec(&value).unwrap(), Pins::reference()).unwrap()
+}
+/// Returns a WES client for the API root `base` that skips service-info
+/// discovery.
+fn wes(base: &str) -> WES {
+    WES::without_discovery(
+        Transport::new(&Configuration::new(url::Url::parse(base).unwrap())),
+        Service {
+            r#type: Box::new(ServiceType {
+                artifact: "wes".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
 }
 #[test]
 fn validates_root_refs_and_preserves_values_without_defaults() {
@@ -319,51 +337,53 @@ fn embedded_query_delimiters_are_redacted_in_stored_results() {
     );
 }
 
+/// Returns a JSON metrics comparator with the tolerances `abs` and `rel`
+/// that skips `ignored` pointers, sorts arrays if `unordered` and walks at
+/// most `max_nodes` nodes.
+fn json_metrics(
+    abs: f64,
+    rel: f64,
+    ignored: &[&str],
+    unordered: bool,
+    max_nodes: usize,
+) -> Comparator {
+    Comparator::JsonMetrics {
+        version: 1,
+        absolute_tolerance: abs,
+        relative_tolerance: rel,
+        ignored_pointers: ignored.iter().map(|p| (*p).to_owned()).collect(),
+        unordered_arrays: unordered,
+        max_nodes,
+    }
+}
 fn policy(abs: f64, rel: f64) -> ComparisonPolicy {
     ComparisonPolicy {
         id: "qc-v1".into(),
         version: 1,
-        outputs: BTreeMap::from([(
-            "/count".into(),
-            Comparator::JsonMetrics {
-                version: 1,
-                absolute_tolerance: abs,
-                relative_tolerance: rel,
-                ignored_pointers: vec![],
-                unordered_arrays: false,
-                max_nodes: 100,
-            },
-        )]),
+        outputs: BTreeMap::from([("/count".into(), json_metrics(abs, rel, &[], false, 100))]),
         required_context: vec!["workflow_digest".into(), "schema_digest".into()],
     }
 }
-fn records(
-    a: Value,
-    b: Value,
-) -> (
-    ga4gh_sdk::workflow::results::ResultRecord,
-    ga4gh_sdk::workflow::results::ResultRecord,
-) {
+/// Projects `a` and `b` as the outputs of two runs under the output
+/// contract `outputs` and gives both the same required context.
+fn project_pair(outputs: Value, a: Value, b: Value) -> (ResultRecord, ResultRecord) {
     let mut s = schema();
-    s["properties"]["outputs"]["properties"]["count"] = json!({"type":"number"});
+    s["properties"]["outputs"] = outputs;
     let p = profile(s);
-    let mut a = p
-        .project_results(
-            "a",
-            "COMPLETE",
-            &json!({"count":a,"report":"https://example.org/qc"}),
-        )
-        .unwrap();
-    let mut b = p
-        .project_results(
-            "b",
-            "COMPLETE",
-            &json!({"count":b,"report":"https://example.org/qc"}),
-        )
-        .unwrap();
+    let mut a = p.project_results("a", "COMPLETE", &a).unwrap();
+    let mut b = p.project_results("b", "COMPLETE", &b).unwrap();
     a.context.insert("workflow_digest".into(), "abc".into());
     b.context = a.context.clone();
     (a, b)
+}
+fn records(a: Value, b: Value) -> (ResultRecord, ResultRecord) {
+    let mut outputs = schema()["properties"]["outputs"].clone();
+    outputs["properties"]["count"] = json!({"type":"number"});
+    project_pair(
+        outputs,
+        json!({"count":a,"report":"https://example.org/qc"}),
+        json!({"count":b,"report":"https://example.org/qc"}),
+    )
 }
 #[test]
 fn numeric_zero_boundary_relative_and_nonfinite_policy() {
@@ -1001,30 +1021,13 @@ fn prepare_rejects_blank_identities_and_request_fields() {
 }
 #[tokio::test]
 async fn submit_with_attachments_checks_the_primary_descriptor_digest() {
-    use ga4gh_sdk::{
-        clients::{
-            serviceinfo::models::{Service, ServiceType},
-            wes::{WorkflowAttachment, WES},
-        },
-        utils::{configuration::Configuration, transport::Transport},
-        workflow::digest,
-    };
     let mut server = mockito::Server::new_async().await;
     let submission = server
         .mock("POST", "/runs")
         .with_body(r#"{"run_id":"checked-run"}"#)
         .expect(1)
         .create();
-    let wes = WES::without_discovery(
-        Transport::new(&Configuration::new(url::Url::parse(&server.url()).unwrap())),
-        Service {
-            r#type: Box::new(ServiceType {
-                artifact: "wes".into(),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-    );
+    let wes = wes(&server.url());
     let descriptor = b"class: Workflow\n";
     let p = profile(schema());
     let prepare = |descriptor_digest: String| {
@@ -1049,10 +1052,13 @@ async fn submit_with_attachments_checks_the_primary_descriptor_digest() {
             content: content.to_vec(),
         }]
     };
-    let expected = format!("sha256:{}", digest(descriptor).to_ascii_uppercase());
+    let expected = format!(
+        "sha256:{}",
+        ga4gh_sdk::workflow::digest(descriptor).to_ascii_uppercase()
+    );
     for (prepared, attachments, message) in [
         (
-            prepare(digest(descriptor)),
+            prepare(ga4gh_sdk::workflow::digest(descriptor)),
             attachment("workflow.cwl", descriptor),
             "must use sha256:",
         ),
@@ -1082,25 +1088,12 @@ async fn submit_with_attachments_checks_the_primary_descriptor_digest() {
 }
 /// Projects `a` and `b` as the `count` output of two runs whose contract
 /// accepts any JSON value there, with the same required context.
-fn any_records(
-    a: Value,
-    b: Value,
-) -> (
-    ga4gh_sdk::workflow::results::ResultRecord,
-    ga4gh_sdk::workflow::results::ResultRecord,
-) {
-    let mut s = schema();
-    s["properties"]["outputs"] = json!({"type":"object","properties":{"count":{}}});
-    let p = profile(s);
-    let mut a = p
-        .project_results("a", "COMPLETE", &json!({"count":a}))
-        .unwrap();
-    let mut b = p
-        .project_results("b", "COMPLETE", &json!({"count":b}))
-        .unwrap();
-    a.context.insert("workflow_digest".into(), "abc".into());
-    b.context = a.context.clone();
-    (a, b)
+fn any_records(a: Value, b: Value) -> (ResultRecord, ResultRecord) {
+    project_pair(
+        json!({"type":"object","properties":{"count":{}}}),
+        json!({"count":a}),
+        json!({"count":b}),
+    )
 }
 /// Compares the `count` outputs `a` and `b` at `pointer` with exact
 /// tolerances, skipping `ignored` pointers, sorting arrays if `unordered`
@@ -1117,14 +1110,7 @@ fn metric_outcome(
     let mut policy = policy(0., 0.);
     policy.outputs = BTreeMap::from([(
         pointer.into(),
-        Comparator::JsonMetrics {
-            version: 1,
-            absolute_tolerance: 0.,
-            relative_tolerance: 0.,
-            ignored_pointers: ignored.iter().map(|p| (*p).to_owned()).collect(),
-            unordered_arrays: unordered,
-            max_nodes,
-        },
+        json_metrics(0., 0., ignored, unordered, max_nodes),
     )]);
     policy.compare(&a, &b).unwrap().outputs[pointer].clone()
 }
