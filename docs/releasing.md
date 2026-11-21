@@ -207,13 +207,18 @@ confirmed.
    tag. The PyPI upload and versioned image tag wait for this approval; the
    run waits for up to 30 days.
 4. When the run has finished, check the image tag and its attestation. Until
-   the package is public (step 6), log in first:
+   the package is public (step 6), log in first with a token that has the
+   `read:packages` scope; if `gh auth status` doesn't list it, add it with
+   `gh auth refresh --scopes read:packages`. Without a Docker credential
+   helper, `docker login` stores the token in Docker's config file, so log out
+   again after the checks:
 
    ```sh
    version=VERSION   # for example 0.2.0
    gh auth token | docker login ghcr.io --username YOUR_USERNAME --password-stdin
    docker buildx imagetools inspect "ghcr.io/ga4gh/ga4gh-cli:$version"
    gh attestation verify "oci://ghcr.io/ga4gh/ga4gh-cli:$version" --repo ga4gh/ga4gh-sdk
+   docker logout ghcr.io
    ```
 
 5. Open the draft release, add the curated notes above GitHub's generated
