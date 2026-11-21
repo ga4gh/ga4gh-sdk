@@ -28,8 +28,8 @@ get a versioned image tag. To run an unreleased revision, build the image
 yourself (see [Building the image](#building-the-image)).
 
 Use a version and pin its digest, so that every run uses exactly the same
-image. Until the package is public, pulling or inspecting it needs a GHCR
-login with a token that can read packages (see step 4 of
+image. Until the package is public, your account needs package access and a
+GHCR login with a classic PAT scoped to `read:packages` (see step 4 of
 [Making a release](releasing.md#making-a-release)):
 
 ```sh

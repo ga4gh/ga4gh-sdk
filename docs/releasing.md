@@ -207,18 +207,27 @@ confirmed.
    tag. The PyPI upload and versioned image tag wait for this approval; the
    run waits for up to 30 days.
 4. When the run has finished, check the image tag and its attestation. Until
-   the package is public (step 6), log in first with a token that has the
-   `read:packages` scope; if `gh auth status` doesn't list it, add it with
-   `gh auth refresh --scopes read:packages`. Without a Docker credential
-   helper, `docker login` stores the token in Docker's config file, so log out
-   again after the checks:
+   the package is public (step 6), your account needs access to the private
+   package and a classic personal access token (PAT) with the `read:packages`
+   scope. Use a temporary Docker configuration so the registry login is
+   removed after the checks. Enter the PAT when prompted; it will not appear
+   in shell history:
 
-   ```sh
-   version=VERSION   # for example 0.2.0
-   gh auth token | docker login ghcr.io --username YOUR_USERNAME --password-stdin
-   docker buildx imagetools inspect "ghcr.io/ga4gh/ga4gh-cli:$version"
-   gh attestation verify "oci://ghcr.io/ga4gh/ga4gh-cli:$version" --repo ga4gh/ga4gh-sdk
-   docker logout ghcr.io
+   ```bash
+   (
+     set -e
+     export DOCKER_CONFIG
+     DOCKER_CONFIG="$(mktemp -d)"
+     trap 'rm -rf -- "$DOCKER_CONFIG"' EXIT
+     version=VERSION   # for example 0.2.0
+     printf 'GHCR read:packages PAT: ' >&2
+     read -r -s GHCR_TOKEN
+     printf '\n' >&2
+     printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io --username YOUR_USERNAME --password-stdin
+     unset GHCR_TOKEN
+     docker buildx imagetools inspect "ghcr.io/ga4gh/ga4gh-cli:$version"
+     gh attestation verify "oci://ghcr.io/ga4gh/ga4gh-cli:$version" --repo ga4gh/ga4gh-sdk
+   )
    ```
 
 5. Open the draft release, add the curated notes above GitHub's generated
