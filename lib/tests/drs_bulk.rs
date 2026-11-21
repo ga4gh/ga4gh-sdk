@@ -759,7 +759,9 @@ fn errors_of(report: &BulkReport<DrsObject>, id: &str) -> Vec<String> {
     assert_eq!(report.outcomes.len(), 1);
     report.outcomes[&key(id)].errors.clone()
 }
-/// A DRS client at a loopback address that refuses connections.
+/// A DRS client at a loopback address that refuses connections: the port
+/// of a listener that is closed again. Another process could take the port
+/// in between; on a test runner that is unlikely.
 async fn unreachable_client() -> DRS {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -912,7 +914,7 @@ async fn the_deadline_also_bounds_reading_the_body() {
         .with_chunked_body(|writer| {
             writer.write_all(b"{")?;
             writer.flush()?;
-            std::thread::sleep(Duration::from_millis(1500));
+            std::thread::sleep(Duration::from_millis(1000));
             writer.write_all(b"}")
         })
         .expect(1)
@@ -922,7 +924,7 @@ async fn the_deadline_also_bounds_reading_the_body() {
             &["a".into()],
             &[],
             &BulkPolicy::default(),
-            &Operation::new(Duration::from_millis(500)),
+            &Operation::new(Duration::from_millis(300)),
         )
         .await
         .unwrap();

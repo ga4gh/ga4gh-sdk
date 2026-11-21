@@ -13,6 +13,14 @@ use ga4gh_sdk::{
 };
 use serde_json::json;
 use std::time::Duration;
+/// The URI of the object that the mock server's planner tests serve.
+const URI: &str = "drs://drs.example/id";
+/// The access choice error that `error` wraps; panics if it wraps another.
+fn choice(error: &ga4gh_sdk::Error) -> &AccessChoiceError {
+    error
+        .downcast_ref::<AccessChoiceError>()
+        .unwrap_or_else(|| panic!("not an access choice error: {error}"))
+}
 fn budget() -> Operation {
     Operation::new(Duration::from_secs(3))
 }
@@ -253,7 +261,7 @@ fn uri_errors_explain_themselves_and_the_default_root_follows_the_host() {
     );
 }
 #[tokio::test]
-async fn unmapped_hosts_get_an_anonymous_client_at_the_default_root() {
+async fn unmapped_hosts_stop_before_any_request_when_cancelled() {
     // A cancelled operation stops before any request leaves the client
     let operation = budget();
     operation.cancellation.cancel();
@@ -295,37 +303,37 @@ async fn method_index_overrides_the_preferences() {
     };
     // The index wins over the protocol preference
     let plan = resolver
-        .access_plan("drs://drs.example/id", &preferences(1), &budget(), 1)
+        .access_plan(URI, &preferences(1), &budget(), 1)
         .await
         .unwrap();
     assert_eq!(plan.method, Type::S3);
     assert_eq!(plan.region.as_deref(), Some("west"));
     assert_eq!(plan.url.as_str(), "s3://bucket/second");
-    for (index, expected) in [(2, "Unavailable"), (3, "InvalidOverride")] {
-        let error = resolver
-            .access_plan("drs://drs.example/id", &preferences(index), &budget(), 1)
-            .await
-            .unwrap_err();
-        assert!(error.downcast_ref::<AccessChoiceError>().is_some());
-        assert!(error.to_string().contains(expected), "{error}");
-    }
+    let error = resolver
+        .access_plan(URI, &preferences(2), &budget(), 1)
+        .await
+        .unwrap_err();
+    assert!(matches!(choice(&error), AccessChoiceError::Unavailable));
+    let error = resolver
+        .access_plan(URI, &preferences(3), &budget(), 1)
+        .await
+        .unwrap_err();
+    assert!(matches!(choice(&error), AccessChoiceError::InvalidOverride));
 }
 #[tokio::test]
 async fn invalid_access_urls_and_headers_are_rejected() {
     let mut server = mockito::Server::new_async().await;
     let resolver = resolver(&server);
-    for (access_url, expected) in [
-        (
-            json!({"url":"mailto:someone@example.org"}),
-            "InvalidAccessUrl",
-        ),
+    // The flag says whether the URL is invalid, else a header is
+    for (access_url, invalid_url) in [
+        (json!({"url":"mailto:someone@example.org"}), true),
         (
             json!({"url":"https://store.example/data","headers":["Bad Name: value"]}),
-            "InvalidAccessHeaders",
+            false,
         ),
         (
             json!({"url":"https://store.example/data","headers":["X-Access: line\u{7f}break"]}),
-            "InvalidAccessHeaders",
+            false,
         ),
     ] {
         let request = server
@@ -334,16 +342,20 @@ async fn invalid_access_urls_and_headers_are_rejected() {
             .expect(1)
             .create();
         let error = resolver
-            .access_plan(
-                "drs://drs.example/id",
-                &AccessPreferences::default(),
-                &budget(),
-                1,
-            )
+            .access_plan(URI, &AccessPreferences::default(), &budget(), 1)
             .await
             .unwrap_err();
-        assert!(error.downcast_ref::<AccessChoiceError>().is_some());
-        assert!(error.to_string().contains(expected), "{error}");
+        if invalid_url {
+            assert!(matches!(
+                choice(&error),
+                AccessChoiceError::InvalidAccessUrl
+            ));
+        } else {
+            assert!(matches!(
+                choice(&error),
+                AccessChoiceError::InvalidAccessHeaders
+            ));
+        }
         request.assert();
         request.remove();
     }
@@ -363,11 +375,7 @@ async fn single_step_plans_resolve_access_ids_and_keep_them_pending() {
         .expect(1)
         .create();
     match resolver
-        .access_plan_once(
-            "drs://drs.example/id",
-            &AccessPreferences::default(),
-            &budget(),
-        )
+        .access_plan_once(URI, &AccessPreferences::default(), &budget())
         .await
         .unwrap()
     {
@@ -385,11 +393,7 @@ async fn single_step_plans_resolve_access_ids_and_keep_them_pending() {
         .expect(1)
         .create();
     match resolver
-        .access_plan_once(
-            "drs://drs.example/id",
-            &AccessPreferences::default(),
-            &budget(),
-        )
+        .access_plan_once(URI, &AccessPreferences::default(), &budget())
         .await
         .unwrap()
     {
@@ -409,9 +413,10 @@ async fn both_planners_reject_other_objects_and_methods_without_access() {
             object("other", json!([{"type":"https","access_id":"a1"}])),
             "identifies another object",
         ),
+        // Display of AccessChoiceError::UnsupportedMethods
         (
             object("id", json!([{"type":"https"}])),
-            "UnsupportedMethods",
+            "DRS access selection: UnsupportedMethods",
         ),
     ] {
         let request = server
@@ -420,21 +425,12 @@ async fn both_planners_reject_other_objects_and_methods_without_access() {
             .expect(2)
             .create();
         let once = resolver
-            .access_plan_once(
-                "drs://drs.example/id",
-                &AccessPreferences::default(),
-                &budget(),
-            )
+            .access_plan_once(URI, &AccessPreferences::default(), &budget())
             .await
             .unwrap_err();
         assert!(once.to_string().contains(expected), "{once}");
         let waiting = resolver
-            .access_plan(
-                "drs://drs.example/id",
-                &AccessPreferences::default(),
-                &budget(),
-                1,
-            )
+            .access_plan(URI, &AccessPreferences::default(), &budget(), 1)
             .await
             .unwrap_err();
         assert!(waiting.to_string().contains(expected), "{waiting}");

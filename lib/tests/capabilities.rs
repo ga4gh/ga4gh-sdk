@@ -1,6 +1,6 @@
 use ga4gh_sdk::{
     clients::{
-        capabilities::{CapabilitySnapshot, Support},
+        capabilities::{CapabilitySnapshot, Diagnostic, Support},
         tes::{models::TesTask, TES},
         wes::{models::RunRequest, WES},
     },
@@ -228,15 +228,14 @@ fn cwl_request(
     }
 }
 
-/// The support of `field` in the diagnostics of `request`; panics if the
-/// field wasn't checked.
-fn support_of(snapshot: &CapabilitySnapshot, request: &RunRequest, field: &str) -> Support {
+/// The diagnostic of `field` for `request`; panics if the field wasn't
+/// checked.
+fn diagnostic_of(snapshot: &CapabilitySnapshot, request: &RunRequest, field: &str) -> Diagnostic {
     snapshot
         .validate_wes(request)
         .into_iter()
         .find(|d| d.field == field)
         .unwrap_or_else(|| panic!("no diagnostic for {field}"))
-        .support
 }
 
 #[test]
@@ -247,14 +246,10 @@ fn wes_type_version_is_checked_against_the_advertised_list() {
     );
     let field = "workflow_type_version";
     assert_eq!(
-        support_of(&advertised, &cwl_request("v1.2", None, None), field),
+        diagnostic_of(&advertised, &cwl_request("v1.2", None, None), field).support,
         Support::Supported
     );
-    let unsupported = advertised
-        .validate_wes(&cwl_request("v1.0", None, None))
-        .into_iter()
-        .find(|d| d.field == field)
-        .unwrap();
+    let unsupported = diagnostic_of(&advertised, &cwl_request("v1.0", None, None), field);
     assert_eq!(unsupported.support, Support::Unsupported);
     assert!(unsupported.blocks_strict);
     assert_eq!(unsupported.detail, "requested version v1.0");
@@ -265,7 +260,7 @@ fn wes_type_version_is_checked_against_the_advertised_list() {
     ] {
         let snapshot = CapabilitySnapshot::from_raw(raw, Duration::from_secs(60));
         assert_eq!(
-            support_of(&snapshot, &cwl_request("v1.2", None, None), field),
+            diagnostic_of(&snapshot, &cwl_request("v1.2", None, None), field).support,
             Support::Unknown
         );
     }
@@ -279,18 +274,15 @@ fn wes_engine_is_checked_against_the_advertised_engines() {
     );
     let field = "workflow_engine";
     assert_eq!(
-        support_of(
+        diagnostic_of(
             &advertised,
             &cwl_request("v1.2", Some("cwltool"), None),
             field
-        ),
+        )
+        .support,
         Support::Supported
     );
-    let unsupported = advertised
-        .validate_wes(&cwl_request("v1.2", Some("toil"), None))
-        .into_iter()
-        .find(|d| d.field == field)
-        .unwrap();
+    let unsupported = diagnostic_of(&advertised, &cwl_request("v1.2", Some("toil"), None), field);
     assert_eq!(unsupported.support, Support::Unsupported);
     assert!(unsupported.blocks_strict);
     assert_eq!(unsupported.detail, "requested engine toil");
@@ -303,11 +295,12 @@ fn wes_engine_is_checked_against_the_advertised_engines() {
     for raw in [json!({}), json!({"workflow_engine_versions":{}})] {
         let snapshot = CapabilitySnapshot::from_raw(raw, Duration::from_secs(60));
         assert_eq!(
-            support_of(
+            diagnostic_of(
                 &snapshot,
                 &cwl_request("v1.2", Some("cwltool"), None),
                 field
-            ),
+            )
+            .support,
             Support::Unknown
         );
     }
@@ -345,11 +338,7 @@ fn wes_engine_version_accepts_lists_and_single_strings() {
             Duration::from_secs(60),
         );
         let request = cwl_request("v1.2", Some("cwltool"), Some(version));
-        let diagnostic = snapshot
-            .validate_wes(&request)
-            .into_iter()
-            .find(|d| d.field == field)
-            .unwrap();
+        let diagnostic = diagnostic_of(&snapshot, &request, field);
         assert_eq!(diagnostic.support, expected, "{advertised} vs {version}");
         assert_eq!(diagnostic.blocks_strict, expected == Support::Unsupported);
         assert_eq!(
@@ -363,11 +352,12 @@ fn wes_engine_version_accepts_lists_and_single_strings() {
         Duration::from_secs(60),
     );
     assert_eq!(
-        support_of(
+        diagnostic_of(
             &snapshot,
             &cwl_request("v1.2", Some("toil"), Some("3.1")),
             field
-        ),
+        )
+        .support,
         Support::Unknown
     );
 }
@@ -388,7 +378,8 @@ fn wes_info_parses_only_wes_service_info() {
     assert_eq!(parsed.supported_wes_versions, ["1.1.0"]);
     assert!(parsed.workflow_type_versions.contains_key("CWL"));
     let tes = CapabilitySnapshot::from_raw(service("tes"), Duration::from_secs(60));
-    tes.wes_info().unwrap_err();
+    let error = tes.wes_info().unwrap_err();
+    assert!(error.to_string().contains("missing field"), "{error}");
 }
 
 #[test]
