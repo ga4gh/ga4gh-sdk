@@ -658,7 +658,7 @@ async fn download_s3(
     config: &Configuration,
 ) -> anyhow::Result<u64> {
     use object_store::aws::{AmazonS3Builder, AmazonS3ConfigKey};
-    use object_store::ObjectStore;
+    use object_store::ObjectStoreExt;
 
     let shown = display_url(url.as_str());
     let bucket = url
