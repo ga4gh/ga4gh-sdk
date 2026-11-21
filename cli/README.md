@@ -121,10 +121,11 @@ submission. `workflow submit` uses the WES section and the same policy as
 `wes run`. Conflicting sources, unsupported `api_key` or URL userinfo, and
 invalid tokens fail before a request. An `_env` field can name a variable that
 holds the token. Keep the file private (`chmod 600 ~/.ga4gh-cli/config.json`).
-SDK-owned clients do not follow redirects. See the
+SDK-owned clients do not follow redirects. A section with `oidc` settings
+gets its tokens from the stored login (see
+[Logging in with OpenID Connect](#logging-in-with-openid-connect)). See the
 [authentication guide](../docs/authentication.md) for the source and redirect
-contracts. Dynamic token-provider integration is tracked in
-[#215](https://github.com/ga4gh/ga4gh-sdk/pull/215).
+contracts, and for the token providers of the Rust and Python APIs.
 
 ### Logging in with OpenID Connect
 

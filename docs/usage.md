@@ -400,8 +400,9 @@ contract:
   token.
 
 Python sets a callable with `Configuration.set_token_provider()`; see the
-[Python README](../python/README.md#token-providers). The CLI doesn't use
-token providers.
+[Python README](../python/README.md#token-providers). The CLI uses a token
+provider only for sections with `oidc` settings (see
+[Logging in with OpenID Connect](../cli/README.md#logging-in-with-openid-connect)).
 
 ### ServiceInfo
 
