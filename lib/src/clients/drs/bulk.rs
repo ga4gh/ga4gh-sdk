@@ -518,29 +518,37 @@ impl DRS {
                 queue.push_back((keys[middle..].to_vec(), depth + 1));
                 continue;
             }
-            match reply {
+            // Without a body, every key of the chunk gets the same outcome.
+            let failed: ObjectOutcome<T> = match reply {
                 ChunkReply::Body(body) => {
                     report.merge(correlate(&keys, body, access));
+                    continue;
                 }
-                reply => {
-                    for key in keys {
-                        let mut outcome = ObjectOutcome::default();
-                        match &reply {
-                            ChunkReply::Failure(code) => outcome.failure_codes.push(*code),
-                            ChunkReply::Error(error) => outcome.errors.push(error.clone()),
-                            ChunkReply::Pending(delay) => {
-                                outcome.pending = Some(BulkPending {
-                                    api_root: self.resolution_reference(String::new()).api_root,
-                                    endpoint: if access { "objects/access" } else { "objects" }
-                                        .into(),
-                                    retry_after_secs: *delay,
-                                })
-                            }
-                            ChunkReply::Body(_) => unreachable!(),
-                        }
-                        report.outcomes.insert(key, outcome);
-                    }
-                }
+                ChunkReply::Failure(code) => ObjectOutcome {
+                    failure_codes: vec![code],
+                    ..Default::default()
+                },
+                ChunkReply::Error(error) => ObjectOutcome {
+                    errors: vec![error],
+                    ..Default::default()
+                },
+                ChunkReply::Pending(delay) => ObjectOutcome {
+                    pending: Some(BulkPending {
+                        api_root: self.resolution_reference(String::new()).api_root,
+                        endpoint: if access { "objects/access" } else { "objects" }.into(),
+                        retry_after_secs: delay,
+                    }),
+                    ..Default::default()
+                },
+            };
+            for key in keys {
+                let outcome = ObjectOutcome {
+                    resolved: Vec::new(),
+                    failure_codes: failed.failure_codes.clone(),
+                    pending: failed.pending.clone(),
+                    errors: failed.errors.clone(),
+                };
+                report.outcomes.insert(key, outcome);
             }
         }
         report
