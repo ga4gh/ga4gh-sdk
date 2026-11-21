@@ -1,0 +1,2 @@
+# Optional example runtime; no Rust workspace dependency.
+temporalio==1.20.0

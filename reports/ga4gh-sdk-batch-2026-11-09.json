@@ -1,0 +1,278 @@
+{
+  "format": "ga4gh-sdk-batch-implementation-report",
+  "recorded_at_utc": "2026-11-10T02:27:21.792608+00:00",
+  "repository": "https://github.com/ga4gh/ga4gh-sdk",
+  "source_batch": "ga4gh_sdk_issues.json",
+  "reviewed_main": "c24cc01b37b1be4bc809addaa3a37a04a3f8ef0f",
+  "summary_ru": "Все 12 пунктов реализованы в 6 draft PR; полный объединённый snapshot проверен локально. Слияние и одобрение upstream CI остаются у сопровождающих проекта.",
+  "issues_created": 12,
+  "pull_requests_created": 6,
+  "validated_source_commit": "cfd8ce34f428cba699a0f1f6bb4f582d2391c556",
+  "validation_branch": "https://github.com/superbsky/ga4gh-sdk/tree/test/final-batch-validation",
+  "items": [
+    {
+      "batch_id": "GA4GH-SDK-001",
+      "summary_ru": "Не возвращать успешный Task с пустым ID, не изменять ID сервера и проверять ID в ответе на отмену WES.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/125",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/137",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": []
+    },
+    {
+      "batch_id": "GA4GH-SDK-002",
+      "summary_ru": "Устранить блокировку Python при сетевых вызовах и создание нового Tokio runtime на каждый запрос.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/126",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/138",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": []
+    },
+    {
+      "batch_id": "GA4GH-SDK-003",
+      "summary_ru": "Сохранить HTTP status/headers и бинарные данные; разблокировать TRS pagination/ZIP и корректную обработку DRS.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/127",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/139",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": []
+    },
+    {
+      "batch_id": "GA4GH-SDK-004",
+      "summary_ru": "Обрабатывать отложенную выдачу DRS как Pending с Retry-After, а не как повреждённый JSON.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/128",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/139",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": [
+        "https://github.com/ga4gh/ga4gh-sdk/issues/127"
+      ]
+    },
+    {
+      "batch_id": "GA4GH-SDK-005",
+      "summary_ru": "Ограничить зависшие запросы и добавить безопасные повторы чтения без повторного создания платных jobs.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/129",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/139",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": [
+        "https://github.com/ga4gh/ga4gh-sdk/issues/127"
+      ]
+    },
+    {
+      "batch_id": "GA4GH-SDK-006",
+      "summary_ru": "Использовать реальные возможности TES/WES для проверки совместимости до запуска workflow.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/130",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/140",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": []
+    },
+    {
+      "batch_id": "GA4GH-SDK-007",
+      "summary_ru": "Дать единый надёжный wait API с дедлайном, правильными терминальными состояниями и возобновлением наблюдения.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/131",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/140",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": [
+        "https://github.com/ga4gh/ga4gh-sdk/issues/129"
+      ]
+    },
+    {
+      "batch_id": "GA4GH-SDK-008",
+      "summary_ru": "Перебирать большие списки задач и запусков с backpressure, checkpoint и JSONL без загрузки всего списка в память.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/132",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/140",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": []
+    },
+    {
+      "batch_id": "GA4GH-SDK-009",
+      "summary_ru": "Загружать workflow и вложения потоком, сохраняя структуру импортов и не удерживая весь набор файлов в RAM.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/133",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/140",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": []
+    },
+    {
+      "batch_id": "GA4GH-SDK-010",
+      "summary_ru": "Принимать drs:// URI, выбирать подходящий способ доступа и возвращать URL с нужными headers без смешивания credentials.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/134",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/141",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": [
+        "https://github.com/ga4gh/ga4gh-sdk/issues/128"
+      ]
+    },
+    {
+      "batch_id": "GA4GH-SDK-011",
+      "summary_ru": "Разрешать DRS-объекты пакетами, учитывать лимиты сервиса и сохранять частичные успехи и ошибки по каждому ID.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/135",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/141",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": [
+        "https://github.com/ga4gh/ga4gh-sdk/issues/128",
+        "https://github.com/ga4gh/ga4gh-sdk/issues/129"
+      ]
+    },
+    {
+      "batch_id": "GA4GH-SDK-012",
+      "summary_ru": "Сделать демонстрируемую связку TRS -> проверенный пакет CWL -> WES с импортами, checksums и provenance.",
+      "issue": "https://github.com/ga4gh/ga4gh-sdk/issues/136",
+      "pull_request": "https://github.com/ga4gh/ga4gh-sdk/pull/142",
+      "status": "implemented_and_locally_verified_in_draft_pr",
+      "issue_state": "open",
+      "dependencies": []
+    }
+  ],
+  "pull_requests": [
+    {
+      "number": 137,
+      "url": "https://github.com/ga4gh/ga4gh-sdk/pull/137",
+      "head": "28e4896b7200e2f51f50b6f5484eb9eea2705485",
+      "branch": "fix/execution-acknowledgements",
+      "draft": true,
+      "upstream_ci": {
+        "conclusion": "action_required",
+        "url": "https://github.com/ga4gh/ga4gh-sdk/actions/runs/42739357446"
+      }
+    },
+    {
+      "number": 138,
+      "url": "https://github.com/ga4gh/ga4gh-sdk/pull/138",
+      "head": "aff99993498d09fb5ec9d9e084dfa56add97d94d",
+      "branch": "fix/python-io-runtime",
+      "draft": true,
+      "upstream_ci": {
+        "conclusion": "action_required",
+        "url": "https://github.com/ga4gh/ga4gh-sdk/actions/runs/42742079653"
+      }
+    },
+    {
+      "number": 139,
+      "url": "https://github.com/ga4gh/ga4gh-sdk/pull/139",
+      "head": "c6cab521b237da13f586560a386181db56e27640",
+      "branch": "feat/bounded-response-transport",
+      "draft": true,
+      "upstream_ci": {
+        "conclusion": "action_required",
+        "url": "https://github.com/ga4gh/ga4gh-sdk/actions/runs/42739603382"
+      }
+    },
+    {
+      "number": 140,
+      "url": "https://github.com/ga4gh/ga4gh-sdk/pull/140",
+      "head": "1c95076027f9aed9838a479e1b6828e7206d2da5",
+      "branch": "feat/service-composition",
+      "draft": true,
+      "upstream_ci": {
+        "conclusion": "action_required",
+        "url": "https://github.com/ga4gh/ga4gh-sdk/actions/runs/42741562287"
+      }
+    },
+    {
+      "number": 141,
+      "url": "https://github.com/ga4gh/ga4gh-sdk/pull/141",
+      "head": "8a08e457a1d76252b7ba555b1ed00acc667378e3",
+      "branch": "feat/drs-access-plans",
+      "draft": true,
+      "upstream_ci": {
+        "conclusion": "action_required",
+        "url": "https://github.com/ga4gh/ga4gh-sdk/actions/runs/42741118511"
+      }
+    },
+    {
+      "number": 142,
+      "url": "https://github.com/ga4gh/ga4gh-sdk/pull/142",
+      "head": "b0ca0f2164a52225216285b35d7e454d40b50c65",
+      "branch": "feat/trs-wes-verified-bundle",
+      "draft": true,
+      "upstream_ci": {
+        "conclusion": "action_required",
+        "url": "https://github.com/ga4gh/ga4gh-sdk/actions/runs/42741626664"
+      }
+    }
+  ],
+  "tested_upstream_dependencies": [
+    {
+      "number": 113,
+      "head": "7fee7cfdd7f1876fea2ccdd6b31e7e5032a3bc9f",
+      "url": "https://github.com/ga4gh/ga4gh-sdk/pull/113"
+    },
+    {
+      "number": 117,
+      "head": "d19147bf82441373b081b213ee58fc8f12342cbc",
+      "url": "https://github.com/ga4gh/ga4gh-sdk/pull/117"
+    },
+    {
+      "number": 123,
+      "head": "0842ea6f03061a1511d91f443e0f6f8e0230b4d7",
+      "url": "https://github.com/ga4gh/ga4gh-sdk/pull/123"
+    }
+  ],
+  "validation": {
+    "rust": {
+      "commands": [
+        "cargo fmt --all --check",
+        "cargo clippy --workspace --all-targets --locked",
+        "cargo build --workspace --locked",
+        "cargo test --workspace --locked"
+      ],
+      "passed": 191,
+      "failed": 0,
+      "default_ignored": 3,
+      "includes_doctests": true,
+      "clippy": "passed with existing model/PyO3 warnings tracked separately by #116"
+    },
+    "python": {
+      "command": "maturin develop --locked; pytest -q python/tests",
+      "passed": 14,
+      "subtests_passed": 3
+    },
+    "named_wes_execution": {
+      "command": "tests/run-toil-bundle-integration.sh",
+      "backend": "Toil WES 9.3.0",
+      "state": "COMPLETE",
+      "run_id": "run-10bd3ecd91ee411c8b19c0407288b21d",
+      "output_verified": "verified hello\n",
+      "bundle_sha256": "37d26220e835ade6ebda46abd62824d7ab3de05d7916caeaf7313af6fda90f50",
+      "files": [
+        {
+          "path": "main.cwl",
+          "sha256": "3bce69230a0674b46a46cdfa9bfbea03350d5245c2a8f151fd72e7dab9107f11"
+        },
+        {
+          "path": "tools/echo.cwl",
+          "sha256": "ba2ed382cbb6a19d020bc2e7c26b8e4ffee643a2fd14c9a18e6bdc8715888b42"
+        }
+      ],
+      "trs_source": "controlled protocol fixture",
+      "wes_and_cwl_engine": "real local deployment",
+      "harness_cleanup": "passed"
+    }
+  },
+  "scope_limits": [
+    "GitHub reports action_required for all six fork PRs; workflow execution requires upstream approval. No upstream merge was performed.",
+    "DRS compatibility is verified with pinned DRS 1.4 protocol fixtures; broad real-service compatibility is not claimed.",
+    "The bulk access MVP allows one access ID per object per call and collapses duplicate inputs; no anonymous or singular fallback.",
+    "The bundle MVP supports primary CWL Workflows with static relative run/import/include dependencies. Packed/fragment, external and dynamic dependencies are rejected.",
+    "SHA-256 checksums are verified. Unsupported algorithms are rejected by default or marked unverified on explicit opt-in.",
+    "Toil 9.3.0 requires supplied backend identity because its legacy service-info omits generic identity fields; Starter Kit attachments remain unsupported."
+  ],
+  "suggested_merge_order": [
+    113,
+    117,
+    123,
+    137,
+    138,
+    139,
+    140,
+    141,
+    142
+  ]
+}
