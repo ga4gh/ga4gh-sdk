@@ -199,9 +199,9 @@ jobs:
         if: matrix.suite == 'keycloak' && steps.changes.outputs.run == 'true'
         run: tests/run-keycloak-integration.sh
 
-  # Coverage of the unit tests, without the generated models; the report
-  # goes to the job summary and the `coverage` artifact (LCOV), which the
-  # `codecov` job uploads
+  # Coverage of the Rust unit tests and the Python binding tests, without
+  # the generated models; the report goes to the job summary and the
+  # `coverage` artifact (LCOV), which the `codecov` job uploads
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -217,14 +217,32 @@ jobs:
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cargo-llvm-cov@0.9.1
+      # The lowest supported Python version of the `python` job
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+      # The versions of the `python` job
+      - name: Install Maturin and pytest
+        run: python -m pip install 'maturin==1.16.0' 'pytest==9.0.3'
+      - name: Test the report filter
+        run: python -m pytest utils
       - name: Measure coverage
-        run: make coverage
+        run: make coverage PYTHON=python
       - name: Write job summary
         run: |
           {
             echo '## Coverage'
             echo
-            echo 'Unit tests, without documentation tests and generated models.'
+            echo 'Rust unit tests and Python binding tests, without documentation'
+            echo 'tests and generated models.'
+            echo
+            echo 'Lines as Codecov counts them, without the PyO3 attribute lines:'
+            echo
+            echo '```text'
+            cat coverage/lines.txt
+            echo '```'
+            echo
+            echo 'All metrics of cargo-llvm-cov, with the PyO3 attribute lines:'
             echo
             echo '```text'
             cat coverage/summary.txt
