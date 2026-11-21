@@ -90,7 +90,11 @@ impl Retrieve for LocalResources {
 }
 /// Returns the SHA-256 of `bytes` as 64 lowercase hex digits.
 pub fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    // sha2 0.11 digests no longer implement `LowerHex`.
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 // Explicit recursive sorting also remains stable if a consumer enables serde_json's
 // preserve_order feature through Cargo feature unification.
@@ -494,4 +498,17 @@ impl PreparedInvocation {
 }
 pub(crate) fn pointer_segment(s: &str) -> String {
     s.replace('~', "~0").replace('/', "~1")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::digest;
+
+    #[test]
+    fn digest_is_lowercase_hex_of_sha256() {
+        assert_eq!(
+            digest(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
 }
