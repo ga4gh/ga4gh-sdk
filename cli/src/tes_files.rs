@@ -854,31 +854,27 @@ mod tests {
             {"url": "s3://bucket/prefixed", "path": "/outputs/x", "type": "FILE", "path_prefix": "/outputs/"}
         ]});
         let catalog = Catalog::from_task(&task);
-        // Whether `selector` names a file reference of that kind, and its
-        // description.
-        let classify = |selector: &str, directory: bool| {
+        // Checks that `selector` names a file reference, a directory or
+        // not, with `description`.
+        let check = |selector: &str, directory: bool, description: &str| {
             let item = catalog.find(selector).unwrap();
-            let kind = matches!(
-                item.content,
-                Content::File { is_directory, .. } if is_directory == directory
+            assert!(
+                matches!(
+                    item.content,
+                    Content::File { is_directory, .. } if is_directory == directory
+                ),
+                "{selector}: {:?}",
+                item.content
             );
-            (kind, item.description.clone())
+            assert_eq!(item.description, description, "{selector}");
         };
         for selector in ["output:0", "output:1"] {
-            assert_eq!(
-                classify(selector, false),
-                (true, "declared output file".into()),
-                "{selector}"
-            );
+            check(selector, false, "declared output file");
             let planned = plan(&catalog, &[selector.into()], None, dir.path(), false).unwrap();
             assert_eq!(planned.len(), 1, "{selector}");
         }
         for selector in ["output:2", "output:3", "output:4"] {
-            assert_eq!(
-                classify(selector, true),
-                (true, "declared output directory".into()),
-                "{selector}"
-            );
+            check(selector, true, "declared output directory");
         }
     }
 

@@ -6,9 +6,11 @@
 
 use mockito::{Matcher, Mock};
 use serde_json::{json, Value};
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
@@ -812,8 +814,6 @@ fn force_replaces_a_symlink_without_writing_through_it() {
 
 #[test]
 fn s3_downloads_report_configuration_and_request_errors() {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
     let mut server = mockito::Server::new();
     let prefix = "/save-s3-errors";
     let task = json!({"id": "t1", "state": "COMPLETE", "logs": [{"logs": [], "outputs": [

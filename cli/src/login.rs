@@ -1458,7 +1458,7 @@ mod tests {
     }
 
     #[test]
-    fn a_store_path_without_a_directory_is_relative_to_the_working_directory() {
+    fn write_and_lock_errors_name_a_store_path_without_a_directory() {
         // A NUL byte makes the final step fail without leaving a file behind:
         // the temporary store in `.` is removed, and the lock file is never
         // created.
