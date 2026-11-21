@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "id": "seqera-native-wes",
+  "kind": "seqera",
+  "api_root": {
+    "environment": "SEQERA_PROFILE_API_ROOT",
+    "public_cloud": "https://api.cloud.seqera.io/ga4gh/wes/v1/"
+  },
+  "spec": {
+    "protocol": "WES",
+    "tested": "1.0",
+    "sdk_models": "1.1.0; runtime native profile checks remain explicit"
+  },
+  "implementation": {
+    "name": "Seqera native WES",
+    "version": "observed by operator; server image/revision not exposed",
+    "public_platform_version_observed": "27.1.0-cycle79"
+  },
+  "client": {
+    "name": "ga4gh-sdk seqera_wes_profile example",
+    "revision": "report.sdk_revision",
+    "auth": "Transport::with_client; sensitive reqwest default bearer header; redirects disabled"
+  },
+  "fixtures": "../fixtures/manifest.json",
+  "authentication": {
+    "kind": "operator-owned test account PAT file",
+    "private_context": [
+      "workspaceId",
+      "computeEnvId"
+    ],
+    "offline": "synthetic token/workspace/compute only"
+  },
+  "storage": {
+    "assumptions": "operator-approved compute environment provides its configured work storage",
+    "physical_cleanup": "WES state does not prove worker shutdown"
+  },
+  "features": [
+    "native NFL descriptor",
+    "multipart attachment",
+    "workspaceId and computeEnvId engine parameters",
+    "status",
+    "run details/log decoding",
+    "cancel API outcome"
+  ],
+  "launch_bound": {
+    "max_runs": 1,
+    "cpus": 1,
+    "memory": "512 MB",
+    "process_time": "2 min",
+    "workflow_sleep_seconds": 30,
+    "poll_budget_seconds_max": 60,
+    "cleanup": "cancel same acknowledged ID; retain private ledger on uncertainty; no automatic submission retry"
+  },
+  "references": [
+    "https://docs.seqera.io/platform-api/ga-4-gh-run-create/",
+    "https://github.com/ga4gh/ga4gh-sdk/issues/31",
+    "https://github.com/ga4gh/ga4gh-sdk/pull/142"
+  ],
+  "public_hello": {
+    "url": "https://github.com/nextflow-io/hello",
+    "expected_repository_head": "3c2cdc9823c2b4636e5e3e73e223878099ff5dc9",
+    "revision_enforced": false,
+    "resource_overrides": "not documented for native WES; selected environment policy remains operator-owned",
+    "global_observation_budget": "under 5 min including bounded HTTP calls; cancellation attempted on known acknowledged ID"
+  }
+}

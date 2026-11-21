@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-11-10T03:43:36.923848+00:00",
+  "sdk_revision": "a694463637a00dbd7e8c62b9f8bc925b724097dc",
+  "sdk_dirty": false,
+  "harness_sha256": "6ca5cc6e0952d12362bba1df8f585a3e52b271a9bcf607189631d52d47945133",
+  "sdk_example_sha256": "8ae2b89fa486948a5a6b2d204219fa1b17f2e54b2fcb776de2b56d0a6e79f233",
+  "command": [
+    "tests/interop/run.py",
+    "--profile",
+    "seqera-native-wes",
+    "--offline-seqera",
+    "--out",
+    "tests/interop/reports/final-offline-execution-distinction"
+  ],
+  "profiles": [
+    {
+      "id": "seqera-native-wes",
+      "profile": {
+        "schema_version": 1,
+        "id": "seqera-native-wes",
+        "kind": "seqera",
+        "api_root": {
+          "environment": "SEQERA_PROFILE_API_ROOT",
+          "public_cloud": "https://api.cloud.seqera.io/ga4gh/wes/v1/"
+        },
+        "spec": {
+          "protocol": "WES",
+          "tested": "1.0",
+          "sdk_models": "1.1.0; runtime native profile checks remain explicit"
+        },
+        "implementation": {
+          "name": "Seqera native WES",
+          "version": "observed by operator; server image/revision not exposed",
+          "public_platform_version_observed": "27.1.0-cycle79"
+        },
+        "client": {
+          "name": "ga4gh-sdk seqera_wes_profile example",
+          "revision": "report.sdk_revision",
+          "auth": "Transport::with_client; sensitive reqwest default bearer header; redirects disabled"
+        },
+        "fixtures": "../fixtures/manifest.json",
+        "authentication": {
+          "kind": "operator-owned test account PAT file",
+          "private_context": [
+            "workspaceId",
+            "computeEnvId"
+          ],
+          "offline": "synthetic token/workspace/compute only"
+        },
+        "storage": {
+          "assumptions": "operator-approved compute environment provides its configured work storage",
+          "physical_cleanup": "WES state does not prove worker shutdown"
+        },
+        "features": [
+          "native NFL descriptor",
+          "multipart attachment",
+          "workspaceId and computeEnvId engine parameters",
+          "status",
+          "run details/log decoding",
+          "cancel API outcome"
+        ],
+        "launch_bound": {
+          "max_runs": 1,
+          "cpus": 1,
+          "memory": "512 MB",
+          "process_time": "2 min",
+          "workflow_sleep_seconds": 30,
+          "poll_budget_seconds_max": 60,
+          "cleanup": "cancel same acknowledged ID; retain private ledger on uncertainty; no automatic submission retry"
+        },
+        "references": [
+          "https://docs.seqera.io/platform-api/ga-4-gh-run-create/",
+          "https://github.com/ga4gh/ga4gh-sdk/issues/31",
+          "https://github.com/ga4gh/ga4gh-sdk/pull/142"
+        ],
+        "public_hello": {
+          "url": "https://github.com/nextflow-io/hello",
+          "expected_repository_head": "3c2cdc9823c2b4636e5e3e73e223878099ff5dc9",
+          "revision_enforced": false,
+          "resource_overrides": "not documented for native WES; selected environment policy remains operator-owned",
+          "global_observation_budget": "under 5 min including bounded HTTP calls; cancellation attempted on known acknowledged ID"
+        }
+      },
+      "evidence": "simulated_protocol",
+      "checks": [
+        {
+          "id": "fixtures",
+          "outcome": "passed",
+          "detail": "Public fixture bytes verified and seeded",
+          "observed": {
+            "schema_version": 1,
+            "fixtures": [
+              {
+                "path": "main.nf",
+                "sha256": "b89064c24114e603b17c8ea816ca425c3c2773c578eac2b518b80cdd9e7bb6fc",
+                "size": 387
+              },
+              {
+                "path": "seed.txt",
+                "sha256": "c69c404318a3dbf8df2d67374f244c03cd5969c94ba42ca24b73a54712f594fa",
+                "size": 34
+              },
+              {
+                "path": "seqera.nf",
+                "sha256": "86ed3a8dd1ebfb1132468141b9f89f52e63b2dcfed6ce148657f2f86356a5db9",
+                "size": 246
+              }
+            ]
+          }
+        },
+        {
+          "detail": "Authenticated native WES service-info",
+          "id": "discovery",
+          "observed": {
+            "supported_wes_versions": [
+              "1.0"
+            ],
+            "workflow_engine_versions": {
+              "Nextflow": "26.10.5"
+            },
+            "workflow_type_versions": {
+              "NFL": {
+                "workflow_type_version": [
+                  "DSL2"
+                ]
+              }
+            }
+          },
+          "outcome": "passed"
+        },
+        {
+          "detail": "One SDK multipart request acknowledged with explicit workspace and compute environment",
+          "id": "multipart_launch",
+          "outcome": "passed"
+        },
+        {
+          "detail": "SDK status observation",
+          "id": "status",
+          "observed": {
+            "state": "RUNNING"
+          },
+          "outcome": "passed"
+        },
+        {
+          "detail": "Native WES execution state is separate from acceptance/status/cancellation; this is not physical worker proof",
+          "id": "execution_observed",
+          "observed": {
+            "state": "RUNNING"
+          },
+          "outcome": "passed"
+        },
+        {
+          "detail": "SDK decoded native run details with matching run identity",
+          "id": "run_details",
+          "observed": {
+            "identity_matches": true
+          },
+          "outcome": "passed"
+        },
+        {
+          "detail": "Native log content/reference availability; private text omitted and external signed log URLs not fetched",
+          "id": "logs",
+          "observed": {
+            "run_log_present": true,
+            "task_logs_present": false
+          },
+          "outcome": "passed"
+        },
+        {
+          "detail": "SDK cancellation acknowledgement",
+          "id": "cancel_request",
+          "outcome": "passed"
+        },
+        {
+          "detail": "CANCELED required; completion/cancellation race remains distinct",
+          "id": "cancel_terminal",
+          "observed": {
+            "state": "CANCELED"
+          },
+          "outcome": "passed"
+        },
+        {
+          "detail": "WES protocol does not expose worker termination; operator observation required",
+          "id": "physical_worker_cleanup",
+          "outcome": "unsupported"
+        },
+        {
+          "id": "fixture_multipart_assertions",
+          "outcome": "passed",
+          "detail": "Synthetic server parses MIME, context fields and exact uploaded workflow bytes",
+          "observed": {
+            "accepted": 1,
+            "requests": [
+              [
+                "GET",
+                "/ga4gh/wes/v1/service-info"
+              ],
+              [
+                "POST",
+                "/ga4gh/wes/v1/runs"
+              ],
+              [
+                "GET",
+                "/ga4gh/wes/v1/runs/synthetic-run/status"
+              ],
+              [
+                "GET",
+                "/ga4gh/wes/v1/runs/synthetic-run"
+              ],
+              [
+                "POST",
+                "/ga4gh/wes/v1/runs/synthetic-run/cancel"
+              ],
+              [
+                "GET",
+                "/ga4gh/wes/v1/runs/synthetic-run/status"
+              ]
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

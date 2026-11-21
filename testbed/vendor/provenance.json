@@ -1,0 +1,10 @@
+{
+  "repository": "elixir-cloud-aai/cloud-components",
+  "revision": "44c6f96fbfbeff6892ba0ca3836a7bcbd7c9069a",
+  "path": "packages/ecc-client-ga4gh-wes/src/providers",
+  "sha256": {
+    "rest-wes-provider.ts": "add17afa2c4fb3b2446c408fbcd604ea29e428e63a0c30dde282525675a197bd",
+    "wes-provider.ts": "98dd34b1d67f91fe5c77b9c3ba38e6c77d83c712b337d2faf590f008700da142",
+    "LICENSE": "23c49ef3476bd8f7d1c48cfbccad93f91d991f1cae4bdd81a46e9593707eb4af"
+  }
+}

@@ -1,0 +1,35 @@
+# Funnel for the integration test (`compose.yaml`): the server runs tasks
+# itself (`local`), and their executors as sibling containers through the
+# Docker socket, so the work directory has the same path in Funnel and on the
+# host. `{{.Field}}` is Funnel's own template syntax
+Database: boltdb
+Compute: local
+EventWriters:
+  - boltdb
+Logger:
+  Level: info
+Server:
+  HostName: funnel
+  HTTPPort: "8000"
+  RPCPort: "9090"
+BoltDB:
+  Path: {{LOCAL}}/funnel-horizon3.db
+LocalStorage:
+  AllowedDirs:
+    - {{LOCAL}}/funnel-work
+Worker:
+  WorkDir: {{LOCAL}}/funnel-work
+  PollingRate: 1s
+  LogUpdateRate: 1s
+  Container:
+    DriverCommand: docker
+    RunCommand: |
+      run -i --label ga4gh-h3-interop=task
+      {{if .RemoveContainer}}--rm{{end}}
+      {{.GetEnvArgs}}
+      {{if .Name}}--name "{{.Name}}"{{end}}
+      {{if .Workdir}}--workdir "{{.Workdir}}"{{end}}
+      {{range .Volumes}}--volume "{{.HostPath}}:{{.ContainerPath}}:{{if .Readonly}}ro{{else}}rw{{end}}" {{end}}
+      {{.Image}} {{.Command}}
+    PullCommand: pull {{.Image}}
+    StopCommand: rm -f {{.Name}}

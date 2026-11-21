@@ -1,0 +1,67 @@
+name: ga4gh-h3-interop
+x-protes: &protes
+  image: h3-protes@sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593
+  pull_policy: never
+  environment:
+    CELERY_BROKER_URL: pyamqp://protes:protes@rabbitmq:5672//
+    FOCA_CONFIG_OVERLAY: /interop/protes.yaml
+  volumes:
+    - "{{LOCAL}}:{{LOCAL}}"
+    - "{{LOCAL}}/protes.yaml:/interop/protes.yaml:ro"
+  depends_on:
+    - mongodb
+    - rabbitmq
+    - fake-tes
+services:
+  protes:
+    <<: *protes
+    ports: ["127.0.0.1:18920:8080"]
+  protes-worker:
+    <<: *protes
+    command: [celery, --app, pro_tes.celery_worker, worker, --concurrency=1, --task-events, --loglevel=info]
+    healthcheck:
+      test: [CMD-SHELL, 'celery --app pro_tes.celery_worker inspect ping --destination celery@$$HOSTNAME --timeout 10']
+      interval: 10s
+      timeout: 20s
+      retries: 12
+      start_period: 10s
+  fake-tes:
+    image: h3-protes@sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593
+    pull_policy: never
+    command: [python, /idp/fake_tes.py]
+    volumes: ["{{LOCAL}}/integration-idp:/idp:ro"]
+    ports: ["127.0.0.1:18921:8080"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8080/oidc/.well-known/openid-configuration')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  mongodb:
+    image: mongo@sha256:8bb4442761a63a8dda452744082cdac9644b429807eb977b42324a63cef59ca4
+    pull_policy: never
+    volumes: [mongodb:/data/db]
+  rabbitmq:
+    image: rabbitmq@sha256:2afee120d039c78a16c930036ac47568ed7fc45dabdc56fc3d890d2d9273ac49
+    pull_policy: never
+    environment:
+      RABBITMQ_DEFAULT_USER: protes
+      RABBITMQ_DEFAULT_PASS: protes
+    configs:
+      - source: rabbitmq-foca
+        target: /etc/rabbitmq/conf.d/90-foca.conf
+    volumes: [rabbitmq:/var/lib/rabbitmq]
+  funnel:
+    image: python@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c
+    pull_policy: never
+    entrypoint: ["{{LOCAL}}/bin/funnel-linux", server, run, --config, "{{LOCAL}}/funnel.yaml"]
+    ports: ["127.0.0.1:18910:8000"]
+    volumes:
+      - "{{LOCAL}}:{{LOCAL}}"
+      - /var/run/docker.sock:/var/run/docker.sock
+      - {{DOCKER_CLI_VM}}:/usr/local/bin/docker:ro
+volumes:
+  mongodb:
+  rabbitmq:
+configs:
+  rabbitmq-foca:
+    content: "deprecated_features.permit.transient_nonexcl_queues = true\n"

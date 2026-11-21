@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "fixtures": "../fixtures/manifest.json",
+  "advertised_spec": "observed in report; never inferred from the endpoint path",
+  "authentication": {
+    "kind": "synthetic OIDC for disposable local stack; bearer via environment/file",
+    "secrets_in_profile": false
+  },
+  "storage": {
+    "shared_work": "same absolute path on Nextflow host, Funnel and Docker VM",
+    "private_backend": "loopback published API, internal database/broker"
+  },
+  "upstream_suites": [
+    {
+      "repository": "https://github.com/elixir-cloud-aai/proTES",
+      "revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+      "path": "tests/integration/check.sh"
+    },
+    {
+      "repository": "https://github.com/ga4gh/openapi-test-runner",
+      "revision": "bc3eb911e877521409348e0225852d072d4de196",
+      "use": "optional existing schema suite; not replaced by this harness"
+    },
+    {
+      "repository": "https://github.com/ga4gh/drs-compliance-suite",
+      "use": "seed deployment-owned DRS objects before that existing suite; not run by TES-only profile"
+    }
+  ],
+  "id": "protes-funnel",
+  "kind": "tes-suite",
+  "api_root": {
+    "environment": "TES_PROFILE_API_ROOT"
+  },
+  "spec": {
+    "protocol": "TES",
+    "tested": "1.1.0"
+  },
+  "implementation": {
+    "name": "proTES with Funnel",
+    "revision": "55c4d1591cd3be883ad0b4fd2da01d49976414cb",
+    "image": "h3-protes@sha256:e11689face55b807e23d36030ec5f427ce8976be618e1720a4fc8d62015c8593",
+    "backend": "direct-funnel",
+    "advertised_version": "0.0.0+h3.55c4d15"
+  },
+  "client": {
+    "name": "proTES existing real integration script",
+    "suite_sha256": "7e8664a6b03ddde30cc079fba8642d9af6903a317257da8b27a538c23dd917b7"
+  },
+  "features": [
+    "inline input staging",
+    "stdout/stderr",
+    "executor failure",
+    "cancel API state"
+  ],
+  "upstream_issues": [
+    "https://github.com/nextflow-io/nf-ga4gh/issues/2",
+    "https://github.com/nextflow-io/nf-ga4gh/issues/6",
+    "https://github.com/nextflow-io/nf-ga4gh/issues/7",
+    "https://github.com/nextflow-io/nf-ga4gh/issues/11",
+    "https://github.com/nextflow-io/nf-ga4gh/issues/12"
+  ]
+}
