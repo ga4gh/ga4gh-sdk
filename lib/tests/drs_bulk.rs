@@ -2,7 +2,7 @@ use ga4gh_sdk::{
     clients::{
         drs::{
             bulk::{BulkDialect, BulkKey, BulkPolicy, BulkReport, ObjectOutcome},
-            models::BulkAccessUrl,
+            models::{BulkAccessUrl, DrsObject},
             DRS,
         },
         serviceinfo::models::Service,
@@ -633,4 +633,299 @@ async fn raw_bulk_reports_keep_fields_unknown_to_the_models() {
         .is_err());
     objects.assert();
     access.assert();
+}
+#[test]
+fn service_info_without_a_bulk_limit_keeps_the_policy() {
+    let policy = BulkPolicy::default()
+        .with_service_info(&json!({"id":"drs"}))
+        .unwrap();
+    assert_eq!(policy.advertised_limit, None);
+}
+#[tokio::test]
+async fn empty_ids_are_rejected_before_any_request() {
+    let server = mockito::Server::new_async().await;
+    let client = client(&server, "/empty-ids");
+    let error = client
+        .get_bulk_objects(&["".into()], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "bulk IDs must be nonempty");
+    let empty_access = BulkKey {
+        object_id: "a".into(),
+        access_id: Some(String::new()),
+    };
+    let error = client
+        .get_bulk_access_urls(&[empty_access], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "bulk IDs must be nonempty");
+}
+#[tokio::test]
+async fn invalid_unrequested_and_conflicting_entries_are_reported() {
+    let mut server = mockito::Server::new_async().await;
+    let mut invalid = object("a");
+    invalid.as_object_mut().unwrap().remove("size");
+    let reply = json!({
+        "resolved_drs_object": [invalid, object("c"), object("unrequested")],
+        "unresolved_drs_objects": [
+            {"error_code": 404, "object_ids": ["b", "unknown"]},
+            {"error_code": 410, "object_ids": ["b"]},
+            {"error_code": 500, "object_ids": ["c"]},
+            {"error_code": 99, "object_ids": ["d"]},
+            {"object_ids": ["d"]},
+            {"error_code": 404}
+        ]
+    });
+    let request = server
+        .mock("POST", "/conflicts/objects")
+        .with_body(reply.to_string())
+        .expect(1)
+        .create();
+    let report = client(&server, "/conflicts")
+        .get_bulk_objects(
+            &["a".into(), "b".into(), "c".into(), "d".into()],
+            &[],
+            &BulkPolicy::default(),
+            &budget(),
+        )
+        .await
+        .unwrap();
+    request.assert();
+    // A schema error without a null created_time gets no hint about it
+    let a = &report.outcomes[&key("a")];
+    assert!(a.resolved.is_empty());
+    assert_eq!(a.errors.len(), 1);
+    assert!(a.errors[0].starts_with("invalid resolved entry"), "{a:?}");
+    assert!(!a.errors[0].contains("created_time"));
+    let b = &report.outcomes[&key("b")];
+    assert_eq!(b.failure_codes, vec![404, 410]);
+    assert_eq!(b.errors, vec!["duplicate unresolved identity"]);
+    let c = &report.outcomes[&key("c")];
+    assert_eq!(c.resolved.len(), 1);
+    assert_eq!(c.failure_codes, vec![500]);
+    assert_eq!(c.errors, vec!["identity is both resolved and unresolved"]);
+    assert_eq!(
+        report.outcomes[&key("d")].errors,
+        vec!["response omitted requested identity"]
+    );
+    let mut diagnostics = report.diagnostics.clone();
+    diagnostics.sort();
+    assert_eq!(
+        diagnostics,
+        vec![
+            "duplicate unresolved identity",
+            "invalid grouped unresolved entry",
+            "invalid grouped unresolved entry",
+            "invalid grouped unresolved entry",
+            "response contained an unrequested resolved identity",
+            "unresolved entry has missing/unrequested/ambiguous identity",
+        ]
+    );
+}
+#[tokio::test]
+async fn unresolved_entries_must_be_an_array() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/unresolved/objects")
+        .with_body(
+            json!({"resolved_drs_object":[],"unresolved_drs_objects":{"404":["a"]}}).to_string(),
+        )
+        .expect(1)
+        .create();
+    let report = client(&server, "/unresolved")
+        .get_bulk_objects(&["a".into()], &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    request.assert();
+    assert_eq!(
+        report.diagnostics,
+        vec!["unresolved entries must be an array"]
+    );
+    assert_eq!(
+        report.outcomes[&key("a")].errors,
+        vec!["response omitted requested identity"]
+    );
+}
+/// A policy with `max_attempts` attempts, `delay` apart.
+fn retrying(max_attempts: usize, delay: Duration) -> BulkPolicy {
+    let mut policy = BulkPolicy::default();
+    policy.retry.max_attempts = max_attempts;
+    policy.retry.initial_delay = delay;
+    policy.retry.max_delay = delay;
+    policy
+}
+/// The errors of the outcome of `id`, the only requested object.
+fn errors_of(report: &BulkReport<DrsObject>, id: &str) -> Vec<String> {
+    assert_eq!(report.outcomes.len(), 1);
+    report.outcomes[&key(id)].errors.clone()
+}
+/// A DRS client at a loopback address that refuses connections.
+async fn unreachable_client() -> DRS {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let config = Configuration::new(url::Url::parse(&format!("http://{address}/drs")).unwrap());
+    DRS::without_discovery(Transport::new(&config), Service::default())
+}
+#[tokio::test]
+async fn network_errors_are_retried_within_the_operation() {
+    let client = unreachable_client().await;
+    let ids = ["a".to_string()];
+    // Every attempt fails; the last error is reported
+    let report = client
+        .get_bulk_objects(&ids, &[], &retrying(2, Duration::from_millis(1)), &budget())
+        .await
+        .unwrap();
+    let errors = errors_of(&report, "a");
+    assert_eq!(errors.len(), 1);
+    assert!(!errors[0].contains("deadline"), "{errors:?}");
+    // The deadline passes while waiting for the retry
+    let report = client
+        .get_bulk_objects(
+            &ids,
+            &[],
+            &retrying(2, Duration::from_secs(10)),
+            &Operation::new(Duration::from_millis(300)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(errors_of(&report, "a"), vec!["operation deadline exceeded"]);
+    // An ended operation sends no request
+    let operation = budget();
+    operation.cancellation.cancel();
+    let report = client
+        .get_bulk_objects(&ids, &[], &BulkPolicy::default(), &operation)
+        .await
+        .unwrap();
+    assert_eq!(errors_of(&report, "a"), vec!["operation canceled locally"]);
+}
+#[tokio::test]
+async fn busy_answers_are_retried_after_the_advertised_delay() {
+    let mut server = mockito::Server::new_async().await;
+    for (status, retry_after) in [(503, Some("0")), (429, None)] {
+        let mut busy = server.mock("POST", "/busy/objects").with_status(status);
+        if let Some(value) = retry_after {
+            busy = busy.with_header("retry-after", value);
+        }
+        let busy = busy.expect(1).create();
+        let ready = server
+            .mock("POST", "/busy/objects")
+            .with_body(json!({"resolved_drs_object":[object("a")]}).to_string())
+            .expect(1)
+            .create();
+        let report = client(&server, "/busy")
+            .get_bulk_objects(
+                &["a".into()],
+                &[],
+                &retrying(2, Duration::from_millis(1)),
+                &budget(),
+            )
+            .await
+            .unwrap();
+        assert!(report.outcomes[&key("a")].is_success(), "{status}");
+        busy.assert();
+        ready.assert();
+        busy.remove();
+        ready.remove();
+    }
+}
+#[tokio::test]
+async fn invalid_or_too_long_busy_delays_end_the_request() {
+    let mut server = mockito::Server::new_async().await;
+    for (retry_after, budget, expected) in [
+        ("soon", Duration::from_secs(5), "invalid bulk Retry-After"),
+        (
+            "10",
+            Duration::from_millis(300),
+            "operation deadline exceeded",
+        ),
+    ] {
+        let busy = server
+            .mock("POST", "/busy-delay/objects")
+            .with_status(503)
+            .with_header("retry-after", retry_after)
+            .expect(1)
+            .create();
+        let report = client(&server, "/busy-delay")
+            .get_bulk_objects(
+                &["a".into()],
+                &[],
+                &retrying(2, Duration::from_millis(1)),
+                &Operation::new(budget),
+            )
+            .await
+            .unwrap();
+        assert_eq!(errors_of(&report, "a"), vec![expected]);
+        busy.assert();
+        busy.remove();
+    }
+}
+#[tokio::test]
+async fn unreadable_bodies_become_errors_of_their_keys() {
+    let mut server = mockito::Server::new_async().await;
+    let mut small = BulkPolicy::default();
+    small.limits.success = 8;
+    let cases = [
+        (
+            server
+                .mock("POST", "/pending-delay/objects")
+                .with_status(202)
+                .with_header("retry-after", "soon"),
+            "/pending-delay",
+            BulkPolicy::default(),
+            "DRS Retry-After must be integral seconds",
+        ),
+        (
+            server
+                .mock("POST", "/not-json/objects")
+                .with_body("not JSON"),
+            "/not-json",
+            BulkPolicy::default(),
+            "invalid bulk response JSON",
+        ),
+        (
+            server
+                .mock("POST", "/too-large/objects")
+                .with_body(json!({"resolved_drs_object":[object("a")]}).to_string()),
+            "/too-large",
+            small,
+            "HTTP 200 OK response exceeds body limit of 8 bytes",
+        ),
+    ];
+    for (mock, path, policy, expected) in cases {
+        let mock = mock.expect(1).create();
+        let report = client(&server, path)
+            .get_bulk_objects(&["a".into()], &[], &policy, &budget())
+            .await
+            .unwrap();
+        let errors = errors_of(&report, "a");
+        assert_eq!(errors.len(), 1, "{path}");
+        assert!(errors[0].contains(expected), "{path}: {errors:?}");
+        mock.assert();
+    }
+}
+#[tokio::test]
+async fn the_deadline_also_bounds_reading_the_body() {
+    let mut server = mockito::Server::new_async().await;
+    let slow = server
+        .mock("POST", "/slow/objects")
+        .with_chunked_body(|writer| {
+            writer.write_all(b"{")?;
+            writer.flush()?;
+            std::thread::sleep(Duration::from_millis(1500));
+            writer.write_all(b"}")
+        })
+        .expect(1)
+        .create();
+    let report = client(&server, "/slow")
+        .get_bulk_objects(
+            &["a".into()],
+            &[],
+            &BulkPolicy::default(),
+            &Operation::new(Duration::from_millis(500)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(errors_of(&report, "a"), vec!["operation deadline exceeded"]);
+    slow.assert();
 }

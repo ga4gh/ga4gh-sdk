@@ -227,3 +227,218 @@ async fn pending_unavailable_unsupported_and_cancel_are_distinct() {
         Some(&OperationError::Cancelled)
     );
 }
+#[test]
+fn uri_errors_explain_themselves_and_the_default_root_follows_the_host() {
+    for (error, text) in [
+        (UriError::UnsupportedScheme, "unsupported DRS URI scheme"),
+        (
+            UriError::UnsupportedCompactIdentifier,
+            "compact DRS identifiers are not supported by this hostname resolver",
+        ),
+        (UriError::Malformed, "malformed hostname-based DRS URI"),
+    ] {
+        assert_eq!(error.to_string(), text);
+    }
+    // Only unreserved characters and percent escapes form an ID
+    assert_eq!(
+        DrsUri::parse("drs://drs.example/a+b"),
+        Err(UriError::Malformed)
+    );
+    assert_eq!(
+        DrsUri::parse("drs://DRS.Example/id")
+            .unwrap()
+            .default_api_root()
+            .as_str(),
+        "https://drs.example/ga4gh/drs/v1"
+    );
+}
+#[tokio::test]
+async fn unmapped_hosts_get_an_anonymous_client_at_the_default_root() {
+    // A cancelled operation stops before any request leaves the client
+    let operation = budget();
+    operation.cancellation.cancel();
+    let error = DrsResolver::default()
+        .access_plan_once(
+            "drs://unmapped.invalid/id",
+            &AccessPreferences::default(),
+            &operation,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<OperationError>(),
+        Some(&OperationError::Cancelled)
+    );
+}
+#[tokio::test]
+async fn method_index_overrides_the_preferences() {
+    let mut server = mockito::Server::new_async().await;
+    let _metadata = server
+        .mock("GET", "/gateway/drs/objects/id")
+        .with_body(
+            object(
+                "id",
+                json!([
+                    {"type":"https","access_url":{"url":"https://store.example/first"}},
+                    {"type":"s3","region":"west","access_url":{"url":"s3://bucket/second"}},
+                    {"type":"https","available":false,"access_url":{"url":"https://store.example/third"}}
+                ]),
+            )
+            .to_string(),
+        )
+        .create();
+    let resolver = resolver(&server);
+    let preferences = |index| AccessPreferences {
+        protocols: vec![Type::Https],
+        method_index: Some(index),
+        ..Default::default()
+    };
+    // The index wins over the protocol preference
+    let plan = resolver
+        .access_plan("drs://drs.example/id", &preferences(1), &budget(), 1)
+        .await
+        .unwrap();
+    assert_eq!(plan.method, Type::S3);
+    assert_eq!(plan.region.as_deref(), Some("west"));
+    assert_eq!(plan.url.as_str(), "s3://bucket/second");
+    for (index, expected) in [(2, "Unavailable"), (3, "InvalidOverride")] {
+        let error = resolver
+            .access_plan("drs://drs.example/id", &preferences(index), &budget(), 1)
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<AccessChoiceError>().is_some());
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+#[tokio::test]
+async fn invalid_access_urls_and_headers_are_rejected() {
+    let mut server = mockito::Server::new_async().await;
+    let resolver = resolver(&server);
+    for (access_url, expected) in [
+        (
+            json!({"url":"mailto:someone@example.org"}),
+            "InvalidAccessUrl",
+        ),
+        (
+            json!({"url":"https://store.example/data","headers":["Bad Name: value"]}),
+            "InvalidAccessHeaders",
+        ),
+        (
+            json!({"url":"https://store.example/data","headers":["X-Access: line\u{7f}break"]}),
+            "InvalidAccessHeaders",
+        ),
+    ] {
+        let request = server
+            .mock("GET", "/gateway/drs/objects/id")
+            .with_body(object("id", json!([{"type":"https","access_url":access_url}])).to_string())
+            .expect(1)
+            .create();
+        let error = resolver
+            .access_plan(
+                "drs://drs.example/id",
+                &AccessPreferences::default(),
+                &budget(),
+                1,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<AccessChoiceError>().is_some());
+        assert!(error.to_string().contains(expected), "{error}");
+        request.assert();
+        request.remove();
+    }
+}
+#[tokio::test]
+async fn single_step_plans_resolve_access_ids_and_keep_them_pending() {
+    let mut server = mockito::Server::new_async().await;
+    let _metadata = server
+        .mock("GET", "/gateway/drs/objects/id")
+        .with_body(object("id", json!([{"type":"https","access_id":"a1"}])).to_string())
+        .create();
+    let resolver = resolver(&server);
+    let pending = server
+        .mock("GET", "/gateway/drs/objects/id/access/a1")
+        .with_status(202)
+        .with_header("retry-after", "1")
+        .expect(1)
+        .create();
+    match resolver
+        .access_plan_once(
+            "drs://drs.example/id",
+            &AccessPreferences::default(),
+            &budget(),
+        )
+        .await
+        .unwrap()
+    {
+        AccessResolution::Pending(pending) => {
+            assert_eq!(pending.reference.endpoint, "objects/id/access/a1");
+            assert_eq!(pending.retry_after_secs, 1);
+        }
+        AccessResolution::Ready(_) => panic!("pending access URL reported as ready"),
+    }
+    pending.assert();
+    pending.remove();
+    let ready = server
+        .mock("GET", "/gateway/drs/objects/id/access/a1")
+        .with_body(r#"{"url":"https://store.example/object"}"#)
+        .expect(1)
+        .create();
+    match resolver
+        .access_plan_once(
+            "drs://drs.example/id",
+            &AccessPreferences::default(),
+            &budget(),
+        )
+        .await
+        .unwrap()
+    {
+        AccessResolution::Ready(plan) => {
+            assert_eq!(plan.url.as_str(), "https://store.example/object")
+        }
+        AccessResolution::Pending(_) => panic!("ready access URL reported as pending"),
+    }
+    ready.assert();
+}
+#[tokio::test]
+async fn both_planners_reject_other_objects_and_methods_without_access() {
+    let mut server = mockito::Server::new_async().await;
+    let resolver = resolver(&server);
+    for (body, expected) in [
+        (
+            object("other", json!([{"type":"https","access_id":"a1"}])),
+            "identifies another object",
+        ),
+        (
+            object("id", json!([{"type":"https"}])),
+            "UnsupportedMethods",
+        ),
+    ] {
+        let request = server
+            .mock("GET", "/gateway/drs/objects/id")
+            .with_body(body.to_string())
+            .expect(2)
+            .create();
+        let once = resolver
+            .access_plan_once(
+                "drs://drs.example/id",
+                &AccessPreferences::default(),
+                &budget(),
+            )
+            .await
+            .unwrap_err();
+        assert!(once.to_string().contains(expected), "{once}");
+        let waiting = resolver
+            .access_plan(
+                "drs://drs.example/id",
+                &AccessPreferences::default(),
+                &budget(),
+                1,
+            )
+            .await
+            .unwrap_err();
+        assert!(waiting.to_string().contains(expected), "{waiting}");
+        request.assert();
+        request.remove();
+    }
+}
