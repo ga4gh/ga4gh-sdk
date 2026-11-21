@@ -18,7 +18,10 @@ const TOOL: &str = include_str!("../../tests/fixtures/trs-cwl/tools/echo.cwl");
 const INLINE_STEPS: &str =
     "steps:\n  echo:\n    run: tools/echo.cwl\n    in:\n      message: message\n    out: [out]";
 fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 fn operation() -> Operation {
     Operation::new(Duration::from_secs(20))
