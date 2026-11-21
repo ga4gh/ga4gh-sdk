@@ -24,7 +24,7 @@ async-trait = "0.1.81"
 dirs = "7.0.0"
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 httpdate = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 futures-util = "0.3"
 # Maintained fork of serde_yaml; keep the existing Rust import path.
 serde_yaml = { package = "yaml_serde", version = "0.10" }
