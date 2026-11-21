@@ -802,10 +802,10 @@ mod tests {
             system.content,
             Content::Inline("pulled image\nstarted\n".into())
         );
-        let Content::File { size, .. } = &catalog.find("file:0:1").unwrap().content else {
-            panic!("file expected");
-        };
-        assert_eq!(*size, Some(3));
+        assert!(matches!(
+            catalog.find("file:0:1").unwrap().content,
+            Content::File { size: Some(3), .. }
+        ));
         let table = catalog.table();
         assert!(table.contains("file:0:0       6          output file: s3://bucket/results/out.txt (path /outputs/out.txt)"), "{table}");
         assert!(!table.contains("secret"), "{table}");
@@ -821,11 +821,16 @@ mod tests {
                 "type": "FILE"
             }]});
             let catalog = Catalog::from_task(&task);
-            let Content::File { is_directory, .. } = &catalog.find("output:0").unwrap().content
-            else {
-                panic!("file reference expected");
-            };
-            assert!(*is_directory, "{path}");
+            assert!(
+                matches!(
+                    catalog.find("output:0").unwrap().content,
+                    Content::File {
+                        is_directory: true,
+                        ..
+                    }
+                ),
+                "{path}"
+            );
             let error = plan(&catalog, &["output:0".into()], None, dir.path(), false)
                 .err()
                 .unwrap();
@@ -849,17 +854,20 @@ mod tests {
             {"url": "s3://bucket/prefixed", "path": "/outputs/x", "type": "FILE", "path_prefix": "/outputs/"}
         ]});
         let catalog = Catalog::from_task(&task);
-        let classify = |selector: &str| {
+        // Whether `selector` names a file reference of that kind, and its
+        // description.
+        let classify = |selector: &str, directory: bool| {
             let item = catalog.find(selector).unwrap();
-            let Content::File { is_directory, .. } = &item.content else {
-                panic!("file reference expected");
-            };
-            (*is_directory, item.description.clone())
+            let kind = matches!(
+                item.content,
+                Content::File { is_directory, .. } if is_directory == directory
+            );
+            (kind, item.description.clone())
         };
         for selector in ["output:0", "output:1"] {
             assert_eq!(
-                classify(selector),
-                (false, "declared output file".into()),
+                classify(selector, false),
+                (true, "declared output file".into()),
                 "{selector}"
             );
             let planned = plan(&catalog, &[selector.into()], None, dir.path(), false).unwrap();
@@ -867,7 +875,7 @@ mod tests {
         }
         for selector in ["output:2", "output:3", "output:4"] {
             assert_eq!(
-                classify(selector),
+                classify(selector, true),
                 (true, "declared output directory".into()),
                 "{selector}"
             );
@@ -1091,5 +1099,144 @@ mod tests {
             .unwrap()
             .0
             .contains("tes save"));
+    }
+
+    #[test]
+    fn system_log_lines_that_are_not_strings_are_shown_as_json() {
+        let task = json!({"state": "COMPLETE", "logs": [{
+            "logs": [],
+            "system_logs": ["pulled", 2, {"retry": true}]
+        }]});
+        let catalog = Catalog::from_task(&task);
+        assert_eq!(
+            catalog.find("system:0").unwrap().content,
+            Content::Inline("pulled\n2\n{\"retry\":true}\n".into())
+        );
+    }
+
+    /// A catalog with an inline log, `stdout:0:0`, and an output file for
+    /// each of `urls`, `file:0:<index>`.
+    fn catalog_with(urls: &[&str]) -> Catalog {
+        let outputs: Vec<Value> = urls
+            .iter()
+            .map(|url| json!({"url": url, "path": "/outputs/out.bin"}))
+            .collect();
+        Catalog::from_task(&json!({"state": "COMPLETE", "logs": [{
+            "logs": [{"exit_code": 0, "stdout": "hello\n"}],
+            "system_logs": [],
+            "outputs": outputs
+        }]}))
+    }
+
+    /// Saves `selector` of `catalog` in `dir` and returns the output.
+    async fn save_selector(
+        catalog: &Catalog,
+        selector: &str,
+        dir: &Path,
+        force: bool,
+    ) -> CommandOutput {
+        save(
+            catalog,
+            &[selector.into()],
+            None,
+            dir,
+            force,
+            &Configuration::default(),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn save_reports_a_directory_it_cannot_create() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        let output =
+            save_selector(&catalog_with(&[]), "stdout:0:0", &file.join("sub"), false).await;
+        assert_eq!(output.exit_code, ExitCode::FAILURE);
+        assert!(
+            output.stderr.starts_with("Can't create "),
+            "{}",
+            output.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn save_reports_a_destination_it_cannot_replace() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let occupied = dir.path().join("stdout-0-0.txt");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("entry"), "").unwrap();
+        let output = save_selector(&catalog_with(&[]), "stdout:0:0", dir.path(), true).await;
+        assert_eq!(output.exit_code, ExitCode::FAILURE);
+        assert!(
+            output.stderr.starts_with("stdout:0:0: Can't save "),
+            "{}",
+            output.stderr
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn save_reports_a_directory_it_cannot_write_to() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+        // Permissions don't stop a privileged user, such as root.
+        let writable = std::fs::write(locked.join("probe"), "").is_ok();
+        let output = save_selector(&catalog_with(&[]), "stdout:0:0", &locked, false).await;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        if !writable {
+            assert_eq!(output.exit_code, ExitCode::FAILURE);
+            assert!(
+                output
+                    .stderr
+                    .starts_with("stdout:0:0: Can't create a file in "),
+                "{}",
+                output.stderr
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn downloads_report_refused_connections_and_invalid_s3_locations() {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let refused = format!("http://127.0.0.1:{port}/out.bin?X-Amz-Signature=secret");
+        let catalog = catalog_with(&[
+            &refused,
+            "s3:///out.bin",
+            "s3://bucket/a%FFb",
+            "s3://bucket",
+        ]);
+        let dir = tempfile::TempDir::new().unwrap();
+        for (selector, expected) in [
+            (
+                "file:0:0",
+                format!("Request to http://127.0.0.1:{port}/out.bin?... failed: "),
+            ),
+            ("file:0:1", "s3:///out.bin names no bucket".into()),
+            (
+                "file:0:2",
+                "s3://bucket/a%FFb has an unsupported object key".into(),
+            ),
+            ("file:0:3", "s3://bucket names no object".into()),
+        ] {
+            let output = save_selector(&catalog, selector, dir.path(), false).await;
+            assert_eq!(output.exit_code, ExitCode::FAILURE, "{selector}");
+            assert!(
+                output.stderr.contains(&expected),
+                "{selector}: {}",
+                output.stderr
+            );
+            assert!(!output.stderr.contains("secret"), "{}", output.stderr);
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 }

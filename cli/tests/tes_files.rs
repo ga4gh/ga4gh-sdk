@@ -48,6 +48,12 @@ fn run(server: &mockito::ServerGuard, home: &TempDir, args: &[&str]) -> Output {
 }
 
 fn run_with_s3_endpoint(home: &TempDir, args: &[&str], endpoint: &str) -> Output {
+    s3_command(home, args, endpoint).output().unwrap()
+}
+
+/// The CLI with `args`, the configuration in `home`, no proxies, and unsigned
+/// S3 requests to `endpoint`.
+fn s3_command(home: &TempDir, args: &[&str], endpoint: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
     command.args(args).env("HOME", home.path());
     for proxy in [
@@ -73,7 +79,7 @@ fn run_with_s3_endpoint(home: &TempDir, args: &[&str], endpoint: &str) -> Output
         .env("AWS_ALLOW_HTTP", "true")
         .env("AWS_SKIP_SIGNATURE", "true")
         .env("AWS_REGION", "us-east-1");
-    command.output().unwrap()
+    command
 }
 
 fn stdout(output: &Output) -> String {
@@ -802,4 +808,157 @@ fn force_replaces_a_symlink_without_writing_through_it() {
         .symlink_metadata()
         .unwrap()
         .is_symlink());
+}
+
+#[test]
+fn s3_downloads_report_configuration_and_request_errors() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let mut server = mockito::Server::new();
+    let prefix = "/save-s3-errors";
+    let task = json!({"id": "t1", "state": "COMPLETE", "logs": [{"logs": [], "outputs": [
+        {"url": format!("s3://bucket{prefix}/denied.bin"), "path": "/o/denied.bin"},
+        {"url": format!("s3://bucket{prefix}/ok.bin"), "path": "/o/ok.bin"},
+    ]}]});
+    let _tes = tes_mocks(&mut server, prefix, &task);
+    let _storage = [
+        server
+            .mock("GET", format!("/bucket{prefix}/denied.bin").as_str())
+            .with_status(403)
+            .with_body("<Error><Code>AccessDenied</Code></Error>")
+            .create(),
+        server
+            .mock("GET", format!("/bucket{prefix}/ok.bin").as_str())
+            .with_status(200)
+            .with_header("ETag", "\"abc\"")
+            .with_header("Last-Modified", "Wed, 11 Nov 2026 10:00:00 GMT")
+            .with_body("ok")
+            .create(),
+    ];
+    let home = home_with_tes(&server, prefix);
+    let dir = home.path().join("results");
+    let save = |selector: &str| {
+        s3_command(
+            &home,
+            &[
+                "tes",
+                "save",
+                "t1",
+                selector,
+                "--dir",
+                dir.to_str().unwrap(),
+            ],
+            &server.url(),
+        )
+    };
+
+    let output = save("file:0:0").output().unwrap();
+    let message = stderr(&output);
+    assert_eq!(output.status.code(), Some(1), "{message}");
+    assert!(
+        message.contains(&format!(
+            "Request for s3://bucket{prefix}/denied.bin failed"
+        )),
+        "{message}"
+    );
+
+    // A key ID without a secret key is an invalid static credential.
+    let output = save("file:0:1")
+        .env("AWS_ACCESS_KEY_ID", "key-id")
+        .output()
+        .unwrap();
+    let message = stderr(&output);
+    assert_eq!(output.status.code(), Some(1), "{message}");
+    assert!(message.contains("Can't configure S3 access"), "{message}");
+    assert!(entries(&dir).is_empty(), "{:?}", entries(&dir));
+
+    // Variables that aren't Unicode are skipped, not a reason to fail.
+    let output = save("file:0:1")
+        .env(OsStr::from_bytes(b"AWS_\xff"), "value")
+        .env("NOT_AWS", OsStr::from_bytes(b"\xff"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(fs::read(dir.join("ok.bin")).unwrap(), b"ok");
+}
+
+/// Answers one S3 request with `response` and then stops listening, so that
+/// retries are refused.
+fn one_response_server(response: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 4096];
+        let _ = stream.read(&mut request).unwrap();
+        stream.write_all(&response).unwrap();
+    });
+    (format!("http://{address}"), server)
+}
+
+#[test]
+fn s3_downloads_that_break_off_or_end_early_leave_no_file() {
+    let mut mock_server = mockito::Server::new();
+    let prefix = "/save-s3-short";
+    let task = json!({"id": "t1", "state": "COMPLETE", "logs": [{"logs": [], "outputs": [
+        {"url": "s3://bucket/big.bin", "path": "/o/big.bin"},
+    ]}]});
+    let _tes = tes_mocks(&mut mock_server, prefix, &task);
+    let home = home_with_tes(&mock_server, prefix);
+    let dir = home.path().join("results");
+    let headers =
+        "HTTP/1.1 200 OK\r\nETag: \"abc\"\r\nLast-Modified: Wed, 11 Nov 2026 10:00:00 GMT\r\n";
+    // The body is shorter than its length; and a chunked body ends before
+    // the length that the server states for the object.
+    let cases = [
+        (
+            format!("{headers}Content-Length: 1000\r\n\r\npartial data"),
+            "Download of s3://bucket/big.bin was interrupted after 12 bytes",
+        ),
+        (
+            format!(
+                "{headers}Content-Length: 10\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nshort\r\n0\r\n\r\n"
+            ),
+            "Download of s3://bucket/big.bin ended after 5 of 10 bytes",
+        ),
+    ];
+    for (response, expected) in cases {
+        let (endpoint, server) = one_response_server(response.into_bytes());
+        let output = run_with_s3_endpoint(
+            &home,
+            &[
+                "tes",
+                "save",
+                "t1",
+                "file:0:0",
+                "--dir",
+                dir.to_str().unwrap(),
+            ],
+            &endpoint,
+        );
+        server.join().unwrap();
+        let message = stderr(&output);
+        assert_eq!(output.status.code(), Some(1), "{message}");
+        assert!(message.contains(expected), "{message}");
+        assert!(entries(&dir).is_empty(), "{:?}", entries(&dir));
+    }
+}
+
+#[test]
+fn named_http_library_targets_keep_their_debug_logs() {
+    let mut server = mockito::Server::new();
+    let prefix = "/files-debug-logs";
+    let _tes = tes_mocks(
+        &mut server,
+        prefix,
+        &json!({"id": "t1", "state": "COMPLETE"}),
+    );
+    let home = home_with_tes(&server, prefix);
+    let output = s3_command(&home, &["tes", "files", "t1"], &server.url())
+        .env("RUST_LOG", "reqwest::connect=debug")
+        .output()
+        .unwrap();
+    let message = stderr(&output);
+    assert!(output.status.success(), "{message}");
+    assert!(message.contains(" DEBUG reqwest::connect]"), "{message}");
 }
