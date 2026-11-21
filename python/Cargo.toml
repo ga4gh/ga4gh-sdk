@@ -30,7 +30,7 @@ default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
 
 [dev-dependencies]
-mockito = "0.31"
+mockito = "1.7"
 
 [build-dependencies]
 pyo3-build-config = "0.30.1"

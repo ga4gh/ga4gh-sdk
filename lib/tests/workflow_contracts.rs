@@ -530,12 +530,14 @@ fn json_metrics_outcome_ignores_key_order_and_nulls_yield_to_differences() {
 }
 #[tokio::test]
 async fn explicit_http_artifact_access_preserves_partial_records_and_no_credentials() {
+    let mut server = mockito::Server::new_async().await;
     use ga4gh_sdk::{
         clients::drs::{models::access_method::Type, uri::AccessPlan},
         utils::operation::Operation,
     };
     use std::time::Duration;
-    let mock = mockito::mock("GET", "/report")
+    let mock = server
+        .mock("GET", "/report")
         .match_header("authorization", "Bearer object-only")
         .with_status(403)
         .expect(1)
@@ -544,7 +546,7 @@ async fn explicit_http_artifact_access_preserves_partial_records_and_no_credenti
         object_id: "report".into(),
         method: Type::Https,
         region: None,
-        url: url::Url::parse(&format!("{}/report", mockito::server_url())).unwrap(),
+        url: url::Url::parse(&format!("{}/report", server.url())).unwrap(),
         headers: ga4gh_sdk::reqwest::header::HeaderMap::from_iter([(
             ga4gh_sdk::reqwest::header::AUTHORIZATION,
             "Bearer object-only".parse().unwrap(),
@@ -767,19 +769,20 @@ async fn malformed_expected_checksums_fail_before_any_read() {
 
 #[tokio::test]
 async fn selected_drs_verification_uses_owning_resolver_and_only_object_headers() {
+    let mut server = mockito::Server::new_async().await;
     use ga4gh_sdk::{
         clients::drs::uri::{AccessPreferences, DrsResolver},
         utils::{configuration::Configuration, operation::Operation, transport::Transport},
     };
-    let store = mockito::mock("GET", "/selected-store")
+    let store = server
+        .mock("GET", "/selected-store")
         .match_header("authorization", "Bearer object-only")
         .with_body("report")
         .expect(1)
         .create();
-    let metadata=mockito::mock("GET","/selected-drs/objects/report").match_header("authorization","Bearer resolver-only").with_body(json!({"id":"report","self_uri":"drs://drs.example/report","size":6,"created_time":"2026-01-01T00:00:00Z","checksums":[],"access_methods":[{"type":"https","access_url":{"url":format!("{}/selected-store",mockito::server_url()),"headers":["Authorization: Bearer object-only"]}}]}).to_string()).expect(1).create();
-    let config = Configuration::new(
-        url::Url::parse(&format!("{}/selected-drs", mockito::server_url())).unwrap(),
-    );
+    let metadata=server.mock("GET","/selected-drs/objects/report").match_header("authorization","Bearer resolver-only").with_body(json!({"id":"report","self_uri":"drs://drs.example/report","size":6,"created_time":"2026-01-01T00:00:00Z","checksums":[],"access_methods":[{"type":"https","access_url":{"url":format!("{}/selected-store",server.url()),"headers":["Authorization: Bearer object-only"]}}]}).to_string()).expect(1).create();
+    let config =
+        Configuration::new(url::Url::parse(&format!("{}/selected-drs", server.url())).unwrap());
     let resolver = DrsResolver::default()
         .with_service(
             "drs.example",

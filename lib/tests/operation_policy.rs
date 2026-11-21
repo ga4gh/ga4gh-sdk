@@ -8,10 +8,9 @@ use ga4gh_sdk::{
         transport::{RequestOptions, Transport},
     },
 };
-use mockito::{mock, server_url};
 use std::time::{Duration, SystemTime};
-fn transport() -> Transport {
-    Transport::new(&Configuration::new(url::Url::parse(&server_url()).unwrap()))
+fn transport(server: &mockito::ServerGuard) -> Transport {
+    Transport::new(&Configuration::new(url::Url::parse(&server.url()).unwrap()))
 }
 #[test]
 fn retry_after_supports_delta_and_date() {
@@ -25,14 +24,17 @@ fn retry_after_supports_delta_and_date() {
 }
 #[tokio::test]
 async fn safe_reads_retry_503_but_permissions_do_not() {
+    let mut server = mockito::Server::new_async().await;
     for status in [429, 503, 401, 403] {
         let path = format!("/status{status}");
-        let first = mock("GET", path.as_str())
+        let first = server
+            .mock("GET", path.as_str())
             .with_status(status)
             .with_header("retry-after", "0")
             .expect(1)
             .create();
-        let second = mock("GET", path.as_str())
+        let second = server
+            .mock("GET", path.as_str())
             .with_status(200)
             .with_body("ready")
             .expect(if status == 429 || status == 503 { 1 } else { 0 })
@@ -42,7 +44,7 @@ async fn safe_reads_retry_503_but_permissions_do_not() {
         options.safety = ReplaySafety::ReadOnly;
         options.retry.max_attempts = 2;
         options.retry.initial_delay = Duration::from_millis(5);
-        let result = transport()
+        let result = transport(&server)
             .request_with_policy(Method::GET, &path, None, None, &options)
             .await;
         if status == 429 || status == 503 {
@@ -152,7 +154,9 @@ async fn cancellation_and_absolute_budget_apply_during_sleep() {
 
 #[tokio::test]
 async fn cancellation_during_retry_after_sends_no_more_requests() {
-    let first = mock("GET", "/backoff")
+    let mut server = mockito::Server::new_async().await;
+    let first = server
+        .mock("GET", "/backoff")
         .with_status(503)
         .with_header("retry-after", "10")
         .expect(1)
@@ -165,7 +169,7 @@ async fn cancellation_during_retry_after_sends_no_more_requests() {
         tokio::time::sleep(Duration::from_millis(100)).await;
         token.cancel();
     });
-    let error = transport()
+    let error = transport(&server)
         .request_with_policy(Method::GET, "backoff", None, None, &options)
         .await
         .unwrap_err();
@@ -178,8 +182,14 @@ async fn cancellation_during_retry_after_sends_no_more_requests() {
 
 #[tokio::test]
 async fn read_only_post_can_retry_but_nonreplayable_get_cannot() {
-    let first = mock("POST", "/lookup").with_status(503).expect(1).create();
-    let second = mock("POST", "/lookup")
+    let mut server = mockito::Server::new_async().await;
+    let first = server
+        .mock("POST", "/lookup")
+        .with_status(503)
+        .expect(1)
+        .create();
+    let second = server
+        .mock("POST", "/lookup")
         .with_status(200)
         .with_body("ready")
         .expect(1)
@@ -189,7 +199,7 @@ async fn read_only_post_can_retry_but_nonreplayable_get_cannot() {
     options.retry.max_attempts = 2;
     options.retry.initial_delay = Duration::from_millis(5);
     assert_eq!(
-        transport()
+        transport(&server)
             .request_with_policy(
                 Method::POST,
                 "lookup",
@@ -203,12 +213,13 @@ async fn read_only_post_can_retry_but_nonreplayable_get_cannot() {
     );
     first.assert();
     second.assert();
-    let request = mock("GET", "/nonreplayable")
+    let request = server
+        .mock("GET", "/nonreplayable")
         .with_status(503)
         .expect(1)
         .create();
     options.safety = ReplaySafety::NonReplayable;
-    assert!(transport()
+    assert!(transport(&server)
         .request_with_policy(Method::GET, "nonreplayable", None, None, &options)
         .await
         .is_err());

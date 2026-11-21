@@ -520,7 +520,7 @@ mod tests {
     use crate::clients::trs::models::tool_file::FileType;
     use crate::utils::auth::FixedToken;
     use crate::utils::transport::BodyLimitError;
-    use mockito::{mock, server_url, Matcher, Mock};
+    use mockito::{Matcher, Mock};
     use url::Url;
 
     // A Dockstore-style ID and a version ID that both need encoding.
@@ -559,13 +559,12 @@ mod tests {
     }
 
     // Clients for the API root `<mock server>/<prefix>/ga4gh/trs/v2`, without
-    // and with a trailing slash. Each test uses its own prefix, because
-    // mockito's server is shared by all tests.
-    fn clients(prefix: &str) -> Vec<TRS> {
+    // and with a trailing slash.
+    fn clients(server: &mockito::ServerGuard, prefix: &str) -> Vec<TRS> {
         ["", "/"]
             .iter()
             .map(|slash| {
-                let base = format!("{}/{prefix}/ga4gh/trs/v2{slash}", server_url());
+                let base = format!("{}/{prefix}/ga4gh/trs/v2{slash}", server.url());
                 let config = Configuration::new(Url::parse(&base).unwrap());
                 TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2)
             })
@@ -587,8 +586,14 @@ mod tests {
     }
 
     // Mocks a GET that must be called once by each client from `clients`.
-    fn get_mock(prefix: &str, api_path: &str, body: &str) -> Mock {
-        mock("GET", path(prefix, api_path).as_str())
+    fn get_mock(
+        server: &mut mockito::ServerGuard,
+        prefix: &str,
+        api_path: &str,
+        body: &str,
+    ) -> Mock {
+        server
+            .mock("GET", path(prefix, api_path).as_str())
             .with_status(200)
             .with_body(body)
             .expect(2)
@@ -626,8 +631,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_new_checks_service_info_below_api_root() {
-        let m = get_mock("new", "service-info", &service_info_json("trs").to_string());
-        for client in clients("new") {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "new",
+            "service-info",
+            &service_info_json("trs").to_string(),
+        );
+        for client in clients(&server, "new") {
             let trs = TRS::new(client.configuration()).await.unwrap();
             assert_eq!(trs.service.unwrap().r#type.artifact, "trs");
         }
@@ -636,17 +647,20 @@ mod tests {
 
     #[tokio::test]
     async fn token_provider_authenticates_discovery_and_tool_reads() {
+        let mut server = mockito::Server::new_async().await;
         let prefix = "provider";
-        let info = mock("GET", path(prefix, "service-info").as_str())
+        let info = server
+            .mock("GET", path(prefix, "service-info").as_str())
             .match_header("authorization", "Bearer good")
             .with_body(service_info_json("trs").to_string())
             .create();
-        let tools = mock("GET", path(prefix, "tools").as_str())
+        let tools = server
+            .mock("GET", path(prefix, "tools").as_str())
             .match_header("authorization", "Bearer good")
             .with_body("[]")
             .create();
         let config = Configuration::new(
-            Url::parse(&format!("{}/{prefix}/ga4gh/trs/v2", server_url())).unwrap(),
+            Url::parse(&format!("{}/{prefix}/ga4gh/trs/v2", server.url())).unwrap(),
         )
         .with_token_provider(FixedToken("good"));
         let trs = TRS::new(&config).await.unwrap();
@@ -661,13 +675,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_old_trs_service_and_version_without_description() {
+        let mut server = mockito::Server::new_async().await;
         let mut info = service_info_json("trs");
         info["type"]["version"] = serde_json::json!("2.0.1");
-        let service = get_mock("trs-201", "service-info", &info.to_string());
+        let service = get_mock(&mut server, "trs-201", "service-info", &info.to_string());
         let mut version = version_json();
         version.as_object_mut().unwrap().remove("description");
-        let response = get_mock("trs-201", &tool_version(""), &version.to_string());
-        for client in clients("trs-201") {
+        let response = get_mock(
+            &mut server,
+            "trs-201",
+            &tool_version(""),
+            &version.to_string(),
+        );
+        for client in clients(&server, "trs-201") {
             let trs = TRS::new(client.configuration()).await.unwrap();
             assert_eq!(trs.service.as_ref().unwrap().r#type.version, "2.0.1");
             assert_eq!(
@@ -684,13 +704,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_new_accepts_dockstore_service_info() {
+        let mut server = mockito::Server::new_async().await;
         let mut info = service_info_json("TRS");
         info["createdAt"] = serde_json::json!(1593648000000u64);
         info["updatedAt"] = serde_json::json!("2026-11-09T00:00:00Z");
         let mut numeric_update = info.clone();
         numeric_update["updatedAt"] = serde_json::json!(1794200849592u64);
-        let m = get_mock("dockstore", "service-info", &info.to_string());
-        for client in clients("dockstore") {
+        let m = get_mock(&mut server, "dockstore", "service-info", &info.to_string());
+        for client in clients(&server, "dockstore") {
             let service = TRS::new(client.configuration())
                 .await
                 .unwrap()
@@ -700,8 +721,13 @@ mod tests {
             assert_eq!(service.updated_at.as_deref(), Some("2026-11-09T00:00:00Z"));
         }
         m.assert();
-        let m = get_mock("dockstore-2", "service-info", &numeric_update.to_string());
-        for client in clients("dockstore-2") {
+        let m = get_mock(
+            &mut server,
+            "dockstore-2",
+            "service-info",
+            &numeric_update.to_string(),
+        );
+        for client in clients(&server, "dockstore-2") {
             let service = TRS::new(client.configuration())
                 .await
                 .unwrap()
@@ -714,12 +740,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_new_rejects_other_services() {
+        let mut server = mockito::Server::new_async().await;
         let m = get_mock(
+            &mut server,
             "not-trs",
             "service-info",
             &service_info_json("wes").to_string(),
         );
-        for client in clients("not-trs") {
+        for client in clients(&server, "not-trs") {
             let error = TRS::new(client.configuration()).await.unwrap_err();
             assert!(
                 error.to_string().contains("not an instance of TRS"),
@@ -731,22 +759,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_new_fails_without_service_info() {
-        let _m = mock("GET", path("no-info", "service-info").as_str())
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", path("no-info", "service-info").as_str())
             .with_status(404)
             .create();
-        for client in clients("no-info") {
+        for client in clients(&server, "no-info") {
             assert!(TRS::new(client.configuration()).await.is_err());
         }
     }
 
     #[tokio::test]
     async fn test_service_info() {
+        let mut server = mockito::Server::new_async().await;
         let m = get_mock(
+            &mut server,
             "info",
             "service-info",
             &service_info_json("trs").to_string(),
         );
-        for client in clients("info") {
+        for client in clients(&server, "info") {
             assert_eq!(client.service_info().await.unwrap().name, "Example TRS");
         }
         m.assert();
@@ -754,9 +786,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_tool_classes() {
+        let mut server = mockito::Server::new_async().await;
         let body = r#"[{"id":"1","name":"Workflow","description":"A workflow"}]"#;
-        let m = get_mock("classes", "toolClasses", body);
-        for client in clients("classes") {
+        let m = get_mock(&mut server, "classes", "toolClasses", body);
+        for client in clients(&server, "classes") {
             let classes = client.list_tool_classes().await.unwrap();
             assert_eq!(classes[0].name.as_deref(), Some("Workflow"));
         }
@@ -765,13 +798,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_tools_without_filter_sends_no_query() {
-        let m = mock("GET", path("tools-all", "tools").as_str())
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", path("tools-all", "tools").as_str())
             .match_query(Matcher::Missing)
             .with_status(200)
             .with_body(serde_json::json!([tool_json()]).to_string())
             .expect(2)
             .create();
-        for client in clients("tools-all") {
+        for client in clients(&server, "tools-all") {
             let tools = client.list_tools(&ToolFilter::default()).await.unwrap();
             assert_eq!(tools[0].id, TOOL_ID);
             assert_eq!(tools[0].versions[0].id, VERSION_ID);
@@ -781,7 +816,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_tools_sends_filters() {
-        let m = mock("GET", path("tools-filter", "tools").as_str())
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", path("tools-filter", "tools").as_str())
             .match_query(Matcher::AllOf(vec![
                 Matcher::UrlEncoded("id".into(), "a/b".into()),
                 Matcher::UrlEncoded("alias".into(), "x y".into()),
@@ -819,7 +856,7 @@ mod tests {
             offset: Some("abc".into()),
             limit: Some(5),
         };
-        for client in clients("tools-filter") {
+        for client in clients(&server, "tools-filter") {
             assert!(client.list_tools(&filter).await.unwrap().is_empty());
         }
         m.assert();
@@ -827,12 +864,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tool() {
+        let mut server = mockito::Server::new_async().await;
         let m = get_mock(
+            &mut server,
             "tool",
             &format!("tools/{TOOL_ID_ENCODED}"),
             &tool_json().to_string(),
         );
-        for client in clients("tool") {
+        for client in clients(&server, "tool") {
             let tool = client.get_tool(TOOL_ID).await.unwrap();
             assert_eq!(tool.id, TOOL_ID);
             assert_eq!(tool.toolclass.name.as_deref(), Some("Workflow"));
@@ -842,11 +881,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tool_returns_http_errors() {
-        let _m = mock("GET", path("tool-404", "tools/missing").as_str())
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", path("tool-404", "tools/missing").as_str())
             .with_status(404)
             .with_body(r#"{"code":404,"message":"not found"}"#)
             .create();
-        for client in clients("tool-404") {
+        for client in clients(&server, "tool-404") {
             let error = client.get_tool("missing").await.unwrap_err();
             assert!(error.to_string().contains("404"), "{error}");
         }
@@ -854,20 +895,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_returns_errors_for_bodies_that_are_not_json() {
-        let _invalid = mock("GET", path("bad-body", "toolClasses").as_str())
+        let mut server = mockito::Server::new_async().await;
+        let _invalid = server
+            .mock("GET", path("bad-body", "toolClasses").as_str())
             .with_status(200)
             .with_body("[{\"id\":")
             .create();
-        let _html = mock("GET", path("bad-body", "tools").as_str())
+        let _html = server
+            .mock("GET", path("bad-body", "tools").as_str())
             .with_status(500)
             .with_header("content-type", "text/html")
             .with_body("<html>Internal Server Error</html>")
             .create();
-        let _info = mock("GET", path("bad-body", "service-info").as_str())
+        let _info = server
+            .mock("GET", path("bad-body", "service-info").as_str())
             .with_status(200)
             .with_body("<html>Not a TRS</html>")
             .create();
-        for client in clients("bad-body") {
+        for client in clients(&server, "bad-body") {
             assert!(client.list_tool_classes().await.is_err());
             let error = client.list_tools(&ToolFilter::default()).await.unwrap_err();
             assert!(error.to_string().contains("500"), "{error}");
@@ -877,8 +922,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_rejects_ids_that_change_the_path() {
+        let server = mockito::Server::new_async().await;
         // No mock: these must fail before any request is sent.
-        for client in clients("bad-ids") {
+        for client in clients(&server, "bad-ids") {
             for id in ["", ".", ".."] {
                 let error = client.get_tool(id).await.unwrap_err();
                 assert!(error.to_string().contains("tool ID"), "{error}");
@@ -900,17 +946,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_unrecognized_descriptor_types_are_one_encoded_segment() {
+        let mut server = mockito::Server::new_async().await;
         let json = get_mock(
+            &mut server,
             "unrecognized",
             &tool_version("JUPYTER%2F..%3Fx/descriptor"),
             r#"{"content":"notebook"}"#,
         );
         let plain = get_mock(
+            &mut server,
             "unrecognized",
             &tool_version("PLAIN_JUPYTER/descriptor"),
             "notebook",
         );
-        for client in clients("unrecognized") {
+        for client in clients(&server, "unrecognized") {
             let file = client
                 .get_descriptor(
                     TOOL_ID,
@@ -938,12 +987,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_versions() {
+        let mut server = mockito::Server::new_async().await;
         let m = get_mock(
+            &mut server,
             "versions",
             &format!("tools/{TOOL_ID_ENCODED}/versions"),
             &serde_json::json!([version_json()]).to_string(),
         );
-        for client in clients("versions") {
+        for client in clients(&server, "versions") {
             let versions = client.list_versions(TOOL_ID).await.unwrap();
             assert_eq!(versions[0].id, VERSION_ID);
             assert_eq!(versions[0].descriptor_type, Some(vec![DescriptorType::Cwl]));
@@ -953,8 +1004,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_version() {
-        let m = get_mock("version", &tool_version(""), &version_json().to_string());
-        for client in clients("version") {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "version",
+            &tool_version(""),
+            &version_json().to_string(),
+        );
+        for client in clients(&server, "version") {
             let version = client.get_version(TOOL_ID, VERSION_ID).await.unwrap();
             assert_eq!(version.id, VERSION_ID);
             assert_eq!(version.description(), Some("First release"));
@@ -964,10 +1021,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_version_preserves_non_string_optional_description() {
+        let mut server = mockito::Server::new_async().await;
         let mut version = version_json();
         version["description"] = serde_json::json!(42);
-        let m = get_mock("bad-description", &tool_version(""), &version.to_string());
-        for client in clients("bad-description") {
+        let m = get_mock(
+            &mut server,
+            "bad-description",
+            &tool_version(""),
+            &version.to_string(),
+        );
+        for client in clients(&server, "bad-description") {
             let actual = client.get_version(TOOL_ID, VERSION_ID).await.unwrap();
             assert_eq!(actual.description(), None);
             assert_eq!(actual.extra["description"], 42);
@@ -977,6 +1040,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_descriptor_per_type() {
+        let mut server = mockito::Server::new_async().await;
         let cases = [
             (DescriptorTypeWithPlain::Cwl, "CWL"),
             (DescriptorTypeWithPlain::Wdl, "WDL"),
@@ -991,11 +1055,12 @@ mod tests {
                 "url": "https://example.org/main"
             });
             let m = get_mock(
+                &mut server,
                 "descriptor",
                 &tool_version(&format!("{name}/descriptor")),
                 &body.to_string(),
             );
-            for client in clients("descriptor") {
+            for client in clients(&server, "descriptor") {
                 let file = client
                     .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type.clone())
                     .await
@@ -1009,6 +1074,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_plain_descriptor_per_type() {
+        let mut server = mockito::Server::new_async().await;
         let cases = [
             (DescriptorTypeWithPlain::PlainCwl, "PLAIN_CWL"),
             (DescriptorTypeWithPlain::PlainWdl, "PLAIN_WDL"),
@@ -1020,11 +1086,12 @@ mod tests {
             // A bare file that isn't JSON must not be parsed as JSON.
             let body = format!("#!/usr/bin/env runner\n{name}: [\n");
             let m = get_mock(
+                &mut server,
                 "plain-descriptor",
                 &tool_version(&format!("{name}/descriptor")),
                 &body,
             );
-            for client in clients("plain-descriptor") {
+            for client in clients(&server, "plain-descriptor") {
                 let file = client
                     .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type.clone())
                     .await
@@ -1037,17 +1104,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_descriptor_file() {
+        let mut server = mockito::Server::new_async().await;
         let m = get_mock(
+            &mut server,
             "relative",
             &tool_version("WDL/descriptor/tasks%2Falign%20v2.wdl"),
             r#"{"content":"task align {}"}"#,
         );
         let plain = get_mock(
+            &mut server,
             "relative",
             &tool_version("PLAIN_WDL/descriptor/tasks%2Falign%20v2.wdl"),
             "task align {}",
         );
-        for client in clients("relative") {
+        for client in clients(&server, "relative") {
             for descriptor_type in [
                 DescriptorTypeWithPlain::Wdl,
                 DescriptorTypeWithPlain::PlainWdl,
@@ -1065,13 +1135,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_tests() {
+        let mut server = mockito::Server::new_async().await;
         let m = get_mock(
+            &mut server,
             "tests",
             &tool_version("CWL/tests"),
             r#"[{"content":"{\"input\":1}"},{"url":"https://example.org/t2.json"}]"#,
         );
-        let plain = get_mock("tests", &tool_version("PLAIN_CWL/tests"), "{\"input\":1}");
-        for client in clients("tests") {
+        let plain = get_mock(
+            &mut server,
+            "tests",
+            &tool_version("PLAIN_CWL/tests"),
+            "{\"input\":1}",
+        );
+        for client in clients(&server, "tests") {
             let tests = client
                 .list_tests(TOOL_ID, VERSION_ID, DescriptorTypeWithPlain::Cwl)
                 .await
@@ -1103,13 +1180,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_files() {
+        let mut server = mockito::Server::new_async().await;
         let body = serde_json::json!([
             { "path": "main.nf", "file_type": "PRIMARY_DESCRIPTOR",
               "checksum": { "checksum": "abc", "type": "sha-256" } },
             { "path": "Dockerfile", "file_type": "CONTAINERFILE" }
         ]);
-        let m = get_mock("files", &tool_version("NFL/files"), &body.to_string());
-        for client in clients("files") {
+        let m = get_mock(
+            &mut server,
+            "files",
+            &tool_version("NFL/files"),
+            &body.to_string(),
+        );
+        for client in clients(&server, "files") {
             let files = client
                 .list_files(TOOL_ID, VERSION_ID, DescriptorType::Nfl)
                 .await
@@ -1123,8 +1206,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_tools_rejects_tags_that_cannot_be_sent() {
+        let server = mockito::Server::new_async().await;
         // No mock: these must fail before any request is sent.
-        for client in clients("bad-tags") {
+        for client in clients(&server, "bad-tags") {
             for tag in ["", "a,b"] {
                 let filter = ToolFilter {
                     tags: vec!["ok".into(), tag.into()],
@@ -1140,7 +1224,9 @@ mod tests {
     // (`tags=a%2Cb`); servers decode the value before splitting it.
     #[tokio::test]
     async fn test_list_tools_sends_tags_with_an_encoded_comma() {
-        let m = mock("GET", path("tags-wire", "tools").as_str())
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", path("tags-wire", "tools").as_str())
             .match_query(Matcher::Exact("tags=a%2Cb".into()))
             .with_status(200)
             .with_body("[]")
@@ -1150,7 +1236,7 @@ mod tests {
             tags: vec!["a".into(), "b".into()],
             ..Default::default()
         };
-        for client in clients("tags-wire") {
+        for client in clients(&server, "tags-wire") {
             assert!(client.list_tools(&filter).await.unwrap().is_empty());
         }
         m.assert();
@@ -1172,15 +1258,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_files_zip() {
+        let mut server = mockito::Server::new_async().await;
         let bytes = include_bytes!("../../../../tests/fixtures/trs/workflow.zip");
-        let m = mock("GET", path("zip", &tool_version("CWL/files")).as_str())
+        let m = server
+            .mock("GET", path("zip", &tool_version("CWL/files")).as_str())
             .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
             .with_status(200)
             .with_header("content-type", "application/zip")
             .with_body(bytes.as_slice())
             .expect(2)
             .create();
-        for client in clients("zip") {
+        for client in clients(&server, "zip") {
             let archive = client
                 .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, bytes.len())
                 .await
@@ -1192,61 +1280,66 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_files_zip_checks_limit_and_body() {
-        let too_large = mock(
-            "GET",
-            path("zip-limit", &tool_version("CWL/files")).as_str(),
-        )
-        .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
-        .with_status(200)
-        .with_body("PK\x03\x04 more than ten bytes")
-        .expect(2)
-        .create();
-        let not_zip = mock("GET", path("zip-json", &tool_version("CWL/files")).as_str())
+        let mut server = mockito::Server::new_async().await;
+        let too_large = server
+            .mock(
+                "GET",
+                path("zip-limit", &tool_version("CWL/files")).as_str(),
+            )
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_body("PK\x03\x04 more than ten bytes")
+            .expect(2)
+            .create();
+        let not_zip = server
+            .mock("GET", path("zip-json", &tool_version("CWL/files")).as_str())
             .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
             .with_status(200)
             .with_body(r#"[{"path":"main.cwl"}]"#)
             .expect(2)
             .create();
-        let fake_zip = mock("GET", path("zip-fake", &tool_version("CWL/files")).as_str())
+        let fake_zip = server
+            .mock("GET", path("zip-fake", &tool_version("CWL/files")).as_str())
             .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
             .with_status(200)
             .with_body("PK not an archive")
             .expect(2)
             .create();
-        let missing = mock("GET", path("zip-404", &tool_version("CWL/files")).as_str())
+        let missing = server
+            .mock("GET", path("zip-404", &tool_version("CWL/files")).as_str())
             .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
             .with_status(404)
             .expect(2)
             .create();
-        for client in clients("zip-limit") {
+        for client in clients(&server, "zip-limit") {
             let error = client
                 .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 10)
                 .await
                 .unwrap_err();
             assert!(error.downcast_ref::<BodyLimitError>().is_some(), "{error}");
         }
-        for client in clients("zip-json") {
+        for client in clients(&server, "zip-json") {
             let error = client
                 .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
                 .await
                 .unwrap_err();
             assert!(error.to_string().contains("not a ZIP archive"), "{error}");
         }
-        for client in clients("zip-fake") {
+        for client in clients(&server, "zip-fake") {
             let error = client
                 .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
                 .await
                 .unwrap_err();
             assert!(error.to_string().contains("not a ZIP archive"), "{error}");
         }
-        for client in clients("zip-404") {
+        for client in clients(&server, "zip-404") {
             let error = client
                 .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
                 .await
                 .unwrap_err();
             assert!(error.to_string().contains("404"), "{error}");
         }
-        for client in clients("zip-ids") {
+        for client in clients(&server, "zip-ids") {
             let error = client
                 .get_files_zip("..", VERSION_ID, DescriptorType::Cwl, 1024)
                 .await
@@ -1261,15 +1354,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_containerfiles() {
+        let mut server = mockito::Server::new_async().await;
         let body = serde_json::json!([
             { "content": "FROM alpine", "image_type": "Docker" }
         ]);
         let m = get_mock(
+            &mut server,
             "containerfile",
             &tool_version("containerfile"),
             &body.to_string(),
         );
-        for client in clients("containerfile") {
+        for client in clients(&server, "containerfile") {
             let files = client
                 .get_containerfiles(TOOL_ID, VERSION_ID)
                 .await

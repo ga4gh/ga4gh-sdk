@@ -3,7 +3,6 @@
 use clap::{Arg, Command};
 use ga4gh_cli::{command, dispatch, dispatch_with_config};
 use ga4gh_sdk::utils::configuration::Configuration;
-use mockito::mock;
 use url::Url;
 
 #[tokio::test]
@@ -24,16 +23,17 @@ async fn downstream_command_can_be_parsed_and_dispatched() {
 
 #[tokio::test]
 async fn downstream_can_inject_config_and_capture_tes_output() {
-    let _service_info = mock("GET", "/ga4gh/tes/v1/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let _service_info = server.mock("GET", "/ga4gh/tes/v1/service-info")
         .with_status(200)
         .with_body(r#"{"id":"test","name":"Test","type":{"group":"org.ga4gh","artifact":"tes","version":"1.1.0"},"organization":{"name":"Test","url":"https://example.org"},"version":"1.0.0"}"#)
         .create();
-    let _tasks = mock("GET", "/ga4gh/tes/v1/tasks")
+    let _tasks = server
+        .mock("GET", "/ga4gh/tes/v1/tasks")
         .with_status(200)
         .with_body(r#"{"tasks":[{"id":"task-from-test","state":"COMPLETE"}]}"#)
         .create();
-    let config =
-        Configuration::new(Url::parse(&format!("{}/ga4gh/tes/v1", mockito::server_url())).unwrap());
+    let config = Configuration::new(Url::parse(&format!("{}/ga4gh/tes/v1", server.url())).unwrap());
     let matches = command()
         .try_get_matches_from(["ga4gh-cli", "tes", "list"])
         .unwrap();
@@ -49,16 +49,17 @@ async fn downstream_can_inject_config_and_capture_tes_output() {
 
 #[tokio::test]
 async fn downstream_can_inject_config_and_capture_drs_output() {
-    let _service_info = mock("GET", "/ga4gh/drs/v1/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let _service_info = server.mock("GET", "/ga4gh/drs/v1/service-info")
         .with_status(200)
         .with_body(r#"{"id":"test","name":"Test","type":{"group":"org.ga4gh","artifact":"drs","version":"1.4.0"},"organization":{"name":"Test","url":"https://example.org"},"version":"1.0.0"}"#)
         .create();
-    let _object = mock("GET", "/ga4gh/drs/v1/objects/object-id")
+    let _object = server
+        .mock("GET", "/ga4gh/drs/v1/objects/object-id")
         .with_status(200)
         .with_body(r#"{"id":"object-id","created_time":null}"#)
         .create();
-    let config =
-        Configuration::new(Url::parse(&format!("{}/ga4gh/drs/v1", mockito::server_url())).unwrap());
+    let config = Configuration::new(Url::parse(&format!("{}/ga4gh/drs/v1", server.url())).unwrap());
     let matches = command()
         .try_get_matches_from(["ga4gh-cli", "drs", "get", "object-id"])
         .unwrap();

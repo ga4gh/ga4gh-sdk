@@ -11,15 +11,14 @@ use ga4gh_sdk::{
         transport::Transport,
     },
 };
-use mockito::{mock, server_url};
 use serde_json::json;
 use std::time::Duration;
 fn budget() -> Operation {
     Operation::new(Duration::from_secs(3))
 }
-fn resolver() -> DrsResolver {
+fn resolver(server: &mockito::ServerGuard) -> DrsResolver {
     let transport = Transport::new(&Configuration::new(
-        url::Url::parse(&format!("{}/gateway/drs", server_url())).unwrap(),
+        url::Url::parse(&format!("{}/gateway/drs", server.url())).unwrap(),
     ));
     DrsResolver::default()
         .with_service("drs.example", transport)
@@ -101,12 +100,13 @@ fn hostname_uri_decodes_exactly_once_and_rejects_unsupported_forms() {
 }
 #[tokio::test]
 async fn explicit_gateway_mapping_direct_url_and_access_headers_do_not_download() {
+    let mut server = mockito::Server::new_async().await;
     let id = "a/b %%2F\"";
-    let data = format!("{}/object-store", server_url());
-    let metadata=mock("GET","/gateway/drs/objects/a%2Fb%20%25%252F%22")
+    let data = format!("{}/object-store", server.url());
+    let metadata=server.mock("GET","/gateway/drs/objects/a%2Fb%20%25%252F%22")
   .with_body(object(id,json!([{"type":"https","access_url":{"url":format!("{data}?signature=object-secret"),"headers":["Authorization: Bearer object-token"]}}])).to_string()).expect(1).create();
-    let download = mock("GET", "/object-store").expect(0).create();
-    let plan = match resolver()
+    let download = server.mock("GET", "/object-store").expect(0).create();
+    let plan = match resolver(&server)
         .access_plan_once(
             "drs://drs.example/a%2Fb%20%25%252F%22",
             &AccessPreferences::default(),
@@ -128,7 +128,9 @@ async fn explicit_gateway_mapping_direct_url_and_access_headers_do_not_download(
 }
 #[tokio::test]
 async fn access_id_negotiation_and_ordered_protocol_region_preferences() {
-    let metadata = mock("GET", "/gateway/drs/objects/id")
+    let mut server = mockito::Server::new_async().await;
+    let metadata = server
+        .mock("GET", "/gateway/drs/objects/id")
         .with_body(
             object(
                 "id",
@@ -142,7 +144,8 @@ async fn access_id_negotiation_and_ordered_protocol_region_preferences() {
         )
         .expect(1)
         .create();
-    let access = mock("GET", "/gateway/drs/objects/id/access/a%2Fb")
+    let access = server
+        .mock("GET", "/gateway/drs/objects/id/access/a%2Fb")
         .with_body(r#"{"url":"https://store.example/object","headers":["X-Access: object"]}"#)
         .expect(1)
         .create();
@@ -151,7 +154,7 @@ async fn access_id_negotiation_and_ordered_protocol_region_preferences() {
         regions: vec!["east".into(), "west".into()],
         method_index: None,
     };
-    let plan = resolver()
+    let plan = resolver(&server)
         .access_plan("drs://drs.example/id", &preferences, &budget(), 2)
         .await
         .unwrap();
@@ -162,13 +165,15 @@ async fn access_id_negotiation_and_ordered_protocol_region_preferences() {
 }
 #[tokio::test]
 async fn pending_unavailable_unsupported_and_cancel_are_distinct() {
-    let pending = mock("GET", "/gateway/drs/objects/id")
+    let mut server = mockito::Server::new_async().await;
+    let pending = server
+        .mock("GET", "/gateway/drs/objects/id")
         .with_status(202)
         .with_header("retry-after", "1")
         .expect(1)
         .create();
     assert!(matches!(
-        resolver()
+        resolver(&server)
             .access_plan_once(
                 "drs://drs.example/id",
                 &AccessPreferences::default(),
@@ -179,7 +184,7 @@ async fn pending_unavailable_unsupported_and_cancel_are_distinct() {
         AccessResolution::Pending(_)
     ));
     pending.assert();
-    drop(pending);
+    pending.remove();
     for (methods, expected) in [
         (json!([{"type":"https","available":false}]), "Unavailable"),
         (
@@ -187,11 +192,12 @@ async fn pending_unavailable_unsupported_and_cancel_are_distinct() {
             "UnsupportedMethods",
         ),
     ] {
-        let request = mock("GET", "/gateway/drs/objects/id")
+        let request = server
+            .mock("GET", "/gateway/drs/objects/id")
             .with_body(object("id", methods).to_string())
             .expect(1)
             .create();
-        let error = resolver()
+        let error = resolver(&server)
             .access_plan_once(
                 "drs://drs.example/id",
                 &AccessPreferences {
@@ -208,7 +214,7 @@ async fn pending_unavailable_unsupported_and_cancel_are_distinct() {
     }
     let operation = budget();
     operation.cancellation.cancel();
-    let error = resolver()
+    let error = resolver(&server)
         .access_plan_once(
             "drs://drs.example/id",
             &AccessPreferences::default(),

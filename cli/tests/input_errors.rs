@@ -2,7 +2,7 @@
 
 #![cfg(unix)]
 
-use mockito::{mock, Matcher};
+use mockito::Matcher;
 use serde_json::json;
 use std::fs;
 use std::process::{Command, Output};
@@ -67,7 +67,8 @@ fn incomplete_configuration_is_an_error() {
 
 #[test]
 fn invalid_list_arguments_are_errors() {
-    let home = home_with_config(json!({"TES": {"base_path": mockito::server_url()}}));
+    let server = mockito::Server::new();
+    let home = home_with_config(json!({"TES": {"base_path": server.url()}}));
     let cases: [(&[&str], &str); 6] = [
         (&["tes", "list", "-s", "NOT_A_STATE"], "Invalid state"),
         (
@@ -107,7 +108,8 @@ fn invalid_list_arguments_are_errors() {
 
 #[test]
 fn invalid_view_error_escapes_terminal_controls() {
-    let home = home_with_config(json!({"TES": {"base_path": mockito::server_url()}}));
+    let server = mockito::Server::new();
+    let home = home_with_config(json!({"TES": {"base_path": server.url()}}));
     let output = run(&home, &["tes", "get", "t1", "FULL\n\x1b[31m"]);
     assert_input_error(&output, "Invalid view");
     let message = stderr(&output);
@@ -117,7 +119,8 @@ fn invalid_view_error_escapes_terminal_controls() {
 
 #[test]
 fn minimal_configuration_and_unquoted_states_work() {
-    let base_path = format!("{}/ga4gh/tes/v1", mockito::server_url());
+    let mut server = mockito::Server::new();
+    let base_path = format!("{}/ga4gh/tes/v1", server.url());
     let home = home_with_config(json!({"TES": {"base_path": base_path}}));
     let service_info = json!({
         "id": "org.example.tes",
@@ -126,11 +129,13 @@ fn minimal_configuration_and_unquoted_states_work() {
         "organization": {"name": "Example", "url": "https://example.org"},
         "version": "1.0.0"
     });
-    let _service_info = mock("GET", "/ga4gh/tes/v1/service-info")
+    let _service_info = server
+        .mock("GET", "/ga4gh/tes/v1/service-info")
         .with_status(200)
         .with_body(service_info.to_string())
         .create();
-    let queued = mock("GET", "/ga4gh/tes/v1/tasks")
+    let queued = server
+        .mock("GET", "/ga4gh/tes/v1/tasks")
         .match_query(Matcher::UrlEncoded("state".into(), "QUEUED".into()))
         .with_status(200)
         .with_body(r#"{"tasks":[]}"#)
@@ -145,9 +150,11 @@ fn minimal_configuration_and_unquoted_states_work() {
 
 #[test]
 fn missing_task_state_is_an_error() {
-    let base_path = format!("{}/ga4gh/tes/v1", mockito::server_url());
+    let mut server = mockito::Server::new();
+    let base_path = format!("{}/ga4gh/tes/v1", server.url());
     let home = home_with_config(json!({"TES": {"base_path": base_path}}));
-    let task = mock("GET", "/ga4gh/tes/v1/tasks/t1?view=MINIMAL")
+    let task = server
+        .mock("GET", "/ga4gh/tes/v1/tasks/t1?view=MINIMAL")
         .with_status(200)
         .with_body(r#"{"id":"t1"}"#)
         .create();

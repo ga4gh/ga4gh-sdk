@@ -9,7 +9,7 @@ use ga4gh_sdk::{
     },
     utils::{configuration::Configuration, operation::Operation, transport::Transport},
 };
-use mockito::{mock, server_url, Matcher};
+use mockito::Matcher;
 use std::{
     pin::Pin,
     sync::{
@@ -44,10 +44,11 @@ fn request() -> RunRequest {
 }
 #[tokio::test]
 async fn sources_preserve_nested_filenames_content_and_shared_header_policy() {
+    let mut server = mockito::Server::new_async().await;
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("tool.cwl");
     std::fs::write(&file, "file contents").unwrap();
-    let wes = wes(&server_url());
+    let wes = wes(&server.url());
     let mut headers = ga4gh_sdk::reqwest::header::HeaderMap::new();
     headers.insert("authorization", "Bearer test-only".parse().unwrap());
     let transport = Transport::with_client(
@@ -58,13 +59,15 @@ async fn sources_preserve_nested_filenames_content_and_shared_header_policy() {
             .unwrap(),
     );
     let wes = WES::without_discovery(transport, wes.discovered_service_info().clone());
-    let json = mock("POST", "/json")
+    let json = server
+        .mock("POST", "/json")
         .match_header("authorization", "Bearer test-only")
         .with_body("{}")
         .expect(1)
         .create();
     wes.transport().post("json", None).await.unwrap();
-    let upload = mock("POST", "/runs")
+    let upload = server
+        .mock("POST", "/runs")
         .match_header("authorization", "Bearer test-only")
         .match_body(Matcher::AllOf(vec![
             Matcher::Regex("filename=\"main.cwl\"".into()),
@@ -233,15 +236,20 @@ async fn reader_failure_and_invalid_paths_are_actionable_without_replay() {
 
 #[tokio::test]
 async fn streamed_submission_validates_acknowledgement_once() {
+    let mut server = mockito::Server::new_async().await;
     use ga4gh_sdk::utils::acknowledgement::AcknowledgementError;
-    let wes = wes(&server_url());
+    let wes = wes(&server.url());
     for body in [
         "{}",
         r#"{"run_id":null}"#,
         r#"{"run_id":4}"#,
         r#"{"run_id":""}"#,
     ] {
-        let post = mock("POST", "/runs").with_body(body).expect(1).create();
+        let post = server
+            .mock("POST", "/runs")
+            .with_body(body)
+            .expect(1)
+            .create();
         let error = wes
             .run_workflow_streaming(
                 request(),

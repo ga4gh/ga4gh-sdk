@@ -260,7 +260,11 @@ pub struct SubmittedBundle {
     pub manifest: BundleManifest,
 }
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    // sha2 0.11 digests no longer implement `LowerHex`.
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 fn safe_root(transport: &Transport) -> crate::Result<String> {
     let mut url = transport.endpoint("")?;
