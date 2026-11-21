@@ -1,7 +1,7 @@
 //! Compile and exercise the public CLI extension point as a downstream crate.
 
 use clap::{Arg, Command};
-use ga4gh_cli::{command, dispatch, dispatch_with_config};
+use ga4gh_cli::{command, dispatch, dispatch_with_config, dispatch_with_config_to};
 use ga4gh_sdk::utils::configuration::Configuration;
 use url::Url;
 
@@ -14,6 +14,19 @@ async fn downstream_command_can_be_parsed_and_dispatched() {
 
     // The SDK CLI leaves commands it does not own to the downstream caller.
     assert!(dispatch(&matches).await.unwrap().is_none());
+    let config = Configuration::default();
+    assert!(dispatch_with_config(&matches, &config)
+        .await
+        .unwrap()
+        .is_none());
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    assert!(
+        dispatch_with_config_to(&matches, &config, &mut stdout, &mut stderr)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(stdout.is_empty() && stderr.is_empty());
     let output = match matches.subcommand() {
         Some(("custom", args)) => args.get_one::<String>("value").unwrap().to_owned(),
         _ => panic!("custom command was not dispatched"),
