@@ -141,6 +141,21 @@ def test_missing_file_has_system_message(tmp_path):
     assert error.value.filename == str(tmp_path / "missing.json")
 
 
+def test_path_error_without_system_error_number_raises_os_error(tmp_path):
+    with pytest.raises(OSError, match="NUL byte") as error:
+        TesTask.from_file(f"{tmp_path}/task\0.json")
+    assert error.value.errno is None
+
+
+def test_missing_file_raises_the_error_of_a_failing_strerror(tmp_path, monkeypatch):
+    def strerror(code):
+        raise LookupError(f"no message for {code}")
+
+    monkeypatch.setattr(os, "strerror", strerror)
+    with pytest.raises(LookupError, match=f"no message for {errno.ENOENT}"):
+        TesTask.from_file(tmp_path / "missing.json")
+
+
 def test_file_that_is_not_utf8_raises_value_error(tmp_path):
     path = tmp_path / "task.json"
     path.write_bytes(b"\xff\xfe{}")
