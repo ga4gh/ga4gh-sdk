@@ -118,13 +118,19 @@ Python tests reach. It writes:
 
 Besides the [prerequisites](#prerequisites) for coverage, it needs a Python
 3.11+ environment with maturin, pip and pytest. `PYTHON` names its
-interpreter (`python3` by default); in a virtual environment:
+interpreter (`python3` by default). `make coverage` replaces any
+`ga4gh-sdk` installed there, so use a virtual environment of its own:
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install 'maturin>=1.7,<2' pytest
-make coverage PYTHON=.venv/bin/python
+python3 -m venv target/coverage-venv
+target/coverage-venv/bin/python -m pip install 'maturin>=1.7,<2' pytest
+make coverage PYTHON=target/coverage-venv/bin/python
 ```
+
+The instrumented builds use cargo-llvm-cov's target directory, `target/`,
+which the normal builds use as well, so switching between `make coverage`
+and `make check` or `make test` can rebuild the workspace crates.
+`make clean-coverage` removes the measurements.
 
 The report leaves out the generated models. Documentation tests (which
 cargo-llvm-cov only measures on nightly Rust) and the opt-in integration
@@ -132,11 +138,12 @@ suites are not included.
 
 [`utils/lcov_filter.py`](../utils/lcov_filter.py) also leaves out the
 `#[pymethods]` and `#[pyclass]` lines of `python/src/` from
-`coverage/lcov.info`. PyO3 generates a wrapper for each Python method, and
-the instrumentation counts these wrappers on the attribute's line, always as
-not executed, even when tests call the methods. The code of the methods is
-counted on its own lines. `coverage/summary.txt` still includes the
-attribute lines. Run the filter's tests with `python3 -m pytest utils`.
+`coverage/lcov.info`, with their line and function records. PyO3 generates
+a wrapper for each Python method, and the instrumentation counts these
+wrappers on the attribute's line, always as not executed, even when tests
+call the methods. The code of the methods is counted on its own lines.
+`coverage/summary.txt` still includes the attribute lines. Run the filter's
+tests with `python3 -m pytest utils`.
 
 For an HTML report of the same data, run this after `make coverage`. The
 report must use cargo-llvm-cov's environment, as `make coverage` does, to
