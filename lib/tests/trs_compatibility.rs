@@ -8,15 +8,21 @@ use ga4gh_sdk::compatibility::{
 };
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::{BodyLimitError, BodyLimits, HttpError, Transport};
-use mockito::{mock, Matcher, Mock};
+use mockito::{Matcher, Mock};
 use serde_json::{json, Value};
 use url::Url;
 
-fn config(prefix: &str) -> Configuration {
-    Configuration::new(Url::parse(&format!("{}/{prefix}/trs/v2", mockito::server_url())).unwrap())
+fn config(server: &mockito::ServerGuard, prefix: &str) -> Configuration {
+    Configuration::new(Url::parse(&format!("{}/{prefix}/trs/v2", server.url())).unwrap())
 }
-fn get(prefix: &str, route: &str, body: impl AsRef<[u8]>) -> Mock {
-    mock("GET", format!("/{prefix}/trs/v2/{route}").as_str())
+fn get(
+    server: &mut mockito::ServerGuard,
+    prefix: &str,
+    route: &str,
+    body: impl AsRef<[u8]>,
+) -> Mock {
+    server
+        .mock("GET", format!("/{prefix}/trs/v2/{route}").as_str())
         .match_header("accept", "application/json")
         .with_status(200)
         .with_body(body)
@@ -34,8 +40,8 @@ fn tool(version: Value) -> Value {
     json!({"id":"t", "url":"https://example.org/tools/t", "organization":"test",
         "toolclass":{"id":"workflow"}, "versions":[version], "provider":{"untouched":true}})
 }
-fn explicit(prefix: &str, profile: TrsVersion) -> TRS {
-    TRS::without_discovery(Transport::new(&config(prefix)), profile)
+fn explicit(server: &mockito::ServerGuard, prefix: &str, profile: TrsVersion) -> TRS {
+    TRS::without_discovery(Transport::new(&config(server, prefix)), profile)
 }
 
 #[test]
@@ -67,14 +73,25 @@ fn selection_is_exact_and_retains_provenance() {
 
 #[tokio::test]
 async fn independent_clients_use_declared_profiles_and_preserve_extensions() {
+    let mut mock_server = mockito::Server::new_async().await;
     for (prefix, declared, expected) in [
         ("compat201", "2.0.1", TrsVersion::V2_0_1),
         ("compat202", "2.0.2", TrsVersion::V2_0_2),
     ] {
-        let discovery = get(prefix, "service-info", info(declared).to_string());
+        let discovery = get(
+            &mut mock_server,
+            prefix,
+            "service-info",
+            info(declared).to_string(),
+        );
         let payload = version(json!("Readable description"));
-        let response = get(prefix, "tools/t/versions/v1", payload.to_string());
-        let client = TRS::new(&config(prefix)).await.unwrap();
+        let response = get(
+            &mut mock_server,
+            prefix,
+            "tools/t/versions/v1",
+            payload.to_string(),
+        );
+        let client = TRS::new(&config(&mock_server, prefix)).await.unwrap();
         assert_eq!(client.compatibility().selection().profile(), expected);
         assert_eq!(
             client.compatibility().selection().source(),
@@ -94,10 +111,11 @@ async fn independent_clients_use_declared_profiles_and_preserve_extensions() {
 
 #[tokio::test]
 async fn tool_with_a_2_0_2_description_keeps_the_public_model_and_original_json() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "nested-description202";
     let payload = tool(version(json!("Readable description")));
-    let response = get(prefix, "tools/t", payload.to_string());
-    let actual = explicit(prefix, TrsVersion::V2_0_2)
+    let response = get(&mut server, prefix, "tools/t", payload.to_string());
+    let actual = explicit(&server, prefix, TrsVersion::V2_0_2)
         .get_tool("t")
         .await
         .unwrap();
@@ -111,22 +129,30 @@ async fn tool_with_a_2_0_2_description_keeps_the_public_model_and_original_json(
 
 #[tokio::test]
 async fn optional_description_is_preserved_across_typed_routes_and_pages() {
+    let mut server = mockito::Server::new_async().await;
     for (prefix, profile) in [
         ("routes201", TrsVersion::V2_0_1),
         ("routes202", TrsVersion::V2_0_2),
     ] {
-        let client = explicit(prefix, profile);
+        let client = explicit(&server, prefix, profile);
         let v = version(json!({"provider_specific": 42}));
         let t = tool(v.clone());
-        let one = get(prefix, "tools/t", t.to_string());
-        let versions = get(prefix, "tools/t/versions", json!([v.clone()]).to_string());
-        let single_version = get(prefix, "tools/t/versions/v1", v.to_string());
-        let list = mock("GET", format!("/{prefix}/trs/v2/tools").as_str())
+        let one = get(&mut server, prefix, "tools/t", t.to_string());
+        let versions = get(
+            &mut server,
+            prefix,
+            "tools/t/versions",
+            json!([v.clone()]).to_string(),
+        );
+        let single_version = get(&mut server, prefix, "tools/t/versions/v1", v.to_string());
+        let list = server
+            .mock("GET", format!("/{prefix}/trs/v2/tools").as_str())
             .with_status(200)
             .with_body(json!([tool(version(json!("valid"))), t.clone()]).to_string())
             .expect(2)
             .create();
-        let next = mock("GET", format!("/{prefix}/trs/v2/tools").as_str())
+        let next = server
+            .mock("GET", format!("/{prefix}/trs/v2/tools").as_str())
             .match_query(Matcher::Exact("offset=opaque%2Btoken".into()))
             .with_status(200)
             .with_body(json!([t]).to_string())
@@ -169,15 +195,25 @@ async fn optional_description_is_preserved_across_typed_routes_and_pages() {
 
 #[tokio::test]
 async fn unknown_version_has_unverified_reads_but_no_assumed_tags() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "unknown";
-    let discovery = get(prefix, "service-info", info("2.1.0").to_string());
+    let discovery = get(
+        &mut server,
+        prefix,
+        "service-info",
+        info("2.1.0").to_string(),
+    );
     let response = get(
+        &mut server,
         prefix,
         "tools/t/versions/v1",
         version(json!(23)).to_string(),
     );
-    let no_tools = mock("GET", "/unknown/trs/v2/tools").expect(0).create();
-    let client = TRS::new(&config(prefix)).await.unwrap();
+    let no_tools = server
+        .mock("GET", "/unknown/trs/v2/tools")
+        .expect(0)
+        .create();
+    let client = TRS::new(&config(&server, prefix)).await.unwrap();
     assert_eq!(
         client.compatibility().selection().source(),
         SelectionSource::Baseline
@@ -220,21 +256,23 @@ async fn unknown_version_has_unverified_reads_but_no_assumed_tags() {
 
 #[tokio::test]
 async fn strict_discovery_and_explicit_override_remain_distinct() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "override";
-    let discovery = mock("GET", "/override/trs/v2/service-info")
+    let discovery = server
+        .mock("GET", "/override/trs/v2/service-info")
         .with_status(200)
         .with_body(info("future").to_string())
         .expect(2)
         .create();
     let error = TRS::with_options(
-        &config(prefix),
+        &config(&server, prefix),
         TrsOptions::default().with_version(VersionPolicy::RequireKnown),
     )
     .await
     .unwrap_err();
     assert!(error.downcast_ref::<CompatibilityError>().is_some());
     let client = TRS::with_options(
-        &config(prefix),
+        &config(&server, prefix),
         TrsOptions::default().with_version(VersionPolicy::Explicit(TrsVersion::V2_0_2)),
     )
     .await
@@ -248,6 +286,7 @@ async fn strict_discovery_and_explicit_override_remain_distinct() {
         SelectionSource::Caller
     );
     let payload = get(
+        &mut server,
         prefix,
         "tools/t/versions/v1",
         version(json!(42)).to_string(),
@@ -261,12 +300,23 @@ async fn strict_discovery_and_explicit_override_remain_distinct() {
 
 #[tokio::test]
 async fn require_known_checks_the_declaration_not_optional_response_metadata() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "strict-known-description";
-    let discovery = get(prefix, "service-info", info("2.0.2").to_string());
+    let discovery = get(
+        &mut server,
+        prefix,
+        "service-info",
+        info("2.0.2").to_string(),
+    );
     let payload = version(json!({"provider_specific": 42}));
-    let response = get(prefix, "tools/t/versions/v1", payload.to_string());
+    let response = get(
+        &mut server,
+        prefix,
+        "tools/t/versions/v1",
+        payload.to_string(),
+    );
     let client = TRS::with_options(
-        &config(prefix),
+        &config(&server, prefix),
         TrsOptions::default().with_version(VersionPolicy::RequireKnown),
     )
     .await
@@ -280,13 +330,15 @@ async fn require_known_checks_the_declaration_not_optional_response_metadata() {
 
 #[tokio::test]
 async fn tags_require_support_on_requests_and_pagination() {
+    let mut server = mockito::Server::new_async().await;
     let tags = ToolFilter {
         tags: vec!["a b".into(), "c".into()],
         ..Default::default()
     };
-    let disabled = explicit("tags-disabled", TrsVersion::V2_0_2)
+    let disabled = explicit(&server, "tags-disabled", TrsVersion::V2_0_2)
         .with_tag_filter_override(CapabilityOverride::Disabled);
-    let denied = mock("GET", "/tags-disabled/trs/v2/tools")
+    let denied = server
+        .mock("GET", "/tags-disabled/trs/v2/tools")
         .expect(0)
         .create();
     assert!(disabled.list_tools(&tags).await.is_err());
@@ -301,9 +353,10 @@ async fn tags_require_support_on_requests_and_pagination() {
             .is_err()
     );
     denied.assert();
-    let client = explicit("tags-backport", TrsVersion::V2_0_1)
+    let client = explicit(&server, "tags-backport", TrsVersion::V2_0_1)
         .with_tag_filter_override(CapabilityOverride::Enabled);
-    let allowed = mock("GET", "/tags-backport/trs/v2/tools")
+    let allowed = server
+        .mock("GET", "/tags-backport/trs/v2/tools")
         .match_query(Matcher::UrlEncoded("tags".into(), "a b,c".into()))
         .with_status(200)
         .with_body("[]")
@@ -326,12 +379,13 @@ async fn tags_require_support_on_requests_and_pagination() {
     );
     allowed.assert();
 
-    let empty_link = mock("GET", "/empty-tag-link/trs/v2/tools")
+    let empty_link = server
+        .mock("GET", "/empty-tag-link/trs/v2/tools")
         .match_query(Matcher::Exact("tags=".into()))
         .with_status(200)
         .with_body("[]")
         .create();
-    let empty_link_client = explicit("empty-tag-link", TrsVersion::V2_0_1);
+    let empty_link_client = explicit(&server, "empty-tag-link", TrsVersion::V2_0_1);
     let page = responses::next_tools_page(&empty_link_client, "?tags=", BodyLimits::default())
         .await
         .unwrap();
@@ -341,17 +395,19 @@ async fn tags_require_support_on_requests_and_pagination() {
 
 #[tokio::test]
 async fn discovery_failure_is_not_an_automatic_bypass() {
+    let mut server = mockito::Server::new_async().await;
     for (prefix, status, body) in [
         ("noinfo", 404, "missing"),
         ("denied", 401, "denied"),
         ("brokeninfo", 200, "{}"),
     ] {
-        let discovery = mock("GET", format!("/{prefix}/trs/v2/service-info").as_str())
+        let discovery = server
+            .mock("GET", format!("/{prefix}/trs/v2/service-info").as_str())
             .with_status(status)
             .with_body(body)
             .create();
         let result = TRS::with_options(
-            &config(prefix),
+            &config(&server, prefix),
             TrsOptions::default().with_version(VersionPolicy::Explicit(TrsVersion::V2_0_1)),
         )
         .await;
@@ -362,9 +418,9 @@ async fn discovery_failure_is_not_an_automatic_bypass() {
                 status as u16
             );
         }
-        let client = explicit(prefix, TrsVersion::V2_0_1);
+        let client = explicit(&server, prefix, TrsVersion::V2_0_1);
         assert!(client.discovered_service_info().is_none());
-        let tools = get(prefix, "tools", "[]");
+        let tools = get(&mut server, prefix, "tools", "[]");
         client.list_tools(&ToolFilter::default()).await.unwrap();
         discovery.assert();
         tools.assert();
@@ -373,6 +429,7 @@ async fn discovery_failure_is_not_an_automatic_bypass() {
 
 #[tokio::test]
 async fn malformed_json_and_invalid_utf8_are_errors_not_repaired_data() {
+    let mut server = mockito::Server::new_async().await;
     for (index, body) in [
         b"{broken".as_slice(),
         b"{\"url\":\"https://example.org\",\"id\":\"\xff\"}",
@@ -383,8 +440,8 @@ async fn malformed_json_and_invalid_utf8_are_errors_not_repaired_data() {
     .enumerate()
     {
         let prefix = format!("malformed-{index}");
-        let response = get(&prefix, "tools/t/versions/v1", body);
-        let error = explicit(&prefix, TrsVersion::V2_0_2)
+        let response = get(&mut server, &prefix, "tools/t/versions/v1", body);
+        let error = explicit(&server, &prefix, TrsVersion::V2_0_2)
             .get_version("t", "v1")
             .await
             .unwrap_err();
@@ -399,8 +456,8 @@ async fn malformed_json_and_invalid_utf8_are_errors_not_repaired_data() {
     let mut invalid = body.into_bytes();
     let at = invalid.windows(6).position(|s| s == b"MARKER").unwrap();
     invalid[at] = 255;
-    let discovery = get("bad-utf8-info", "service-info", invalid);
-    assert!(TRS::new(&config("bad-utf8-info"))
+    let discovery = get(&mut server, "bad-utf8-info", "service-info", invalid);
+    assert!(TRS::new(&config(&server, "bad-utf8-info"))
         .await
         .unwrap_err()
         .downcast_ref::<std::str::Utf8Error>()
@@ -410,11 +467,13 @@ async fn malformed_json_and_invalid_utf8_are_errors_not_repaired_data() {
 
 #[tokio::test]
 async fn bounded_bodies_and_http_status_survive_typed_reads() {
-    let response = mock("GET", "/http-error/trs/v2/tools/t")
+    let mut server = mockito::Server::new_async().await;
+    let response = server
+        .mock("GET", "/http-error/trs/v2/tools/t")
         .with_status(503)
         .with_body("unavailable")
         .create();
-    let error = explicit("http-error", TrsVersion::V2_0_2)
+    let error = explicit(&server, "http-error", TrsVersion::V2_0_2)
         .get_tool("t")
         .await
         .unwrap_err();
@@ -424,11 +483,12 @@ async fn bounded_bodies_and_http_status_survive_typed_reads() {
     );
     response.assert();
     let response = get(
+        &mut server,
         "limited",
         "tools",
         json!([tool(version(json!("long description")))]).to_string(),
     );
-    let client = explicit("limited", TrsVersion::V2_0_2);
+    let client = explicit(&server, "limited", TrsVersion::V2_0_2);
     let error = responses::list_tools_page(
         &client,
         None,
@@ -445,9 +505,11 @@ async fn bounded_bodies_and_http_status_survive_typed_reads() {
 
 #[tokio::test]
 async fn legacy_transport_helpers_keep_baseline_and_containment() {
-    let transport = Transport::new(&config("legacy-page"));
+    let mut server = mockito::Server::new_async().await;
+    let transport = Transport::new(&config(&server, "legacy-page"));
     let payload = tool(version(json!(42)));
-    let response = mock("GET", "/legacy-page/trs/v2/tools")
+    let response = server
+        .mock("GET", "/legacy-page/trs/v2/tools")
         .with_status(200)
         .with_body(json!([payload.clone()]).to_string())
         .expect(2)
@@ -504,11 +566,22 @@ fn old_public_tool_version_struct_literal_still_compiles() {
 
 #[tokio::test]
 async fn simultaneous_connections_keep_independent_profiles() {
-    let old = explicit("simultaneous201", TrsVersion::V2_0_1);
-    let new = explicit("simultaneous202", TrsVersion::V2_0_2);
+    let mut server = mockito::Server::new_async().await;
+    let old = explicit(&server, "simultaneous201", TrsVersion::V2_0_1);
+    let new = explicit(&server, "simultaneous202", TrsVersion::V2_0_2);
     let payload = version(json!(42)).to_string();
-    let old_response = get("simultaneous201", "tools/t/versions/v1", &payload);
-    let new_response = get("simultaneous202", "tools/t/versions/v1", &payload);
+    let old_response = get(
+        &mut server,
+        "simultaneous201",
+        "tools/t/versions/v1",
+        &payload,
+    );
+    let new_response = get(
+        &mut server,
+        "simultaneous202",
+        "tools/t/versions/v1",
+        &payload,
+    );
     let (old_result, new_result) =
         tokio::join!(old.get_version("t", "v1"), new.get_version("t", "v1"));
     assert_eq!(old_result.unwrap().extra["description"], 42);
@@ -527,36 +600,41 @@ async fn simultaneous_connections_keep_independent_profiles() {
 
 #[tokio::test]
 async fn common_operations_and_zip_are_available_under_both_profiles() {
+    let mut server = mockito::Server::new_async().await;
     use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain};
     for (prefix, profile) in [
         ("common201", TrsVersion::V2_0_1),
         ("common202", TrsVersion::V2_0_2),
     ] {
-        let client = explicit(prefix, profile);
-        let classes = get(prefix, "toolClasses", r#"[{"id":"workflow"}]"#);
+        let client = explicit(&server, prefix, profile);
+        let classes = get(&mut server, prefix, "toolClasses", r#"[{"id":"workflow"}]"#);
         let files = get(
+            &mut server,
             prefix,
             "tools/t/versions/v1/CWL/files",
             r#"[{"path":"main.cwl","file_type":"PRIMARY_DESCRIPTOR"}]"#,
         );
         let descriptor = get(
+            &mut server,
             prefix,
             "tools/t/versions/v1/CWL/descriptor",
             r#"{"content":"class: Workflow"}"#,
         );
         let tests = get(
+            &mut server,
             prefix,
             "tools/t/versions/v1/CWL/tests",
             r#"[{"content":"{}"}]"#,
         );
-        let archive = mock(
-            "GET",
-            format!("/{prefix}/trs/v2/tools/t/versions/v1/CWL/files").as_str(),
-        )
-        .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
-        .with_status(200)
-        .with_body(b"PK\x05\x06archive")
-        .create();
+        let archive = server
+            .mock(
+                "GET",
+                format!("/{prefix}/trs/v2/tools/t/versions/v1/CWL/files").as_str(),
+            )
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_body(b"PK\x05\x06archive")
+            .create();
         assert_eq!(client.list_tool_classes().await.unwrap().len(), 1);
         assert_eq!(
             client
@@ -600,13 +678,19 @@ async fn common_operations_and_zip_are_available_under_both_profiles() {
 
 #[tokio::test]
 async fn nullable_descriptions_are_preserved_under_both_profiles() {
+    let mut server = mockito::Server::new_async().await;
     for (prefix, profile) in [
         ("nullable201", TrsVersion::V2_0_1),
         ("nullable202", TrsVersion::V2_0_2),
     ] {
         let payload = version(Value::Null);
-        let response = get(prefix, "tools/t/versions/v1", payload.to_string());
-        let actual = explicit(prefix, profile)
+        let response = get(
+            &mut server,
+            prefix,
+            "tools/t/versions/v1",
+            payload.to_string(),
+        );
+        let actual = explicit(&server, prefix, profile)
             .get_version("t", "v1")
             .await
             .unwrap();

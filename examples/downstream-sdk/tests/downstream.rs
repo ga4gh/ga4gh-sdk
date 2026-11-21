@@ -12,7 +12,7 @@ use ga4gh_sdk::clients::tes::{TesView, TES};
 use ga4gh_sdk::reqwest;
 use ga4gh_sdk::utils::configuration::{BasicAuth, Configuration};
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
-use mockito::{mock, Matcher, Mock};
+use mockito::{Matcher, Mock};
 use serde_json::json;
 #[cfg(unix)]
 use std::process::Command;
@@ -20,13 +20,13 @@ use std::process::ExitCode;
 use url::Url;
 
 /// The API root `/<root>/ga4gh/tes/v1` on the mock server.
-fn api_root(root: &str) -> String {
-    format!("{}/{root}/ga4gh/tes/v1", mockito::server_url())
+fn api_root(server: &mockito::ServerGuard, root: &str) -> String {
+    format!("{}/{root}/ga4gh/tes/v1", server.url())
 }
 
 /// A configuration for the API root `/<root>/ga4gh/tes/v1`.
-fn config(root: &str) -> Configuration {
-    Configuration::new(Url::parse(&api_root(root)).unwrap())
+fn config(server: &mockito::ServerGuard, root: &str) -> Configuration {
+    Configuration::new(Url::parse(&api_root(server, root)).unwrap())
 }
 
 /// The body of a TES service-info response.
@@ -42,8 +42,9 @@ fn service_info_body() -> String {
 }
 
 /// A TES service-info response beneath `root`.
-fn service_info(root: &str) -> Mock {
-    mock("GET", format!("/{root}/ga4gh/tes/v1/service-info").as_str())
+fn service_info(server: &mut mockito::ServerGuard, root: &str) -> Mock {
+    server
+        .mock("GET", format!("/{root}/ga4gh/tes/v1/service-info").as_str())
         .with_status(200)
         .with_body(service_info_body())
         .create()
@@ -60,21 +61,24 @@ fn example_task() -> TesTask {
 
 #[tokio::test]
 async fn usage_client_shares_the_tes_clients_transport() {
+    let mut server = mockito::Server::new_async().await;
     // Only the injected HTTP client sends this header, so the service-info
     // and usage requests prove that the client is shared, not just the
     // configuration.
-    let info = mock("GET", "/shared/ga4gh/tes/v1/service-info")
+    let info = server
+        .mock("GET", "/shared/ga4gh/tes/v1/service-info")
         .match_header("x-client", "injected")
         .with_status(200)
         .with_body(service_info_body())
         .expect(1)
         .create();
-    let _usage = mock("GET", "/shared/ga4gh/tes/v1/tasks/task%201/usage")
+    let _usage = server
+        .mock("GET", "/shared/ga4gh/tes/v1/tasks/task%201/usage")
         .match_header("x-client", "injected")
         .with_status(200)
         .with_body(r#"{"id":"task 1","cpu_seconds":1.5,"peak_memory_bytes":1024,"node":"n1"}"#)
         .create();
-    let config = config("shared");
+    let config = config(&server, "shared");
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("x-client", "injected".parse().unwrap());
     let client = reqwest::Client::builder()
@@ -106,8 +110,10 @@ async fn usage_client_shares_the_tes_clients_transport() {
 
 #[tokio::test]
 async fn usage_client_shares_configured_auth_with_tes() {
+    let mut server = mockito::Server::new_async().await;
     const AUTH: &str = "Basic ZGVtbzpzZWNyZXQ=";
-    let info = mock("GET", "/auth/ga4gh/tes/v1/service-info")
+    let info = server
+        .mock("GET", "/auth/ga4gh/tes/v1/service-info")
         .match_header("authorization", AUTH)
         .with_body(
             json!({
@@ -120,11 +126,12 @@ async fn usage_client_shares_configured_auth_with_tes() {
             .to_string(),
         )
         .create();
-    let usage_request = mock("GET", "/auth/ga4gh/tes/v1/tasks/task-1/usage")
+    let usage_request = server
+        .mock("GET", "/auth/ga4gh/tes/v1/tasks/task-1/usage")
         .match_header("authorization", AUTH)
         .with_body(r#"{"id":"task-1","cpu_seconds":2.0}"#)
         .create();
-    let config = config("auth").with_basic_auth(BasicAuth {
+    let config = config(&server, "auth").with_basic_auth(BasicAuth {
         username: "demo".into(),
         password: Some("secret".into()),
     });
@@ -141,12 +148,14 @@ async fn usage_client_shares_configured_auth_with_tes() {
 
 #[tokio::test]
 async fn usage_errors_keep_the_http_status() {
-    let _usage = mock("GET", "/missing/ga4gh/tes/v1/tasks/gone/usage")
+    let mut server = mockito::Server::new_async().await;
+    let _usage = server
+        .mock("GET", "/missing/ga4gh/tes/v1/tasks/gone/usage")
         .with_status(404)
         .with_body(r#"{"msg":"not found"}"#)
         .create();
 
-    let error = UsageClient::new(&config("missing"))
+    let error = UsageClient::new(&config(&server, "missing"))
         .task_usage("gone")
         .await
         .unwrap_err();
@@ -159,12 +168,14 @@ async fn usage_errors_keep_the_http_status() {
 
 #[tokio::test]
 async fn usage_rejects_invalid_bodies() {
-    let _usage = mock("GET", "/invalid/ga4gh/tes/v1/tasks/task-1/usage")
+    let mut server = mockito::Server::new_async().await;
+    let _usage = server
+        .mock("GET", "/invalid/ga4gh/tes/v1/tasks/task-1/usage")
         .with_status(200)
         .with_body(r#"{"cpu_seconds":1}"#)
         .create();
 
-    let error = UsageClient::new(&config("invalid"))
+    let error = UsageClient::new(&config(&server, "invalid"))
         .task_usage("task-1")
         .await
         .unwrap_err();
@@ -174,8 +185,10 @@ async fn usage_rejects_invalid_bodies() {
 
 #[tokio::test]
 async fn prioritized_task_sends_and_reads_the_extra_field() {
-    let _info = service_info("priority");
-    let created = mock("POST", "/priority/ga4gh/tes/v1/tasks")
+    let mut server = mockito::Server::new_async().await;
+    let _info = service_info(&mut server, "priority");
+    let created = server
+        .mock("POST", "/priority/ga4gh/tes/v1/tasks")
         .match_body(Matcher::Json(json!({
             "name": "hello",
             "executors": [{"image": "alpine", "command": ["echo", "hello"]}],
@@ -185,11 +198,12 @@ async fn prioritized_task_sends_and_reads_the_extra_field() {
         .with_status(200)
         .with_body(r#"{"id":"task-7"}"#)
         .create();
-    let _fetched = mock("GET", "/priority/ga4gh/tes/v1/tasks/task-7?view=BASIC")
+    let _fetched = server
+        .mock("GET", "/priority/ga4gh/tes/v1/tasks/task-7?view=BASIC")
         .with_status(200)
         .with_body(r#"{"id":"task-7","state":"QUEUED","executors":[],"priority":7,"x-other":true}"#)
         .create();
-    let tes = TES::new(&config("priority")).await.unwrap();
+    let tes = TES::new(&config(&server, "priority")).await.unwrap();
     let mut spec_task = example_task();
     spec_task.extra.insert("x-other".into(), json!(true));
 
@@ -212,7 +226,9 @@ async fn prioritized_task_sends_and_reads_the_extra_field() {
 
 #[tokio::test]
 async fn tes_client_accepts_the_artifact_of_the_extended_service() {
-    let _info = mock("GET", "/artifact/ga4gh/tes/v1/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let _info = server
+        .mock("GET", "/artifact/ga4gh/tes/v1/service-info")
         .with_status(200)
         .with_body(
             json!({
@@ -225,12 +241,13 @@ async fn tes_client_accepts_the_artifact_of_the_extended_service() {
             .to_string(),
         )
         .create();
-    let created = mock("POST", "/artifact/ga4gh/tes/v1/tasks")
+    let created = server
+        .mock("POST", "/artifact/ga4gh/tes/v1/tasks")
         .match_body(Matcher::PartialJson(json!({"priority": 2})))
         .with_status(200)
         .with_body(r#"{"id":"task-2"}"#)
         .create();
-    let config = config("artifact");
+    let config = config(&server, "artifact");
 
     let error = TES::new(&config).await.unwrap_err();
     assert!(
@@ -305,16 +322,18 @@ fn cli_keeps_the_built_in_commands_and_adds_its_own() {
 
 #[tokio::test]
 async fn quota_uses_the_sdk_output_helpers() {
-    let _quota = mock("GET", "/quota-ok/quota")
+    let mut server = mockito::Server::new_async().await;
+    let _quota = server
+        .mock("GET", "/quota-ok/quota")
         .with_body("{\"user\":\"a\u{202e}\",\"cpu_hours\":10}")
         .create();
-    let _error = mock("GET", "/quota-error/quota")
+    let _error = server
+        .mock("GET", "/quota-error/quota")
         .with_status(403)
         .with_body("denied")
         .create();
-    let quota_config = |root: &str| {
-        Configuration::new(Url::parse(&format!("{}/{root}/", mockito::server_url())).unwrap())
-    };
+    let quota_config =
+        |root: &str| Configuration::new(Url::parse(&format!("{}/{root}/", server.url())).unwrap());
     let output = cli::quota(&quota_config("quota-ok")).await;
     assert_eq!(output.exit_code, ExitCode::SUCCESS);
     assert_eq!(output.stdout, "{\"user\":\"a\\u202e\",\"cpu_hours\":10}");
@@ -325,15 +344,18 @@ async fn quota_uses_the_sdk_output_helpers() {
 
 #[tokio::test]
 async fn cli_extension_escapes_output_and_reports_errors() {
-    let _usage = mock("GET", "/cli-usage/ga4gh/tes/v1/tasks/task-1/usage")
+    let mut server = mockito::Server::new_async().await;
+    let _usage = server
+        .mock("GET", "/cli-usage/ga4gh/tes/v1/tasks/task-1/usage")
         .with_status(200)
         .with_body(r#"{"id":"task-1\u001b[2J","cpu_seconds":2.0}"#)
         .create();
-    let _error = mock("GET", "/cli-usage/ga4gh/tes/v1/tasks/task-2/usage")
+    let _error = server
+        .mock("GET", "/cli-usage/ga4gh/tes/v1/tasks/task-2/usage")
         .with_status(500)
         .with_body("broken")
         .create();
-    let config = config("cli-usage");
+    let config = config(&server, "cli-usage");
 
     let matches = cli::command()
         .try_get_matches_from([cli::BIN_NAME, "tes", "usage", "task-1"])
@@ -375,21 +397,26 @@ async fn cli_extension_escapes_output_and_reports_errors() {
 #[cfg(unix)]
 #[test]
 fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
-    let _info = service_info("cli-run");
-    let _usage = mock("GET", "/cli-run/ga4gh/tes/v1/tasks/task-1/usage")
+    let mut server = mockito::Server::new();
+    let _info = service_info(&mut server, "cli-run");
+    let _usage = server
+        .mock("GET", "/cli-run/ga4gh/tes/v1/tasks/task-1/usage")
         .with_status(200)
         .with_body(r#"{"id":"task-1","peak_memory_bytes":5}"#)
         .create();
-    let _tasks = mock("GET", "/cli-run/ga4gh/tes/v1/tasks")
+    let _tasks = server
+        .mock("GET", "/cli-run/ga4gh/tes/v1/tasks")
         .with_status(200)
         .with_body(r#"{"tasks":[{"id":"task-from-sdk","state":"COMPLETE"}]}"#)
         .create();
-    let _quota = mock("GET", "/cli-run-quota/quota")
+    let _quota = server
+        .mock("GET", "/cli-run-quota/quota")
         .match_header("authorization", "Bearer from-file")
         .with_body(r#"{"cpu_hours":3}"#)
         .create();
     // The built-in `service-info` command reads the binary's own sections too.
-    let _quota_info = mock("GET", "/cli-run-quota/service-info")
+    let _quota_info = server
+        .mock("GET", "/cli-run-quota/service-info")
         .match_header("authorization", "Bearer from-file")
         .with_body(
             json!({
@@ -408,8 +435,8 @@ fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
     std::fs::write(
         home.path().join(".downstream-cli/config.json"),
         json!({
-            "TES": {"base_path": api_root("cli-run")},
-            "QUOTA": {"base_path": format!("{}/cli-run-quota/", mockito::server_url()), "oauth_access_token": "from-file"}
+            "TES": {"base_path": api_root(&server, "cli-run")},
+            "QUOTA": {"base_path": format!("{}/cli-run-quota/", server.url()), "oauth_access_token": "from-file"}
         }).to_string(),
     )
     .unwrap();
@@ -452,7 +479,9 @@ fn cli_binary_reads_the_config_file_for_added_and_built_in_commands() {
 #[cfg(unix)]
 #[test]
 fn cli_binary_selects_a_profile_for_its_own_command() {
-    let quota = mock("GET", "/cli-run-metered-quota/quota")
+    let mut server = mockito::Server::new();
+    let quota = server
+        .mock("GET", "/cli-run-metered-quota/quota")
         .match_header("authorization", "Bearer metered-file-token")
         .with_body(r#"{"cpu_hours":7}"#)
         .create();
@@ -463,9 +492,9 @@ fn cli_binary_selects_a_profile_for_its_own_command() {
         config_dir.join("config.json"),
         json!({
             "profiles": {
-                "default": {"TES": {"base_path": api_root("unused")}},
+                "default": {"TES": {"base_path": api_root(&server, "unused")}},
                 "metered": {"QUOTA": {
-                    "base_path": format!("{}/cli-run-metered-quota/", mockito::server_url()),
+                    "base_path": format!("{}/cli-run-metered-quota/", server.url()),
                     "oauth_access_token": "metered-file-token"
                 }}
             }

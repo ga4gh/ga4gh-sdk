@@ -9,7 +9,6 @@ use ga4gh_sdk::clients::wes::{Run, WES};
 use ga4gh_sdk::utils::configuration::Configuration;
 use ga4gh_sdk::utils::transport::{HttpError, Transport};
 use ga4gh_sdk::Error;
-use mockito::{mock, server_url};
 
 fn service_info(artifact: &str) -> String {
     serde_json::json!({
@@ -22,8 +21,8 @@ fn service_info(artifact: &str) -> String {
     .to_string()
 }
 
-fn config(path: &str) -> Configuration {
-    Configuration::new(url::Url::parse(&format!("{}{path}", server_url())).unwrap())
+fn config(server: &mockito::ServerGuard, path: &str) -> Configuration {
+    Configuration::new(url::Url::parse(&format!("{}{path}", server.url())).unwrap())
 }
 
 #[test]
@@ -41,18 +40,22 @@ fn clients_and_errors_are_send_and_sync() {
 
 #[tokio::test]
 async fn spawned_client_reports_http_and_parse_errors() {
-    let _service = mock("GET", "/kinds/tes/v1/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let _service = server
+        .mock("GET", "/kinds/tes/v1/service-info")
         .with_body(service_info("tes"))
         .create();
-    let _denied = mock("GET", "/kinds/tes/v1/tasks/denied?view=FULL")
+    let _denied = server
+        .mock("GET", "/kinds/tes/v1/tasks/denied?view=FULL")
         .with_status(401)
         .with_body("unauthorized")
         .create();
-    let _malformed = mock("GET", "/kinds/tes/v1/tasks/malformed?view=FULL")
+    let _malformed = server
+        .mock("GET", "/kinds/tes/v1/tasks/malformed?view=FULL")
         .with_body("not JSON")
         .create();
 
-    let config = config("/kinds/tes/v1");
+    let config = config(&server, "/kinds/tes/v1");
     let tes = tokio::spawn(async move { TES::new(&config).await })
         .await
         .unwrap()
@@ -79,17 +82,40 @@ async fn spawned_client_reports_http_and_parse_errors() {
 
 #[tokio::test]
 async fn constructors_return_service_and_transport_errors() {
-    let _service = mock("GET", "/kinds/wrong/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let _service = server
+        .mock("GET", "/kinds/wrong/service-info")
         .with_body(service_info("wes"))
         .create();
-    let _other = mock("GET", "/kinds/other/service-info")
+    let _other = server
+        .mock("GET", "/kinds/other/service-info")
         .with_body(service_info("tes"))
         .create();
     let errors = [
-        ("TES", TES::new(&config("/kinds/wrong")).await.unwrap_err()),
-        ("WES", WES::new(&config("/kinds/other")).await.unwrap_err()),
-        ("DRS", DRS::new(&config("/kinds/other")).await.unwrap_err()),
-        ("TRS", TRS::new(&config("/kinds/other")).await.unwrap_err()),
+        (
+            "TES",
+            TES::new(&config(&server, "/kinds/wrong"))
+                .await
+                .unwrap_err(),
+        ),
+        (
+            "WES",
+            WES::new(&config(&server, "/kinds/other"))
+                .await
+                .unwrap_err(),
+        ),
+        (
+            "DRS",
+            DRS::new(&config(&server, "/kinds/other"))
+                .await
+                .unwrap_err(),
+        ),
+        (
+            "TRS",
+            TRS::new(&config(&server, "/kinds/other"))
+                .await
+                .unwrap_err(),
+        ),
     ];
     for (api, error) in errors {
         assert!(matches!(error, Error::UnexpectedService(_)), "{error:?}");
@@ -120,18 +146,24 @@ async fn constructors_return_service_and_transport_errors() {
 
 #[tokio::test]
 async fn discovery_hint_keeps_the_http_error() {
-    let _service = mock("GET", "/kinds/missing/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let _service = server
+        .mock("GET", "/kinds/missing/service-info")
         .with_status(404)
         .with_body("missing")
         .create();
     let errors = [
         (
             "DRS",
-            DRS::new(&config("/kinds/missing")).await.unwrap_err(),
+            DRS::new(&config(&server, "/kinds/missing"))
+                .await
+                .unwrap_err(),
         ),
         (
             "WES",
-            WES::new(&config("/kinds/missing")).await.unwrap_err(),
+            WES::new(&config(&server, "/kinds/missing"))
+                .await
+                .unwrap_err(),
         ),
     ];
     for (api, error) in errors {
@@ -179,11 +211,13 @@ async fn resolution_keeps_the_typed_request_error() {
 
 #[tokio::test]
 async fn discovery_reports_another_service_as_unexpected() {
-    let _service = mock("GET", "/kinds/discover/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let _service = server
+        .mock("GET", "/kinds/discover/service-info")
         .with_body(service_info("wes"))
         .create();
     let max_age = std::time::Duration::from_secs(60);
-    let error = TES::discover(&config("/kinds/discover"), max_age)
+    let error = TES::discover(&config(&server, "/kinds/discover"), max_age)
         .await
         .map(|_| ())
         .unwrap_err();
@@ -207,7 +241,8 @@ fn bearer_token_from_env_errors_are_configuration_errors() {
 
 #[tokio::test]
 async fn endpoint_and_configuration_errors_have_their_own_kind() {
-    let task = Task::new("..".to_owned(), Transport::new(&config("/kinds")));
+    let server = mockito::Server::new_async().await;
+    let task = Task::new("..".to_owned(), Transport::new(&config(&server, "/kinds")));
     let error = task.status().await.unwrap_err();
     assert!(matches!(error, Error::Endpoint(_)), "{error:?}");
 

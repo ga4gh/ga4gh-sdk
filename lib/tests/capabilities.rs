@@ -6,7 +6,6 @@ use ga4gh_sdk::{
     },
     utils::{configuration::Configuration, transport::Transport},
 };
-use mockito::{mock, server_url};
 use serde_json::json;
 use std::time::Duration;
 fn service(artifact: &str) -> serde_json::Value {
@@ -14,13 +13,15 @@ fn service(artifact: &str) -> serde_json::Value {
 }
 #[tokio::test]
 async fn discovery_caches_raw_extensions_and_refreshes_once() {
+    let mut server = mockito::Server::new_async().await;
     let mut info = service("tes");
     info["extension"] = json!({"custom":true});
-    let first = mock("GET", "/service-info")
+    let first = server
+        .mock("GET", "/service-info")
         .with_body(info.to_string())
         .expect(1)
         .create();
-    let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+    let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
     let mut client = TES::discover(&config, Duration::from_secs(60))
         .await
         .unwrap();
@@ -28,9 +29,10 @@ async fn discovery_caches_raw_extensions_and_refreshes_once() {
     assert_eq!(client.capabilities().tes_info().unwrap().name, "test");
     assert_eq!(client.capabilities().tes_info().unwrap().name, "test");
     first.assert();
-    drop(first);
+    first.remove();
     info["extension"]["custom"] = json!(false);
-    let refresh = mock("GET", "/service-info")
+    let refresh = server
+        .mock("GET", "/service-info")
         .with_body(info.to_string())
         .expect(1)
         .create();
@@ -40,17 +42,20 @@ async fn discovery_caches_raw_extensions_and_refreshes_once() {
 }
 #[tokio::test]
 async fn strict_wes_contradiction_prevents_submission_but_unknown_is_advisory() {
+    let mut server = mockito::Server::new_async().await;
     let mut info = service("wes");
     info["workflow_type_versions"] = json!({"CWL":{"workflow_type_version":["v1.2"]}});
-    let service = mock("GET", "/service-info")
+    let service = server
+        .mock("GET", "/service-info")
         .with_body(info.to_string())
         .expect(1)
         .create();
-    let submit = mock("POST", "/runs")
+    let submit = server
+        .mock("POST", "/runs")
         .with_body(r#"{"run_id":"r1"}"#)
         .expect(0)
         .create();
-    let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+    let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
     let client = WES::discover(&config, Duration::from_secs(60))
         .await
         .unwrap();
@@ -118,18 +123,20 @@ async fn stale_metadata_and_tes_parameter_case_strictness() {
 }
 
 /// A configuration for the API root `/<root>/` on the mock server.
-fn config_below(root: &str) -> Configuration {
-    Configuration::new(url::Url::parse(&format!("{}/{root}/", server_url())).unwrap())
+fn config_below(server: &mockito::ServerGuard, root: &str) -> Configuration {
+    Configuration::new(url::Url::parse(&format!("{}/{root}/", server.url())).unwrap())
 }
 
 #[tokio::test]
 async fn discovered_accessors_read_client_and_snapshot() {
+    let mut server = mockito::Server::new_async().await;
     let mut info = service("tes");
     info["id"] = json!("org.example.accessors");
-    let _info = mock("GET", "/accessors/ga4gh/tes/v9/service-info")
+    let _info = server
+        .mock("GET", "/accessors/ga4gh/tes/v9/service-info")
         .with_body(info.to_string())
         .create();
-    let config = config_below("accessors/ga4gh/tes/v9");
+    let config = config_below(&server, "accessors/ga4gh/tes/v9");
     let root = config.base_path.clone();
     let transport =
         Transport::with_timeouts(&config, Duration::from_secs(3), Duration::from_secs(7)).unwrap();
@@ -160,36 +167,40 @@ async fn discovered_accessors_read_client_and_snapshot() {
 
 #[tokio::test]
 async fn refresh_replaces_service_and_snapshot_together() {
+    let mut server = mockito::Server::new_async().await;
     let mut info = service("wes");
     info["id"] = json!("first");
-    let first = mock("GET", "/refresh/ga4gh/wes/v9/service-info")
+    let first = server
+        .mock("GET", "/refresh/ga4gh/wes/v9/service-info")
         .with_body(info.to_string())
         .expect(1)
         .create();
     let mut discovered = WES::discover(
-        &config_below("refresh/ga4gh/wes/v9"),
+        &config_below(&server, "refresh/ga4gh/wes/v9"),
         Duration::from_secs(60),
     )
     .await
     .unwrap();
     first.assert();
-    drop(first);
+    first.remove();
     assert_eq!(discovered.discovered_service_info().id, "first");
     assert_eq!(discovered.capabilities().raw["id"], "first");
 
     info["id"] = json!("second");
-    let second = mock("GET", "/refresh/ga4gh/wes/v9/service-info")
+    let second = server
+        .mock("GET", "/refresh/ga4gh/wes/v9/service-info")
         .with_body(info.to_string())
         .expect(1)
         .create();
     discovered.refresh().await.unwrap();
     second.assert();
-    drop(second);
+    second.remove();
     assert_eq!(discovered.discovered_service_info().id, "second");
     assert_eq!(discovered.capabilities().raw["id"], "second");
 
     // A failed refresh keeps both values.
-    let failed = mock("GET", "/refresh/ga4gh/wes/v9/service-info")
+    let failed = server
+        .mock("GET", "/refresh/ga4gh/wes/v9/service-info")
         .with_status(500)
         .expect(1)
         .create();

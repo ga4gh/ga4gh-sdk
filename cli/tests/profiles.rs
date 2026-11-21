@@ -7,7 +7,6 @@
 
 use ga4gh_cli::CliContext;
 use ga4gh_sdk::clients::ServiceType;
-use mockito::mock;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -224,24 +223,31 @@ fn profile_option_is_global() {
 }
 
 /// A mock TES below `/<prefix>/ga4gh/tes/v1` that lists one task named `task`.
-fn mock_tes(prefix: &str, task: &str) -> (mockito::Mock, mockito::Mock, String) {
-    let service_info = mock("GET", format!("/{prefix}/ga4gh/tes/v1/service-info").as_str())
+fn mock_tes(
+    server: &mut mockito::ServerGuard,
+    prefix: &str,
+    task: &str,
+) -> (mockito::Mock, mockito::Mock, String) {
+    let service_info = server.mock("GET", format!("/{prefix}/ga4gh/tes/v1/service-info").as_str())
         .with_status(200)
         .with_body(r#"{"id":"test","name":"Test","type":{"group":"org.ga4gh","artifact":"tes","version":"1.1.0"},"organization":{"name":"Test","url":"https://example.org"},"version":"1.0.0"}"#)
         .create();
-    let tasks = mock("GET", format!("/{prefix}/ga4gh/tes/v1/tasks").as_str())
+    let tasks = server
+        .mock("GET", format!("/{prefix}/ga4gh/tes/v1/tasks").as_str())
         .with_status(200)
         .with_body(json!({"tasks": [{"id": task, "state": "COMPLETE"}]}).to_string())
         .create();
-    let base_path = format!("{}/{prefix}/ga4gh/tes/v1", mockito::server_url());
+    let base_path = format!("{}/{prefix}/ga4gh/tes/v1", server.url());
     (service_info, tasks, base_path)
 }
 
 #[tokio::test]
 async fn dispatch_uses_the_profile_option() {
+    let mut server = mockito::Server::new_async().await;
     const VAR: &str = "GA4GH_CLI_TEST_PROFILE_DISPATCH";
-    let (_local_info, _local_tasks, local) = mock_tes("profile-local", "task-local");
-    let (_remote_info, _remote_tasks, remote) = mock_tes("profile-remote", "task-remote");
+    let (_local_info, _local_tasks, local) = mock_tes(&mut server, "profile-local", "task-local");
+    let (_remote_info, _remote_tasks, remote) =
+        mock_tes(&mut server, "profile-remote", "task-remote");
     let dir = tempfile::tempdir().unwrap();
     let path = write_config(
         dir.path(),
@@ -297,6 +303,7 @@ async fn dispatch_uses_the_profile_option() {
 /// section, with its token in a named variable, reaches the service.
 #[tokio::test]
 async fn workflow_submission_uses_the_profile_and_its_token_variable() {
+    let mut server = mockito::Server::new_async().await;
     const TOKEN: &str = "GA4GH_CLI_TEST_PROFILE_WORKFLOW_TOKEN";
     let info = json!({
         "workflow_type_versions": {"CWL": {"workflow_type_version": ["v1.2"]}},
@@ -307,18 +314,20 @@ async fn workflow_submission_uses_the_profile_and_its_token_variable() {
         "system_state_counts": {},
         "tags": {}
     });
-    let service = mock("GET", "/profile-wes/service-info")
+    let service = server
+        .mock("GET", "/profile-wes/service-info")
         .match_header("authorization", "Bearer token-of-the-profile")
         .with_body(info.to_string())
         .expect(1)
         .create();
-    let submission = mock("POST", "/profile-wes/runs")
+    let submission = server
+        .mock("POST", "/profile-wes/runs")
         .match_header("authorization", "Bearer token-of-the-profile")
         .with_body(r#"{"run_id":"profile-run"}"#)
         .expect(1)
         .create();
     let dir = tempfile::tempdir().unwrap();
-    let base_path = format!("{}/profile-wes", mockito::server_url());
+    let base_path = format!("{}/profile-wes", server.url());
     let path = write_config(
         dir.path(),
         json!({

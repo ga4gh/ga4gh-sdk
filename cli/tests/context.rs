@@ -8,7 +8,6 @@
 use clap::Command;
 use ga4gh_cli::{CliContext, CommandOutput};
 use ga4gh_sdk::clients::ServiceType;
-use mockito::mock;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -243,16 +242,18 @@ fn non_unicode_token_variable_is_an_error_without_its_value() {
 
 #[tokio::test]
 async fn dispatch_to_reads_the_configured_file() {
-    let _service_info = mock("GET", "/context/ga4gh/tes/v1/service-info")
+    let mut server = mockito::Server::new_async().await;
+    let _service_info = server.mock("GET", "/context/ga4gh/tes/v1/service-info")
         .with_status(200)
         .with_body(r#"{"id":"test","name":"Test","type":{"group":"org.ga4gh","artifact":"tes","version":"1.1.0"},"organization":{"name":"Test","url":"https://example.org"},"version":"1.0.0"}"#)
         .create();
-    let _tasks = mock("GET", "/context/ga4gh/tes/v1/tasks")
+    let _tasks = server
+        .mock("GET", "/context/ga4gh/tes/v1/tasks")
         .with_status(200)
         .with_body(r#"{"tasks":[{"id":"task-from-context","state":"COMPLETE"}]}"#)
         .create();
     let dir = tempfile::tempdir().unwrap();
-    let base_path = format!("{}/context/ga4gh/tes/v1", mockito::server_url());
+    let base_path = format!("{}/context/ga4gh/tes/v1", server.url());
     let path = write_config(dir.path(), json!({"TES": {"base_path": base_path}}));
     let context = context(&path);
     let matches = context
@@ -343,6 +344,7 @@ fn write_to_writes_both_streams_and_returns_the_exit_code() {
 /// shows that the token variable reaches the service.
 #[tokio::test]
 async fn workflow_submission_uses_the_context_file_and_token_variable() {
+    let mut server = mockito::Server::new_async().await;
     const VAR: &str = "GA4GH_CLI_TEST_CONTEXT_TOKEN_WORKFLOW";
     let info = json!({
         "workflow_type_versions": {"CWL": {"workflow_type_version": ["v1.2"]}},
@@ -353,18 +355,20 @@ async fn workflow_submission_uses_the_context_file_and_token_variable() {
         "system_state_counts": {},
         "tags": {}
     });
-    let service = mock("GET", "/context-wes/service-info")
+    let service = server
+        .mock("GET", "/context-wes/service-info")
         .match_header("authorization", "Bearer token-from-variable")
         .with_body(info.to_string())
         .expect(1)
         .create();
-    let submission = mock("POST", "/context-wes/runs")
+    let submission = server
+        .mock("POST", "/context-wes/runs")
         .match_header("authorization", "Bearer token-from-variable")
         .with_body(r#"{"run_id":"context-run"}"#)
         .expect(1)
         .create();
     let dir = tempfile::tempdir().unwrap();
-    let base_path = format!("{}/context-wes", mockito::server_url());
+    let base_path = format!("{}/context-wes", server.url());
     let path = write_config(dir.path(), json!({"WES": {"base_path": base_path}}));
     std::env::set_var(VAR, "token-from-variable");
     let context = context(&path).with_token_env(VAR, [ServiceType::WES]);

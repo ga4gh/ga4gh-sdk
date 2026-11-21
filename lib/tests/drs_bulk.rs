@@ -9,11 +9,11 @@ use ga4gh_sdk::{
     },
     utils::{configuration::Configuration, operation::Operation, transport::Transport},
 };
-use mockito::{mock, server_url, Matcher};
+use mockito::Matcher;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, time::Duration};
-fn client(path: &str) -> DRS {
-    let config = Configuration::new(url::Url::parse(&format!("{}{path}", server_url())).unwrap());
+fn client(server: &mockito::ServerGuard, path: &str) -> DRS {
+    let config = Configuration::new(url::Url::parse(&format!("{}{path}", server.url())).unwrap());
     DRS::without_discovery(Transport::new(&config), Service::default())
 }
 fn budget() -> Operation {
@@ -52,9 +52,10 @@ fn debug_output_does_not_disclose_access_credentials() {
 }
 #[tokio::test]
 async fn mixed_reordered_outcomes_and_duplicate_input_are_correlated_by_identity() {
-    let request=mock("POST","/mixed/objects").match_body(Matcher::Json(json!({"bulk_object_ids":["a","b","c","d"],"passports":["test-passport"]})))
+    let mut server = mockito::Server::new_async().await;
+    let request=server.mock("POST","/mixed/objects").match_body(Matcher::Json(json!({"bulk_object_ids":["a","b","c","d"],"passports":["test-passport"]})))
  .with_body(json!({"resolved_drs_object":[object("d"),object("a")],"unresolved_drs_objects":[{"error_code":403,"object_ids":["b"]},{"error_code":404,"object_ids":["c"]}]}).to_string()).expect(1).create();
-    let report = client("/mixed")
+    let report = client(&server, "/mixed")
         .get_bulk_objects(
             &["d".into(), "c".into(), "a".into(), "b".into(), "a".into()],
             &["test-passport".into()],
@@ -72,6 +73,7 @@ async fn mixed_reordered_outcomes_and_duplicate_input_are_correlated_by_identity
 }
 #[tokio::test]
 async fn access_pairs_missing_and_duplicate_identities_are_never_zipped_to_positions() {
+    let mut server = mockito::Server::new_async().await;
     let a = BulkKey {
         object_id: "a".into(),
         access_id: Some("x".into()),
@@ -80,9 +82,9 @@ async fn access_pairs_missing_and_duplicate_identities_are_never_zipped_to_posit
         object_id: "b".into(),
         access_id: Some("y".into()),
     };
-    let request=mock("POST","/access/objects/access").match_body(Matcher::Json(json!({"bulk_object_access_ids":[{"bulk_object_id":"a","bulk_access_ids":["x"]},{"bulk_object_id":"b","bulk_access_ids":["y"]}]})))
+    let request=server.mock("POST","/access/objects/access").match_body(Matcher::Json(json!({"bulk_object_access_ids":[{"bulk_object_id":"a","bulk_access_ids":["x"]},{"bulk_object_id":"b","bulk_access_ids":["y"]}]})))
  .with_body(json!({"resolved_drs_object_access_urls":[{"drs_object_id":"b","drs_access_id":"y","url":"https://store/b"},{"drs_object_id":"a","url":"https://store/ambiguous"},{"drs_object_id":"b","drs_access_id":"y","url":"https://store/duplicate"}]}).to_string()).expect(1).create();
-    let report = client("/access")
+    let report = client(&server, "/access")
         .get_bulk_access_urls(
             &[b.clone(), a.clone()],
             &[],
@@ -99,7 +101,7 @@ async fn access_pairs_missing_and_duplicate_identities_are_never_zipped_to_posit
     request.assert();
     let mut other = a.clone();
     other.access_id = Some("another".into());
-    assert!(client("/access")
+    assert!(client(&server, "/access")
         .get_bulk_access_urls(&[a, other], &[], &BulkPolicy::default(), &budget())
         .await
         .unwrap_err()
@@ -108,7 +110,8 @@ async fn access_pairs_missing_and_duplicate_identities_are_never_zipped_to_posit
 }
 #[tokio::test]
 async fn invalid_policy_is_rejected_even_without_ids() {
-    let client = client("/invalid-policy");
+    let server = mockito::Server::new_async().await;
+    let client = client(&server, "/invalid-policy");
     let invalid = BulkPolicy {
         chunk_size: 0,
         ..BulkPolicy::default()
@@ -155,16 +158,18 @@ async fn invalid_policy_is_rejected_even_without_ids() {
 }
 #[tokio::test]
 async fn empty_pending_and_auth_failure_do_not_fallback() {
-    let client = client("/pending");
+    let mut server = mockito::Server::new_async().await;
+    let client = client(&server, "/pending");
     assert!(client
         .get_bulk_objects(&[], &[], &BulkPolicy::default(), &budget())
         .await
         .unwrap()
         .outcomes
         .is_empty());
-    let single = mock("GET", "/pending/objects/a").expect(0).create();
+    let single = server.mock("GET", "/pending/objects/a").expect(0).create();
     for status in [202, 401, 403] {
-        let request = mock("POST", "/pending/objects")
+        let request = server
+            .mock("POST", "/pending/objects")
             .with_status(status)
             .with_header("retry-after", "1")
             .expect(1)
@@ -194,18 +199,22 @@ async fn empty_pending_and_auth_failure_do_not_fallback() {
 }
 #[tokio::test]
 async fn bounded_413_splitting_preserves_siblings_and_singleton_failure_terminates() {
-    let client = client("/split");
-    let both = mock("POST", "/split/objects")
+    let mut server = mockito::Server::new_async().await;
+    let client = client(&server, "/split");
+    let both = server
+        .mock("POST", "/split/objects")
         .match_body(Matcher::Json(json!({"bulk_object_ids":["a","b"]})))
         .with_status(413)
         .expect(1)
         .create();
-    let a = mock("POST", "/split/objects")
+    let a = server
+        .mock("POST", "/split/objects")
         .match_body(Matcher::Json(json!({"bulk_object_ids":["a"]})))
         .with_body(json!({"resolved_drs_object":[object("a")]}).to_string())
         .expect(1)
         .create();
-    let b = mock("POST", "/split/objects")
+    let b = server
+        .mock("POST", "/split/objects")
         .match_body(Matcher::Json(json!({"bulk_object_ids":["b"]})))
         .with_status(413)
         .expect(1)
@@ -283,8 +292,9 @@ async fn configured_service_limit_and_concurrency_are_enforced() {
 
 #[tokio::test]
 async fn credential_contexts_and_global_request_bound_are_isolated() {
-    let mut a = client("/context-a");
-    let mut b = client("/context-b");
+    let mut server = mockito::Server::new_async().await;
+    let mut a = client(&server, "/context-a");
+    let mut b = client(&server, "/context-b");
     for (client, token) in [(&mut a, "Bearer context-a"), (&mut b, "Bearer context-b")] {
         let mut headers = ga4gh_sdk::reqwest::header::HeaderMap::new();
         headers.insert("authorization", token.parse().unwrap());
@@ -297,13 +307,15 @@ async fn credential_contexts_and_global_request_bound_are_isolated() {
         );
         *client = DRS::without_discovery(transport, client.discovered_service_info().clone());
     }
-    let request_a = mock("POST", "/context-a/objects")
+    let request_a = server
+        .mock("POST", "/context-a/objects")
         .match_header("authorization", "Bearer context-a")
         .match_body(Matcher::Json(json!({"bulk_object_ids":["a"]})))
         .with_body(json!({"resolved_drs_object":[object("a")]}).to_string())
         .expect(1)
         .create();
-    let request_b = mock("POST", "/context-b/objects")
+    let request_b = server
+        .mock("POST", "/context-b/objects")
         .match_header("authorization", "Bearer context-b")
         .match_body(Matcher::Json(json!({"bulk_object_ids":["b"]})))
         .with_body(json!({"resolved_drs_object":[object("b")]}).to_string())
@@ -321,7 +333,8 @@ async fn credential_contexts_and_global_request_bound_are_isolated() {
     assert!(b_result.unwrap().outcomes[&key("b")].is_success());
     request_a.assert();
     request_b.assert();
-    let first = mock("POST", "/bound/objects")
+    let first = server
+        .mock("POST", "/bound/objects")
         .with_status(413)
         .expect(1)
         .create();
@@ -329,7 +342,7 @@ async fn credential_contexts_and_global_request_bound_are_isolated() {
         max_requests: 1,
         ..Default::default()
     };
-    let report = client("/bound")
+    let report = client(&server, "/bound")
         .get_bulk_objects(&["a".into(), "b".into()], &[], &policy, &budget())
         .await
         .unwrap();
@@ -347,8 +360,10 @@ const GEN3_REPLY: &str = include_str!("../../tests/fixtures/drs/gen3-caninedc-bu
 
 #[tokio::test]
 async fn gen3_reply_is_correlated_without_fabricating_created_time() {
+    let mut server = mockito::Server::new_async().await;
     // Request IDs are sent in sorted order, not in input order.
-    let request = mock("POST", "/gen3/objects")
+    let request = server
+        .mock("POST", "/gen3/objects")
         .match_body(Matcher::Json(
             json!({"bulk_object_ids":[GEN3_MISSING, GEN3_FOUND]}),
         ))
@@ -356,7 +371,7 @@ async fn gen3_reply_is_correlated_without_fabricating_created_time() {
         .expect(2)
         .create();
     let ids = [GEN3_FOUND.to_string(), GEN3_MISSING.to_string()];
-    let client = client("/gen3");
+    let client = client(&server, "/gen3");
 
     let typed = client
         .get_bulk_objects(&ids, &[], &BulkPolicy::default(), &budget())
@@ -389,14 +404,16 @@ async fn gen3_reply_is_correlated_without_fabricating_created_time() {
 
 #[tokio::test]
 async fn standard_field_wins_when_a_reply_uses_both_dialects() {
-    let request = mock("POST", "/both/objects")
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/both/objects")
         .with_body(
             json!({"resolved_drs_object":[object("a")],"resolved_drs_objects":[object("b")]})
                 .to_string(),
         )
         .expect(1)
         .create();
-    let report = client("/both")
+    let report = client(&server, "/both")
         .get_bulk_objects(
             &["a".into(), "b".into()],
             &[],
@@ -418,12 +435,15 @@ async fn standard_field_wins_when_a_reply_uses_both_dialects() {
 
 #[tokio::test]
 async fn dialects_from_separate_chunks_are_reported_together() {
-    let standard = mock("POST", "/mixed-dialects/objects")
+    let mut server = mockito::Server::new_async().await;
+    let standard = server
+        .mock("POST", "/mixed-dialects/objects")
         .match_body(Matcher::Json(json!({"bulk_object_ids":["a"]})))
         .with_body(json!({"resolved_drs_object":[object("a")]}).to_string())
         .expect(1)
         .create();
-    let gen3 = mock("POST", "/mixed-dialects/objects")
+    let gen3 = server
+        .mock("POST", "/mixed-dialects/objects")
         .match_body(Matcher::Json(json!({"bulk_object_ids":["b"]})))
         .with_body(json!({"resolved_drs_objects":[object("b")]}).to_string())
         .expect(1)
@@ -433,7 +453,7 @@ async fn dialects_from_separate_chunks_are_reported_together() {
         concurrency: 2,
         ..Default::default()
     };
-    let report = client("/mixed-dialects")
+    let report = client(&server, "/mixed-dialects")
         .get_bulk_objects(&["b".into(), "a".into()], &[], &policy, &budget())
         .await
         .unwrap();
@@ -450,9 +470,11 @@ async fn dialects_from_separate_chunks_are_reported_together() {
 
 #[tokio::test]
 async fn starter_kit_experimental_reply_is_not_interpreted() {
+    let mut server = mockito::Server::new_async().await;
     // Starter Kit DRS `1.3.0experimental` (develop 2b76a63) reads `selection`
     // and reports failures in an `unresolved_drs_object` map.
-    let request = mock("POST", "/starter-kit/objects")
+    let request = server
+        .mock("POST", "/starter-kit/objects")
         .match_body(Matcher::Json(json!({"bulk_object_ids":["a"]})))
         .with_body(
             json!({"summary":{"requested":0,"resolved":0,"unresolved":0},
@@ -461,7 +483,7 @@ async fn starter_kit_experimental_reply_is_not_interpreted() {
         )
         .expect(1)
         .create();
-    let report = client("/starter-kit")
+    let report = client(&server, "/starter-kit")
         .get_bulk_objects(&["a".into()], &[], &BulkPolicy::default(), &budget())
         .await
         .unwrap();
@@ -484,11 +506,12 @@ async fn starter_kit_experimental_reply_is_not_interpreted() {
         object_id: "a".into(),
         access_id: Some("x".into()),
     };
-    let request = mock("POST", "/starter-kit-access/objects/access")
+    let request = server
+        .mock("POST", "/starter-kit-access/objects/access")
         .with_body(json!([{"url":"https://store.example/a"}]).to_string())
         .expect(1)
         .create();
-    let report = client("/starter-kit-access")
+    let report = client(&server, "/starter-kit-access")
         .get_bulk_access_urls(
             std::slice::from_ref(&access),
             &[],
@@ -505,11 +528,13 @@ async fn starter_kit_experimental_reply_is_not_interpreted() {
 
 #[tokio::test]
 async fn gen3_field_is_read_only_for_object_lookups_with_an_array() {
+    let mut server = mockito::Server::new_async().await;
     let access = BulkKey {
         object_id: "a".into(),
         access_id: Some("x".into()),
     };
-    let request = mock("POST", "/gen3-access/objects/access")
+    let request = server
+        .mock("POST", "/gen3-access/objects/access")
         .with_body(
             json!({"resolved_drs_objects":[
                 {"drs_object_id":"a","drs_access_id":"x","url":"https://store/a"}
@@ -518,7 +543,7 @@ async fn gen3_field_is_read_only_for_object_lookups_with_an_array() {
         )
         .expect(1)
         .create();
-    let report = client("/gen3-access")
+    let report = client(&server, "/gen3-access")
         .get_bulk_access_urls(
             std::slice::from_ref(&access),
             &[],
@@ -532,11 +557,12 @@ async fn gen3_field_is_read_only_for_object_lookups_with_an_array() {
     assert!(report.dialects.is_empty());
     request.assert();
 
-    let request = mock("POST", "/gen3-shape/objects")
+    let request = server
+        .mock("POST", "/gen3-shape/objects")
         .with_body(json!({"resolved_drs_objects":{"id":"a"}}).to_string())
         .expect(1)
         .create();
-    let report = client("/gen3-shape")
+    let report = client(&server, "/gen3-shape")
         .get_bulk_objects(&["a".into()], &[], &BulkPolicy::default(), &budget())
         .await
         .unwrap();
@@ -544,13 +570,14 @@ async fn gen3_field_is_read_only_for_object_lookups_with_an_array() {
     assert!(report.diagnostics.iter().any(|d| d.contains("array")));
     request.assert();
 
-    let request = mock("POST", "/gen3-null/objects")
+    let request = server
+        .mock("POST", "/gen3-null/objects")
         .with_body(
             json!({"resolved_drs_object":null,"resolved_drs_objects":[object("a")]}).to_string(),
         )
         .expect(1)
         .create();
-    let report = client("/gen3-null")
+    let report = client(&server, "/gen3-null")
         .get_bulk_objects(&["a".into()], &[], &BulkPolicy::default(), &budget())
         .await
         .unwrap();
@@ -561,13 +588,16 @@ async fn gen3_field_is_read_only_for_object_lookups_with_an_array() {
 
 #[tokio::test]
 async fn raw_bulk_reports_keep_fields_unknown_to_the_models() {
+    let mut server = mockito::Server::new_async().await;
     let mut extended = object("a");
     extended["extension"] = json!({"kept": true});
-    let objects = mock("POST", "/raw/objects")
+    let objects = server
+        .mock("POST", "/raw/objects")
         .with_body(json!({"resolved_drs_object": [extended.clone()]}).to_string())
         .expect(1)
         .create();
-    let access = mock("POST", "/raw/objects/access")
+    let access = server
+        .mock("POST", "/raw/objects/access")
         .with_body(
             json!({"resolved_drs_object_access_urls": [{
                 "drs_object_id": "a", "drs_access_id": "x",
@@ -577,7 +607,7 @@ async fn raw_bulk_reports_keep_fields_unknown_to_the_models() {
         )
         .expect(1)
         .create();
-    let client = client("/raw");
+    let client = client(&server, "/raw");
     let report = client
         .get_bulk_objects_raw(&["a".into()], &[], &BulkPolicy::default(), &budget())
         .await

@@ -2,16 +2,16 @@
 
 use ga4gh_cli::{command, dispatch_with_config};
 use ga4gh_sdk::utils::configuration::{BasicAuth, Configuration};
-use mockito::mock;
 use serde_json::json;
 use url::Url;
 
-fn config(prefix: &str) -> Configuration {
-    Configuration::new(Url::parse(&format!("{}{prefix}", mockito::server_url())).unwrap())
-        .with_basic_auth(BasicAuth {
+fn config(server: &mockito::ServerGuard, prefix: &str) -> Configuration {
+    Configuration::new(Url::parse(&format!("{}{prefix}", server.url())).unwrap()).with_basic_auth(
+        BasicAuth {
             username: "cli".into(),
             password: Some("secret".into()),
-        })
+        },
+    )
 }
 
 fn service_info(artifact: &str) -> String {
@@ -35,6 +35,7 @@ async fn dispatch(args: &[&str], config: &Configuration) -> ga4gh_cli::CommandOu
 
 #[tokio::test]
 async fn configured_basic_reaches_discovery_and_operations_in_every_service_family() {
+    let mut server = mockito::Server::new_async().await;
     const HEADER: &str = "Basic Y2xpOnNlY3JldA==";
     for (family, args, discovery, endpoint, body) in [
         (
@@ -67,15 +68,17 @@ async fn configured_basic_reaches_discovery_and_operations_in_every_service_fami
         ),
     ] {
         let prefix = format!("/cli-auth-{family}");
-        let info = mock("GET", format!("{prefix}/service-info").as_str())
+        let info = server
+            .mock("GET", format!("{prefix}/service-info").as_str())
             .match_header("authorization", HEADER)
             .with_body(discovery)
             .create();
-        let operation = mock("GET", format!("{prefix}/{endpoint}").as_str())
+        let operation = server
+            .mock("GET", format!("{prefix}/{endpoint}").as_str())
             .match_header("authorization", HEADER)
             .with_body(body)
             .create();
-        let output = dispatch(&args, &config(&prefix)).await;
+        let output = dispatch(&args, &config(&server, &prefix)).await;
         assert_eq!(
             output.exit_code,
             std::process::ExitCode::SUCCESS,
@@ -87,11 +90,12 @@ async fn configured_basic_reaches_discovery_and_operations_in_every_service_fami
     }
 
     let prefix = "/cli-auth-registry";
-    let operation = mock("GET", "/cli-auth-registry/services")
+    let operation = server
+        .mock("GET", "/cli-auth-registry/services")
         .match_header("authorization", HEADER)
         .with_body("[]")
         .create();
-    let output = dispatch(&["ga4gh-cli", "registry", "list"], &config(prefix)).await;
+    let output = dispatch(&["ga4gh-cli", "registry", "list"], &config(&server, prefix)).await;
     assert_eq!(
         output.exit_code,
         std::process::ExitCode::SUCCESS,
@@ -103,12 +107,15 @@ async fn configured_basic_reaches_discovery_and_operations_in_every_service_fami
 
 #[tokio::test]
 async fn wes_run_uses_the_same_configured_credential_for_discovery_and_submission() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/cli-auth-submit";
-    let discovery = mock("GET", "/cli-auth-submit/service-info")
+    let discovery = server
+        .mock("GET", "/cli-auth-submit/service-info")
         .match_header("authorization", "Basic Y2xpOnNlY3JldA==")
         .with_body(service_info("wes"))
         .create();
-    let submission = mock("POST", "/cli-auth-submit/runs")
+    let submission = server
+        .mock("POST", "/cli-auth-submit/runs")
         .match_header("authorization", "Basic Y2xpOnNlY3JldA==")
         .with_body(r#"{"run_id":"run-1"}"#)
         .expect(1)
@@ -124,7 +131,7 @@ async fn wes_run_uses_the_same_configured_credential_for_discovery_and_submissio
             "--type_version",
             "v1.2",
         ],
-        &config(prefix),
+        &config(&server, prefix),
     )
     .await;
     assert_eq!(
@@ -139,13 +146,19 @@ async fn wes_run_uses_the_same_configured_credential_for_discovery_and_submissio
 
 #[tokio::test]
 async fn wrong_credential_yields_inspectable_401() {
-    let unauthorized = mock("GET", "/cli-auth-401/services")
+    let mut server = mockito::Server::new_async().await;
+    let unauthorized = server
+        .mock("GET", "/cli-auth-401/services")
         .match_header("authorization", "Basic Y2xpOnNlY3JldA==")
         .with_status(401)
         .with_body("authentication required")
         .expect(1)
         .create();
-    let output = dispatch(&["ga4gh-cli", "registry", "list"], &config("/cli-auth-401")).await;
+    let output = dispatch(
+        &["ga4gh-cli", "registry", "list"],
+        &config(&server, "/cli-auth-401"),
+    )
+    .await;
     assert_eq!(output.exit_code, std::process::ExitCode::FAILURE);
     assert!(output.stderr.contains("401"), "{}", output.stderr);
     unauthorized.assert();
@@ -154,19 +167,21 @@ async fn wrong_credential_yields_inspectable_401() {
 #[cfg(unix)]
 #[test]
 fn file_section_reads_explicit_token_variable_and_sends_it() {
+    let mut server = mockito::Server::new();
     let home = tempfile::TempDir::new().unwrap();
     let config_dir = home.path().join(".ga4gh-cli");
     std::fs::create_dir(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
         json!({"REGISTRY": {
-            "base_path": format!("{}/cli-auth-env", mockito::server_url()),
+            "base_path": format!("{}/cli-auth-env", server.url()),
             "bearer_access_token_env": "GA4GH_SDK_AUTH203_TEST_TOKEN"
         }})
         .to_string(),
     )
     .unwrap();
-    let request = mock("GET", "/cli-auth-env/services")
+    let request = server
+        .mock("GET", "/cli-auth-env/services")
         .match_header("authorization", "Bearer from-env")
         .with_body("[]")
         .create();

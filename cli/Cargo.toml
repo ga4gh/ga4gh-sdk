@@ -52,7 +52,7 @@ trs_filer_integration_tests = []
 keycloak_integration_tests = []
 
 [dev-dependencies]
-mockito = "0.31"
+mockito = "1.7"
 
 [[bin]]
 name = "ga4gh-cli"

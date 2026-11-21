@@ -5,7 +5,6 @@
 
 use ga4gh_cli::{command, dispatch_with_config};
 use ga4gh_sdk::utils::configuration::Configuration;
-use mockito::mock;
 use serde_json::{json, Value};
 use std::fs;
 use std::net::TcpListener;
@@ -72,14 +71,16 @@ fn stderr(output: &Output) -> String {
 
 #[test]
 fn list_prints_services_and_filters_by_type() {
+    let mut server = mockito::Server::new();
     let mut extra = service("org.example.wes", "wes");
     extra["vendor_field"] = json!({"kept": false});
-    let _m = mock("GET", "/list/ga4gh/registry/v1/services")
+    let _m = server
+        .mock("GET", "/list/ga4gh/registry/v1/services")
         .with_status(200)
         .with_body(json!([service("org.example.tes", "tes"), extra]).to_string())
         .create();
     for suffix in ["", "/"] {
-        let base_path = format!("{}/list/ga4gh/registry/v1{suffix}", mockito::server_url());
+        let base_path = format!("{}/list/ga4gh/registry/v1{suffix}", server.url());
 
         let output = run(&base_path, &["registry", "list"]);
         assert!(output.status.success(), "{}", stderr(&output));
@@ -106,13 +107,15 @@ fn list_prints_services_and_filters_by_type() {
 
 #[test]
 fn get_prints_one_service_with_the_fields_that_the_registry_adds() {
+    let mut server = mockito::Server::new();
     let mut body = service("org.example/tes 1", "tes");
     body["vendor_field"] = json!(true);
-    let _m = mock("GET", "/get/services/org.example%2Ftes%201")
+    let _m = server
+        .mock("GET", "/get/services/org.example%2Ftes%201")
         .with_status(200)
         .with_body(body.to_string())
         .create();
-    let base_path = format!("{}/get", mockito::server_url());
+    let base_path = format!("{}/get", server.url());
     let output = run(&base_path, &["registry", "get", "org.example/tes 1"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let printed: Value = serde_json::from_str(&stdout(&output)).unwrap();
@@ -122,7 +125,9 @@ fn get_prints_one_service_with_the_fields_that_the_registry_adds() {
 
 #[test]
 fn types_prints_one_type_per_line() {
-    let _m = mock("GET", "/types/services/types")
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/types/services/types")
         .with_status(200)
         .with_body(
             json!([
@@ -132,10 +137,7 @@ fn types_prints_one_type_per_line() {
             .to_string(),
         )
         .create();
-    let output = run(
-        &format!("{}/types", mockito::server_url()),
-        &["registry", "types"],
-    );
+    let output = run(&format!("{}/types", server.url()), &["registry", "types"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(
         stdout(&output),
@@ -145,17 +147,19 @@ fn types_prints_one_type_per_line() {
 
 #[test]
 fn error_responses_exit_with_status_but_not_untrusted_body() {
+    let mut server = mockito::Server::new();
     for status in [401, 404, 500] {
         let prefix = format!("/error{status}");
         let body = format!("mock failure {status}");
-        let _m = mock(
-            "GET",
-            mockito::Matcher::Regex(format!("^{prefix}/services")),
-        )
-        .with_status(status)
-        .with_body(&body)
-        .create();
-        let base_path = format!("{}{prefix}", mockito::server_url());
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(format!("^{prefix}/services")),
+            )
+            .with_status(status)
+            .with_body(&body)
+            .create();
+        let base_path = format!("{}{prefix}", server.url());
         for args in [
             &["registry", "list"][..],
             &["registry", "get", "x"],
@@ -180,14 +184,13 @@ fn error_responses_exit_with_status_but_not_untrusted_body() {
 
 #[test]
 fn invalid_responses_and_unreachable_registries_fail() {
-    let _m = mock("GET", "/invalid/services")
+    let mut server = mockito::Server::new();
+    let _m = server
+        .mock("GET", "/invalid/services")
         .with_status(200)
         .with_body("<html>not a registry</html>")
         .create();
-    let output = run(
-        &format!("{}/invalid", mockito::server_url()),
-        &["registry", "list"],
-    );
+    let output = run(&format!("{}/invalid", server.url()), &["registry", "list"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
         stderr(&output).contains("Invalid response from the service registry"),
@@ -208,18 +211,21 @@ fn invalid_responses_and_unreachable_registries_fail() {
 
 #[test]
 fn server_text_is_escaped_in_get_and_omitted_from_errors() {
+    let mut server = mockito::Server::new();
     let mut body = service("org.example.tes", "tes");
     body["name"] = json!("a\u{9b}2K\u{1b}b");
     body["description"] = json!("right\u{202e}left\u{2028}next");
-    let _get = mock("GET", "/escape/services/ok")
+    let _get = server
+        .mock("GET", "/escape/services/ok")
         .with_status(200)
         .with_body(body.to_string())
         .create();
-    let _error = mock("GET", "/escape/services")
+    let _error = server
+        .mock("GET", "/escape/services")
         .with_status(500)
         .with_body("\u{1b}[2K\rOK: 3 services\nfake line")
         .create();
-    let base_path = format!("{}/escape", mockito::server_url());
+    let base_path = format!("{}/escape", server.url());
 
     let output = run(&base_path, &["registry", "get", "ok"]);
     assert!(output.status.success(), "{}", stderr(&output));
@@ -271,12 +277,13 @@ fn missing_registry_section_is_an_error() {
 
 #[tokio::test]
 async fn downstream_can_inject_a_registry_config() {
-    let _m = mock("GET", "/downstream/services")
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/downstream/services")
         .with_status(200)
         .with_body(json!([service("org.example.tes", "tes")]).to_string())
         .create();
-    let config =
-        Configuration::new(Url::parse(&format!("{}/downstream", mockito::server_url())).unwrap());
+    let config = Configuration::new(Url::parse(&format!("{}/downstream", server.url())).unwrap());
     let matches = command()
         .try_get_matches_from(["ga4gh-cli", "registry", "list"])
         .unwrap();

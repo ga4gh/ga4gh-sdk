@@ -406,8 +406,6 @@ mod tests {
     use crate::clients::serviceinfo::models::ServiceType;
 
     use super::*;
-    use mockito::mock;
-    use mockito::server_url;
 
     #[test]
     fn test_debug_output() {
@@ -422,12 +420,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_tes_create() {
-        let _m = mock("POST", "/tasks")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/tasks")
             .with_status(200)
             .with_body(r#"{"id": "123"}"#)
             .create();
 
-        let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = url::Url::parse(&server.url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
 
@@ -450,11 +450,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_status() {
-        let _m = mock("GET", "/tasks/123?view=MINIMAL")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/tasks/123?view=MINIMAL")
             .with_status(200)
             .with_body(r#"{"state": "COMPLETE", "executors": []}"#)
             .create();
-        let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = url::Url::parse(&server.url()).expect("Invalid URL");
         let transport = Transport::new(&Configuration::new(mock_url));
         let task = Task::new("123".to_string(), transport);
 
@@ -465,11 +467,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_status_missing_state_is_an_error() {
-        let _m = mock("GET", "/tasks/123?view=MINIMAL")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/tasks/123?view=MINIMAL")
             .with_status(200)
             .with_body(r#"{"executors": []}"#)
             .create();
-        let url = url::Url::parse(&server_url()).unwrap();
+        let url = url::Url::parse(&server.url()).unwrap();
         let task = Task::new("123".to_owned(), Transport::new(&Configuration::new(url)));
         let error = task.status().await.unwrap_err();
         assert!(error.to_string().contains("missing 'state'"), "{error}");
@@ -477,6 +481,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_provider_for_discovery_submission_and_pages() {
+        let mut server = mockito::Server::new_async().await;
         use crate::clients::pagination::{Pager, PagingOptions};
         use crate::clients::wait::ServiceKind;
         use crate::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest};
@@ -495,7 +500,8 @@ mod tests {
             }
         }
 
-        let service_info = mock("GET", "/tes-auth/service-info")
+        let service_info = server
+            .mock("GET", "/tes-auth/service-info")
             .match_header("authorization", "Bearer token-1")
             .with_status(200)
             .with_body(
@@ -506,18 +512,21 @@ mod tests {
             .expect(1)
             .create();
         // A rejected submission is not sent again.
-        let submission = mock("POST", "/tes-auth/tasks")
+        let submission = server
+            .mock("POST", "/tes-auth/tasks")
             .match_header("authorization", "Bearer token-2")
             .with_status(401)
             .expect(1)
             .create();
         // A rejected page is asked for once more, with a new token.
-        let rejected_page = mock("GET", "/tes-auth/tasks")
+        let rejected_page = server
+            .mock("GET", "/tes-auth/tasks")
             .match_header("authorization", "Bearer token-3")
             .with_status(401)
             .expect(1)
             .create();
-        let page = mock("GET", "/tes-auth/tasks")
+        let page = server
+            .mock("GET", "/tes-auth/tasks")
             .match_header("authorization", "Bearer token-4")
             .with_status(200)
             .with_body(r#"{"tasks": [{"id": "1"}]}"#)
@@ -525,7 +534,7 @@ mod tests {
             .create();
 
         let provider = Arc::new(Counting::default());
-        let base = url::Url::parse(&format!("{}/tes-auth", server_url())).unwrap();
+        let base = url::Url::parse(&format!("{}/tes-auth", server.url())).unwrap();
         let config = Configuration::new(base).with_shared_token_provider(provider.clone());
         let tes = TES::new(&config).await.unwrap();
         let error = tes
@@ -557,12 +566,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_cancel() {
-        let _m = mock("POST", "/tasks/123:cancel")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/tasks/123:cancel")
             .with_status(200)
             .with_body(r#"{"status": "CANCELLED", "executors": []}"#)
             .create();
 
-        let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = url::Url::parse(&server.url()).expect("Invalid URL");
         let transport = Transport::new(&Configuration::new(mock_url));
 
         let task = Task::new("123".to_string(), transport);
@@ -574,12 +585,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_tes_get() {
-        let _m = mock("GET", "/tasks/123?view=FULL")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/tasks/123?view=FULL")
             .with_status(200)
             .with_body(r#"{"id": "123", "state": "COMPLETE", "executors": []}"#)
             .create();
 
-        let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = url::Url::parse(&server.url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let tes = TES::without_discovery(transport, Service::default());
@@ -591,12 +604,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_tes_list_tasks() {
-        let _m = mock("GET", "/tasks")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/tasks")
             .with_status(200)
             .with_body(r#"{"tasks": []}"#)
             .create();
 
-        let mock_url = url::Url::parse(&server_url()).expect("Invalid URL");
+        let mock_url = url::Url::parse(&server.url()).expect("Invalid URL");
         let config = Configuration::new(mock_url);
         let transport = Transport::new(&config);
         let tes = TES::without_discovery(transport, Service::default());
@@ -608,14 +623,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_tes_list_tasks_with_repeated_tags() {
-        let _request = mock("GET", "/tasks")
+        let mut server = mockito::Server::new_async().await;
+        let _request = server
+            .mock("GET", "/tasks")
             .match_query(mockito::Matcher::Exact(
                 "tag_key=first&tag_key=second&tag_value=one&tag_value=two".to_owned(),
             ))
             .with_status(200)
             .with_body(r#"{"tasks":[],"next_page_token":"page-2"}"#)
             .create();
-        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
         let tes = TES::without_discovery(Transport::new(&config), Service::default());
         let result = tes
             .list_tasks(Some(ListTasksParams {
@@ -635,19 +652,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_each_view_sends_its_tes_value() {
-        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let mut server = mockito::Server::new_async().await;
+        let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
         let tes = TES::without_discovery(Transport::new(&config), Service::default());
         for (view, value) in [
             (TesView::Minimal, "MINIMAL"),
             (TesView::Basic, "BASIC"),
             (TesView::Full, "FULL"),
         ] {
-            let get = mock("GET", format!("/tasks/123?view={value}").as_str())
+            let get = server
+                .mock("GET", format!("/tasks/123?view={value}").as_str())
                 .with_status(200)
                 .with_body(r#"{"id": "123", "executors": []}"#)
                 .expect(2)
                 .create();
-            let list = mock("GET", "/tasks")
+            let list = server
+                .mock("GET", "/tasks")
                 .match_query(mockito::Matcher::Exact(format!("view={value}")))
                 .with_status(200)
                 .with_body(r#"{"tasks": []}"#)
@@ -677,11 +697,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_tes_methods_under_api_root() {
+        let mut server = mockito::Server::new_async().await;
         let id = "a/b ?#";
         let encoded_id = urlencode(id);
         for suffix in ["", "/"] {
             let prefix = "/proxy/ga4gh/tes/v1";
-            let _service = mock("GET", format!("{prefix}/service-info").as_str())
+            let _service = server
+                .mock("GET", format!("{prefix}/service-info").as_str())
                 .with_status(200)
                 .with_body(
                     serde_json::json!({
@@ -694,41 +716,48 @@ mod tests {
                     .to_string(),
                 )
                 .create();
-            let _create = mock("POST", format!("{prefix}/tasks").as_str())
+            let _create = server
+                .mock("POST", format!("{prefix}/tasks").as_str())
                 .with_status(200)
                 .with_body(serde_json::json!({ "id": id }).to_string())
                 .create();
-            let _get = mock(
-                "GET",
-                format!("{prefix}/tasks/{encoded_id}?view=BASIC").as_str(),
-            )
-            .with_status(200)
-            .with_body(
-                serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] }).to_string(),
-            )
-            .create();
-            let _status = mock(
-                "GET",
-                format!("{prefix}/tasks/{encoded_id}?view=MINIMAL").as_str(),
-            )
-            .with_status(200)
-            .with_body(
-                serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] }).to_string(),
-            )
-            .create();
-            let _list = mock("GET", format!("{prefix}/tasks").as_str())
+            let _get = server
+                .mock(
+                    "GET",
+                    format!("{prefix}/tasks/{encoded_id}?view=BASIC").as_str(),
+                )
+                .with_status(200)
+                .with_body(
+                    serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] })
+                        .to_string(),
+                )
+                .create();
+            let _status = server
+                .mock(
+                    "GET",
+                    format!("{prefix}/tasks/{encoded_id}?view=MINIMAL").as_str(),
+                )
+                .with_status(200)
+                .with_body(
+                    serde_json::json!({ "id": id, "state": "COMPLETE", "executors": [] })
+                        .to_string(),
+                )
+                .create();
+            let _list = server
+                .mock("GET", format!("{prefix}/tasks").as_str())
                 .with_status(200)
                 .with_body(r#"{"tasks":[]}"#)
                 .create();
-            let _cancel = mock(
-                "POST",
-                format!("{prefix}/tasks/{encoded_id}:cancel").as_str(),
-            )
-            .with_status(200)
-            .with_body(r#"{"status":"CANCELLED"}"#)
-            .create();
+            let _cancel = server
+                .mock(
+                    "POST",
+                    format!("{prefix}/tasks/{encoded_id}:cancel").as_str(),
+                )
+                .with_status(200)
+                .with_body(r#"{"status":"CANCELLED"}"#)
+                .create();
 
-            let base = url::Url::parse(&format!("{}{prefix}{suffix}", server_url())).unwrap();
+            let base = url::Url::parse(&format!("{}{prefix}{suffix}", server.url())).unwrap();
             let tes = TES::new(&Configuration::new(base)).await.unwrap();
             let task = tes.create(TesTask::default()).await.unwrap();
             assert_eq!(task.id, id);
@@ -744,12 +773,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_info_error_keeps_http_error() {
+        let mut server = mockito::Server::new_async().await;
         for (status, path) in [(404, "/missing/tes/v1"), (503, "/unavailable/tes/v1")] {
-            let _service = mock("GET", format!("{path}/service-info").as_str())
+            let _service = server
+                .mock("GET", format!("{path}/service-info").as_str())
                 .with_status(status)
                 .with_body("service failure")
                 .create();
-            let base = url::Url::parse(&format!("{}{path}", server_url())).unwrap();
+            let base = url::Url::parse(&format!("{}{path}", server.url())).unwrap();
             let error = TES::new(&Configuration::new(base)).await.unwrap_err();
             let http = error.downcast_ref::<crate::utils::transport::HttpError>();
             assert!(http.is_some(), "{error}");
@@ -761,27 +792,33 @@ mod tests {
 
     #[tokio::test]
     async fn tes_methods_preserve_http_error_for_downcast() {
-        let _create = mock("POST", "/tasks")
+        let mut server = mockito::Server::new_async().await;
+        let _create = server
+            .mock("POST", "/tasks")
             .with_status(401)
             .with_body("unauthorized")
             .create();
-        let _list = mock("GET", "/tasks")
+        let _list = server
+            .mock("GET", "/tasks")
             .with_status(401)
             .with_body("unauthorized")
             .create();
-        let _get = mock("GET", "/tasks/123?view=FULL")
+        let _get = server
+            .mock("GET", "/tasks/123?view=FULL")
             .with_status(401)
             .with_body("unauthorized")
             .create();
-        let _status = mock("GET", "/tasks/123?view=MINIMAL")
+        let _status = server
+            .mock("GET", "/tasks/123?view=MINIMAL")
             .with_status(401)
             .with_body("unauthorized")
             .create();
-        let _cancel = mock("POST", "/tasks/123:cancel")
+        let _cancel = server
+            .mock("POST", "/tasks/123:cancel")
             .with_status(401)
             .with_body("unauthorized")
             .create();
-        let config = Configuration::new(url::Url::parse(&server_url()).unwrap());
+        let config = Configuration::new(url::Url::parse(&server.url()).unwrap());
         let transport = Transport::new(&config);
         let tes = TES::without_discovery(
             transport.clone(),
@@ -815,7 +852,9 @@ mod tests {
     /// from `Transport::with_timeouts`.
     #[tokio::test]
     async fn configuration_is_transport_configuration() {
-        let _m = mock("GET", "/accessors/custom/tes/v9/service-info")
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/accessors/custom/tes/v9/service-info")
             .with_status(200)
             .with_body(
                 serde_json::json!({
@@ -828,7 +867,7 @@ mod tests {
                 .to_string(),
             )
             .create();
-        let root = format!("{}/accessors/custom/tes/v9/", server_url());
+        let root = format!("{}/accessors/custom/tes/v9/", server.url());
         let config = Configuration::new(url::Url::parse(&root).unwrap());
         let connect = std::time::Duration::from_secs(3);
         let request = std::time::Duration::from_secs(7);

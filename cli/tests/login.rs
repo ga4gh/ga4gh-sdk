@@ -7,22 +7,27 @@
 
 use ga4gh_cli::CliContext;
 use ga4gh_sdk::clients::ServiceType;
-use mockito::{mock, Matcher};
+use mockito::Matcher;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The issuer of the fake provider under `prefix`.
-fn issuer(prefix: &str) -> String {
-    format!("{}{prefix}/idp", mockito::server_url())
+fn issuer(server: &mockito::ServerGuard, prefix: &str) -> String {
+    format!("{}{prefix}/idp", server.url())
 }
 
 /// A configuration with a `REGISTRY` section under `prefix` that logs in
 /// with the fake provider, plus `extra` section fields.
-fn write_config(dir: &Path, prefix: &str, extra: Value) -> CliContext {
+fn write_config(
+    server: &mockito::ServerGuard,
+    dir: &Path,
+    prefix: &str,
+    extra: Value,
+) -> CliContext {
     let mut section = json!({
-        "base_path": format!("{}{prefix}/registry", mockito::server_url()),
-        "oidc": {"issuer": issuer(prefix), "client_id": "test-cli", "scope": "openid"},
+        "base_path": format!("{}{prefix}/registry", server.url()),
+        "oidc": {"issuer": issuer(server, prefix), "client_id": "test-cli", "scope": "openid"},
     });
     section
         .as_object_mut()
@@ -33,21 +38,22 @@ fn write_config(dir: &Path, prefix: &str, extra: Value) -> CliContext {
     CliContext::new("test-cli", "1.0.0").with_config_path(path)
 }
 
-fn discovery(prefix: &str) -> mockito::Mock {
-    let issuer = issuer(prefix);
-    mock(
-        "GET",
-        format!("{prefix}/idp/.well-known/openid-configuration").as_str(),
-    )
-    .with_body(
-        json!({
-            "issuer": issuer,
-            "device_authorization_endpoint": format!("{issuer}/device"),
-            "token_endpoint": format!("{issuer}/token"),
-        })
-        .to_string(),
-    )
-    .create()
+fn discovery(server: &mut mockito::ServerGuard, prefix: &str) -> mockito::Mock {
+    let issuer = issuer(&*server, prefix);
+    server
+        .mock(
+            "GET",
+            format!("{prefix}/idp/.well-known/openid-configuration").as_str(),
+        )
+        .with_body(
+            json!({
+                "issuer": issuer,
+                "device_authorization_endpoint": format!("{issuer}/device"),
+                "token_endpoint": format!("{issuer}/token"),
+            })
+            .to_string(),
+        )
+        .create()
 }
 
 fn now() -> u64 {
@@ -58,8 +64,15 @@ fn now() -> u64 {
 }
 
 /// Writes a stored login for the fake provider under `prefix`.
-fn write_store(dir: &Path, prefix: &str, access: &str, refresh: &str, expires_at: u64) {
-    let issuer = issuer(prefix);
+fn write_store(
+    server: &mockito::ServerGuard,
+    dir: &Path,
+    prefix: &str,
+    access: &str,
+    refresh: &str,
+    expires_at: u64,
+) {
+    let issuer = issuer(server, prefix);
     let store = json!({"logins": [{
         "issuer": issuer,
         "client_id": "test-cli",
@@ -97,8 +110,9 @@ async fn run(context: &CliContext, args: &[&str]) -> (String, String, bool) {
     )
 }
 
-fn services(prefix: &str, token: &str) -> mockito::Mock {
-    mock("GET", format!("{prefix}/registry/services").as_str())
+fn services(server: &mut mockito::ServerGuard, prefix: &str, token: &str) -> mockito::Mock {
+    server
+        .mock("GET", format!("{prefix}/registry/services").as_str())
         .match_header("authorization", format!("Bearer {token}").as_str())
         .with_body("[]")
         .expect(1)
@@ -107,11 +121,13 @@ fn services(prefix: &str, token: &str) -> mockito::Mock {
 
 #[tokio::test]
 async fn login_stores_the_tokens_privately_and_commands_send_them() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/login-flow";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
-    let _discovery = discovery(prefix);
-    let device = mock("POST", format!("{prefix}/idp/device").as_str())
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    let _discovery = discovery(&mut server, prefix);
+    let device = server
+        .mock("POST", format!("{prefix}/idp/device").as_str())
         .match_body(Matcher::AllOf(vec![
             Matcher::UrlEncoded("client_id".into(), "test-cli".into()),
             Matcher::UrlEncoded("scope".into(), "openid".into()),
@@ -129,12 +145,14 @@ async fn login_stores_the_tokens_privately_and_commands_send_them() {
         )
         .expect(1)
         .create();
-    let pending = mock("POST", format!("{prefix}/idp/token").as_str())
+    let pending = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
         .with_status(400)
         .with_body(json!({"error": "authorization_pending"}).to_string())
         .expect(1)
         .create();
-    let token = mock("POST", format!("{prefix}/idp/token").as_str())
+    let token = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
         .match_body(Matcher::AllOf(vec![
             Matcher::UrlEncoded(
                 "grant_type".into(),
@@ -181,7 +199,7 @@ async fn login_stores_the_tokens_privately_and_commands_send_them() {
         assert_eq!(mode & 0o777, 0o600);
     }
 
-    let request = services(prefix, "access-secret");
+    let request = services(&mut server, prefix, "access-secret");
     let (stdout, stderr, success) = run(&context, &["test-cli", "registry", "list"]).await;
     assert!(success, "{stderr}");
     assert!(!stdout.contains("secret") && !stderr.contains("secret"));
@@ -190,11 +208,20 @@ async fn login_stores_the_tokens_privately_and_commands_send_them() {
 
 #[tokio::test]
 async fn an_expired_token_is_refreshed_and_stored() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/login-refresh";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
-    write_store(dir.path(), prefix, "old-access", "old-refresh", now() - 10);
-    let refresh = mock("POST", format!("{prefix}/idp/token").as_str())
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    write_store(
+        &server,
+        dir.path(),
+        prefix,
+        "old-access",
+        "old-refresh",
+        now() - 10,
+    );
+    let refresh = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
         .match_body(Matcher::AllOf(vec![
             Matcher::UrlEncoded("grant_type".into(), "refresh_token".into()),
             Matcher::UrlEncoded("refresh_token".into(), "old-refresh".into()),
@@ -206,7 +233,7 @@ async fn an_expired_token_is_refreshed_and_stored() {
         )
         .expect(1)
         .create();
-    let request = services(prefix, "new-access");
+    let request = services(&mut server, prefix, "new-access");
 
     let (_, stderr, success) = run(&context, &["test-cli", "registry", "list"]).await;
     assert!(success, "{stderr}");
@@ -221,23 +248,33 @@ async fn an_expired_token_is_refreshed_and_stored() {
 
 #[tokio::test]
 async fn a_rejected_token_is_refreshed_and_a_read_is_sent_again() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/login-rejected";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
-    write_store(dir.path(), prefix, "revoked", "refresh", now() + 3600);
-    let rejected = mock("GET", format!("{prefix}/registry/services").as_str())
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    write_store(
+        &server,
+        dir.path(),
+        prefix,
+        "revoked",
+        "refresh",
+        now() + 3600,
+    );
+    let rejected = server
+        .mock("GET", format!("{prefix}/registry/services").as_str())
         .match_header("authorization", "Bearer revoked")
         .with_status(401)
         .expect(1)
         .create();
-    let refresh = mock("POST", format!("{prefix}/idp/token").as_str())
+    let refresh = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
         .with_body(
             json!({"access_token": "fresh", "token_type": "Bearer", "refresh_token": "next"})
                 .to_string(),
         )
         .expect(1)
         .create();
-    let request = services(prefix, "fresh");
+    let request = services(&mut server, prefix, "fresh");
 
     let (_, stderr, success) = run(&context, &["test-cli", "registry", "list"]).await;
     assert!(success, "{stderr}");
@@ -249,11 +286,20 @@ async fn a_rejected_token_is_refreshed_and_a_read_is_sent_again() {
 
 #[tokio::test]
 async fn a_failed_refresh_asks_to_log_in_again() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/login-refresh-failed";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
-    write_store(dir.path(), prefix, "old", "expired-refresh", now() - 10);
-    let _refresh = mock("POST", format!("{prefix}/idp/token").as_str())
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    write_store(
+        &server,
+        dir.path(),
+        prefix,
+        "old",
+        "expired-refresh",
+        now() - 10,
+    );
+    let _refresh = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
         .with_status(400)
         .with_body(json!({"error": "invalid_grant"}).to_string())
         .create();
@@ -277,8 +323,9 @@ async fn a_failed_refresh_asks_to_log_in_again() {
 
 #[test]
 fn a_section_with_oidc_needs_a_login_and_no_other_credential() {
+    let server = mockito::Server::new();
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), "/login-missing", json!({}));
+    let context = write_config(&server, dir.path(), "/login-missing", json!({}));
     let error = context.load_config(ServiceType::REGISTRY).unwrap_err();
     assert!(error.to_string().contains("Not logged in"), "{error}");
     assert!(
@@ -287,6 +334,7 @@ fn a_section_with_oidc_needs_a_login_and_no_other_credential() {
     );
 
     let context = write_config(
+        &server,
         dir.path(),
         "/login-conflict",
         json!({"oauth_access_token": "configured"}),
@@ -294,26 +342,34 @@ fn a_section_with_oidc_needs_a_login_and_no_other_credential() {
     let error = context.load_config(ServiceType::REGISTRY).unwrap_err();
     assert!(error.to_string().contains("both 'oidc'"), "{error}");
 
-    let context = write_config(dir.path(), "/login-bad", json!({"oidc": {"issuer": 1}}));
+    let context = write_config(
+        &server,
+        dir.path(),
+        "/login-bad",
+        json!({"oidc": {"issuer": 1}}),
+    );
     let error = context.load_config(ServiceType::REGISTRY).unwrap_err();
     assert!(error.to_string().contains("issuer"), "{error}");
 }
 
 #[tokio::test]
 async fn login_rejects_a_conflicting_credential_before_discovery() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/login-conflicting-credential";
     let dir = tempfile::TempDir::new().unwrap();
     let context = write_config(
+        &server,
         dir.path(),
         prefix,
         json!({"oauth_access_token": "configured"}),
     );
-    let discovery = mock(
-        "GET",
-        format!("{prefix}/idp/.well-known/openid-configuration").as_str(),
-    )
-    .expect(0)
-    .create();
+    let discovery = server
+        .mock(
+            "GET",
+            format!("{prefix}/idp/.well-known/openid-configuration").as_str(),
+        )
+        .expect(0)
+        .create();
     let error = run_error(&context, &["test-cli", "login", "registry"]).await;
     assert!(error.contains("both 'oidc' and a credential"), "{error}");
     assert!(!dir.path().join("tokens.json").exists());
@@ -322,8 +378,9 @@ async fn login_rejects_a_conflicting_credential_before_discovery() {
 
 #[tokio::test]
 async fn dispatch_requires_a_caller_owned_prompt_for_login() {
+    let server = mockito::Server::new_async().await;
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), "/login-prompt", json!({}));
+    let context = write_config(&server, dir.path(), "/login-prompt", json!({}));
     let matches = context
         .command()
         .try_get_matches_from(["test-cli", "login", "registry"])
@@ -335,17 +392,20 @@ async fn dispatch_requires_a_caller_owned_prompt_for_login() {
 
 #[tokio::test]
 async fn provider_error_that_echoes_refresh_token_is_not_printed() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/login-echoed-refresh-token";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
+    let context = write_config(&server, dir.path(), prefix, json!({}));
     write_store(
+        &server,
         dir.path(),
         prefix,
         "old-access",
         "refresh-secret",
         now() - 10,
     );
-    let response = mock("POST", format!("{prefix}/idp/token").as_str())
+    let response = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
         .match_body(Matcher::UrlEncoded(
             "refresh_token".into(),
             "refresh-secret".into(),
@@ -362,10 +422,11 @@ async fn provider_error_that_echoes_refresh_token_is_not_printed() {
 
 #[test]
 fn the_token_variable_overrides_the_login() {
+    let server = mockito::Server::new();
     const VARIABLE: &str = "GA4GH_SDK_LOGIN_TEST_OVERRIDE";
     let dir = tempfile::TempDir::new().unwrap();
     // No stored login: with the variable set, none is needed.
-    let context = write_config(dir.path(), "/login-env", json!({}))
+    let context = write_config(&server, dir.path(), "/login-env", json!({}))
         .with_token_env(VARIABLE, [ServiceType::REGISTRY]);
     std::env::set_var(VARIABLE, "from-env");
     let config = context.load_config(ServiceType::REGISTRY).unwrap();
@@ -380,10 +441,18 @@ fn the_token_variable_overrides_the_login() {
 
 #[tokio::test]
 async fn logout_deletes_only_the_sections_login() {
+    let server = mockito::Server::new_async().await;
     let prefix = "/login-logout";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
-    write_store(dir.path(), prefix, "access", "refresh", now() + 3600);
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    write_store(
+        &server,
+        dir.path(),
+        prefix,
+        "access",
+        "refresh",
+        now() + 3600,
+    );
     let mut store = read_store(dir.path());
     let mut other = store["logins"][0].clone();
     other["issuer"] = json!("https://other.example.org");
@@ -404,19 +473,21 @@ async fn logout_deletes_only_the_sections_login() {
 
 #[tokio::test]
 async fn sections_with_different_scopes_keep_separate_logins() {
+    let server = mockito::Server::new_async().await;
     let prefix = "/login-distinct-scopes";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
+    let context = write_config(&server, dir.path(), prefix, json!({}));
     let config_path = dir.path().join("config.json");
     let mut config: Value =
         serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
     let mut tes = config["REGISTRY"].clone();
-    tes["base_path"] = json!(format!("{}{prefix}/tes", mockito::server_url()));
+    tes["base_path"] = json!(format!("{}{prefix}/tes", server.url()));
     tes["oidc"]["scope"] = json!("openid tes.read");
     config["TES"] = tes;
     std::fs::write(&config_path, config.to_string()).unwrap();
 
     write_store(
+        &server,
         dir.path(),
         prefix,
         "registry-access",
@@ -476,10 +547,11 @@ async fn run_error(context: &CliContext, args: &[&str]) -> String {
 
 #[tokio::test]
 async fn an_expired_login_without_refresh_token_asks_to_log_in_again() {
+    let server = mockito::Server::new_async().await;
     let prefix = "/login-no-refresh";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
-    let issuer = issuer(prefix);
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    let issuer = issuer(&server, prefix);
     let store = json!({"logins": [{
         "issuer": issuer,
         "client_id": "test-cli",
@@ -507,11 +579,13 @@ async fn an_expired_login_without_refresh_token_asks_to_log_in_again() {
 
 #[tokio::test]
 async fn a_transient_refresh_error_is_reported_by_its_code() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/login-refresh-unavailable";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
-    write_store(dir.path(), prefix, "old", "refresh", now() - 10);
-    let _refresh = mock("POST", format!("{prefix}/idp/token").as_str())
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    write_store(&server, dir.path(), prefix, "old", "refresh", now() - 10);
+    let _refresh = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
         .with_status(503)
         .with_body(json!({"error": "temporarily_unavailable"}).to_string())
         .create();
@@ -522,17 +596,33 @@ async fn a_transient_refresh_error_is_reported_by_its_code() {
 
 #[tokio::test]
 async fn tokens_that_another_process_refreshed_are_used_without_refreshing() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/login-rotated";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
-    write_store(dir.path(), prefix, "old", "rotated-away", now() - 10);
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    write_store(
+        &server,
+        dir.path(),
+        prefix,
+        "old",
+        "rotated-away",
+        now() - 10,
+    );
     let config = context.load_config(ServiceType::REGISTRY).unwrap();
     // Another process refreshes in the meantime.
-    write_store(dir.path(), prefix, "newer", "current", now() + 3600);
-    let refresh = mock("POST", format!("{prefix}/idp/token").as_str())
+    write_store(
+        &server,
+        dir.path(),
+        prefix,
+        "newer",
+        "current",
+        now() + 3600,
+    );
+    let refresh = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
         .expect(0)
         .create();
-    let request = services(prefix, "newer");
+    let request = services(&mut server, prefix, "newer");
     let client = ga4gh_sdk::clients::registry::ServiceRegistry::new(&config);
     client.list_services().await.unwrap();
     request.assert();
@@ -541,15 +631,17 @@ async fn tokens_that_another_process_refreshed_are_used_without_refreshing() {
 
 #[tokio::test]
 async fn a_refresh_after_logout_does_not_store_the_tokens_again() {
+    let mut server = mockito::Server::new_async().await;
     let prefix = "/login-logged-out";
     let dir = tempfile::TempDir::new().unwrap();
-    let context = write_config(dir.path(), prefix, json!({}));
-    write_store(dir.path(), prefix, "old", "refresh", now() - 10);
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    write_store(&server, dir.path(), prefix, "old", "refresh", now() - 10);
     let config = context.load_config(ServiceType::REGISTRY).unwrap();
     // `logout` runs while the command runs.
     let (_, stderr, success) = run(&context, &["test-cli", "logout", "registry"]).await;
     assert!(success, "{stderr}");
-    let refresh = mock("POST", format!("{prefix}/idp/token").as_str())
+    let refresh = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
         .expect(0)
         .create();
     let client = ga4gh_sdk::clients::registry::ServiceRegistry::new(&config);

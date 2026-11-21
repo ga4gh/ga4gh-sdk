@@ -10,13 +10,13 @@ use ga4gh_sdk::{
     },
     utils::{configuration::Configuration, query::encode_query, transport::Transport},
 };
-use mockito::{mock, server_url, Matcher};
+use mockito::Matcher;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-fn transport(path: &str) -> Transport {
+fn transport(server: &mockito::ServerGuard, path: &str) -> Transport {
     Transport::new(&Configuration::new(
-        url::Url::parse(&format!("{}{path}", server_url())).unwrap(),
+        url::Url::parse(&format!("{}{path}", server.url())).unwrap(),
     ))
 }
 
@@ -55,15 +55,17 @@ fn unsupported_cases() -> Vec<(&'static str, Value)> {
 
 #[tokio::test]
 async fn transport_sends_shared_cases() {
+    let mut server = mockito::Server::new_async().await;
     for (name, params, query) in shared_cases() {
         // The Python bindings send `encode_query`'s output; it must match.
         assert_eq!(encode_query(&params).unwrap(), query, "{name}");
-        let request = mock("GET", format!("/qt-{name}/tasks").as_str())
+        let request = server
+            .mock("GET", format!("/qt-{name}/tasks").as_str())
             .match_query(Matcher::Exact(query.to_owned()))
             .with_body("ok")
             .expect(1)
             .create();
-        let body = transport(&format!("/qt-{name}"))
+        let body = transport(&server, &format!("/qt-{name}"))
             .get("tasks", Some(params))
             .await
             .unwrap();
@@ -74,12 +76,14 @@ async fn transport_sends_shared_cases() {
 
 #[tokio::test]
 async fn transport_rejects_unsupported_values_before_sending() {
+    let mut server = mockito::Server::new_async().await;
     for (name, params) in unsupported_cases() {
-        let request = mock("GET", format!("/qtu-{name}/tasks").as_str())
+        let request = server
+            .mock("GET", format!("/qtu-{name}/tasks").as_str())
             .match_query(Matcher::Any)
             .expect(0)
             .create();
-        let error = transport(&format!("/qtu-{name}"))
+        let error = transport(&server, &format!("/qtu-{name}"))
             .get("tasks", Some(params))
             .await
             .unwrap_err();
@@ -95,9 +99,9 @@ async fn transport_rejects_unsupported_values_before_sending() {
     }
 }
 
-async fn first_page(path: &str, query: Value) -> Result<(), String> {
+async fn first_page(server: &mockito::ServerGuard, path: &str, query: Value) -> Result<(), String> {
     let mut pager = Pager::new(
-        &transport(path),
+        &transport(server, path),
         ServiceKind::Tes,
         query,
         PagingOptions::new(Duration::from_secs(10)),
@@ -112,25 +116,32 @@ async fn first_page(path: &str, query: Value) -> Result<(), String> {
 
 #[tokio::test]
 async fn pager_sends_shared_cases() {
+    let mut server = mockito::Server::new_async().await;
     for (name, params, query) in shared_cases() {
-        let request = mock("GET", format!("/qp-{name}/tasks").as_str())
+        let request = server
+            .mock("GET", format!("/qp-{name}/tasks").as_str())
             .match_query(Matcher::Exact(query.to_owned()))
             .with_body(r#"{"tasks":[]}"#)
             .expect(1)
             .create();
-        first_page(&format!("/qp-{name}"), params).await.unwrap();
+        first_page(&server, &format!("/qp-{name}"), params)
+            .await
+            .unwrap();
         request.assert();
     }
 }
 
 #[tokio::test]
 async fn pager_encodes_its_token_like_other_parameters() {
-    let request = mock("GET", "/qp-token/tasks")
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("GET", "/qp-token/tasks")
         .match_query(Matcher::Exact("a=1&page_token=t%2F%2B+%25&z=2".to_owned()))
         .with_body(r#"{"tasks":[]}"#)
         .expect(1)
         .create();
     first_page(
+        &server,
         "/qp-token",
         json!({"a": "1", "z": 2, "page_token": "t/+ %"}),
     )
@@ -141,12 +152,14 @@ async fn pager_encodes_its_token_like_other_parameters() {
 
 #[tokio::test]
 async fn pager_rejects_unsupported_values_before_sending() {
+    let mut server = mockito::Server::new_async().await;
     for (name, params) in unsupported_cases() {
-        let request = mock("GET", format!("/qpu-{name}/tasks").as_str())
+        let request = server
+            .mock("GET", format!("/qpu-{name}/tasks").as_str())
             .match_query(Matcher::Any)
             .expect(0)
             .create();
-        let error = first_page(&format!("/qpu-{name}"), params)
+        let error = first_page(&server, &format!("/qpu-{name}"), params)
             .await
             .unwrap_err();
         assert!(error.starts_with("query parameter '"), "{name}: {error}");
@@ -156,14 +169,16 @@ async fn pager_rejects_unsupported_values_before_sending() {
 
 #[tokio::test]
 async fn tes_pages_repeat_tags_in_order() {
-    let request = mock("GET", "/qp-tags/tasks")
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("GET", "/qp-tags/tasks")
         .match_query(Matcher::Exact(
             "page_size=2&tag_key=team+a&tag_key=x%2Fy&tag_value=&tag_value=1%262".to_owned(),
         ))
         .with_body(r#"{"tasks":[]}"#)
         .expect(1)
         .create();
-    let tes = TES::without_discovery(transport("/qp-tags"), Default::default());
+    let tes = TES::without_discovery(transport(&server, "/qp-tags"), Default::default());
     let params = ListTasksParams {
         tag_key: Some(vec!["team a".into(), "x/y".into()]),
         tag_value: Some(vec!["".into(), "1&2".into()]),
