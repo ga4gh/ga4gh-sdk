@@ -1,0 +1,15 @@
+{
+  "name": "public QC demo",
+  "executors": [
+    {
+      "image": "alpine:3.20",
+      "command": [
+        "echo",
+        "public sequence qc"
+      ]
+    }
+  ],
+  "tags": {
+    "study": "public-qc"
+  }
+}

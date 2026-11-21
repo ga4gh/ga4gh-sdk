@@ -424,3 +424,12 @@ Gen3 bulk access behavior is unverified.
   [`run-trs-filer-integration.sh`](run-trs-filer-integration.sh) registers in
   TRS-Filer for [`trs_filer.rs`](../lib/tests/trs_filer.rs) and
   [`cli/tests/trs_filer.rs`](../cli/tests/trs_filer.rs).
+
+## Downstream proTES consumer
+
+`examples/protes-companion` is a standalone crate using SDK transport with
+explicit bearer-client injection.
+Run `cargo test --manifest-path examples/protes-companion/Cargo.toml` for provenance
+retention, ordered attempts, rerun sanitization and 403/404 semantics. Its README
+provides actual offline CLI examples and describes the outstanding live pipeline
+acceptance. Fixture tests do not demonstrate remote gateway execution.

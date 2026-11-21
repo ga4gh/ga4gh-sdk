@@ -1,0 +1,67 @@
+{
+  "engine": {
+    "foca": "0.22.0"
+  },
+  "pipeline": {
+    "source": "preset",
+    "preset": "qc",
+    "resolved_hash": "sha256:fixture",
+    "resolved": [
+      {
+        "id": "route",
+        "alternatives": [
+          {
+            "plugin": "foca.routing.ordered"
+          }
+        ]
+      }
+    ]
+  },
+  "plugins": {
+    "build-1": "foca.routing.ordered"
+  },
+  "builds": {
+    "build-1": {
+      "distribution": "foca",
+      "version": "0.22.0"
+    }
+  },
+  "executions": [
+    {
+      "step": "sanitize",
+      "phase": "request",
+      "plugin": "public-qc-fixture",
+      "outcome": "ok",
+      "changes": {
+        "paths": [
+          "/payload/tags/smoke.plugin"
+        ],
+        "before": "hmac-sha256:before-fixture",
+        "after": "hmac-sha256:after-fixture"
+      }
+    },
+    {
+      "step": "route",
+      "phase": "route",
+      "outcome": "ok"
+    }
+  ],
+  "attempts": [
+    {
+      "number": 1,
+      "backend": "https://node-a.example/tes",
+      "outcome": "rejected",
+      "reason": "capacity"
+    },
+    {
+      "number": 2,
+      "backend": "https://node-b.example/tes",
+      "outcome": "unknown",
+      "reason": "response_lost"
+    }
+  ],
+  "final_reason": "outcome_unknown",
+  "future_field": {
+    "retained": true
+  }
+}
