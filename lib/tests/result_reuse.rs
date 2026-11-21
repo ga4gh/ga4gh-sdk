@@ -753,3 +753,23 @@ fn real_local_result_reuse() {
     .unwrap();
     println!("one container execution, zero provider B tasks; {} bytes revalidated/transferred; evidence {}",payload_delta,evidence_path.display());
 }
+#[test]
+fn unsupported_receipt_versions_and_oversized_fresh_reads_are_ineligible() {
+    let mut changed = receipt();
+    changed.version = 2;
+    let report = changed.assess(&changed.recipe, &trust(&changed), 32, read);
+    assert_eq!(report.status, ReuseStatus::Ineligible);
+    reason(&report, ReasonCode::UnsupportedReceiptVersion);
+    assert_eq!(report.measurements.bytes_read, 0);
+    let receipt = receipt();
+    let report = receipt.assess(&receipt.recipe, &trust(&receipt), 4, |_| {
+        Ok(ArtifactRead {
+            bytes: b"data and more".to_vec(),
+            bytes_transferred: 13,
+        })
+    });
+    assert_eq!(report.status, ReuseStatus::Ineligible);
+    reason(&report, ReasonCode::ArtifactTooLarge);
+    assert_eq!(report.measurements.bytes_read, 13);
+    assert_eq!(report.measurements.bytes_revalidated, 0);
+}

@@ -584,3 +584,284 @@ async fn unsupported_checksums_are_explicitly_unverified_only_when_opted_in() {
         .unwrap();
     assert!(!proof.verified);
 }
+
+/// Prepares the bundle that [`source`] serves under `prefix` with `options`
+/// and returns the error message; panics if preparation succeeds.
+async fn prepare_error(
+    server: &mut mockito::ServerGuard,
+    prefix: &str,
+    (main, tool): (&str, &str),
+    listing: Option<Value>,
+    primary: Option<Value>,
+    options: &PreparationOptions,
+) -> String {
+    let (registry, _mocks) = source(server, prefix, main, tool, listing, primary);
+    PreparedBundle::prepare(&registry, request(), options, &operation(), None)
+        .await
+        .err()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn malformed_cyclic_and_unsupported_cwl_dependencies_are_rejected() {
+    let mut server = mockito::Server::new_async().await;
+    let defaults = PreparationOptions::default();
+    let run = |reference: &str| MAIN.replace("tools/echo.cwl", reference);
+    let cases = [
+        (
+            run("tools/echo%zz.cwl"),
+            TOOL.into(),
+            "malformed percent encoding",
+        ),
+        (
+            run("tools/echo%4.cwl"),
+            TOOL.into(),
+            "malformed percent encoding",
+        ),
+        (
+            run("../../echo.cwl"),
+            TOOL.into(),
+            "escapes the staged root",
+        ),
+        (
+            MAIN.replace(INLINE_STEPS, "steps:\n  $include: steps.txt"),
+            TOOL.into(),
+            "unsupported CWL steps declaration",
+        ),
+        (
+            MAIN.replace(INLINE_STEPS, "steps: 5"),
+            TOOL.into(),
+            "unsupported CWL steps declaration",
+        ),
+        (
+            format!("{MAIN}\ndoc:\n  $import:\n    nested: value\n"),
+            TOOL.into(),
+            "dynamic CWL dependency",
+        ),
+        (
+            format!("{MAIN}\nlabel: !custom value\n"),
+            TOOL.into(),
+            "tagged YAML",
+        ),
+        (
+            MAIN.into(),
+            format!("{TOOL}\ndoc:\n  $import: ../main.cwl\n"),
+            "cyclic CWL descriptor dependency",
+        ),
+        (TOOL.into(), TOOL.into(), "must be a Workflow"),
+    ];
+    for (index, (main, tool, message)) in cases.iter().enumerate() {
+        let error = prepare_error(
+            &mut server,
+            &format!("/dependency{index}"),
+            (main, tool),
+            None,
+            None,
+            &defaults,
+        )
+        .await;
+        assert!(error.contains(message), "case {index}: {error}");
+    }
+}
+
+#[tokio::test]
+async fn listings_descriptors_and_bounds_are_checked_before_staging() {
+    let mut server = mockito::Server::new_async().await;
+    let defaults = PreparationOptions::default();
+    let secondary = json!([
+        {"path":"main.cwl","file_type":"SECONDARY_DESCRIPTOR"},
+        {"path":"tools/echo.cwl","file_type":"SECONDARY_DESCRIPTOR"}
+    ]);
+    let cases = [
+        (
+            Some(secondary),
+            None,
+            defaults.clone(),
+            "exactly one declared primary descriptor",
+        ),
+        (
+            Some(json!("not a file list")),
+            None,
+            defaults.clone(),
+            "invalid type",
+        ),
+        (
+            None,
+            Some(json!({})),
+            defaults.clone(),
+            "neither content nor URL",
+        ),
+        (
+            None,
+            None,
+            PreparationOptions {
+                max_files: 1,
+                ..defaults.clone()
+            },
+            "exceeds bundle file bound",
+        ),
+        (
+            None,
+            None,
+            PreparationOptions {
+                max_file_bytes: 10,
+                ..defaults.clone()
+            },
+            "exceeds bundle byte bound",
+        ),
+    ];
+    for (index, (listing, primary, options, message)) in cases.into_iter().enumerate() {
+        let error = prepare_error(
+            &mut server,
+            &format!("/listing{index}"),
+            (MAIN, TOOL),
+            listing,
+            primary,
+            &options,
+        )
+        .await;
+        assert!(error.contains(message), "case {index}: {error}");
+    }
+    let registry = Transport::new(&Configuration::new(url::Url::parse(&server.url()).unwrap()));
+    let blank_tool = BundleRequest {
+        tool_id: String::new(),
+        ..request()
+    };
+    let no_files = PreparationOptions {
+        max_files: 0,
+        ..defaults.clone()
+    };
+    for (request, options, message) in [
+        (blank_tool, &defaults, "nonempty opaque segments"),
+        (request(), &no_files, "bounds must be positive"),
+    ] {
+        let error = PreparedBundle::prepare(&registry, request, options, &operation(), None)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+#[tokio::test]
+async fn equivalent_relative_paths_stage_the_listed_descriptor() {
+    let mut server = mockito::Server::new_async().await;
+    for (index, reference) in ["./tools/echo.cwl", "tools//echo.cwl"].iter().enumerate() {
+        let main = MAIN.replace("tools/echo.cwl", reference);
+        let (registry, _mocks) = source(
+            &mut server,
+            &format!("/relative{index}"),
+            &main,
+            TOOL,
+            None,
+            None,
+        );
+        let prepared = PreparedBundle::prepare(
+            &registry,
+            request(),
+            &PreparationOptions::default(),
+            &operation(),
+            None,
+        )
+        .await
+        .unwrap();
+        let plan = prepared.request_plan();
+        assert_eq!(plan.workflow_url, "main.cwl");
+        assert_eq!(plan.workflow_type, "CWL");
+        assert_eq!(plan.workflow_type_version, "v1.2");
+        assert_eq!(plan.workflow_params, Some(request().workflow_params));
+        assert_eq!(
+            prepared.staged_files().map(|(p, _)| p).collect::<Vec<_>>(),
+            ["main.cwl", "tools/echo.cwl"]
+        );
+    }
+}
+
+#[tokio::test]
+async fn several_steps_and_inline_tools_stage_only_listed_references() {
+    let mut server = mockito::Server::new_async().await;
+    let inline_tool = TOOL.replace('\n', "\n      ");
+    let main = MAIN.replace(
+        INLINE_STEPS,
+        &format!(
+            "{INLINE_STEPS}\n  again:\n    run: tools/echo.cwl\n    in:\n      message: message\n    out: [out]\n  inline:\n    run:\n      {inline_tool}\n    in:\n      message: message\n    out: [out]"
+        ),
+    );
+    assert_ne!(main, MAIN);
+    let (registry, _mocks) = source(&mut server, "/several", &main, TOOL, None, None);
+    let prepared = PreparedBundle::prepare(
+        &registry,
+        request(),
+        &PreparationOptions::default(),
+        &operation(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        prepared.staged_files().map(|(p, _)| p).collect::<Vec<_>>(),
+        ["main.cwl", "tools/echo.cwl"]
+    );
+}
+
+#[tokio::test]
+async fn anonymous_fetch_rejects_error_statuses_and_oversized_bodies() {
+    let mut server = mockito::Server::new_async().await;
+    let missing = server
+        .mock("GET", "/missing")
+        .with_status(404)
+        .expect(1)
+        .create();
+    let large = server
+        .mock("GET", "/large")
+        .with_body("0123456789")
+        .expect(1)
+        .create();
+    let fetcher = AnonymousFetcher::new([server.url()]).unwrap();
+    let url = |path: &str| url::Url::parse(&format!("{}{path}", server.url())).unwrap();
+    let error = fetcher
+        .fetch(&url("/missing"), &operation(), 1024)
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("descriptor fetch HTTP 404"),
+        "{error}"
+    );
+    let error = fetcher
+        .fetch(&url("/large"), &operation(), 4)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("limit"), "{error}");
+    missing.assert();
+    large.assert();
+}
+
+#[tokio::test]
+async fn anonymous_fetch_truncated_bodies_do_not_expose_signed_url_queries() {
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0; 4096];
+        assert!(socket.read(&mut request).await.unwrap() > 0);
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\ntruncated")
+            .await
+            .unwrap();
+    });
+    let fetcher = AnonymousFetcher::new([format!("http://{address}")]).unwrap();
+    let url = url::Url::parse(&format!(
+        "http://{address}/descriptor?signature=SIGNED_SECRET"
+    ))
+    .unwrap();
+    let error = fetcher.fetch(&url, &operation(), 1024).await.unwrap_err();
+    server.await.unwrap();
+    assert!(matches!(error, ga4gh_sdk::Error::Transport(_)), "{error:?}");
+    assert!(!format!("{error}").contains("SIGNED_SECRET"));
+    assert!(!format!("{error:?}").contains("SIGNED_SECRET"));
+}
