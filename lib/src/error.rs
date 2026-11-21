@@ -354,6 +354,53 @@ mod tests {
         assert!(error.downcast_ref::<reqwest::Error>().is_some());
     }
 
+    /// The transport errors of each kind, with their messages.
+    #[tokio::test]
+    async fn test_transport_error_kinds_have_their_messages() {
+        let mut server = mockito::Server::new_async().await;
+        let _gateway = server.mock("GET", "/").with_status(502).create();
+        let builder = reqwest::Client::new()
+            .get("http://[")
+            .build()
+            .unwrap_err();
+        let response = || async { reqwest::get(server.url()).await.unwrap() };
+        let status = response().await.error_for_status().unwrap_err();
+        // A response without `101 Switching Protocols` fails to upgrade.
+        let upgrade = response().await.upgrade().await.unwrap_err();
+        let failed: Vec<Result<Vec<u8>, std::io::Error>> =
+            vec![Err(std::io::Error::other("broken"))];
+        let mut body = reqwest::Body::wrap_stream(futures_util::stream::iter(failed));
+        let body = http_body_util::BodyExt::frame(&mut body)
+            .await
+            .unwrap()
+            .unwrap_err();
+        for (error, message) in [
+            (builder, "HTTP client configuration failed"),
+            (status, "HTTP response returned status 502 Bad Gateway"),
+            (body, "HTTP request or response body failed"),
+            (upgrade, "HTTP transport failed"),
+        ] {
+            assert_eq!(Error::from(error).to_string(), message);
+        }
+    }
+
+    #[test]
+    fn test_debug_names_the_variant() {
+        let parse = serde_json::from_str::<u8>("x").unwrap_err();
+        for (error, variant) in [
+            (Error::from(EndpointError::InvalidPath), "Endpoint(InvalidPath)"),
+            (Error::from(parse), "Parse("),
+            (Error::Configuration("bad file".into()), "Configuration(\"bad file\")"),
+            (
+                Error::UnexpectedService("not TES".to_owned()),
+                "UnexpectedService(\"not TES\")",
+            ),
+        ] {
+            let debug = format!("{error:?}");
+            assert!(debug.starts_with(variant), "{debug}");
+        }
+    }
+
     #[test]
     fn test_downcast_ref_finds_the_error_of_every_variant() {
         let error = Error::from(http());
