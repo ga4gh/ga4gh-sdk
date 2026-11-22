@@ -522,6 +522,8 @@ impl DRS {
             let failed: ObjectOutcome<T> = match reply {
                 ChunkReply::Body(body) => {
                     report.merge(correlate(&keys, body, access));
+                    // The body has an outcome per key; the loop below is
+                    // only for replies without one.
                     continue;
                 }
                 ChunkReply::Failure(code) => ObjectOutcome {

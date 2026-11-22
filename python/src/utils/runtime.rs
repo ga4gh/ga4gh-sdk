@@ -133,6 +133,8 @@ where
     spawn_io_with_slots(make, call_slots()).await
 }
 
+/// [`spawn_io`] with the call pool `slots`: waits for a slot, then runs the
+/// call on the call threads; a closed pool fails the call without running it.
 async fn spawn_io_with_slots<F, Fut, T>(make: F, slots: Arc<Semaphore>) -> Result<T, String>
 where
     F: FnOnce() -> Fut + Send + 'static,
