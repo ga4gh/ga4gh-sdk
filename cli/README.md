@@ -475,10 +475,12 @@ and each later wait for body data; a download as a whole has no time limit.
 Saved files get the permissions that the umask allows, as with other new files.
 Debug logs of the HTTP libraries
 show full URLs, so the CLI logs them only when `RUST_LOG` names them, for
-example `RUST_LOG=debug,reqwest=debug`. A directive counts only with the exact
-name (`reqwest`, `hyper` or `hyper_util`), without spaces before `=`, and with
-a valid level: `RUST_LOG=debug,reqwest::connect=debug` logs that module only,
-and `reqwest =debug` names no target, as in env_logger.
+example `RUST_LOG=debug,reqwest=debug`. The CLI reads `RUST_LOG` as
+[env_logger](https://docs.rs/env_logger/0.11/env_logger/#enabling-logging)
+does, and only a directive with the exact name (`reqwest`, `hyper` or
+`hyper_util`) and a valid level counts. `RUST_LOG=debug,reqwest::connect=debug`
+logs at debug level for that module only, and `reqwest =debug`, with a space,
+names no target.
 
 Other schemes, such as `file`, `gs` or `ftp`, are refused with an error, and
 so are declared outputs of type `DIRECTORY` or with a wildcard: save the files

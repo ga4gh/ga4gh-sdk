@@ -260,6 +260,21 @@ fn error_logs_are_shown_without_rust_log() {
         "{}",
         stderr(&output)
     );
+    // `RUST_LOG` without directives leaves env_logger's default level.
+    for filters in ["", "debug/a/b"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"))
+            .args(["tes", "files", "t1"])
+            .env("HOME", home.path())
+            .env("RUST_LOG", filters)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            stderr(&output).contains(" ERROR ga4gh_sdk"),
+            "{filters}: {}",
+            stderr(&output)
+        );
+    }
 }
 
 #[test]
@@ -323,7 +338,7 @@ fn http_library_debug_logs_need_the_exact_target_name() {
         &json!({"id": "t1", "state": "COMPLETE"}),
     );
     let home = home_with_tes(&server, prefix);
-    let http_debug_lines = |filters: &str| {
+    let reqwest_debug_lines = |filters: &str| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
         command
             .args(["tes", "files", "t1"])
@@ -334,32 +349,20 @@ fn http_library_debug_logs_need_the_exact_target_name() {
         }
         let output = command.output().unwrap();
         assert!(output.status.success(), "{filters}: {}", stderr(&output));
+        // This relies on the log format in `main.rs`. hyper logs through
+        // `tracing` without its `log` feature, so only reqwest can be seen.
         stderr(&output)
             .lines()
-            .filter(|line| {
-                ["DEBUG", "TRACE"].iter().any(|level| {
-                    ["reqwest", "hyper"]
-                        .iter()
-                        .any(|target| line.contains(&format!(" {level} {target}")))
-                })
-            })
+            .filter(|line| line.contains(" DEBUG reqwest") || line.contains(" TRACE reqwest"))
             .map(str::to_owned)
             .collect::<Vec<_>>()
     };
     // With the exact name, the user's level applies.
-    assert!(!http_debug_lines("trace,reqwest=trace").is_empty());
-    // env_logger reads `reqwest ` (with a space) as a name of its own and
-    // skips directives with an invalid level or too many `/`, so these
-    // don't name reqwest, and the global level doesn't reach it.
-    for filters in [
-        "trace",
-        "trace,reqwest =info",
-        "trace, reqwest = info",
-        "trace,reqwest=verbose",
-        "trace,reqwest=info=debug",
-        "trace,reqwest::connect=info",
-    ] {
-        let lines = http_debug_lines(filters);
+    assert!(!reqwest_debug_lines("trace,reqwest=trace").is_empty());
+    // env_logger reads `reqwest ` (with a space) as a name of its own, so the
+    // global level doesn't reach reqwest. The unit tests cover other cases.
+    for filters in ["trace", "trace,reqwest =info", "trace, reqwest = info"] {
+        let lines = reqwest_debug_lines(filters);
         assert!(lines.is_empty(), "{filters}: {lines:?}");
     }
 }
