@@ -726,6 +726,16 @@ async fn listings_descriptors_and_bounds_are_checked_before_staging() {
             },
             "exceeds bundle byte bound",
         ),
+        // Each file fits the per-file bound; together they exceed the total.
+        (
+            None,
+            None,
+            PreparationOptions {
+                max_total_bytes: MAIN.len() + TOOL.len() - 1,
+                ..defaults.clone()
+            },
+            "exceeds bundle byte bound",
+        ),
     ];
     for (index, (listing, primary, options, message)) in cases.into_iter().enumerate() {
         let error = prepare_error(
@@ -862,7 +872,12 @@ async fn anonymous_fetch_truncated_bodies_do_not_expose_signed_url_queries() {
     .await
     .unwrap()
     .unwrap_err();
-    server.await.unwrap();
+    // Bounded, so a fetch that fails before connecting can't leave the test
+    // waiting on accept forever.
+    tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .expect("the server answers the fetch")
+        .unwrap();
     assert!(matches!(error, ga4gh_sdk::Error::Transport(_)), "{error:?}");
     assert!(!format!("{error}").contains("SIGNED_SECRET"));
     assert!(!format!("{error:?}").contains("SIGNED_SECRET"));
