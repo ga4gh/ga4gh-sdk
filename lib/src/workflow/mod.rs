@@ -36,16 +36,31 @@ pub type ContractError = crate::Error;
 /// The revision of the GA4GH I/O profile and widget vocabulary schemas that
 /// this crate embeds; [`Pins::reference`] pins both to it.
 pub const PROFILE_REVISION: &str = "45d41324353cb4900fdd999c307c2e36a3f2a410";
-const FRAGMENT: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
-    .add(b' ')
-    .add(b'%')
-    .add(b'#')
-    .add(b'?')
-    .add(b'"')
-    .add(b'<')
-    .add(b'>')
-    .add(b'`')
-    .add(b'\\');
+/// The ASCII characters that a URI fragment can't hold as they are, so that
+/// any JSON Pointer to a schema works in a `$ref` (RFC 3986: `fragment =
+/// *( pchar / "/" / "?" )`). Everything except the unreserved characters,
+/// the sub-delimiters, `:`, `@`, `/` and `?` is encoded; bytes outside ASCII
+/// always are.
+const FRAGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~')
+    .remove(b'!')
+    .remove(b'$')
+    .remove(b'&')
+    .remove(b'\'')
+    .remove(b'(')
+    .remove(b')')
+    .remove(b'*')
+    .remove(b'+')
+    .remove(b',')
+    .remove(b';')
+    .remove(b'=')
+    .remove(b':')
+    .remove(b'@')
+    .remove(b'/')
+    .remove(b'?');
 const DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
 const PROFILE_URI: &str = "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/ga4gh-io-profile.schema.json";
 const WIDGET_URI: &str = "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/vocabularies/ui-widgets.schema.json";

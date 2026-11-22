@@ -873,6 +873,58 @@ fn output_keys_keep_json_pointer_and_uri_fragment_escaping() {
     assert_eq!(r.outputs[key].contract_status, ContractStatus::Conformant);
 }
 #[test]
+fn output_keys_with_characters_illegal_in_uri_fragments_are_validated() {
+    // RFC 3986 allows none of the first six characters in a fragment; "%"
+    // and the space were already encoded, "é" stands for every byte outside
+    // ASCII, and the rest are allowed as they are.
+    let keys = [
+        "{",
+        "}",
+        "|",
+        "^",
+        "[",
+        "]",
+        "reads[1]",
+        "a b",
+        "100%",
+        "é",
+        "x/y~z",
+        "a:b@c!$&'()*+,;=-._~",
+    ];
+    let properties: serde_json::Map<String, Value> = keys
+        .iter()
+        .map(|k| (k.to_string(), json!({"type":"integer"})))
+        .collect();
+    let mut s = schema();
+    s["properties"]["outputs"] = json!({"type":"object","properties":properties});
+    let p = profile(s);
+    let with = |value: Value| -> Value {
+        Value::Object(
+            keys.iter()
+                .map(|k| (k.to_string(), value.clone()))
+                .collect(),
+        )
+    };
+    let good = p
+        .project_results("one", "COMPLETE", &with(json!(1)))
+        .unwrap();
+    let bad = p
+        .project_results("two", "COMPLETE", &with(json!("one")))
+        .unwrap();
+    for key in keys {
+        assert_eq!(
+            good.outputs[key].contract_status,
+            ContractStatus::Conformant,
+            "{key}"
+        );
+        assert_eq!(
+            bad.outputs[key].contract_status,
+            ContractStatus::Invalid,
+            "{key}"
+        );
+    }
+}
+#[test]
 fn unordered_numeric_objects_ignore_json_number_representation() {
     let mut s = schema();
     s["properties"]["outputs"]["properties"]["count"] = json!({"type":"array"});
