@@ -314,6 +314,57 @@ fn debug_logs_omit_redirected_signed_urls() {
 }
 
 #[test]
+fn http_library_debug_logs_need_the_exact_target_name() {
+    let mut server = mockito::Server::new();
+    let prefix = "/log-targets";
+    let _tes = tes_mocks(
+        &mut server,
+        prefix,
+        &json!({"id": "t1", "state": "COMPLETE"}),
+    );
+    let home = home_with_tes(&server, prefix);
+    let http_debug_lines = |filters: &str| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
+        command
+            .args(["tes", "files", "t1"])
+            .env("HOME", home.path())
+            .env("RUST_LOG", filters);
+        for proxy in ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+            command.env_remove(proxy);
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{filters}: {}", stderr(&output));
+        stderr(&output)
+            .lines()
+            .filter(|line| {
+                ["DEBUG", "TRACE"].iter().any(|level| {
+                    ["reqwest", "hyper"]
+                        .iter()
+                        .any(|target| line.contains(&format!(" {level} {target}")))
+                })
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    // With the exact name, the user's level applies.
+    assert!(!http_debug_lines("trace,reqwest=trace").is_empty());
+    // env_logger reads `reqwest ` (with a space) as a name of its own and
+    // skips directives with an invalid level or too many `/`, so these
+    // don't name reqwest, and the global level doesn't reach it.
+    for filters in [
+        "trace",
+        "trace,reqwest =info",
+        "trace, reqwest = info",
+        "trace,reqwest=verbose",
+        "trace,reqwest=info=debug",
+        "trace,reqwest::connect=info",
+    ] {
+        let lines = http_debug_lines(filters);
+        assert!(lines.is_empty(), "{filters}: {lines:?}");
+    }
+}
+
+#[test]
 fn files_reports_an_incomplete_task() {
     let mut server = mockito::Server::new();
     let prefix = "/files-incomplete";
