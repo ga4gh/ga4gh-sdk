@@ -359,10 +359,7 @@ mod tests {
     async fn test_transport_error_kinds_have_their_messages() {
         let mut server = mockito::Server::new_async().await;
         let _gateway = server.mock("GET", "/").with_status(502).create();
-        let builder = reqwest::Client::new()
-            .get("http://[")
-            .build()
-            .unwrap_err();
+        let builder = reqwest::Client::new().get("http://[").build().unwrap_err();
         let response = || async { reqwest::get(server.url()).await.unwrap() };
         let status = response().await.error_for_status().unwrap_err();
         // A response without `101 Switching Protocols` fails to upgrade.
@@ -388,9 +385,15 @@ mod tests {
     fn test_debug_names_the_variant() {
         let parse = serde_json::from_str::<u8>("x").unwrap_err();
         for (error, variant) in [
-            (Error::from(EndpointError::InvalidPath), "Endpoint(InvalidPath)"),
+            (
+                Error::from(EndpointError::InvalidPath),
+                "Endpoint(InvalidPath)",
+            ),
             (Error::from(parse), "Parse("),
-            (Error::Configuration("bad file".into()), "Configuration(\"bad file\")"),
+            (
+                Error::Configuration("bad file".into()),
+                "Configuration(\"bad file\")",
+            ),
             (
                 Error::UnexpectedService("not TES".to_owned()),
                 "UnexpectedService(\"not TES\")",

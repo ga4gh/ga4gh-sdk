@@ -509,7 +509,8 @@ mod tests {
                     self.started.notify_one();
                     self.resume.notified().await;
                 }
-                Ok(AccessToken::new("stale").reusable_until(Instant::now() + Duration::from_secs(60)))
+                Ok(AccessToken::new("stale")
+                    .reusable_until(Instant::now() + Duration::from_secs(60)))
             }
         }
 

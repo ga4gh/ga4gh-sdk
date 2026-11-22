@@ -108,14 +108,16 @@ pinned hook revisions.
 - `coverage/lcov.info`: the LCOV report, for editors and coverage services
 - `coverage/summary.txt`: the summary table, which it also prints
 
-The report leaves out the generated models. Documentation tests (which
+The report leaves out the generated models and
+`lib/src/utils/test_utils.rs`, the helpers of the Funnel integration suite,
+which is test support rather than product code. Documentation tests (which
 cargo-llvm-cov only measures on nightly Rust) and the opt-in integration
 suites are not included. For an HTML report of the same data, run this after
 `make coverage`:
 
 ```sh
 cargo llvm-cov report --html --open \
-  --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
+  --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/|lib/src/utils/test_utils\.rs$'
 ```
 
 In CI, the `codecov` job uploads `coverage/lcov.info` from the `coverage`

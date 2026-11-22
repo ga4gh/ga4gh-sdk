@@ -1149,7 +1149,10 @@ mod tests {
         });
         let error = config.configured_auth().err().unwrap();
         assert_eq!(error, AuthError::InvalidBasicUsername);
-        assert_eq!(error.to_string(), "Basic auth username must not contain ':'");
+        assert_eq!(
+            error.to_string(),
+            "Basic auth username must not contain ':'"
+        );
     }
 
     #[test]

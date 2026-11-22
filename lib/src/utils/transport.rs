@@ -1139,10 +1139,7 @@ mod tests {
         let transport = Transport::new(&Configuration::new(base));
         for path in [".\t./secret", ".\n./secret"] {
             assert!(
-                matches!(
-                    transport.endpoint(path),
-                    Err(EndpointError::OutsideApiRoot)
-                ),
+                matches!(transport.endpoint(path), Err(EndpointError::OutsideApiRoot)),
                 "{path:?}"
             );
         }
@@ -1183,7 +1180,10 @@ mod tests {
             .create();
         let mut config = Configuration::new(Url::parse(&server.url()).unwrap());
         config.user_agent = None;
-        let body = Transport::new(&config).get("anonymous", None).await.unwrap();
+        let body = Transport::new(&config)
+            .get("anonymous", None)
+            .await
+            .unwrap();
         assert_eq!(body, "ok");
         request.assert();
     }
@@ -1219,7 +1219,11 @@ mod tests {
         // A body that breaks off, and one that stalls after three bytes.
         for (hold, budget, reason) in [
             (false, Duration::from_secs(10), "HTTP response body failed"),
-            (true, Duration::from_millis(200), "operation deadline exceeded"),
+            (
+                true,
+                Duration::from_millis(200),
+                "operation deadline exceeded",
+            ),
         ] {
             let url = raw_server(vec![(PARTIAL, hold)]).await;
             let transport = Transport::new(&Configuration::new(url));

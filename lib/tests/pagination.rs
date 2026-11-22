@@ -257,7 +257,10 @@ fn invalid_limits_and_page_tokens_fail_before_a_request() {
     let mut settings = options();
     settings.max_requests = 0;
     let error = Pager::new(&transport, ServiceKind::Tes, json!({}), settings).unwrap_err();
-    assert_eq!(error.to_string(), "pagination max_requests must be positive");
+    assert_eq!(
+        error.to_string(),
+        "pagination max_requests must be positive"
+    );
     let error = Pager::new(
         &transport,
         ServiceKind::Tes,
@@ -272,7 +275,11 @@ fn invalid_limits_and_page_tokens_fail_before_a_request() {
 async fn malformed_pages_fail_with_the_checkpoint_of_the_page() {
     let mut server = mockito::Server::new_async().await;
     for (root, body, reason) in [
-        ("/items", r#"{"tasks":"one"}"#, "page is missing its items array"),
+        (
+            "/items",
+            r#"{"tasks":"one"}"#,
+            "page is missing its items array",
+        ),
         (
             "/token",
             r#"{"tasks":[],"next_page_token":7}"#,
@@ -362,8 +369,14 @@ async fn resumed_tokens_count_as_seen() {
         .with_body(r#"{"tasks":[],"next_page_token":"again"}"#)
         .expect(1)
         .create();
-    let mut pager =
-        Pager::resume(&transport, ServiceKind::Tes, json!({}), checkpoint, options()).unwrap();
+    let mut pager = Pager::resume(
+        &transport,
+        ServiceKind::Tes,
+        json!({}),
+        checkpoint,
+        options(),
+    )
+    .unwrap();
     let error = pager.next_page().await.unwrap_err();
     assert_eq!(error.reason, "continuation token cycle");
     page.assert();

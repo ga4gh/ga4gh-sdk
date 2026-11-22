@@ -70,6 +70,19 @@ async fn unknown_states_deadline_and_interruption_keep_handle() {
         );
     }
 }
+#[tokio::test(start_paused = true)]
+async fn deadline_during_a_poll_ends_the_wait() {
+    // The poll never answers, so the operation's deadline ends it.
+    let result = observe(
+        handle(ServiceKind::Wes),
+        &WaitOptions::new(Duration::from_secs(3)),
+        std::future::pending::<ga4gh_sdk::Result<serde_json::Value>>,
+    )
+    .await;
+    assert_eq!(result.outcome, WaitOutcome::Deadline);
+    assert_eq!(result.last_state, None);
+    assert!(result.error.is_some());
+}
 #[test]
 fn resume_descriptor_is_credential_free_and_checked() {
     let mut config =

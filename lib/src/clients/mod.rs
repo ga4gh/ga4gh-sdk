@@ -61,6 +61,7 @@ mod tests {
     #[test]
     fn test_service_type_section_names() {
         assert_eq!(ServiceType::TES.as_str(), "TES");
+        assert_eq!(ServiceType::AAI.as_str(), "AAI");
         assert_eq!(ServiceType::REGISTRY.as_str(), "REGISTRY");
         assert_eq!(ServiceType::Custom("PROXY".to_owned()).as_str(), "PROXY");
     }
