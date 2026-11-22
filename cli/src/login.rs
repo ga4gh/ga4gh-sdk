@@ -1379,4 +1379,258 @@ mod tests {
             .to_string();
         assert!(error.contains("must use HTTPS"), "{error}");
     }
+
+    #[test]
+    fn oidc_settings_must_be_an_object() {
+        let mut config = Configuration::default();
+        config
+            .extra
+            .insert(OIDC_KEY.into(), json!("https://idp.example.org"));
+        let error = OidcSettings::from_config(&config).unwrap_err().to_string();
+        assert!(error.contains("must be an object"), "{error}");
+    }
+
+    #[test]
+    fn ipv6_loopback_may_use_http_but_hostless_urls_may_not() {
+        let check = |url: &str| check_secure(&Url::parse(url).unwrap(), "token_endpoint");
+        assert!(check("http://[::1]:8080/token").is_ok());
+        assert!(check("http://[2001:db8::1]/token").is_err());
+        let error = check("file:///token").unwrap_err().to_string();
+        assert!(error.contains("must use HTTPS"), "{error}");
+    }
+
+    /// A store with one login, for the tests of reading and writing.
+    fn one_login_store() -> TokenStore {
+        let mut store = TokenStore::default();
+        store.put(StoredLogin {
+            issuer: "https://idp.example.org".into(),
+            client_id: "c".into(),
+            scope: DEFAULT_SCOPE.into(),
+            token_endpoint: "https://idp.example.org/token".into(),
+            access_token: "a".into(),
+            refresh_token: None,
+            expires_at: None,
+        });
+        store
+    }
+
+    #[test]
+    fn token_store_read_errors_name_the_store() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let error = TokenStore::read(dir.path()).err().unwrap().to_string();
+        assert!(error.starts_with("Cannot read token store"), "{error}");
+
+        let path = dir.path().join("tokens.json");
+        std::fs::write(&path, "{\"logins\": \"secret-token\"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let error = TokenStore::read(&path).err().unwrap().to_string();
+        assert!(error.contains("is malformed"), "{error}");
+        assert!(!error.contains("secret-token"), "{error}");
+    }
+
+    #[test]
+    fn token_store_write_errors_name_the_path() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        let error = one_login_store()
+            .write(&file.join("tokens.json"))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.starts_with("Cannot create directory"), "{error}");
+
+        // A directory with an entry can't be replaced by the store.
+        let occupied = dir.path().join("occupied");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("entry"), "").unwrap();
+        let error = one_login_store()
+            .write(&occupied)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.starts_with("Cannot write token store"), "{error}");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn write_and_lock_errors_name_a_store_path_without_a_directory() {
+        // A NUL byte makes the final step fail without leaving a file behind:
+        // the temporary store in `.` is removed, and the lock file is never
+        // created.
+        let path = Path::new("tokens\0");
+        let error = one_login_store().write(path).err().unwrap().to_string();
+        assert!(error.starts_with("Cannot write token store"), "{error}");
+        let error = StoreLock::acquire(path).err().unwrap().to_string();
+        assert!(error.starts_with("Cannot open tokens\0.lock"), "{error}");
+    }
+
+    /// A discovery document under `prefix` with the given endpoints.
+    fn discovery_with(
+        server: &mut mockito::ServerGuard,
+        prefix: &str,
+        device: &str,
+        token: &str,
+    ) -> mockito::Mock {
+        let issuer = format!("{}{prefix}", server.url());
+        server
+            .mock(
+                "GET",
+                format!("{prefix}/.well-known/openid-configuration").as_str(),
+            )
+            .with_body(
+                json!({
+                    "issuer": issuer,
+                    "device_authorization_endpoint": device,
+                    "token_endpoint": token,
+                })
+                .to_string(),
+            )
+            .create()
+    }
+
+    /// The URL of `path` on a loopback port that refuses connections.
+    fn refused_url(path: &str) -> String {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        format!("http://127.0.0.1:{port}{path}")
+    }
+
+    /// Runs the device flow against the provider under `prefix`.
+    async fn device_flow_error(server: &mockito::ServerGuard, prefix: &str) -> String {
+        device_flow(
+            &http_client().unwrap(),
+            &settings(&format!("{}{prefix}", server.url())),
+            &mut Vec::new(),
+            FAST,
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn failed_or_malformed_discovery_is_reported() {
+        let mut server = mockito::Server::new_async().await;
+        for (prefix, status, body, expected) in [
+            (
+                "/oidc-discovery-500",
+                500,
+                "{}",
+                "discovery failed with HTTP status 500",
+            ),
+            (
+                "/oidc-discovery-text",
+                200,
+                "not json",
+                "discovery document is not valid JSON",
+            ),
+        ] {
+            let _discovery = server
+                .mock(
+                    "GET",
+                    format!("{prefix}/.well-known/openid-configuration").as_str(),
+                )
+                .with_status(status)
+                .with_body(body)
+                .create();
+            let error = device_flow_error(&server, prefix).await;
+            assert!(error.contains(expected), "{prefix}: {error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_or_malformed_device_authorization_is_reported() {
+        let mut server = mockito::Server::new_async().await;
+        let prefix = "/oidc-device-refused";
+        let token = format!("{}{prefix}/token", server.url());
+        let _discovery = discovery_with(&mut server, prefix, &refused_url("/device"), &token);
+        let error = device_flow_error(&server, prefix).await;
+        assert!(
+            error.starts_with("The device authorization request failed: "),
+            "{error}"
+        );
+        assert!(error.contains("HTTP connection failed"), "{error}");
+
+        for (prefix, status, body, expected) in [
+            (
+                "/oidc-device-500",
+                500,
+                "{}",
+                "device authorization request failed with HTTP status 500",
+            ),
+            (
+                "/oidc-device-malformed",
+                200,
+                "{\"device_code\": \"d\"}",
+                "device authorization response is malformed",
+            ),
+        ] {
+            let _discovery = discovery(&mut server, prefix);
+            let _device = server
+                .mock("POST", format!("{prefix}/device").as_str())
+                .with_status(status)
+                .with_body(body)
+                .create();
+            let error = device_flow_error(&server, prefix).await;
+            assert!(error.contains(expected), "{prefix}: {error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_or_unusable_token_responses_are_reported() {
+        let mut server = mockito::Server::new_async().await;
+        let prefix = "/oidc-token-refused";
+        let device_url = format!("{}{prefix}/device", server.url());
+        let _discovery = discovery_with(&mut server, prefix, &device_url, &refused_url("/token"));
+        let _device = device(&mut server, prefix);
+        let error = device_flow_error(&server, prefix).await;
+        assert!(error.starts_with("The token request failed: "), "{error}");
+        assert!(error.contains("HTTP connection failed"), "{error}");
+
+        for (prefix, status, body, expected) in [
+            (
+                "/oidc-token-text",
+                200,
+                "access-secret",
+                "token response (HTTP status 200 OK) is not valid JSON",
+            ),
+            (
+                "/oidc-token-missing",
+                200,
+                "{\"token_type\": \"Bearer\"}",
+                "token response lacks an access token",
+            ),
+            (
+                "/oidc-token-invalid",
+                200,
+                "{\"access_token\": \"access secret\", \"token_type\": \"Bearer\"}",
+                "not a valid bearer token",
+            ),
+            (
+                "/oidc-token-no-error",
+                500,
+                "{\"message\": \"access-secret\"}",
+                "token request failed with HTTP status 500",
+            ),
+        ] {
+            let _discovery = discovery(&mut server, prefix);
+            let _device = device(&mut server, prefix);
+            let _token = server
+                .mock("POST", format!("{prefix}/token").as_str())
+                .with_status(status)
+                .with_body(body)
+                .create();
+            let error = device_flow_error(&server, prefix).await;
+            assert!(error.contains(expected), "{prefix}: {error}");
+            assert!(!error.contains("secret"), "{prefix}: {error}");
+        }
+    }
 }
