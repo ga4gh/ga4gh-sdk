@@ -135,7 +135,9 @@ and `make check` or `make test` can rebuild the workspace crates.
 `make clean-coverage` removes the measurements and the instrumented
 bindings.
 
-The report leaves out the generated models. Documentation tests (which
+The report leaves out the generated models and
+`lib/src/utils/test_utils.rs`: the crate ships it as a public module, but
+only the Funnel integration suite uses it. Documentation tests (which
 cargo-llvm-cov only measures on nightly Rust) and the opt-in integration
 suites are not included.
 
@@ -157,7 +159,7 @@ shell:
 (
   eval "$(cargo llvm-cov show-env --sh)"
   cargo llvm-cov report --html --open \
-    --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
+    --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/|lib/src/utils/test_utils\.rs$'
 )
 ```
 

@@ -487,6 +487,49 @@ mod tests {
         assert_eq!(*provider.flags.lock().unwrap(), [true, true]);
     }
 
+    /// A rejection while the provider is asked keeps the token it gives from
+    /// being reused: it may be the token that was just rejected.
+    #[tokio::test]
+    async fn rejection_during_a_provider_call_drops_its_token() {
+        struct Paused {
+            started: tokio::sync::Notify,
+            resume: tokio::sync::Notify,
+            flags: Mutex<Vec<bool>>,
+        }
+
+        #[async_trait]
+        impl TokenProvider for Paused {
+            async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+                let first = {
+                    let mut flags = self.flags.lock().unwrap();
+                    flags.push(request.after_rejection);
+                    flags.len() == 1
+                };
+                if first {
+                    self.started.notify_one();
+                    self.resume.notified().await;
+                }
+                Ok(AccessToken::new("stale")
+                    .reusable_until(Instant::now() + Duration::from_secs(60)))
+            }
+        }
+
+        let provider = Arc::new(Paused {
+            started: tokio::sync::Notify::new(),
+            resume: tokio::sync::Notify::new(),
+            flags: Mutex::new(Vec::new()),
+        });
+        let source = TokenSource::new(provider.clone());
+        let (token, ()) = tokio::join!(source.token("a", false), async {
+            provider.started.notified().await;
+            source.reject("a", "stale");
+            provider.resume.notify_one();
+        });
+        assert_eq!(token.unwrap().secret(), "stale");
+        source.token("a", false).await.unwrap();
+        assert_eq!(*provider.flags.lock().unwrap(), [false, true]);
+    }
+
     #[test]
     fn test_debug_output_hides_the_token() {
         let token = AccessToken::new("SENTINEL_TOKEN");
@@ -517,6 +560,10 @@ mod tests {
         );
         assert!(!format!("{error:?}").contains("no session"));
         assert_eq!(error.source().unwrap().to_string(), "no session");
+        let error = TokenProviderError::InvalidToken {
+            audience: "https://example.org/".to_owned(),
+        };
+        assert!(error.source().is_none());
         let error = AuthConflictError {
             sources: vec!["basic_auth", "oauth_access_token"],
         };

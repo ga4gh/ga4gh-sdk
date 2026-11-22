@@ -12,6 +12,14 @@ coverage:
       default:
         informational: true
 
+# Already left out of the uploaded report by `make coverage`
+# (`COVERAGE_IGNORE` in the `Makefile`); listed here for reports from other
+# sources
+ignore:
+  - "lib/src/clients/*/models/**"
+  - "lib/src/clients/*/wire/*/models/**"
+  - "lib/src/utils/test_utils.rs"
+
 comment:
   layout: "condensed_header, condensed_files, condensed_footer"
   # Comment only when the coverage changes

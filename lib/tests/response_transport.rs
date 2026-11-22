@@ -1,4 +1,5 @@
 use ga4gh_sdk::{
+    clients::trs::{models::DescriptorType, responses},
     reqwest::Method,
     utils::{
         configuration::Configuration,
@@ -284,4 +285,36 @@ async fn strict_json_validates_utf8_even_in_ignored_properties() {
     .expect_err("invalid UTF-8 must not be skipped with an unknown field");
     assert!(error.downcast_ref::<std::str::Utf8Error>().is_some());
     request.assert();
+}
+
+/// A next-page link without a query fetches the plain tools list.
+#[tokio::test]
+async fn tools_links_without_a_query_list_all_tools() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("GET", "/tools")
+        .match_query(mockito::Matcher::Missing)
+        .with_body("[]")
+        .expect(1)
+        .create();
+    let page = responses::next_tools_page(&transport(&server), "tools", BodyLimits::default())
+        .await
+        .unwrap();
+    assert!(page.tools.is_empty());
+    request.assert();
+}
+
+#[tokio::test]
+async fn zip_requests_reject_empty_and_dot_ids_before_sending() {
+    let server = mockito::Server::new_async().await;
+    let transport = transport(&server);
+    for (tool, version) in [("", "1"), ("tool", ""), (".", "1"), ("tool", "..")] {
+        let error = responses::files_zip(&transport, tool, version, DescriptorType::Cwl)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "TRS tool/version IDs must be nonempty opaque segments"
+        );
+    }
 }
