@@ -106,7 +106,8 @@ pinned hook revisions.
 [Python binding tests](../python/README.md#running-tests) with
 [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov). It runs
 `cargo test --workspace`, builds the bindings with maturin and installs them
-into the environment of `PYTHON`, and runs pytest in `python/`. All of these
+into `target/coverage-site/`, and runs pytest in `python/` with that
+directory on `PYTHONPATH`. All of these
 builds are instrumented, so the report shows the binding code that the
 Python tests reach. It writes:
 
@@ -118,8 +119,9 @@ Python tests reach. It writes:
 
 Besides the [prerequisites](#prerequisites) for coverage, it needs a Python
 3.11+ environment with maturin, pip and pytest. `PYTHON` names its
-interpreter (`python3` by default). `make coverage` replaces any
-`ga4gh-sdk` installed there, so use a virtual environment of its own:
+interpreter (`python3` by default). `make coverage` doesn't install
+anything into that environment; a virtual environment of its own keeps the
+tools apart from other projects:
 
 ```sh
 python3 -m venv target/coverage-venv
@@ -130,7 +132,8 @@ make coverage PYTHON=target/coverage-venv/bin/python
 The instrumented builds use cargo-llvm-cov's target directory, `target/`,
 which the normal builds use as well, so switching between `make coverage`
 and `make check` or `make test` can rebuild the workspace crates.
-`make clean-coverage` removes the measurements.
+`make clean-coverage` removes the measurements and the instrumented
+bindings.
 
 The report leaves out the generated models. Documentation tests (which
 cargo-llvm-cov only measures on nightly Rust) and the opt-in integration

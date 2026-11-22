@@ -12,12 +12,14 @@ MKDOCS ?= mkdocs
 # Generated OpenAPI models are left out of the coverage report (see AGENTS.md)
 COVERAGE_IGNORE ?= lib/src/clients/[^/]+/(wire/[^/]+/)?models/
 COVERAGE_DIR ?= coverage
-# Python with maturin, pip and pytest, for the Python tests of `coverage`,
-# which installs the bindings into its environment
+# Python with maturin, pip and pytest, for the Python tests of `coverage`;
+# the bindings go to COVERAGE_SITE, not into its environment
 PYTHON ?= python3
 # The same interpreter from other directories: a path made absolute
 COVERAGE_PYTHON = $(if $(findstring /,$(PYTHON)),$(abspath $(PYTHON)),$(PYTHON))
 COVERAGE_WHEELS ?= target/coverage-wheels
+# The instrumented bindings, on PYTHONPATH for pytest only
+COVERAGE_SITE ?= target/coverage-site
 # Sets cargo-llvm-cov's environment in a recipe line; a failure of `show-env`
 # stops the line (a plain `eval "$$(...)"` would hide it)
 COVERAGE_ENV = coverage_env="$$($(CARGO) llvm-cov show-env --sh)" && eval "$$coverage_env"
@@ -61,6 +63,7 @@ check: lint build test ## Run the standard checks from AGENTS.md
 coverage: ## Measure the coverage of the Rust and Python tests (see docs/development.md)
 	mkdir -p $(COVERAGE_DIR) $(COVERAGE_WHEELS)
 	rm -f $(COVERAGE_WHEELS)/ga4gh_sdk-*.whl
+	rm -rf $(COVERAGE_SITE)
 	@# The environment of `show-env` instruments every build in this line, the
 	@# extension module that maturin builds included, and points `clean` and
 	@# the report to their target directory and measurements
@@ -69,8 +72,9 @@ coverage: ## Measure the coverage of the Rust and Python tests (see docs/develop
 	$(CARGO) test --workspace --locked && \
 	(cd python && $(COVERAGE_PYTHON) -m maturin build --locked --profile dev \
 		--interpreter $(COVERAGE_PYTHON) --out $(abspath $(COVERAGE_WHEELS))) && \
-	$(COVERAGE_PYTHON) -m pip install --force-reinstall --no-deps $(COVERAGE_WHEELS)/ga4gh_sdk-*.whl && \
-	(cd python && $(COVERAGE_PYTHON) -m pytest) && \
+	$(COVERAGE_PYTHON) -m pip install --no-deps --target $(COVERAGE_SITE) \
+		$(COVERAGE_WHEELS)/ga4gh_sdk-*.whl && \
+	(cd python && PYTHONPATH=$(abspath $(COVERAGE_SITE)) $(COVERAGE_PYTHON) -m pytest) && \
 	$(CARGO) llvm-cov report --ignore-filename-regex '$(COVERAGE_IGNORE)' \
 		--lcov --output-path $(COVERAGE_DIR)/lcov.info && \
 	$(CARGO) llvm-cov report --ignore-filename-regex '$(COVERAGE_IGNORE)' \
@@ -81,6 +85,7 @@ clean-coverage: ## Remove coverage data and reports
 	$(COVERAGE_ENV) && $(CARGO) llvm-cov clean --workspace
 	rm -rf $(COVERAGE_DIR)
 	rm -f $(COVERAGE_WHEELS)/ga4gh_sdk-*.whl
+	rm -rf $(COVERAGE_SITE)
 
 downstream: ## Check, lint and test the downstream example crate
 	cp Cargo.lock $(DOWNSTREAM_DIR)/Cargo.lock
