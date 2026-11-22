@@ -883,12 +883,30 @@ fn s3_downloads_report_configuration_and_request_errors() {
 }
 
 /// Answers one S3 request with `response` and then stops listening, so that
-/// retries are refused.
+/// retries are refused. The server thread panics if no request arrives
+/// within 30 seconds, so that joining it can't hang.
 fn one_response_server(response: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+        let timeout = std::time::Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + timeout;
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "no S3 request within {timeout:?}"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream.set_read_timeout(Some(timeout)).unwrap();
         let mut request = [0u8; 4096];
         let _ = stream.read(&mut request).unwrap();
         stream.write_all(&response).unwrap();
@@ -955,7 +973,11 @@ fn named_http_library_targets_keep_their_debug_logs() {
     );
     let home = home_with_tes(&server, prefix);
     let output = s3_command(&home, &["tes", "files", "t1"], &server.url())
-        .env("RUST_LOG", "reqwest::connect=debug")
+        // The exact name: a filter that the CLI adds for an unnamed library
+        // replaces this directive, while a child target such as
+        // `reqwest::connect` would win against it as the longer match (the
+        // unit tests of `names_log_target` cover child targets).
+        .env("RUST_LOG", "reqwest=debug")
         .output()
         .unwrap();
     let message = stderr(&output);

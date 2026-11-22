@@ -54,3 +54,37 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::names_log_target;
+
+    #[test]
+    fn names_log_target_matches_the_target_and_its_children() {
+        for filters in [
+            "reqwest",
+            "reqwest=debug",
+            " reqwest = debug ",
+            "reqwest/connect",
+            "warn,reqwest::connect=debug",
+            "reqwest::connect::http",
+        ] {
+            assert!(names_log_target(filters, "reqwest"), "{filters:?}");
+        }
+    }
+
+    #[test]
+    fn names_log_target_ignores_other_targets() {
+        for filters in [
+            "",
+            "debug",
+            "trace,hyper=debug",
+            "reqwest_middleware=debug",
+            "reqwestx::connect=debug",
+            "ga4gh_cli=debug,warn",
+            "my::reqwest=debug",
+        ] {
+            assert!(!names_log_target(filters, "reqwest"), "{filters:?}");
+        }
+    }
+}
