@@ -1220,11 +1220,9 @@ mod tests {
         // partial body, `hold` false), and one that stalls after three bytes.
         for (hold, budget, reason) in [
             (false, Duration::from_secs(10), "HTTP response body failed"),
-            (
-                true,
-                Duration::from_millis(200),
-                "operation deadline exceeded",
-            ),
+            // Long enough that the request is sent before the deadline, even
+            // on a loaded machine: a deadline before sending isn't ambiguous.
+            (true, Duration::from_secs(2), "operation deadline exceeded"),
         ] {
             let url = raw_server(vec![(PARTIAL, hold)]).await;
             let transport = Transport::new(&Configuration::new(url));

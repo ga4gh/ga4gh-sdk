@@ -1076,13 +1076,12 @@ mod tests {
 
     #[test]
     fn test_with_bearer_access_token_from_env() {
+        // Only this test reads this variable, so parallel tests cannot change it.
+        std::env::set_var("GA4GH_SDK_TEST_BEARER_BUILDER_SET", "builder-token");
         let config = Configuration::default()
-            .with_bearer_access_token_from_env("PATH")
+            .with_bearer_access_token_from_env("GA4GH_SDK_TEST_BEARER_BUILDER_SET")
             .unwrap();
-        assert_eq!(
-            config.bearer_access_token,
-            Some(std::env::var("PATH").unwrap())
-        );
+        assert_eq!(config.bearer_access_token.as_deref(), Some("builder-token"));
         let error = Configuration::default()
             .with_bearer_access_token_from_env("GA4GH_SDK_TEST_BEARER_BUILDER_UNSET")
             .unwrap_err();
