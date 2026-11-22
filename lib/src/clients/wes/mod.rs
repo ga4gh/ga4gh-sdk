@@ -419,6 +419,41 @@ mod tests {
         }
     }
 
+    /// Native WES 1.0 service-info that parses but can't describe a usable
+    /// service is rejected.
+    #[test]
+    fn test_service_from_info_rejects_unusable_native_info() {
+        let native = |versions: serde_json::Value, types: serde_json::Value| {
+            json!({
+                "workflow_type_versions": types,
+                "supported_wes_versions": versions,
+                "supported_filesystem_protocols": [],
+                "workflow_engine_versions": {},
+                "default_workflow_engine_parameters": [],
+                "system_state_counts": {},
+                "tags": {}
+            })
+        };
+        let cwl = json!({"CWL": {"workflow_type_version": ["v1.2"]}});
+        for info in [
+            native(json!([]), cwl.clone()),
+            native(json!(["1.0.0"]), json!({})),
+            native(json!(["1.0.0"]), json!({"CWL": {}})),
+            native(
+                json!(["1.0.0"]),
+                json!({"CWL": {"workflow_type_version": []}}),
+            ),
+            native(
+                json!(["1.0.0"]),
+                json!({"CWL": {"workflow_type_version": [1]}}),
+            ),
+        ] {
+            let error = service_from_info(info).unwrap_err();
+            assert_eq!(error.to_string(), "invalid native WES service-info");
+        }
+        assert!(service_from_info(native(json!(["1.0.0"]), cwl)).is_ok());
+    }
+
     fn valid_request() -> RunRequest {
         RunRequest {
             workflow_params: Some(json!({})),

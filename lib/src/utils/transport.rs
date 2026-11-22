@@ -1036,9 +1036,205 @@ impl Transport {
 mod tests {
     use super::is_plain_http_to_remote;
     use crate::utils::configuration::Configuration;
-    use crate::utils::transport::{urlencode, EndpointError, HttpStatusError, Transport};
+    use crate::utils::transport::{
+        urlencode, BodyLimitError, EndpointError, HttpStatusError, RequestOptions, Transport,
+    };
     use mockito::Matcher;
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::{TcpListener, TcpStream};
     use url::Url;
+
+    /// Reads the head of one HTTP request from `socket`, up to and including
+    /// the empty line; panics if the client closes the connection first.
+    async fn read_head(socket: &mut TcpStream) -> String {
+        let mut reader = BufReader::new(socket);
+        let mut head = String::new();
+        while !head.ends_with("\r\n\r\n") {
+            assert_ne!(reader.read_line(&mut head).await.unwrap(), 0, "{head}");
+        }
+        head
+    }
+
+    /// Serves one connection per entry of `replies`, in turn, on a loopback
+    /// port, and returns its URL. Each connection reads a request head and
+    /// writes the reply's bytes; then it closes, or, if the reply's flag is
+    /// set, stays open without sending more. For replies that `mockito` can't
+    /// give: dropped connections, truncated bodies and stalled bodies.
+    async fn raw_server(replies: Vec<(&'static str, bool)>) -> Url {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        tokio::spawn(async move {
+            for (bytes, hold) in replies {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    read_head(&mut socket).await;
+                    socket.write_all(bytes.as_bytes()).await.unwrap();
+                    if hold {
+                        std::future::pending::<()>().await;
+                    }
+                });
+            }
+        });
+        url
+    }
+
+    /// Request options for one read-only (`read_only`) or non-replayable
+    /// request within `budget`, with up to two attempts 1 ms apart.
+    fn policy(read_only: bool, budget: Duration) -> RequestOptions {
+        let mut options = RequestOptions::new(budget);
+        options.retry.max_attempts = 2;
+        options.retry.initial_delay = Duration::from_millis(1);
+        if read_only {
+            options.safety = crate::utils::operation::ReplaySafety::ReadOnly;
+        }
+        options
+    }
+
+    #[test]
+    fn body_limit_error_names_status_and_limit() {
+        let error = BodyLimitError {
+            status: reqwest::StatusCode::OK,
+            limit: 4,
+        };
+        assert_eq!(
+            error.to_string(),
+            "HTTP 200 OK response exceeds body limit of 4 bytes"
+        );
+    }
+
+    #[test]
+    fn endpoint_errors_describe_the_problem_and_keep_the_parse_error() {
+        use std::error::Error;
+        let parse = url::ParseError::EmptyHost;
+        let cases = [
+            (
+                EndpointError::InvalidBase,
+                "base_path must be a hierarchical URL without a query or fragment",
+            ),
+            (
+                EndpointError::InvalidPath,
+                "endpoint must be a relative path without dot segments or backslashes",
+            ),
+            (
+                EndpointError::OutsideApiRoot,
+                "endpoint resolves outside base_path",
+            ),
+        ];
+        for (error, message) in cases {
+            assert_eq!(error.to_string(), message);
+            assert!(error.source().is_none());
+        }
+        let error = EndpointError::from(parse);
+        assert_eq!(error.to_string(), format!("invalid endpoint URL: {parse}"));
+        assert_eq!(error.source().unwrap().to_string(), parse.to_string());
+    }
+
+    /// The URL parser drops tabs and newlines, so a path that has no dot
+    /// segment before parsing can still have one after it; the resolved URL
+    /// is checked against the API root as well.
+    #[test]
+    fn endpoint_rejects_paths_that_leave_the_api_root_after_parsing() {
+        let base = Url::parse("https://example.org/ga4gh/tes/v1").unwrap();
+        let transport = Transport::new(&Configuration::new(base));
+        for path in [".\t./secret", ".\n./secret"] {
+            assert!(
+                matches!(transport.endpoint(path), Err(EndpointError::OutsideApiRoot)),
+                "{path:?}"
+            );
+        }
+    }
+
+    /// Requests through `client()` are sent without the configured
+    /// credentials.
+    #[tokio::test]
+    async fn client_requests_carry_no_configured_credentials() {
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/plain")
+            .match_header("authorization", Matcher::Missing)
+            .with_body("ok")
+            .expect(1)
+            .create();
+        let config = Configuration::new(Url::parse(&server.url()).unwrap())
+            .with_bearer_access_token("SENTINEL".to_owned());
+        let transport = Transport::new(&config);
+        let response = transport
+            .client()
+            .get(format!("{}/plain", server.url()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.text().await.unwrap(), "ok");
+        request.assert();
+    }
+
+    #[tokio::test]
+    async fn requests_without_a_user_agent_send_none() {
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/anonymous")
+            .match_header("user-agent", Matcher::Missing)
+            .with_body("ok")
+            .expect(1)
+            .create();
+        let mut config = Configuration::new(Url::parse(&server.url()).unwrap());
+        config.user_agent = None;
+        let body = Transport::new(&config)
+            .get("anonymous", None)
+            .await
+            .unwrap();
+        assert_eq!(body, "ok");
+        request.assert();
+    }
+
+    /// A read-only request is sent again after a connection that closed
+    /// without a response.
+    #[tokio::test]
+    async fn read_only_requests_retry_after_a_transport_error() {
+        let url = raw_server(vec![
+            ("", false),
+            (
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                false,
+            ),
+        ])
+        .await;
+        let transport = Transport::new(&Configuration::new(url));
+        let options = policy(true, Duration::from_secs(10));
+        let body = transport
+            .request_with_policy(reqwest::Method::GET, "lookup", None, None, &options)
+            .await
+            .unwrap();
+        assert_eq!(body, "ok");
+    }
+
+    /// After a non-replayable request was sent, a body that breaks off or
+    /// doesn't arrive before the deadline makes the submission ambiguous; it
+    /// isn't sent again.
+    #[tokio::test]
+    async fn lost_submission_bodies_are_ambiguous() {
+        use crate::utils::operation::AmbiguousSubmissionError;
+        const PARTIAL: &str = "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc";
+        // A body that breaks off (the server closes the connection after the
+        // partial body, `hold` false), and one that stalls after three bytes.
+        for (hold, budget, reason) in [
+            (false, Duration::from_secs(10), "HTTP response body failed"),
+            // Long enough that the request is sent before the deadline, even
+            // on a loaded machine: a deadline before sending isn't ambiguous.
+            (true, Duration::from_secs(2), "operation deadline exceeded"),
+        ] {
+            let url = raw_server(vec![(PARTIAL, hold)]).await;
+            let transport = Transport::new(&Configuration::new(url));
+            let options = policy(false, budget);
+            let error = transport
+                .request_with_policy(reqwest::Method::POST, "tasks", None, None, &options)
+                .await
+                .unwrap_err();
+            let error = error.downcast_ref::<AmbiguousSubmissionError>().unwrap();
+            assert_eq!(error.reason, reason, "hold: {hold}");
+        }
+    }
 
     #[test]
     fn remote_plain_http_is_identified_without_warning_for_loopback() {
@@ -1401,11 +1597,7 @@ mod tests {
 
         #[tokio::test]
         async fn late_401_does_not_evict_a_newer_reusable_token() {
-            use tokio::{
-                io::{AsyncReadExt, AsyncWriteExt},
-                net::TcpListener,
-                sync::Notify,
-            };
+            use tokio::{io::AsyncWriteExt, net::TcpListener, sync::Notify};
 
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
@@ -1423,19 +1615,7 @@ mod tests {
                         let release_late = release_late.clone();
                         let seen = seen.clone();
                         tokio::spawn(async move {
-                            let mut bytes = Vec::new();
-                            let mut chunk = [0; 1024];
-                            loop {
-                                let count = socket.read(&mut chunk).await.unwrap();
-                                if count == 0 {
-                                    return;
-                                }
-                                bytes.extend_from_slice(&chunk[..count]);
-                                if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
-                                    break;
-                                }
-                            }
-                            let request = String::from_utf8(bytes).unwrap();
+                            let request = super::read_head(&mut socket).await;
                             let path = request.split_whitespace().nth(1).unwrap();
                             let authorization = request
                                 .lines()
@@ -1448,16 +1628,11 @@ mod tests {
                                 late_started.notify_one();
                                 release_late.notified().await;
                             }
-                            let response = match (path, authorization) {
-                                ("/auth-race/late", "Bearer token-1")
-                                | ("/auth-race/fast", "Bearer token-1") => {
-                                    "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                                }
-                                ("/auth-race/late", "Bearer token-2")
-                                | ("/auth-race/fast", "Bearer token-2") => {
-                                    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
-                                }
-                                _ => "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            // The test checks the requests in `seen` afterwards.
+                            let response = if authorization == "Bearer token-2" {
+                                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                            } else {
+                                "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                             };
                             socket.write_all(response.as_bytes()).await.unwrap();
                         });
@@ -1489,8 +1664,43 @@ mod tests {
             .unwrap();
             assert_eq!(late.unwrap(), "ok");
             assert_eq!(provider.calls().len(), 2, "the newer token must be reused");
-            assert_eq!(seen.lock().unwrap().len(), 4);
+            let mut seen = seen.lock().unwrap().clone();
+            seen.sort();
+            assert_eq!(
+                seen,
+                [
+                    "/auth-race/fast Bearer token-1",
+                    "/auth-race/fast Bearer token-2",
+                    "/auth-race/late Bearer token-1",
+                    "/auth-race/late Bearer token-2",
+                ]
+            );
             server.abort();
+        }
+
+        /// A token with bytes beyond ASCII is a valid header value, which
+        /// `reject_token` can't read back as text; the 401 still reaches the
+        /// caller.
+        #[tokio::test]
+        async fn rejected_non_ascii_token_returns_the_401() {
+            let mut server = mockito::Server::new_async().await;
+            let provider = Arc::new(Recording {
+                token: Some("t\u{f6}ken"),
+                ..Default::default()
+            });
+            let transport = transport(&server, "auth-non-ascii", &provider);
+            let rejected = server
+                .mock("POST", "/auth-non-ascii/a")
+                .with_status(401)
+                .expect(1)
+                .create();
+            let error = transport.post("a", None).await.unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<HttpError>().unwrap().status,
+                reqwest::StatusCode::UNAUTHORIZED
+            );
+            rejected.assert();
+            assert_eq!(provider.calls().len(), 1);
         }
 
         #[tokio::test]

@@ -9,8 +9,9 @@ CARGO ?= cargo
 PRE_COMMIT ?= pre-commit
 MKDOCS ?= mkdocs
 
-# Generated OpenAPI models are left out of the coverage report (see AGENTS.md)
-COVERAGE_IGNORE ?= lib/src/clients/[^/]+/(wire/[^/]+/)?models/
+# Generated OpenAPI models (see AGENTS.md) and the test support module
+# `lib/src/utils/test_utils.rs` are left out of the coverage report
+COVERAGE_IGNORE ?= lib/src/clients/[^/]+/(wire/[^/]+/)?models/|lib/src/utils/test_utils\.rs$$
 COVERAGE_DIR ?= coverage
 # Python with maturin, pip and pytest, for the Python tests of `coverage`;
 # the bindings go to COVERAGE_SITE, not into its environment
