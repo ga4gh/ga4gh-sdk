@@ -408,17 +408,21 @@ async fn single_step_plans_resolve_access_ids_and_keep_them_pending() {
 async fn both_planners_reject_other_objects_and_methods_without_access() {
     let mut server = mockito::Server::new_async().await;
     let resolver = resolver(&server);
+    // `None`: an AccessChoiceError::UnsupportedMethods.
     for (body, expected) in [
         (
             object("other", json!([{"type":"https","access_id":"a1"}])),
-            "identifies another object",
+            Some("identifies another object"),
         ),
-        // Display of AccessChoiceError::UnsupportedMethods
-        (
-            object("id", json!([{"type":"https"}])),
-            "DRS access selection: UnsupportedMethods",
-        ),
+        (object("id", json!([{"type":"https"}])), None),
     ] {
+        let check = |error: &ga4gh_sdk::Error| match expected {
+            Some(expected) => assert!(error.to_string().contains(expected), "{error}"),
+            None => assert!(
+                matches!(choice(error), AccessChoiceError::UnsupportedMethods),
+                "{error}"
+            ),
+        };
         let request = server
             .mock("GET", "/gateway/drs/objects/id")
             .with_body(body.to_string())
@@ -428,12 +432,12 @@ async fn both_planners_reject_other_objects_and_methods_without_access() {
             .access_plan_once(URI, &AccessPreferences::default(), &budget())
             .await
             .unwrap_err();
-        assert!(once.to_string().contains(expected), "{once}");
+        check(&once);
         let waiting = resolver
             .access_plan(URI, &AccessPreferences::default(), &budget(), 1)
             .await
             .unwrap_err();
-        assert!(waiting.to_string().contains(expected), "{waiting}");
+        check(&waiting);
         request.assert();
         request.remove();
     }

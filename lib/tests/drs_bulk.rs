@@ -759,22 +759,25 @@ fn errors_of(report: &BulkReport<DrsObject>, id: &str) -> Vec<String> {
     assert_eq!(report.outcomes.len(), 1);
     report.outcomes[&key(id)].errors.clone()
 }
-/// A DRS client at a loopback address that refuses connections: the port
-/// of a listener that is closed again. Another process could take the port
-/// in between; on a test runner that is unlikely.
-async fn unreachable_client() -> DRS {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    drop(listener);
+/// A DRS client at a loopback address that refuses connections, and the
+/// socket that holds its port: bound but not listening, so connections are
+/// refused and no other server can take the port while the socket lives.
+fn unreachable_client() -> (DRS, tokio::net::TcpSocket) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = socket.local_addr().unwrap();
     let config = Configuration::new(url::Url::parse(&format!("http://{address}/drs")).unwrap());
-    DRS::without_discovery(Transport::new(&config), Service::default())
+    (
+        DRS::without_discovery(Transport::new(&config), Service::default()),
+        socket,
+    )
 }
 #[tokio::test]
 async fn network_errors_are_retried_within_the_operation() {
-    let client = unreachable_client().await;
+    let (unreachable, _port) = unreachable_client();
     let ids = ["a".to_string()];
     // Every attempt fails; the last error is reported
-    let report = client
+    let report = unreachable
         .get_bulk_objects(&ids, &[], &retrying(2, Duration::from_millis(1)), &budget())
         .await
         .unwrap();
@@ -782,7 +785,7 @@ async fn network_errors_are_retried_within_the_operation() {
     assert_eq!(errors.len(), 1);
     assert!(!errors[0].contains("deadline"), "{errors:?}");
     // The deadline passes while waiting for the retry
-    let report = client
+    let report = unreachable
         .get_bulk_objects(
             &ids,
             &[],
@@ -793,16 +796,23 @@ async fn network_errors_are_retried_within_the_operation() {
         .unwrap();
     assert_eq!(errors_of(&report, "a"), vec!["operation deadline exceeded"]);
     // An ended operation sends no request
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/ended/objects")
+        .expect(0)
+        .create_async()
+        .await;
     let operation = budget();
     operation.cancellation.cancel();
-    let report = client
+    let report = client(&server, "/ended")
         .get_bulk_objects(&ids, &[], &BulkPolicy::default(), &operation)
         .await
         .unwrap();
     assert_eq!(errors_of(&report, "a"), vec!["operation canceled locally"]);
+    request.assert_async().await;
 }
 #[tokio::test]
-async fn busy_answers_are_retried_after_the_advertised_delay() {
+async fn busy_answers_are_retried() {
     let mut server = mockito::Server::new_async().await;
     for (status, retry_after) in [(503, Some("0")), (429, None)] {
         let mut busy = server.mock("POST", "/busy/objects").with_status(status);

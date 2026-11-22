@@ -356,11 +356,15 @@ async fn attempt_limits_and_ended_operations_stop_before_any_attempt() {
     }
     let operation = Operation::new(Duration::from_secs(5));
     operation.cancellation.cancel();
+    // The attempt future is created but never polled.
+    let polled = Cell::new(0);
     let error = resolve_until::<(), _, _>(reference(), &operation, 3, || async {
+        polled.set(polled.get() + 1);
         Ok(Resolution::Ready(()))
     })
     .await
     .unwrap_err();
+    assert_eq!(polled.get(), 0);
     assert!(error.last_pending.is_none());
     assert!(matches!(
         error.cause,
