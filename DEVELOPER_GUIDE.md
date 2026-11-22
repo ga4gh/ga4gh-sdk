@@ -173,8 +173,8 @@ Two more checks protect users of the SDK:
 - `tests/run-image-tests.sh` builds and tests the
   [CLI container image](docs/container-image.md); it needs Docker.
 
-`make coverage` measures the coverage of the unit and crate tests; see
-[Development](docs/development.md#coverage).
+`make coverage` measures the coverage of the unit, crate and Python binding
+tests; see [Development](docs/development.md#coverage).
 
 When you fix a bug, first add a test that reproduces it. Test at the
 boundary that users see, as the
