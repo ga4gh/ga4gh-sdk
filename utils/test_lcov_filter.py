@@ -296,3 +296,43 @@ def test_main_writes_report_and_summary(
     output = capsys.readouterr().out
     assert output.startswith("Dropped 1 PyO3 attribute lines\n")
     assert output.endswith("TOTAL              1        0  100.00%\n")
+
+
+def test_main_keeps_report_when_writing_fails(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed write leaves the original report in place.
+
+    Args:
+        root: The repository root.
+        monkeypatch: pytest's monkeypatch fixture.
+    """
+    lcov = root / "lcov.info"
+    original = _record(root / "python/src/thing.rs", {6: 0, 8: 1})
+    lcov.write_text(original)
+    write_text = Path.write_text
+
+    def fail_after_truncating(path: Path, data: str, **kwargs: str) -> int:
+        """Truncate the file, then fail like a full disk.
+
+        Args:
+            path: The file to write.
+            data: The text to write.
+            **kwargs: The other arguments of `Path.write_text`.
+
+        Returns:
+            Never; it raises.
+
+        Raises:
+            OSError: Always.
+        """
+        write_text(path, "", **kwargs)
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(Path, "write_text", fail_after_truncating)
+
+    with pytest.raises(OSError):
+        lcov_filter.main([str(lcov), "--root", str(root)])
+
+    monkeypatch.undo()
+    assert lcov.read_text() == original

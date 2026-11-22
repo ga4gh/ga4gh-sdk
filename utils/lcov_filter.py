@@ -167,7 +167,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="repository root")
     args = parser.parse_args(argv)
     report, dropped = filter_report(args.lcov.read_text(encoding="utf-8"), args.root)
-    args.lcov.write_text(report, encoding="utf-8")
+    # A failed or interrupted write leaves the original report in place
+    partial = args.lcov.with_name(f"{args.lcov.name}.tmp")
+    partial.write_text(report, encoding="utf-8")
+    partial.replace(args.lcov)
     print(f"Dropped {dropped} PyO3 attribute lines")
     print(summarize(report, args.root), end="")
     return 0
