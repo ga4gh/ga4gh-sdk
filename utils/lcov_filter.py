@@ -138,7 +138,9 @@ def summarize(report: str, root: Path) -> str:
     for line in report.splitlines():
         if line.startswith("SF:"):
             relative = _relative(line[3:], root)
-            directory = OUTSIDE if relative is None else "/".join(relative.split("/")[:2])
+            directory = (
+                OUTSIDE if relative is None else "/".join(relative.split("/")[:2])
+            )
         elif line.startswith("DA:"):
             counts[directory][0] += 1
             counts[directory][1] += int(line[3:].split(",")[1]) == 0

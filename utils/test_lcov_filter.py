@@ -78,12 +78,16 @@ def test_drops_pyo3_attribute_lines_of_bindings(root: Path) -> None:
     """
     binding = root / "python/src/thing.rs"
     library = root / "lib/src/value.rs"
-    report = _record(binding, {3: 0, 6: 0, 8: 1, 9: 1}) + _record(library, {1: 0, 2: 1, 3: 1})
+    report = _record(binding, {3: 0, 6: 0, 8: 1, 9: 1}) + _record(
+        library, {1: 0, 2: 1, 3: 1}
+    )
 
     filtered, dropped = lcov_filter.filter_report(report, root)
 
     assert dropped == 2
-    assert filtered == _record(binding, {8: 1, 9: 1}) + _record(library, {1: 0, 2: 1, 3: 1})
+    assert filtered == _record(binding, {8: 1, 9: 1}) + _record(
+        library, {1: 0, 2: 1, 3: 1}
+    )
 
 
 def test_drops_functions_of_attribute_lines(root: Path) -> None:
@@ -137,6 +141,25 @@ def test_summarizes_lines_per_directory(root: Path) -> None:
     )
 
 
+def test_drops_opening_line_of_multi_line_pyclass(root: Path) -> None:
+    """Only the opening line of a `#[pyclass(` that spans lines goes.
+
+    Args:
+        root: The repository root.
+    """
+    source = root / "python/src/multi.rs"
+    source.write_text('#[pyclass(\n    name = "Multi",\n)]\npub struct PyMulti;\n')
+    report = _record(source, {1: 0, 2: 0, 4: 1})
+
+    filtered, dropped = lcov_filter.filter_report(report, root)
+
+    assert dropped == 1
+    assert "\nDA:1," not in filtered
+    assert "DA:2,0\n" in filtered
+    assert "DA:4,1\n" in filtered
+    assert "LF:2\nLH:1\n" in filtered
+
+
 @pytest.mark.parametrize(
     "attribute",
     [
@@ -182,7 +205,9 @@ def test_accepts_relative_paths_and_checksums(root: Path) -> None:
     Args:
         root: The repository root.
     """
-    report = "SF:python/src/thing.rs\nDA:6,0,abc\nDA:8,1,def\nLF:2\nLH:1\nend_of_record\n"
+    report = (
+        "SF:python/src/thing.rs\nDA:6,0,abc\nDA:8,1,def\nLF:2\nLH:1\nend_of_record\n"
+    )
 
     filtered, dropped = lcov_filter.filter_report(report, root)
 
@@ -247,7 +272,9 @@ def test_main_defaults_to_the_working_directory(
 
     assert lcov_filter.main(["lcov.info"]) == 0
 
-    assert (root / "lcov.info").read_text() == _record(Path("python/src/thing.rs"), {8: 1})
+    assert (root / "lcov.info").read_text() == _record(
+        Path("python/src/thing.rs"), {8: 1}
+    )
     assert capsys.readouterr().out.startswith("Dropped 1 PyO3 attribute lines\n")
 
 

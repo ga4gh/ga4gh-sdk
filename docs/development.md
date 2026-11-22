@@ -147,12 +147,15 @@ tests with `python3 -m pytest utils`.
 
 For an HTML report of the same data, run this after `make coverage`. The
 report must use cargo-llvm-cov's environment, as `make coverage` does, to
-find the measurements:
+find the measurements; the subshell keeps that environment out of your
+shell:
 
 ```sh
-eval "$(cargo llvm-cov show-env --sh)"
-cargo llvm-cov report --html --open \
-  --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
+(
+  eval "$(cargo llvm-cov show-env --sh)"
+  cargo llvm-cov report --html --open \
+    --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
+)
 ```
 
 The HTML report includes the PyO3 attribute lines.
