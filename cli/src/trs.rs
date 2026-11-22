@@ -550,14 +550,54 @@ mod tests {
 
     #[test]
     fn plain_switches_to_the_plain_variant() {
-        assert_eq!(
-            with_plain(DescriptorType::Wdl, false),
-            DescriptorTypeWithPlain::Wdl
-        );
-        assert_eq!(
-            with_plain(DescriptorType::Wdl, true),
-            DescriptorTypeWithPlain::PlainWdl
-        );
+        use DescriptorType as T;
+        use DescriptorTypeWithPlain as P;
+        for (descriptor_type, without, with) in [
+            (T::Cwl, P::Cwl, P::PlainCwl),
+            (T::Wdl, P::Wdl, P::PlainWdl),
+            (T::Nfl, P::Nfl, P::PlainNfl),
+            (T::Galaxy, P::Galaxy, P::PlainGalaxy),
+            (T::Smk, P::Smk, P::PlainSmk),
+            (
+                T::Unrecognized("JSON".into()),
+                P::Unrecognized("JSON".into()),
+                P::Unrecognized("PLAIN_JSON".into()),
+            ),
+        ] {
+            assert_eq!(with_plain(descriptor_type.clone(), false), without);
+            assert_eq!(with_plain(descriptor_type, true), with);
+        }
+    }
+
+    #[test]
+    fn new_file_is_written_directly_if_it_cannot_be_linked() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let path = directory.path().join("workflow.zip");
+        let file = NewFile::create(&path).unwrap();
+        // Linking fails, without the target existing.
+        std::fs::remove_file(&file.temp).unwrap();
+        assert!(file
+            .finish(b"PK new")
+            .unwrap()
+            .starts_with("Wrote 6 bytes to "));
+        assert_eq!(std::fs::read(&path).unwrap(), b"PK new");
+    }
+
+    // `/dev/full` fails every write.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn new_file_reports_write_errors() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let path = directory.path().join("workflow.zip");
+        let mut file = NewFile::create(&path).unwrap();
+        file.file = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        let error = file.finish(b"PK new").unwrap_err().to_string();
+        assert!(error.starts_with("Can't write "), "{error}");
+        assert!(!path.exists());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 
     #[test]

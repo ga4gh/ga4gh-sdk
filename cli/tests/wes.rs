@@ -258,6 +258,7 @@ fn run_input_errors_are_reported_before_any_request() {
     let home = home_with_wes_config(&mock_server, "/input-errors/ga4gh/wes/v1");
     fs::write(home.path().join("list.json"), "[1, 2]").unwrap();
     fs::write(home.path().join("broken.json"), "{").unwrap();
+    fs::create_dir(home.path().join("tools")).unwrap();
     let with = |extra: &[&'static str]| {
         let mut args = RUN_ARGS.to_vec();
         args.push("v1.2");
@@ -283,6 +284,10 @@ fn run_input_errors_are_reported_before_any_request() {
         (
             with(&["--attachment", "missing.cwl"]),
             "Cannot read attachment 'missing.cwl'",
+        ),
+        (
+            with(&["--attachment", "tools"]),
+            "Cannot read attachment 'tools': not a file",
         ),
         (
             with(&["--attachment", "/etc/hostname"]),
