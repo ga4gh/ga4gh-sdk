@@ -261,7 +261,7 @@ fn uri_errors_explain_themselves_and_the_default_root_follows_the_host() {
     );
 }
 #[tokio::test]
-async fn unmapped_hosts_stop_before_any_request_when_cancelled() {
+async fn unmapped_hosts_get_a_default_transport() {
     // A cancelled operation stops before any request leaves the client
     let operation = budget();
     operation.cancellation.cancel();
@@ -277,6 +277,17 @@ async fn unmapped_hosts_stop_before_any_request_when_cancelled() {
         error.downcast_ref::<OperationError>(),
         Some(&OperationError::Cancelled)
     );
+    // Without cancellation, the request goes to the host's default API root,
+    // which can't resolve (`.invalid`): a transport error, not a cancellation.
+    let error = DrsResolver::default()
+        .access_plan_once(
+            "drs://unmapped.invalid/id",
+            &AccessPreferences::default(),
+            &budget(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ga4gh_sdk::Error::Transport(_)), "{error:?}");
 }
 #[tokio::test]
 async fn method_index_overrides_the_preferences() {

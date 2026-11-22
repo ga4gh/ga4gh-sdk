@@ -643,7 +643,12 @@ fn service_info_without_a_bulk_limit_keeps_the_policy() {
 }
 #[tokio::test]
 async fn empty_ids_are_rejected_before_any_request() {
-    let server = mockito::Server::new_async().await;
+    let mut server = mockito::Server::new_async().await;
+    let requests = server
+        .mock("POST", Matcher::Any)
+        .expect(0)
+        .create_async()
+        .await;
     let client = client(&server, "/empty-ids");
     let error = client
         .get_bulk_objects(&["".into()], &[], &BulkPolicy::default(), &budget())
@@ -659,6 +664,7 @@ async fn empty_ids_are_rejected_before_any_request() {
         .await
         .unwrap_err();
     assert_eq!(error.to_string(), "bulk IDs must be nonempty");
+    requests.assert_async().await;
 }
 #[tokio::test]
 async fn invalid_unrequested_and_conflicting_entries_are_reported() {
@@ -774,16 +780,31 @@ fn unreachable_client() -> (DRS, tokio::net::TcpSocket) {
 }
 #[tokio::test]
 async fn network_errors_are_retried_within_the_operation() {
-    let (unreachable, _port) = unreachable_client();
     let ids = ["a".to_string()];
-    // Every attempt fails; the last error is reported
-    let report = unreachable
+    // Every attempt fails; each one connects again and the last error is
+    // reported. The server closes each connection without answering.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = accepted.clone();
+    let server = tokio::spawn(async move {
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            drop(socket);
+        }
+    });
+    let config = Configuration::new(url::Url::parse(&format!("http://{address}/drs")).unwrap());
+    let report = DRS::without_discovery(Transport::new(&config), Service::default())
         .get_bulk_objects(&ids, &[], &retrying(2, Duration::from_millis(1)), &budget())
         .await
         .unwrap();
+    server.abort();
     let errors = errors_of(&report, "a");
     assert_eq!(errors.len(), 1);
     assert!(!errors[0].contains("deadline"), "{errors:?}");
+    assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let (unreachable, _port) = unreachable_client();
     // The deadline passes while waiting for the retry
     let report = unreachable
         .get_bulk_objects(
@@ -846,11 +867,7 @@ async fn invalid_or_too_long_busy_delays_end_the_request() {
     let mut server = mockito::Server::new_async().await;
     for (retry_after, budget, expected) in [
         ("soon", Duration::from_secs(5), "invalid bulk Retry-After"),
-        (
-            "10",
-            Duration::from_millis(300),
-            "operation deadline exceeded",
-        ),
+        ("10", Duration::from_secs(2), "operation deadline exceeded"),
     ] {
         let busy = server
             .mock("POST", "/busy-delay/objects")
@@ -924,7 +941,7 @@ async fn the_deadline_also_bounds_reading_the_body() {
         .with_chunked_body(|writer| {
             writer.write_all(b"{")?;
             writer.flush()?;
-            std::thread::sleep(Duration::from_millis(1000));
+            std::thread::sleep(Duration::from_secs(4));
             writer.write_all(b"}")
         })
         .expect(1)
@@ -934,7 +951,7 @@ async fn the_deadline_also_bounds_reading_the_body() {
             &["a".into()],
             &[],
             &BulkPolicy::default(),
-            &Operation::new(Duration::from_millis(300)),
+            &Operation::new(Duration::from_secs(2)),
         )
         .await
         .unwrap();
