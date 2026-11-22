@@ -899,26 +899,26 @@ fn output_keys_with_characters_illegal_in_uri_fragments_are_validated() {
         // The empty name points at "/properties/outputs/properties/"
         "",
     ];
+    // Each output accepts only its own index, so an output checked against
+    // another output's schema is invalid
     let properties: serde_json::Map<String, Value> = keys
         .iter()
-        .map(|k| (k.to_string(), json!({"type":"integer"})))
+        .enumerate()
+        .map(|(i, k)| (k.to_string(), json!({"const":i})))
         .collect();
     let mut s = schema();
     s["properties"]["outputs"] = json!({"type":"object","properties":properties});
     let p = profile(s);
-    let with = |value: Value| -> Value {
+    let with = |offset: usize| -> Value {
         Value::Object(
             keys.iter()
-                .map(|k| (k.to_string(), value.clone()))
+                .enumerate()
+                .map(|(i, k)| (k.to_string(), json!(i + offset)))
                 .collect(),
         )
     };
-    let good = p
-        .project_results("one", "COMPLETE", &with(json!(1)))
-        .unwrap();
-    let bad = p
-        .project_results("two", "COMPLETE", &with(json!("one")))
-        .unwrap();
+    let good = p.project_results("one", "COMPLETE", &with(0)).unwrap();
+    let bad = p.project_results("two", "COMPLETE", &with(1)).unwrap();
     for key in keys {
         assert_eq!(
             good.outputs[key].contract_status,
