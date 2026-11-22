@@ -242,6 +242,10 @@ everything else to the SDK:
 - For all other commands, it calls `CliContext::dispatch_to`, which runs a
   built-in command with its own service's section of the context's
   configuration file and returns `None` for commands it doesn't own.
+  A subcommand added to a built-in service command, such as `tes usage`,
+  belongs to that command: the dispatchers read the service's section and
+  then return an error (`Unrecognized TES command: usage`), so handle such
+  subcommands before dispatching, as `cli::run` does.
   `ga4gh_cli::dispatch_with_config_to` does the same with a configuration
   that the caller supplies; that configuration must be for the command's
   service. The free functions `ga4gh_cli::command`, `dispatch` and

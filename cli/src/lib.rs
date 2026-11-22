@@ -591,7 +591,9 @@ pub fn command() -> Command {
 /// Run a built-in command using its service section in the config file.
 ///
 /// `None` leaves an added command to its caller without reading the config file.
-/// Config and input errors are returned as `Err`. Service request failures return
+/// A subcommand added to a built-in service command, such as `tes usage`, is
+/// not left to the caller: the service's section is read and the handler
+/// returns `Err`. Config and input errors are returned as `Err`. Service request failures return
 /// a `CommandOutput` with an error message and a failure exit code. Reads
 /// `~/.ga4gh-cli/config.json`; [`CliContext::dispatch`] reads another file.
 pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
@@ -601,7 +603,8 @@ pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutp
 /// Run a built-in command with a caller-supplied configuration for its service.
 ///
 /// Returns `None` for commands not owned by this crate, and for `login` and
-/// `logout`, which need a [`CliContext`]. The caller can inspect
+/// `logout`, which need a [`CliContext`]. A subcommand added to a built-in
+/// service command, such as `tes usage`, returns `Err`. The caller can inspect
 /// or reformat both output streams without changing process-global state.
 pub async fn dispatch_with_config(
     matches: &ArgMatches,
