@@ -113,8 +113,9 @@ pub fn command() -> Command {
 
 /// Execute a parsed WES subcommand using the supplied configuration.
 ///
-/// Output is returned to the caller for writing or reformatting. Input errors
-/// are returned as `Err`; service failures return a failure `CommandOutput`.
+/// Output is returned to the caller for writing or reformatting. Input errors,
+/// a missing or unknown subcommand included, are returned as `Err`; service
+/// failures return a failure `CommandOutput`.
 pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<CommandOutput> {
     match sub.subcommand() {
         Some(("run", sub)) => submit(sub, config).await,
@@ -147,7 +148,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
                 Err(error) => CommandOutput::failure(error),
             })
         }
-        _ => Ok(CommandOutput::success(String::new())),
+        Some((name, _)) => anyhow::bail!("Unrecognized WES command: {name}"),
+        None => anyhow::bail!("WES subcommand is required"),
     }
 }
 

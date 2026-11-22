@@ -888,7 +888,10 @@ add its own Clap 4 subcommands to `ga4gh_cli::command()`. Call
 Both return `None` when the downstream binary should handle its own command.
 Built-in commands return stdout, stderr, and an exit code in `CommandOutput`,
 so the downstream binary can write or reformat their output; `stderr` and the
-text parts of `stdout` are already escaped as described above.
+text parts of `stdout` are already escaped as described above. Matches of a
+built-in service command without a subcommand, or with one that the SDK
+doesn't know (for example one that the downstream binary added to `tes`),
+return an error: handle added subcommands before calling the dispatcher.
 `ga4gh_cli::printable()` escapes a value in the same way for a downstream
 binary's own text output. SDK log messages can hold a service's response, so
 a downstream binary that writes logs should pass them through `printable()`

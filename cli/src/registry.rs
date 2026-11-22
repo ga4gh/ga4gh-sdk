@@ -34,8 +34,9 @@ pub fn command() -> Command {
 
 /// Execute a parsed Service Registry subcommand using the supplied configuration.
 ///
-/// Output is returned to the caller for writing or reformatting. Request and
-/// response failures return a failure `CommandOutput`.
+/// Output is returned to the caller for writing or reformatting. A missing or
+/// unknown subcommand is returned as `Err`; request and response failures
+/// return a failure `CommandOutput`.
 pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<CommandOutput> {
     let registry = ServiceRegistry::new(config);
     let output = match sub.subcommand() {
@@ -78,7 +79,8 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
             ),
             Err(error) => service_failure(&error, "services/types"),
         },
-        _ => CommandOutput::success(String::new()),
+        Some((name, _)) => anyhow::bail!("Unrecognized registry command: {name}"),
+        None => anyhow::bail!("Registry subcommand is required"),
     };
     Ok(output)
 }

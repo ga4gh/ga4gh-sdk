@@ -127,8 +127,9 @@ pub fn command() -> Command {
 
 /// Execute a parsed TES subcommand using the supplied configuration.
 ///
-/// Output is returned to the caller for writing or reformatting. Input errors
-/// are returned as `Err`; service failures return a failure `CommandOutput`.
+/// Output is returned to the caller for writing or reformatting. Input errors,
+/// a missing or unknown subcommand included, are returned as `Err`; service
+/// failures return a failure `CommandOutput`.
 pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<CommandOutput> {
     if let Some(("create", sub)) = sub.subcommand() {
         let task_file = sub
@@ -284,7 +285,10 @@ pub async fn run(sub: &ArgMatches, config: &Configuration) -> anyhow::Result<Com
     if let Some((name @ ("files" | "log" | "save"), sub)) = sub.subcommand() {
         return run_files(name, sub, config).await;
     }
-    Ok(CommandOutput::success(String::new()))
+    match sub.subcommand() {
+        Some((name, _)) => anyhow::bail!("Unrecognized TES command: {name}"),
+        None => anyhow::bail!("TES subcommand is required"),
+    }
 }
 
 /// Runs `tes files`, `tes log` and `tes save` on the task's `FULL` view.
