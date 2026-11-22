@@ -1,12 +1,30 @@
 #![cfg(feature = "workflow-contracts")]
-use ga4gh_sdk::clients::wes::models::RunRequest;
-use ga4gh_sdk::workflow::{InvocationIdentity, Pins, Profile};
+use ga4gh_sdk::clients::{
+    serviceinfo::models::{Service, ServiceType},
+    wes::{models::RunRequest, WorkflowAttachment, WES},
+};
+use ga4gh_sdk::utils::{configuration::Configuration, transport::Transport};
+use ga4gh_sdk::workflow::{results::ResultRecord, InvocationIdentity, Pins, Profile};
 use serde_json::{json, Value};
 fn schema() -> Value {
     json!({"$schema":"https://json-schema.org/draft/2020-12/schema", "type":"object", "$defs":{"choice":{"type":"string","enum":["fast","full"]}}, "properties":{"inputs":{"type":"object","properties":{"mode":{"$ref":"#/$defs/choice"},"nested":{"type":"object","properties":{"n":{"type":"integer"}},"required":["n"]}},"required":["mode","nested"]},"outputs":{"type":"object","properties":{"count":{"type":"integer"},"report":{"type":"string","format":"uri","contentMediaType":"text/html","x-ga4gh-ui-widget":"html-viewer"}},"required":["count","report"]}}})
 }
 fn profile(value: Value) -> Profile {
     Profile::from_slice(&serde_json::to_vec(&value).unwrap(), Pins::reference()).unwrap()
+}
+/// Returns a WES client for the API root `base` that skips service-info
+/// discovery.
+fn wes(base: &str) -> WES {
+    WES::without_discovery(
+        Transport::new(&Configuration::new(url::Url::parse(base).unwrap())),
+        Service {
+            r#type: Box::new(ServiceType {
+                artifact: "wes".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
 }
 #[test]
 fn validates_root_refs_and_preserves_values_without_defaults() {
@@ -319,51 +337,53 @@ fn embedded_query_delimiters_are_redacted_in_stored_results() {
     );
 }
 
+/// Returns a JSON metrics comparator with the tolerances `abs` and `rel`
+/// that skips `ignored` pointers, sorts arrays if `unordered` and walks at
+/// most `max_nodes` nodes.
+fn json_metrics(
+    abs: f64,
+    rel: f64,
+    ignored: &[&str],
+    unordered: bool,
+    max_nodes: usize,
+) -> Comparator {
+    Comparator::JsonMetrics {
+        version: 1,
+        absolute_tolerance: abs,
+        relative_tolerance: rel,
+        ignored_pointers: ignored.iter().map(|p| (*p).to_owned()).collect(),
+        unordered_arrays: unordered,
+        max_nodes,
+    }
+}
 fn policy(abs: f64, rel: f64) -> ComparisonPolicy {
     ComparisonPolicy {
         id: "qc-v1".into(),
         version: 1,
-        outputs: BTreeMap::from([(
-            "/count".into(),
-            Comparator::JsonMetrics {
-                version: 1,
-                absolute_tolerance: abs,
-                relative_tolerance: rel,
-                ignored_pointers: vec![],
-                unordered_arrays: false,
-                max_nodes: 100,
-            },
-        )]),
+        outputs: BTreeMap::from([("/count".into(), json_metrics(abs, rel, &[], false, 100))]),
         required_context: vec!["workflow_digest".into(), "schema_digest".into()],
     }
 }
-fn records(
-    a: Value,
-    b: Value,
-) -> (
-    ga4gh_sdk::workflow::results::ResultRecord,
-    ga4gh_sdk::workflow::results::ResultRecord,
-) {
+/// Projects `a` and `b` as the outputs of two runs under the output
+/// contract `outputs` and gives both the same required context.
+fn project_pair(outputs: Value, a: Value, b: Value) -> (ResultRecord, ResultRecord) {
     let mut s = schema();
-    s["properties"]["outputs"]["properties"]["count"] = json!({"type":"number"});
+    s["properties"]["outputs"] = outputs;
     let p = profile(s);
-    let mut a = p
-        .project_results(
-            "a",
-            "COMPLETE",
-            &json!({"count":a,"report":"https://example.org/qc"}),
-        )
-        .unwrap();
-    let mut b = p
-        .project_results(
-            "b",
-            "COMPLETE",
-            &json!({"count":b,"report":"https://example.org/qc"}),
-        )
-        .unwrap();
+    let mut a = p.project_results("a", "COMPLETE", &a).unwrap();
+    let mut b = p.project_results("b", "COMPLETE", &b).unwrap();
     a.context.insert("workflow_digest".into(), "abc".into());
     b.context = a.context.clone();
     (a, b)
+}
+fn records(a: Value, b: Value) -> (ResultRecord, ResultRecord) {
+    let mut outputs = schema()["properties"]["outputs"].clone();
+    outputs["properties"]["count"] = json!({"type":"number"});
+    project_pair(
+        outputs,
+        json!({"count":a,"report":"https://example.org/qc"}),
+        json!({"count":b,"report":"https://example.org/qc"}),
+    )
 }
 #[test]
 fn numeric_zero_boundary_relative_and_nonfinite_policy() {
@@ -906,5 +926,369 @@ fn typed_result_retains_root_context_for_referenced_annotations() {
     assert_eq!(
         record.outputs["report"].annotations["$ref"],
         "#/$defs/html-report"
+    );
+}
+
+/// Reads `value` as a profile with the reference pins and returns the error
+/// message; panics if the profile is accepted.
+fn profile_error(value: &Value) -> String {
+    Profile::from_slice(&serde_json::to_vec(value).unwrap(), Pins::reference())
+        .err()
+        .unwrap()
+        .to_string()
+}
+#[test]
+fn rejects_unpinned_revisions_non_objects_unknown_dialects_and_ids() {
+    let bytes = serde_json::to_vec(&schema()).unwrap();
+    let mut pins = Pins::reference();
+    pins.vocabulary_revision = "main".into();
+    assert!(Profile::from_slice(&bytes, pins)
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("pinned reference revision"));
+    assert!(profile_error(&json!([])).contains("must be an object"));
+    let mut s = schema();
+    s["$schema"] = json!("http://json-schema.org/draft-07/schema#");
+    assert!(profile_error(&s).contains("unsupported schema dialect"));
+    for id in ["relative/profile.json", "https://example.org/profile.json#"] {
+        let mut s = schema();
+        s["$id"] = json!(id);
+        assert!(
+            profile_error(&s).contains("absolute URI without fragment"),
+            "{id}"
+        );
+    }
+}
+#[test]
+fn checks_vocabularies_in_subschema_arrays_and_accepts_standard_ones() {
+    let mut s = schema();
+    s["$vocabulary"] = json!({
+        "https://json-schema.org/draft/2020-12/vocab/core": true,
+        "https://unknown.invalid/optional-vocab": false
+    });
+    s["allOf"] = json!([{"type":"object"}]);
+    let p = profile(s.clone());
+    assert_eq!(p.document(), &s);
+    s["allOf"] = json!([{"$vocabulary":{"https://unknown.invalid/vocab":true}}]);
+    assert!(profile_error(&s).contains("unsupported required vocabulary"));
+}
+#[test]
+fn profile_without_outputs_exposes_pins_and_annotations() {
+    let mut s = schema();
+    s["properties"].as_object_mut().unwrap().remove("outputs");
+    let p = profile(s);
+    assert_eq!(p.pins(), &Pins::reference());
+    assert_eq!(
+        p.annotations("/properties/inputs/properties/mode"),
+        Some(&json!({"$ref":"#/$defs/choice"}))
+    );
+    assert_eq!(p.annotations("/properties/outputs"), None);
+    assert!(p
+        .validate_outputs(&json!({}))
+        .unwrap_err()
+        .to_string()
+        .contains("no output contract"));
+}
+#[test]
+fn prepare_rejects_blank_identities_and_request_fields() {
+    let p = profile(schema());
+    let request = RunRequest {
+        workflow_url: "workflow.cwl".into(),
+        workflow_type: "CWL".into(),
+        workflow_type_version: "v1.2".into(),
+        workflow_params: Some(json!({"mode":"fast","nested":{"n":4}})),
+        ..Default::default()
+    };
+    let identity = |workflow: &str| InvocationIdentity {
+        workflow: workflow.into(),
+        descriptor_digest: None,
+    };
+    assert!(p
+        .prepare(request.clone(), identity(" "))
+        .unwrap_err()
+        .to_string()
+        .contains("workflow identity must be pinned"));
+    let blank_type = RunRequest {
+        workflow_type: " ".into(),
+        ..request
+    };
+    assert!(p
+        .prepare(blank_type, identity("qc@sha256:abc"))
+        .unwrap_err()
+        .to_string()
+        .contains("requires workflow_url, workflow_type"));
+}
+#[tokio::test]
+async fn submit_with_attachments_checks_the_primary_descriptor_digest() {
+    let mut server = mockito::Server::new_async().await;
+    let submission = server
+        .mock("POST", "/runs")
+        .with_body(r#"{"run_id":"checked-run"}"#)
+        .expect(1)
+        .create();
+    let wes = wes(&server.url());
+    let descriptor = b"class: Workflow\n";
+    let p = profile(schema());
+    let prepare = |descriptor_digest: String| {
+        p.prepare(
+            RunRequest {
+                workflow_url: "workflow.cwl".into(),
+                workflow_type: "CWL".into(),
+                workflow_type_version: "v1.2".into(),
+                workflow_params: Some(json!({"mode":"fast","nested":{"n":4}})),
+                ..Default::default()
+            },
+            InvocationIdentity {
+                workflow: "qc@sha256:abc".into(),
+                descriptor_digest: Some(descriptor_digest),
+            },
+        )
+        .unwrap()
+    };
+    let attachment = |filename: &str, content: &[u8]| {
+        vec![WorkflowAttachment {
+            filename: filename.into(),
+            content: content.to_vec(),
+        }]
+    };
+    let expected = format!(
+        "sha256:{}",
+        ga4gh_sdk::workflow::digest(descriptor).to_ascii_uppercase()
+    );
+    for (prepared, attachments, message) in [
+        (
+            prepare(ga4gh_sdk::workflow::digest(descriptor)),
+            attachment("workflow.cwl", descriptor),
+            "must use sha256:",
+        ),
+        (
+            prepare(expected.clone()),
+            attachment("other.cwl", descriptor),
+            "primary descriptor attachment missing",
+        ),
+        (
+            prepare(expected.clone()),
+            attachment("workflow.cwl", b"class: CommandLineTool\n"),
+            "primary descriptor digest mismatch",
+        ),
+    ] {
+        let error = prepared
+            .submit_with_attachments(&wes, attachments)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains(message), "{error}");
+    }
+    let run = prepare(expected)
+        .submit_with_attachments(&wes, attachment("workflow.cwl", descriptor))
+        .await
+        .unwrap();
+    assert_eq!(run.id, "checked-run");
+    submission.assert();
+}
+/// Projects `a` and `b` as the `count` output of two runs whose contract
+/// accepts any JSON value there, with the same required context.
+fn any_records(a: Value, b: Value) -> (ResultRecord, ResultRecord) {
+    project_pair(
+        json!({"type":"object","properties":{"count":{}}}),
+        json!({"count":a}),
+        json!({"count":b}),
+    )
+}
+/// Compares the `count` outputs `a` and `b` at `pointer` with exact
+/// tolerances, skipping `ignored` pointers, sorting arrays if `unordered`
+/// and walking at most `max_nodes` nodes.
+fn metric_outcome(
+    a: Value,
+    b: Value,
+    pointer: &str,
+    ignored: &[&str],
+    unordered: bool,
+    max_nodes: usize,
+) -> Outcome {
+    let (a, b) = any_records(a, b);
+    let mut policy = policy(0., 0.);
+    policy.outputs = BTreeMap::from([(
+        pointer.into(),
+        json_metrics(0., 0., ignored, unordered, max_nodes),
+    )]);
+    policy.compare(&a, &b).unwrap().outputs[pointer].clone()
+}
+#[test]
+fn json_metrics_compare_scalars_arrays_and_nested_pointers() {
+    let equal = Outcome::EquivalentUnderPolicy;
+    let outcome = |a: Value, b: Value| metric_outcome(a, b, "/count", &[], false, 100);
+    assert_eq!(outcome(json!("x"), json!("x")), equal);
+    assert_eq!(outcome(json!("x"), json!("y")), Outcome::Different);
+    assert_eq!(outcome(json!(true), json!(false)), Outcome::Different);
+    assert_eq!(outcome(json!([1]), json!([1, 2])), Outcome::Different);
+    assert_eq!(outcome(json!(1e300), json!(1e300)), equal);
+    assert_eq!(outcome(json!(1e300), json!(2e300)), Outcome::Different);
+    let unordered = |a: Value, b: Value| metric_outcome(a, b, "/count", &[], true, 100);
+    assert_eq!(
+        unordered(json!(["b", true, [1], 2]), json!([2, [1], true, "b"])),
+        equal
+    );
+    assert_eq!(
+        unordered(json!(["b", null, 2]), json!([2, null, "b"])),
+        Outcome::Inconclusive
+    );
+    assert_eq!(
+        metric_outcome(json!([1, 2]), json!([1, 3]), "/count", &["/1"], false, 100),
+        equal
+    );
+    assert_eq!(
+        metric_outcome(
+            json!({"x":1,"y":1}),
+            json!({"x":1,"y":2}),
+            "/count/x",
+            &[],
+            false,
+            100
+        ),
+        equal
+    );
+}
+#[test]
+fn json_metrics_values_beyond_the_bounds_are_inconclusive() {
+    let outcome =
+        |a: Value, max_nodes: usize| metric_outcome(a.clone(), a, "/count", &[], false, max_nodes);
+    let mut deep = json!(1);
+    for _ in 0..130 {
+        deep = json!([deep]);
+    }
+    assert_eq!(outcome(deep, 1000), Outcome::Inconclusive);
+    assert_eq!(outcome(json!({"a":[1],"b":[1]}), 3), Outcome::Inconclusive);
+    assert_eq!(outcome(json!([1, 2, 3]), 2), Outcome::Inconclusive);
+    assert_eq!(
+        outcome(json!("x".repeat(8 * 1024 * 1024 + 1)), 10),
+        Outcome::Inconclusive
+    );
+    assert_eq!(
+        outcome(json!({"k".repeat(2046): [0]}), 10),
+        Outcome::Inconclusive
+    );
+    assert_eq!(
+        outcome(json!({"k".repeat(2045): [0]}), 10),
+        Outcome::EquivalentUnderPolicy
+    );
+}
+#[test]
+fn comparison_rejects_invalid_policies() {
+    let (a, b) = any_records(json!(1), json!(1));
+    let mut blank = policy(0., 0.);
+    blank.id = " ".into();
+    let mut relative = policy(0., 0.);
+    relative.outputs = BTreeMap::from([("count".into(), Comparator::Sha256 { version: 1 })]);
+    let mut digest_version = policy(0., 0.);
+    digest_version.outputs = BTreeMap::from([("/count".into(), Comparator::Sha256 { version: 2 })]);
+    for (policy, message) in [
+        (blank, "requires id, version 1 and named outputs"),
+        (relative, "keys must be JSON pointers"),
+        (digest_version, "unsupported digest comparator version"),
+    ] {
+        let error = policy.compare(&a, &b).unwrap_err();
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+#[test]
+fn digest_comparison_detects_different_and_unattested_artifacts() {
+    let p = profile(schema());
+    let mut a = p
+        .project_results(
+            "a",
+            "COMPLETE",
+            &json!({"count":1,"report":"drs://example.org/report"}),
+        )
+        .unwrap();
+    let mut b = a.clone();
+    let mut policy = policy(0., 0.);
+    policy.required_context.clear();
+    policy.outputs = BTreeMap::from([("/report".into(), Comparator::Sha256 { version: 1 })]);
+    let expected = |bytes: &[u8]| ExpectedChecksum {
+        algorithm: "sha256".into(),
+        digest: ga4gh_sdk::workflow::digest(bytes),
+        evidence_source: "manifest@v1".into(),
+    };
+    a.verify_bytes("/report", b"left", Some(expected(b"left")))
+        .unwrap();
+    b.verify_bytes("/report", b"right", Some(expected(b"right")))
+        .unwrap();
+    assert_eq!(policy.compare(&a, &b).unwrap().outcome, Outcome::Different);
+    b.artifacts
+        .get_mut("/report")
+        .unwrap()
+        .expected
+        .as_mut()
+        .unwrap()
+        .evidence_source = " ".into();
+    assert_eq!(
+        policy.compare(&a, &b).unwrap().outcome,
+        Outcome::Inconclusive
+    );
+}
+#[test]
+fn stored_results_redact_json_text_and_reference_fragments_but_keep_data() {
+    let mut s = schema();
+    s["$defs"]["external"] =
+        json!({"$dynamicRef":"https://example.org/schema.json?sig=SECRET#a=b"});
+    s["$defs"]["unanchored"] = json!({"$dynamicRef":"https://example.org/other.json?sig=SECRET"});
+    s["properties"]["outputs"] =
+        json!({"type":"object","properties":{"count":{"x-ga4gh-hidden":true}}});
+    let p = profile(s);
+    let record = p
+        .project_results(
+            "run",
+            "COMPLETE",
+            &json!({"count":r#"["plain","https://example.org/r?sig=SECRET"]"#}),
+        )
+        .unwrap();
+    assert_eq!(
+        record.contract_document["$defs"]["external"]["$dynamicRef"],
+        "https://example.org/schema.json"
+    );
+    assert_eq!(
+        record.contract_document["$defs"]["unanchored"]["$dynamicRef"],
+        "https://example.org/other.json"
+    );
+    assert_eq!(
+        record.outputs["count"].annotations,
+        json!({"x-ga4gh-hidden":true})
+    );
+    assert_eq!(
+        record.outputs["count"].value,
+        Some(json!(r#"["plain","https://example.org/r"]"#))
+    );
+    assert!(record.outputs["count"].access_details_redacted);
+}
+#[tokio::test]
+async fn access_plan_for_a_missing_output_records_it_without_a_request() {
+    use ga4gh_sdk::{
+        clients::drs::{models::access_method::Type, uri::AccessPlan},
+        utils::operation::Operation,
+    };
+    let plan = AccessPlan {
+        object_id: "missing".into(),
+        method: Type::Https,
+        region: None,
+        url: url::Url::parse("http://127.0.0.1:9/never-requested").unwrap(),
+        headers: Default::default(),
+    };
+    let mut record = profile(schema())
+        .project_results("run", "COMPLETE", &json!({"count":1}))
+        .unwrap();
+    record
+        .verify_access_plan(
+            "/report",
+            &plan,
+            None,
+            &Operation::new(std::time::Duration::from_secs(2)),
+            1024,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        record.artifacts["/report"].access_status,
+        AccessStatus::Missing
     );
 }

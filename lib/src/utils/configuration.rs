@@ -1075,6 +1075,100 @@ mod tests {
     }
 
     #[test]
+    fn test_with_bearer_access_token_from_env() {
+        // Only this test reads this variable, so parallel tests cannot change it.
+        std::env::set_var("GA4GH_SDK_TEST_BEARER_BUILDER_SET", "builder-token");
+        let config = Configuration::default()
+            .with_bearer_access_token_from_env("GA4GH_SDK_TEST_BEARER_BUILDER_SET")
+            .unwrap();
+        assert_eq!(config.bearer_access_token.as_deref(), Some("builder-token"));
+        let error = Configuration::default()
+            .with_bearer_access_token_from_env("GA4GH_SDK_TEST_BEARER_BUILDER_UNSET")
+            .unwrap_err();
+        assert!(matches!(error, crate::Error::Configuration(_)), "{error:?}");
+    }
+
+    /// `from_file` reads the section of `~/.ga4gh-cli/config.json`. A child
+    /// process gets its own `HOME`, so that no other test thread sees it.
+    /// Unix only: elsewhere the home directory doesn't come from `HOME`.
+    #[cfg(unix)]
+    #[test]
+    fn test_from_file_reads_the_home_configuration() {
+        const CHILD_ENV: &str = "GA4GH_SDK_TEST_CONFIG_HOME_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let home = tempfile::tempdir().unwrap();
+            std::fs::create_dir(home.path().join(".ga4gh-cli")).unwrap();
+            std::fs::write(
+                home.path().join(".ga4gh-cli/config.json"),
+                r#"{"TES":{"base_path":"https://example.org/tes/v1"}}"#,
+            )
+            .unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "utils::configuration::tests::test_from_file_reads_the_home_configuration",
+                ])
+                .env(CHILD_ENV, "1")
+                .env("HOME", home.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            // The child must have run the test, not filtered it out.
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        let config = Configuration::from_file(crate::clients::ServiceType::TES).unwrap();
+        assert_eq!(config.base_path.as_str(), "https://example.org/tes/v1");
+        let error = Configuration::from_file(crate::clients::ServiceType::WES).unwrap_err();
+        assert!(error.to_string().contains("'WES' object"), "{error}");
+    }
+
+    #[test]
+    fn test_configured_auth_rejects_api_keys_and_basic_usernames_with_colons() {
+        let base = Url::parse("https://example.org/tes/v1").unwrap();
+        let mut config = Configuration::new(base.clone());
+        config.api_key = Some(ApiKey {
+            prefix: None,
+            key: "SENTINEL_KEY".to_owned(),
+        });
+        assert_eq!(
+            config.configured_auth().err(),
+            Some(AuthError::Unsupported { source: "api_key" })
+        );
+        let config = Configuration::new(base).with_basic_auth(BasicAuth {
+            username: "alice:admin".to_owned(),
+            password: None,
+        });
+        let error = config.configured_auth().err().unwrap();
+        assert_eq!(error, AuthError::InvalidBasicUsername);
+        assert_eq!(
+            error.to_string(),
+            "Basic auth username must not contain ':'"
+        );
+    }
+
+    #[test]
+    fn test_auth_error_messages_for_client_and_builder_misuse() {
+        assert_eq!(
+            AuthError::CallerOwnedClient.to_string(),
+            "Configured credentials cannot be applied to a caller-owned HTTP client without explicit opt-in"
+        );
+        assert_eq!(
+            AuthError::ProviderRequiresAsyncBuilder.to_string(),
+            "A token provider requires authorized_request_builder() before sending a request"
+        );
+    }
+
+    #[test]
     fn test_from_path_reads_timeouts() {
         use std::time::Duration;
         let dir = tempfile::tempdir().unwrap();
@@ -1134,6 +1228,14 @@ mod tests {
             (
                 r#"{"custom":{"base_path":"https://example.org","basic_auth":{}}}"#,
                 "basic_auth.username",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","basic_auth":{"username":"alice","password":3}}}"#,
+                "basic_auth.password must be a string",
+            ),
+            (
+                r#"{"custom":{"base_path":"https://example.org","basic_auth":"alice"}}"#,
+                "basic_auth must be an object",
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","oauth_access_token":3}}"#,

@@ -784,6 +784,18 @@ mod tests {
         m.assert();
     }
 
+    /// A service-info body that isn't an object fails to parse.
+    #[tokio::test]
+    async fn test_service_info_rejects_non_objects() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(&mut server, "info-array", "service-info", "[]");
+        for client in clients(&server, "info-array") {
+            let error = client.service_info().await.unwrap_err();
+            assert!(matches!(error, crate::Error::Parse(_)), "{error:?}");
+        }
+        m.assert();
+    }
+
     #[tokio::test]
     async fn test_list_tool_classes() {
         let mut server = mockito::Server::new_async().await;

@@ -104,6 +104,23 @@ async fn sources_preserve_nested_filenames_content_and_shared_header_policy() {
     json.assert();
     upload.assert();
 }
+#[tokio::test]
+async fn duplicate_filenames_fail_before_any_request() {
+    // No mock: a request would get mockito's 501 instead of the error below.
+    let server = mockito::Server::new_async().await;
+    let files = ["main.cwl", "main.cwl"]
+        .into_iter()
+        .map(|filename| StreamingAttachment {
+            filename: filename.into(),
+            source: AttachmentSource::Bytes(b"contents".to_vec()),
+        })
+        .collect();
+    let error = wes(&server.url())
+        .run_workflow_streaming(request(), files, &Operation::new(Duration::from_secs(3)))
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "duplicate workflow attachment filename");
+}
 struct Generated {
     read: Arc<AtomicUsize>,
     remaining: usize,
