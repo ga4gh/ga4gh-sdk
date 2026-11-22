@@ -1091,6 +1091,8 @@ mod tests {
 
     /// `from_file` reads the section of `~/.ga4gh-cli/config.json`. A child
     /// process gets its own `HOME`, so that no other test thread sees it.
+    /// Unix only: elsewhere the home directory doesn't come from `HOME`.
+    #[cfg(unix)]
     #[test]
     fn test_from_file_reads_the_home_configuration() {
         const CHILD_ENV: &str = "GA4GH_SDK_TEST_CONFIG_HOME_CHILD";

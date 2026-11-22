@@ -109,8 +109,8 @@ pinned hook revisions.
 - `coverage/summary.txt`: the summary table, which it also prints
 
 The report leaves out the generated models and
-`lib/src/utils/test_utils.rs`, the helpers of the Funnel integration suite,
-which is test support rather than product code. Documentation tests (which
+`lib/src/utils/test_utils.rs`: the crate ships it as a public module, but
+only the Funnel integration suite uses it. Documentation tests (which
 cargo-llvm-cov only measures on nightly Rust) and the opt-in integration
 suites are not included. For an HTML report of the same data, run this after
 `make coverage`:

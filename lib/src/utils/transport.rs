@@ -1216,7 +1216,8 @@ mod tests {
     async fn lost_submission_bodies_are_ambiguous() {
         use crate::utils::operation::AmbiguousSubmissionError;
         const PARTIAL: &str = "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc";
-        // A body that breaks off, and one that stalls after three bytes.
+        // A body that breaks off (the server closes the connection after the
+        // partial body, `hold` false), and one that stalls after three bytes.
         for (hold, budget, reason) in [
             (false, Duration::from_secs(10), "HTTP response body failed"),
             (
@@ -1233,7 +1234,7 @@ mod tests {
                 .await
                 .unwrap_err();
             let error = error.downcast_ref::<AmbiguousSubmissionError>().unwrap();
-            assert_eq!(error.reason, reason);
+            assert_eq!(error.reason, reason, "hold: {hold}");
         }
     }
 
