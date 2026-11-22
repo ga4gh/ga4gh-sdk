@@ -83,8 +83,9 @@ cargo run -p ga4gh-cli -- workflow verify result.json /report/location report.ht
 `Profile::project_results` matches declared output properties and preserves their
 nested data and schema annotations. An output contract must expose named
 `properties`; schemas which describe only opaque output data fail explicitly.
-Output names can be any string that JSON Schema allows, including `/`, `~`,
-`#`, `%`, `[`, `]`, `{`, `}`, `|`, `^`, spaces and non-ASCII characters.
+Output names can be any string, including the empty string, characters that
+URIs reserve or forbid (such as `/`, `~`, `#`, `%`, `?`, `[`, `]`, `{`, `}`,
+`|`, `^` and spaces) and non-ASCII characters.
 The durable `contract_document` preserves root scope for referenced scientific
 and viewer annotations; consumers can resolve those references without fetching
 a schema. The small viewer helper recognizes inline hints, while a richer viewer

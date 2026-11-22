@@ -874,10 +874,8 @@ fn output_keys_keep_json_pointer_and_uri_fragment_escaping() {
 }
 #[test]
 fn output_keys_with_characters_illegal_in_uri_fragments_are_validated() {
-    // RFC 3986 allows none of the first six characters in a fragment; "%"
-    // and the space were already encoded, "é" stands for every byte outside
-    // ASCII, and the rest are allowed as they are.
     let keys = [
+        // Not allowed in a fragment and left unencoded before #340
         "{",
         "}",
         "|",
@@ -885,11 +883,21 @@ fn output_keys_with_characters_illegal_in_uri_fragments_are_validated() {
         "[",
         "]",
         "reads[1]",
+        // Not allowed in a fragment and encoded before as well
         "a b",
         "100%",
+        "a\"b<c>d",
+        "`",
+        "back\\slash",
+        // Every byte outside ASCII is encoded
         "é",
+        // Allowed in a fragment as they are; "/" and "~" are JSON Pointer
+        // escapes first
         "x/y~z",
+        "what?",
         "a:b@c!$&'()*+,;=-._~",
+        // The empty name points at "/properties/outputs/properties/"
+        "",
     ];
     let properties: serde_json::Map<String, Value> = keys
         .iter()

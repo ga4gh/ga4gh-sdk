@@ -42,10 +42,12 @@ pub const PROFILE_REVISION: &str = "45d41324353cb4900fdd999c307c2e36a3f2a410";
 /// the sub-delimiters, `:`, `@`, `/` and `?` is encoded; bytes outside ASCII
 /// always are.
 const FRAGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    // unreserved = ALPHA / DIGIT / "-" / "." / "_" / "~"
     .remove(b'-')
     .remove(b'.')
     .remove(b'_')
     .remove(b'~')
+    // sub-delims = "!" / "$" / "&" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "="
     .remove(b'!')
     .remove(b'$')
     .remove(b'&')
@@ -57,6 +59,7 @@ const FRAGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERI
     .remove(b',')
     .remove(b';')
     .remove(b'=')
+    // the rest of pchar, and the two characters that fragment adds
     .remove(b':')
     .remove(b'@')
     .remove(b'/')
