@@ -583,4 +583,24 @@ mod tests {
         assert_eq!(parse_state("unknown").unwrap(), TesState::Unknown);
         assert!(parse_state("SUSPENDED").is_err());
     }
+
+    #[test]
+    fn every_state_has_a_table_name() {
+        for (state, name) in [
+            (Some(TesState::Unknown), "Unknown"),
+            (Some(TesState::Queued), "Queued"),
+            (Some(TesState::Initializing), "Initializing"),
+            (Some(TesState::Running), "Running"),
+            (Some(TesState::Paused), "Paused"),
+            (Some(TesState::Complete), "Complete"),
+            (Some(TesState::ExecutorError), "Executor Error"),
+            (Some(TesState::SystemError), "System Error"),
+            (Some(TesState::Canceled), "Canceled"),
+            (Some(TesState::Canceling), "Canceling"),
+            (Some(TesState::Preempted), "Preempted"),
+            (None, "None"),
+        ] {
+            assert_eq!(tes_state_to_str(&state), name);
+        }
+    }
 }

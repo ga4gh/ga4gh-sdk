@@ -53,7 +53,7 @@ bump them, so update this guide when you change them.
 | `make clippy` | `cargo clippy --workspace --all-targets --locked -- -D warnings` |
 | `make lint` | `fmt-check` and `clippy` |
 | `make check` | `lint`, `build` and `test`: the standard checks |
-| `make coverage` | Coverage report in `coverage/` (see below) |
+| `make coverage` | Coverage report of the Rust and Python tests in `coverage/` (see below) |
 | `make clean-coverage` | Removes coverage data and `coverage/` |
 | `make downstream` | Formatting, Clippy and tests of the [downstream example](downstream.md#checks) |
 | `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
@@ -102,21 +102,66 @@ pinned hook revisions.
 
 ## Coverage
 
-`make coverage` runs the unit tests with
-[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and writes:
+`make coverage` measures the Rust unit tests and the
+[Python binding tests](../python/README.md#running-tests) with
+[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov). It runs
+`cargo test --workspace`, builds the bindings with maturin and installs them
+into `target/coverage-site/`, and runs pytest in `python/` with that
+directory on `PYTHONPATH`. All of these
+builds are instrumented, so the report shows the binding code that the
+Python tests reach. It writes:
 
 - `coverage/lcov.info`: the LCOV report, for editors and coverage services
-- `coverage/summary.txt`: the summary table, which it also prints
+- `coverage/summary.txt`: the summary table of cargo-llvm-cov, which it also
+  prints
+- `coverage/lines.txt`: the covered lines per directory, as Codecov counts
+  them
+
+Besides the [prerequisites](#prerequisites) for coverage, it needs a Python
+3.11+ environment with maturin, pip and pytest. `PYTHON` names its
+interpreter (`python3` by default). `make coverage` doesn't install
+anything into that environment; a virtual environment of its own keeps the
+tools apart from other projects:
+
+```sh
+python3 -m venv target/coverage-venv
+target/coverage-venv/bin/python -m pip install 'maturin>=1.7,<2' pytest
+make coverage PYTHON=target/coverage-venv/bin/python
+```
+
+The instrumented builds use cargo-llvm-cov's target directory, `target/`,
+which the normal builds use as well, so switching between `make coverage`
+and `make check` or `make test` can rebuild the workspace crates.
+`make clean-coverage` removes the measurements and the instrumented
+bindings.
 
 The report leaves out the generated models. Documentation tests (which
 cargo-llvm-cov only measures on nightly Rust) and the opt-in integration
-suites are not included. For an HTML report of the same data, run this after
-`make coverage`:
+suites are not included.
+
+[`utils/lcov_filter.py`](../utils/lcov_filter.py) also leaves out the
+`#[pymethods]` and `#[pyclass]` lines of `python/src/` from
+`coverage/lcov.info`, with their line and function records. PyO3 generates
+a wrapper for each Python method, and the instrumentation counts these
+wrappers on the attribute's line, always as not executed, even when tests
+call the methods. The code of the methods is counted on its own lines.
+`coverage/summary.txt` still includes the attribute lines. Run the filter's
+tests with `python3 -m pytest utils`.
+
+For an HTML report of the same data, run this after `make coverage`. The
+report must use cargo-llvm-cov's environment, as `make coverage` does, to
+find the measurements; the subshell keeps that environment out of your
+shell:
 
 ```sh
-cargo llvm-cov report --html --open \
-  --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
+(
+  eval "$(cargo llvm-cov show-env --sh)"
+  cargo llvm-cov report --html --open \
+    --ignore-filename-regex 'lib/src/clients/[^/]+/(wire/[^/]+/)?models/'
+)
 ```
+
+The HTML report includes the PyO3 attribute lines.
 
 In CI, the `codecov` job uploads `coverage/lcov.info` from the `coverage`
 job to [Codecov](https://codecov.io/gh/ga4gh/ga4gh-sdk), which shows the
@@ -273,7 +318,7 @@ on pushes to `main` and on manual dispatch:
 | `binaries` | CLI binaries | Builds and runs `ga4gh-cli` on the six release platforms on `main` pushes and manual runs; skipped on PRs |
 | `image` | CLI image | Builds the [CLI image](container-image.md) for `linux/amd64` and `linux/arm64` and runs `tests/run-image-tests.sh` (with Funnel on `linux/amd64`); runs on PRs too |
 | `integration` | Integration (*suite*) | Integration suites when their files change |
-| `coverage` | Coverage | `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
+| `coverage` | Coverage | Tests `utils/`, then `make coverage`; summary in the job summary, LCOV report as the `coverage` artifact |
 | `codecov` | Upload coverage | Uploads the `coverage` artifact to Codecov; upload errors don't fail it |
 | `pre-commit` | Pre-commit | All hooks except the Rust ones, which `lint` runs |
 | `docs` | Docs | `make site`: the Rust API reference, without rustdoc warnings, and the strict MkDocs build |
