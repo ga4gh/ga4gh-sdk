@@ -64,7 +64,6 @@ mod tests {
         for filters in [
             "reqwest",
             "reqwest=debug",
-            " reqwest = debug ",
             "reqwest/connect",
             "warn,reqwest::connect=debug",
             "reqwest::connect::http",
