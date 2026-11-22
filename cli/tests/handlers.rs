@@ -626,7 +626,25 @@ async fn workflow_verify_and_compare_read_result_records() {
     let policy = policy.to_str().unwrap();
     let output = run_workflow(&["compare", policy, record, record]).await;
     assert_eq!(output.exit_code, ExitCode::SUCCESS, "{}", output.stderr);
-    assert!(serde_json::from_str::<Value>(&output.stdout).is_ok());
+    let report: Value = serde_json::from_str(&output.stdout).unwrap();
+    assert_eq!(report["policy"]["id"], "sequence-qc/1");
+    assert_eq!(report["left"], "wes/run1");
+    assert_eq!(report["right"], "wes/run1");
+    // A record compared with itself matches on every output, but the
+    // record lacks the workflow and input digests the policy requires.
+    assert_eq!(
+        report["outputs"],
+        json!({
+            "/metrics/mean_length": "equivalent_under_policy",
+            "/metrics/sequence_count": "equivalent_under_policy",
+            "/metrics/total_length": "equivalent_under_policy",
+        })
+    );
+    assert_eq!(
+        report["missing_context"],
+        json!(["workflow_digest", "input_digest"])
+    );
+    assert_eq!(report["outcome"], "inconclusive");
     let unsupported = write_json(
         directory.path(),
         "policy.json",
@@ -708,6 +726,7 @@ async fn workflow_submit_reports_unreadable_attachments() {
     )
     .await
     .unwrap();
-    assert_failure(&output, "No such file");
+    // ENOENT on Unix and ERROR_FILE_NOT_FOUND on Windows are both code 2.
+    assert_failure(&output, "(os error 2)");
     submission.assert_async().await;
 }
