@@ -131,4 +131,27 @@ mod tests {
         assert!(!names_log_target("debug,reqwest::connect=trace", "reqwest"));
         assert!(!names_log_target("debug/reqwest=info", "reqwest"));
     }
+
+    #[test]
+    fn names_the_target_but_not_its_children() {
+        for filters in ["reqwest", "reqwest=debug", "reqwest/connect"] {
+            assert!(names_log_target(filters, "reqwest"), "{filters:?}");
+        }
+        for filters in ["warn,reqwest::connect=debug", "reqwest::connect::http"] {
+            assert!(!names_log_target(filters, "reqwest"), "{filters:?}");
+        }
+    }
+
+    #[test]
+    fn ignores_targets_with_a_shared_prefix_or_suffix() {
+        for filters in [
+            "trace,hyper=debug",
+            "reqwest_middleware=debug",
+            "reqwestx::connect=debug",
+            "ga4gh_cli=debug,warn",
+            "my::reqwest=debug",
+        ] {
+            assert!(!names_log_target(filters, "reqwest"), "{filters:?}");
+        }
+    }
 }
