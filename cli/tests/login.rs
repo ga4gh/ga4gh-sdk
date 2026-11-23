@@ -649,3 +649,130 @@ async fn a_refresh_after_logout_does_not_store_the_tokens_again() {
     refresh.assert();
     assert_eq!(read_store(dir.path())["logins"], json!([]));
 }
+
+#[tokio::test]
+async fn dispatch_logs_out_of_a_store_at_a_set_path() {
+    let server = mockito::Server::new_async().await;
+    let prefix = "/login-store-path";
+    let dir = tempfile::TempDir::new().unwrap();
+    let store_dir = dir.path().join("store");
+    std::fs::create_dir(&store_dir).unwrap();
+    let context = write_config(&server, dir.path(), prefix, json!({}))
+        .with_token_store_path(store_dir.join("tokens.json"));
+    write_store(
+        &server,
+        &store_dir,
+        prefix,
+        "access",
+        "refresh",
+        now() + 3600,
+    );
+
+    let matches = context
+        .command()
+        .try_get_matches_from(["test-cli", "logout", "registry"])
+        .unwrap();
+    let output = context
+        .dispatch(&matches)
+        .await
+        .unwrap()
+        .expect("built-in command");
+    assert_eq!(output.exit_code, std::process::ExitCode::SUCCESS);
+    assert!(output.stderr.contains("Deleted"), "{}", output.stderr);
+    assert_eq!(read_store(&store_dir)["logins"], json!([]));
+    assert!(!dir.path().join("tokens.json").exists());
+}
+
+#[tokio::test]
+async fn logout_reports_an_unreadable_configuration() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("config.json");
+    std::fs::write(&path, "{\"REGISTRY\": ").unwrap();
+    let context = CliContext::new("test-cli", "1.0.0").with_config_path(path);
+    let error = run_error(&context, &["test-cli", "logout", "registry"]).await;
+    assert!(
+        error.starts_with("Invalid JSON in configuration file"),
+        "{error}"
+    );
+    assert!(!dir.path().join("tokens.json").exists());
+}
+
+#[tokio::test]
+async fn login_without_a_refresh_token_says_that_it_expires() {
+    let mut server = mockito::Server::new_async().await;
+    let prefix = "/login-no-refresh-token";
+    let dir = tempfile::TempDir::new().unwrap();
+    let context = write_config(&server, dir.path(), prefix, json!({}));
+    let _discovery = discovery(&mut server, prefix);
+    let _device = server
+        .mock("POST", format!("{prefix}/idp/device").as_str())
+        .with_body(
+            json!({
+                "device_code": "device-code",
+                "user_code": "WDJB-MJHT",
+                "verification_uri": "https://idp.example.org/device",
+                "expires_in": 60,
+                "interval": 0,
+            })
+            .to_string(),
+        )
+        .create();
+    let _token = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
+        .with_body(json!({"access_token": "access-secret", "token_type": "Bearer"}).to_string())
+        .expect(1)
+        .create();
+
+    let (_, stderr, success) = run(&context, &["test-cli", "login", "registry"]).await;
+    assert!(success, "{stderr}");
+    assert!(stderr.contains("Logged in"), "{stderr}");
+    assert!(stderr.contains("issued no refresh token"), "{stderr}");
+    let store = read_store(dir.path());
+    assert_eq!(store["logins"][0]["access_token"], "access-secret");
+    assert!(store["logins"][0].get("refresh_token").is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn refreshed_tokens_are_used_when_the_store_cannot_be_written() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut server = mockito::Server::new_async().await;
+    let prefix = "/login-refresh-read-only";
+    let dir = tempfile::TempDir::new().unwrap();
+    let store_dir = dir.path().join("store");
+    std::fs::create_dir(&store_dir).unwrap();
+    let context = write_config(&server, dir.path(), prefix, json!({}))
+        .with_token_store_path(store_dir.join("tokens.json"));
+    write_store(
+        &server,
+        &store_dir,
+        prefix,
+        "old-access",
+        "old-refresh",
+        now() - 10,
+    );
+    // The lock file exists, so only the new store can't be created.
+    std::fs::write(store_dir.join("tokens.json.lock"), "").unwrap();
+    std::fs::set_permissions(&store_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    // Permissions don't stop a privileged user, such as root.
+    let writable = std::fs::write(store_dir.join("probe"), "").is_ok();
+    let refresh = server
+        .mock("POST", format!("{prefix}/idp/token").as_str())
+        .with_body(
+            json!({"access_token": "new-access", "token_type": "Bearer", "expires_in": 600})
+                .to_string(),
+        )
+        .expect(1)
+        .create();
+    let request = services(&mut server, prefix, "new-access");
+
+    let (_, stderr, success) = run(&context, &["test-cli", "registry", "list"]).await;
+    std::fs::set_permissions(&store_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    if !writable {
+        assert!(success, "{stderr}");
+        refresh.assert();
+        request.assert();
+        let store = read_store(&store_dir);
+        assert_eq!(store["logins"][0]["access_token"], "old-access");
+    }
+}
