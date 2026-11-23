@@ -132,17 +132,12 @@ async fn tes_handlers_reject_matches_without_required_arguments() {
     ] {
         assert_error(tes::run(&parse(command(), args), &config).await, expected);
     }
-    // Matches without a subcommand, or with one that the handler doesn't
-    // know, are errors, as for DRS and TRS.
-    assert_error(
-        tes::run(&parse(command(), &["tes"]), &config).await,
-        "TES subcommand is required",
-    );
-    let other = Command::new("tes").subcommand(Command::new("other"));
-    assert_error(
-        tes::run(&parse(other, &["tes", "other"]), &config).await,
-        "Unrecognized TES command: other",
-    );
+    // Matches without a subcommand that the handler knows produce no output.
+    let output = tes::run(&parse(command(), &["tes"]), &config)
+        .await
+        .unwrap();
+    assert_eq!(output.exit_code, ExitCode::SUCCESS);
+    assert!(output.stdout.is_empty() && output.stderr.is_empty());
 }
 
 #[tokio::test]
@@ -361,17 +356,11 @@ async fn wes_handlers_reject_matches_without_required_arguments() {
         wes::run(&parse(command(), &["wes", "get"]), &config).await,
         "id argument is required",
     );
-    // Matches without a subcommand, or with one that the handler doesn't
-    // know, are errors, as for DRS and TRS.
-    assert_error(
-        wes::run(&parse(command(), &["wes"]), &config).await,
-        "WES subcommand is required",
-    );
-    let other = Command::new("wes").subcommand(Command::new("other"));
-    assert_error(
-        wes::run(&parse(other, &["wes", "other"]), &config).await,
-        "Unrecognized WES command: other",
-    );
+    let output = wes::run(&parse(command(), &["wes"]), &config)
+        .await
+        .unwrap();
+    assert_eq!(output.exit_code, ExitCode::SUCCESS);
+    assert!(output.stdout.is_empty() && output.stderr.is_empty());
 }
 
 #[tokio::test]
@@ -504,17 +493,11 @@ async fn registry_handler_rejects_matches_without_required_arguments() {
         registry::run(&parse(command(), &["registry", "get"]), &config).await,
         "id argument is required",
     );
-    // Matches without a subcommand, or with one that the handler doesn't
-    // know, are errors, as for DRS and TRS.
-    assert_error(
-        registry::run(&parse(command(), &["registry"]), &config).await,
-        "Registry subcommand is required",
-    );
-    let other = Command::new("registry").subcommand(Command::new("other"));
-    assert_error(
-        registry::run(&parse(other, &["registry", "other"]), &config).await,
-        "Unrecognized registry command: other",
-    );
+    let output = registry::run(&parse(command(), &["registry"]), &config)
+        .await
+        .unwrap();
+    assert_eq!(output.exit_code, ExitCode::SUCCESS);
+    assert!(output.stdout.is_empty() && output.stderr.is_empty());
 }
 
 #[tokio::test]

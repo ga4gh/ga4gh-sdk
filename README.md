@@ -146,13 +146,6 @@ A service-info response that isn't valid UTF-8 is now an error of
 such text used to be repaired with replacement characters. See
 [Service Info](docs/api_compatibility.md#service-info).
 
-The handlers of the `tes`, `wes` and `registry` CLI commands, and the
-dispatchers that call them, return an error for matches without a
-subcommand or with one they don't know, as those of `drs` and `trs` already
-did; they used to return an empty success. A downstream CLI that adds a
-subcommand to a built-in service command handles it before dispatching (see
-[A CLI with added subcommands](docs/downstream.md#a-cli-with-added-subcommands)).
-
 ## Installation
 
 ### Download the CLI
