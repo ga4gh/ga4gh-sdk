@@ -441,7 +441,9 @@ pub async fn wait_task_send(task: Task, settings: WaitSettings) -> WaitEnd {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ga4gh_sdk::utils::operation::Operation;
     use mockito::{Matcher, Mock};
+    use std::time::Duration;
     use url::Url;
 
     /// The user agent of the transport that a test gives the client.
@@ -522,6 +524,36 @@ mod tests {
             client.config().inner.user_agent.as_deref(),
             Some(OWNED_AGENT)
         );
+    }
+
+    #[tokio::test]
+    async fn poll_keeps_operation_errors_for_the_waiter() {
+        let mut server = mockito::Server::new_async().await;
+        // An operation that has already ended sends no request.
+        let poll = server
+            .mock("GET", Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+        let task = Task::new(
+            "task-1".to_owned(),
+            Transport::new(&config(&server, "ended")),
+        );
+        let options = RequestOptions {
+            operation: Operation::new(Duration::from_secs(60)),
+            retry: Default::default(),
+            safety: ReplaySafety::ReadOnly,
+            limits: BodyLimits::default(),
+        };
+        options.operation.cancellation.cancel();
+
+        let error = poll_on_call_thread(task, options).await.unwrap_err();
+
+        assert_eq!(
+            error.downcast_ref::<OperationError>(),
+            Some(&OperationError::Cancelled)
+        );
+        poll.assert_async().await;
     }
 
     #[tokio::test]

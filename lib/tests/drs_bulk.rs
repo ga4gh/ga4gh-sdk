@@ -198,6 +198,87 @@ async fn empty_pending_and_auth_failure_do_not_fallback() {
     single.assert();
 }
 #[tokio::test]
+async fn chunk_without_a_body_gives_every_key_the_same_outcome() {
+    let mut server = mockito::Server::new_async().await;
+    let client = client(&server, "/chunk");
+    let api_root = format!("{}/chunk/", server.url());
+    let ids = ["a".to_string(), "b".to_string()];
+    let keys = [key("a"), key("b")];
+    // A pending answer, a failure status and a body that isn't JSON
+    for (status, body) in [(202, ""), (500, ""), (200, "not JSON")] {
+        let request = server
+            .mock("POST", "/chunk/objects")
+            .with_status(status)
+            .with_header("retry-after", "7")
+            .with_body(body)
+            .expect(1)
+            .create();
+        let report = client
+            .get_bulk_objects(&ids, &[], &BulkPolicy::default(), &budget())
+            .await
+            .unwrap();
+        request.assert();
+        assert_eq!(report.outcomes.len(), 2);
+        for key in &keys {
+            let outcome = &report.outcomes[key];
+            assert!(outcome.resolved.is_empty());
+            match status {
+                202 => {
+                    let pending = outcome.pending.as_ref().unwrap();
+                    assert_eq!(pending.api_root, api_root);
+                    assert_eq!(pending.endpoint, "objects");
+                    assert_eq!(pending.retry_after_secs, 7);
+                    assert!(outcome.failure_codes.is_empty());
+                    assert!(outcome.errors.is_empty());
+                }
+                500 => {
+                    assert_eq!(outcome.failure_codes, vec![500]);
+                    assert!(outcome.pending.is_none());
+                    assert!(outcome.errors.is_empty());
+                }
+                _ => {
+                    assert_eq!(outcome.errors.len(), 1, "{:?}", outcome.errors);
+                    assert!(
+                        outcome.errors[0].starts_with("invalid bulk response JSON"),
+                        "{:?}",
+                        outcome.errors
+                    );
+                    assert!(outcome.failure_codes.is_empty());
+                    assert!(outcome.pending.is_none());
+                }
+            }
+        }
+        request.remove();
+    }
+    let access = [
+        BulkKey {
+            object_id: "a".into(),
+            access_id: Some("x".into()),
+        },
+        BulkKey {
+            object_id: "b".into(),
+            access_id: Some("y".into()),
+        },
+    ];
+    let request = server
+        .mock("POST", "/chunk/objects/access")
+        .with_status(202)
+        .with_header("retry-after", "3")
+        .expect(1)
+        .create();
+    let report = client
+        .get_bulk_access_urls(&access, &[], &BulkPolicy::default(), &budget())
+        .await
+        .unwrap();
+    request.assert();
+    for key in &access {
+        let pending = report.outcomes[key].pending.as_ref().unwrap();
+        assert_eq!(pending.api_root, api_root);
+        assert_eq!(pending.endpoint, "objects/access");
+        assert_eq!(pending.retry_after_secs, 3);
+    }
+}
+#[tokio::test]
 async fn bounded_413_splitting_preserves_siblings_and_singleton_failure_terminates() {
     let mut server = mockito::Server::new_async().await;
     let client = client(&server, "/split");

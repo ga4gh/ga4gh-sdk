@@ -19,10 +19,17 @@ static RUNTIME: OnceLock<Result<Runtime, std::io::Error>> = OnceLock::new();
 
 /// The process-lifetime runtime, started on first use.
 fn runtime() -> Result<&'static Runtime, String> {
-    RUNTIME
-        .get_or_init(Runtime::new)
+    started(RUNTIME.get_or_init(Runtime::new), "async runtime")
+}
+
+/// The runtime that `build` gave, or why `what` couldn't be started.
+fn started<'a>(
+    build: &'a Result<Runtime, std::io::Error>,
+    what: &str,
+) -> Result<&'a Runtime, String> {
+    build
         .as_ref()
-        .map_err(|e| format!("Cannot start async runtime: {e}"))
+        .map_err(|e| format!("Cannot start {what}: {e}"))
 }
 
 /// The runtime, also handed to `pyo3-async-runtimes` for [`future_into_py`].
@@ -72,16 +79,14 @@ const ASYNC_CALL_THREAD_NAME: &str = "ga4gh-async-call";
 /// themselves, for example for DNS lookups: calls that wait there can't starve them.
 fn call_threads() -> Result<&'static Runtime, String> {
     static CALLS: OnceLock<Result<Runtime, std::io::Error>> = OnceLock::new();
-    CALLS
-        .get_or_init(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .max_blocking_threads(ASYNC_CALL_THREADS)
-                .thread_name(ASYNC_CALL_THREAD_NAME)
-                .build()
-        })
-        .as_ref()
-        .map_err(|e| format!("Cannot start async call threads: {e}"))
+    let build = CALLS.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(ASYNC_CALL_THREADS)
+            .thread_name(ASYNC_CALL_THREAD_NAME)
+            .build()
+    });
+    started(build, "async call threads")
 }
 
 fn call_slots() -> Arc<Semaphore> {
@@ -91,19 +96,23 @@ fn call_slots() -> Arc<Semaphore> {
         .clone()
 }
 
+/// Runs the future that `make` creates unless `cancelled` resolves first.
+///
+/// `cancelled` resolves when its sender is dropped with the future of [`spawn_io`], so the
+/// error of a cancelled call reaches no caller.
 async fn run_until_cancelled<F, Fut, T>(
     make: F,
     cancelled: oneshot::Receiver<()>,
-) -> Option<Result<T, String>>
+) -> Result<T, String>
 where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<T, String>>,
 {
     tokio::select! {
         biased;
-        _ = cancelled => None,
+        _ = cancelled => Err("The request was cancelled".to_owned()),
         // Construct the SDK future only after the cancellation branch is checked.
-        result = async move { make().await } => Some(result),
+        result = async move { make().await } => result,
     }
 }
 
@@ -124,6 +133,8 @@ where
     spawn_io_with_slots(make, call_slots()).await
 }
 
+/// [`spawn_io`] with the call pool `slots`: waits for a slot, then runs the
+/// call on the call threads; a closed pool fails the call without running it.
 async fn spawn_io_with_slots<F, Fut, T>(make: F, slots: Arc<Semaphore>) -> Result<T, String>
 where
     F: FnOnce() -> Fut + Send + 'static,
@@ -143,8 +154,7 @@ where
         runtime.block_on(run_until_cancelled(make, cancelled))
     });
     match task.await {
-        Ok(Some(result)) => result,
-        Ok(None) => Err("The request was cancelled".to_owned()),
+        Ok(result) => result,
         Err(error) => Err(format!("The request failed: {error}")),
     }
 }
@@ -230,6 +240,34 @@ mod tests {
     }
 
     #[test]
+    fn failed_runtime_start_names_what_could_not_start() {
+        let build = Err(std::io::Error::other("no threads left"));
+        assert_eq!(
+            started(&build, "async call threads").err().as_deref(),
+            Some("Cannot start async call threads: no threads left")
+        );
+    }
+
+    #[test]
+    fn closed_call_pool_rejects_calls_without_running_them() {
+        let slots = Arc::new(Semaphore::new(1));
+        slots.close();
+        // The call would succeed if it ran.
+        let call = spawn_io_with_slots(|| std::future::ready(Ok(())), slots);
+        let result = runtime().unwrap().block_on(call);
+        assert_eq!(result, Err("The async call pool is closed".to_owned()));
+    }
+
+    #[test]
+    fn panicking_call_fails_the_request() {
+        let call =
+            spawn_io(|| -> std::future::Ready<Result<(), String>> { panic!("the call panicked") });
+        let error = runtime().unwrap().block_on(call).unwrap_err();
+        assert!(error.starts_with("The request failed: "), "{error}");
+        assert!(error.contains("panicked"), "{error}");
+    }
+
+    #[test]
     fn async_calls_share_the_runtime_of_sync_calls() {
         let runtime = shared_runtime().unwrap();
         assert!(std::ptr::eq(
@@ -251,7 +289,7 @@ mod tests {
             },
             cancelled,
         ));
-        assert!(result.is_none());
+        assert_eq!(result, Err("The request was cancelled".to_owned()));
         assert!(!constructed.load(Ordering::SeqCst));
     }
 
