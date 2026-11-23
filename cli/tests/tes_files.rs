@@ -268,6 +268,21 @@ fn error_logs_are_shown_without_rust_log() {
         "{}",
         stderr(&output)
     );
+    // `RUST_LOG` without directives leaves env_logger's default level.
+    for filters in ["", "debug/a/b"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"))
+            .args(["tes", "files", "t1"])
+            .env("HOME", home.path())
+            .env("RUST_LOG", filters)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            stderr(&output).contains(" ERROR ga4gh_sdk"),
+            "{filters}: {}",
+            stderr(&output)
+        );
+    }
 }
 
 #[test]
@@ -318,6 +333,45 @@ fn debug_logs_omit_redirected_signed_urls() {
         for stream in [stdout(&output), stderr(&output)] {
             assert!(!stream.contains("SECRET"), "{filters}: {stream}");
         }
+    }
+}
+
+#[test]
+fn http_library_debug_logs_need_the_exact_target_name() {
+    let mut server = mockito::Server::new();
+    let prefix = "/log-targets";
+    let _tes = tes_mocks(
+        &mut server,
+        prefix,
+        &json!({"id": "t1", "state": "COMPLETE"}),
+    );
+    let home = home_with_tes(&server, prefix);
+    let reqwest_debug_lines = |filters: &str| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ga4gh-cli"));
+        command
+            .args(["tes", "files", "t1"])
+            .env("HOME", home.path())
+            .env("RUST_LOG", filters);
+        for proxy in ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+            command.env_remove(proxy);
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{filters}: {}", stderr(&output));
+        // This relies on the log format in `main.rs`. hyper logs through
+        // `tracing` without its `log` feature, so only reqwest can be seen.
+        stderr(&output)
+            .lines()
+            .filter(|line| line.contains(" DEBUG reqwest") || line.contains(" TRACE reqwest"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    // With the exact name, the user's level applies.
+    assert!(!reqwest_debug_lines("trace,reqwest=trace").is_empty());
+    // env_logger reads `reqwest ` (with a space) as a name of its own, so the
+    // global level doesn't reach reqwest. The unit tests cover other cases.
+    for filters in ["trace", "trace,reqwest =info", "trace, reqwest = info"] {
+        let lines = reqwest_debug_lines(filters);
+        assert!(lines.is_empty(), "{filters}: {lines:?}");
     }
 }
 
