@@ -873,6 +873,66 @@ fn output_keys_keep_json_pointer_and_uri_fragment_escaping() {
     assert_eq!(r.outputs[key].contract_status, ContractStatus::Conformant);
 }
 #[test]
+fn output_keys_with_characters_illegal_in_uri_fragments_are_validated() {
+    let keys = [
+        // Not allowed in a fragment and left unencoded before #340
+        "{",
+        "}",
+        "|",
+        "^",
+        "[",
+        "]",
+        "reads[1]",
+        // Not allowed in a fragment and encoded before as well
+        "a b",
+        "100%",
+        "a\"b<c>d",
+        "`",
+        "back\\slash",
+        // Every byte outside ASCII is encoded
+        "é",
+        // Allowed in a fragment as they are; "/" and "~" are JSON Pointer
+        // escapes first
+        "x/y~z",
+        "what?",
+        "a:b@c!$&'()*+,;=-._~",
+        // The empty name points at "/properties/outputs/properties/"
+        "",
+    ];
+    // Each output accepts only its own index, so an output checked against
+    // another output's schema is invalid
+    let properties: serde_json::Map<String, Value> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (k.to_string(), json!({"const":i})))
+        .collect();
+    let mut s = schema();
+    s["properties"]["outputs"] = json!({"type":"object","properties":properties});
+    let p = profile(s);
+    let with = |offset: usize| -> Value {
+        Value::Object(
+            keys.iter()
+                .enumerate()
+                .map(|(i, k)| (k.to_string(), json!(i + offset)))
+                .collect(),
+        )
+    };
+    let good = p.project_results("one", "COMPLETE", &with(0)).unwrap();
+    let bad = p.project_results("two", "COMPLETE", &with(1)).unwrap();
+    for key in keys {
+        assert_eq!(
+            good.outputs[key].contract_status,
+            ContractStatus::Conformant,
+            "{key}"
+        );
+        assert_eq!(
+            bad.outputs[key].contract_status,
+            ContractStatus::Invalid,
+            "{key}"
+        );
+    }
+}
+#[test]
 fn unordered_numeric_objects_ignore_json_number_representation() {
     let mut s = schema();
     s["properties"]["outputs"]["properties"]["count"] = json!({"type":"array"});
