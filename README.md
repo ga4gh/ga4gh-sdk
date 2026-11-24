@@ -148,10 +148,33 @@ such text used to be repaired with replacement characters. See
 
 ## Installation
 
+[Release 0.1.0](https://github.com/ga4gh/ga4gh-sdk/releases/tag/v0.1.0)
+ships the Python package on PyPI, binaries of the CLI and a CLI container
+image. It is a prerelease: the APIs may still change before 1.0. The Rust
+library isn't on crates.io; use it as a Git dependency (see
+[Rust library](#rust-library)).
+
+### Python package
+
+The PyPI package `ga4gh-sdk` contains the Python bindings (import name
+`ga4gh_sdk`) for CPython 3.11 and newer. It doesn't include the CLI. Install
+it into a virtual environment:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install ga4gh-sdk==0.1.0
+python -c 'from ga4gh_sdk import TES; print(TES.__name__)'
+```
+
+The [Python README](python/README.md#install-from-pypi) lists the platforms
+with prebuilt wheels and what pip needs elsewhere.
+
 ### Download the CLI
 
 Each [release](https://github.com/ga4gh/ga4gh-sdk/releases) has an archive of
-`ga4gh-cli` per platform, named `ga4gh-cli-<version>-<target>`:
+`ga4gh-cli` per platform, named `ga4gh-cli-<version>-<target>`, and a
+`SHA256SUMS` file with the checksums of all archives:
 
 | Platform | Target | Archive |
 | --- | --- | --- |
@@ -169,12 +192,11 @@ Ubuntu, `openssl-libs` on Fedora and RHEL) and CA certificates
 Elsewhere, build from source as below. The binaries aren't signed, so macOS
 may block them until you remove the quarantine attribute
 (`xattr -d com.apple.quarantine ga4gh-cli`). For example, on Linux x86-64,
-check the download against the release's `SHA256SUMS` and, optionally, its
-build provenance, then unpack it (replace the example version with that of
-the release):
+download 0.1.0, check it against the release's `SHA256SUMS` and, optionally,
+its build provenance, then unpack it and run it:
 
 ```sh
-version=0.2.0
+version=0.1.0
 target=x86_64-unknown-linux-gnu
 archive="ga4gh-cli-$version-$target.tar.gz"
 base="https://github.com/ga4gh/ga4gh-sdk/releases/download/v$version"
@@ -183,8 +205,51 @@ curl --fail --location --remote-name "$base/SHA256SUMS"
 sha256sum --check --ignore-missing SHA256SUMS
 gh attestation verify "$archive" --repo ga4gh/ga4gh-sdk  # needs the GitHub CLI
 tar -xzf "$archive"
-"ga4gh-cli-$version-$target/ga4gh-cli" --help
+"ga4gh-cli-$version-$target/ga4gh-cli" --version
 ```
+
+The archive unpacks into the directory `ga4gh-cli-<version>-<target>`, with
+the binary (`ga4gh-cli`, or `ga4gh-cli.exe` on Windows), `README.md` and
+`LICENSE`. Move the binary to a directory on your `PATH`, such as
+`~/.local/bin`, to run it as `ga4gh-cli`.
+
+### Container image
+
+The image `ghcr.io/ga4gh/ga4gh-cli:0.1.0` runs the CLI for `linux/amd64`
+and `linux/arm64`; pulling it needs no login. Its entrypoint is
+`ga4gh-cli`, so the arguments after the image name are CLI arguments:
+
+```sh
+docker run --rm ghcr.io/ga4gh/ga4gh-cli:0.1.0 --version
+```
+
+The CLI in the container reads its configuration from
+`/home/ga4gh/.ga4gh-cli/config.json`; mount yours read-only, and mount task
+files under the working directory `/work`, as here from a clone of this
+repository:
+
+```sh
+docker run --rm \
+  --volume "$HOME/.ga4gh-cli:/home/ga4gh/.ga4gh-cli:ro" \
+  --volume "$PWD/examples:/work:ro" \
+  ghcr.io/ga4gh/ga4gh-cli:0.1.0 tes create tes-hello.json
+```
+
+The [container image guide](docs/container-image.md) covers pinning the
+image digest, verifying its provenance, credentials, file permissions and
+running it as a Kubernetes Job.
+
+### Rust library
+
+Add the library as a Git dependency on the release tag (package
+`ga4gh-lib`, crate `ga4gh_sdk`):
+
+```toml
+[dependencies]
+ga4gh-lib = { git = "https://github.com/ga4gh/ga4gh-sdk", tag = "v0.1.0" }
+```
+
+Building it needs the prerequisites of [Build from source](#build-from-source).
 
 ### Build from source
 
@@ -206,22 +271,11 @@ cargo install --path cli --locked
 ga4gh-cli --help
 ```
 
-To run the CLI as a container, for example as a Kubernetes Job inside a
-cluster, see the [container image guide](docs/container-image.md). Releases
-publish the image as `ghcr.io/ga4gh/ga4gh-cli`; the guide says whether a
-release includes it yet.
-
-To use the Rust library in your own project, add it as a Git dependency
-(package `ga4gh-lib`, crate `ga4gh_sdk`):
-
-```toml
-[dependencies]
-ga4gh-lib = { git = "https://github.com/ga4gh/ga4gh-sdk" }
-```
-
-For the Python bindings (built with [maturin](https://www.maturin.rs/)), see
-the [Python README](python/README.md) for installation and the `ga4gh_sdk`
-import name. Maintainers can follow the [release guide](docs/releasing.md).
+To build the container image yourself, see
+[Building the image](docs/container-image.md#building-the-image). To build
+the Python bindings (with [maturin](https://www.maturin.rs/)), see the
+[Python README](python/README.md#installation). Maintainers can follow the
+[release guide](docs/releasing.md).
 
 ## Quick start
 
