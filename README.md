@@ -157,8 +157,9 @@ library isn't on crates.io; use it as a Git dependency (see
 ### Python package
 
 The PyPI package `ga4gh-sdk` contains the Python bindings (import name
-`ga4gh_sdk`) for CPython 3.11 and newer. It doesn't include the CLI. Install
-it into a virtual environment:
+`ga4gh_sdk`) for CPython 3.11 and newer; PyPy and free-threaded CPython
+builds are not supported. It doesn't include the CLI. Install it into a
+virtual environment:
 
 ```sh
 python3 -m venv .venv
@@ -225,11 +226,13 @@ docker run --rm ghcr.io/ga4gh/ga4gh-cli:0.1.0 --version
 
 The CLI in the container reads its configuration from
 `/home/ga4gh/.ga4gh-cli/config.json`; mount yours read-only, and mount task
-files under the working directory `/work`, as here from a clone of this
-repository:
+files under the working directory `/work`. The container runs as UID 10001
+by default; `--user` runs it with your UID instead, so that it can read a
+configuration file that only you can read. Run this example from the root of
+a clone of this repository:
 
 ```sh
-docker run --rm \
+docker run --rm --user "$(id -u):$(id -g)" \
   --volume "$HOME/.ga4gh-cli:/home/ga4gh/.ga4gh-cli:ro" \
   --volume "$PWD/examples:/work:ro" \
   ghcr.io/ga4gh/ga4gh-cli:0.1.0 tes create tes-hello.json
