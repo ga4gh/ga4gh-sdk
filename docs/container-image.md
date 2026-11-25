@@ -28,14 +28,13 @@ get a versioned image tag. To run an unreleased revision, build the image
 yourself (see [Building the image](#building-the-image)).
 
 Use a version and pin its digest, so that every run uses exactly the same
-image. Until the package is public, your account needs package access and a
-GHCR login with a classic PAT scoped to `read:packages` (see step 4 of
-[Making a release](releasing.md#making-a-release)):
+image. The package is public, so pulling needs no login. For example, for
+0.1.0:
 
 ```sh
-docker buildx imagetools inspect ghcr.io/ga4gh/ga4gh-cli:0.2.0
-# Name: ghcr.io/ga4gh/ga4gh-cli:0.2.0, Digest: sha256:...
-image=ghcr.io/ga4gh/ga4gh-cli:0.2.0@sha256:...
+docker buildx imagetools inspect ghcr.io/ga4gh/ga4gh-cli:0.1.0
+# Name: ghcr.io/ga4gh/ga4gh-cli:0.1.0, Digest: sha256:7b68c93ed9b8edada66088013a1088809bfbf24f3763bbe2fc35d120f366999b
+image=ghcr.io/ga4gh/ga4gh-cli:0.1.0@sha256:7b68c93ed9b8edada66088013a1088809bfbf24f3763bbe2fc35d120f366999b
 gh attestation verify "oci://$image" --repo ga4gh/ga4gh-sdk
 ```
 
