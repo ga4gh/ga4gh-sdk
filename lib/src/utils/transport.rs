@@ -1678,6 +1678,39 @@ mod tests {
             server.abort();
         }
 
+        /// A reusable token with all the punctuation of RFC 6750 `b64token` is
+        /// sent, and dropped after a 401, so that the next request asks the
+        /// provider again (#341).
+        #[tokio::test]
+        async fn rejected_b64token_is_not_reused() {
+            let mut server = mockito::Server::new_async().await;
+            let provider = Arc::new(Recording {
+                token: Some("a-._~+/b=="),
+                lifetime: Some(Duration::from_secs(60)),
+                ..Default::default()
+            });
+            let transport = transport(&server, "auth-b64token", &provider);
+            let rejected = server
+                .mock("POST", "/auth-b64token/a")
+                .match_header("authorization", "Bearer a-._~+/b==")
+                .with_status(401)
+                .expect(2)
+                .create();
+            let error = transport.post("a", None).await.unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<HttpError>().unwrap().status,
+                reqwest::StatusCode::UNAUTHORIZED
+            );
+            assert!(transport.post("a", None).await.is_err());
+            rejected.assert();
+            let after_rejection: Vec<bool> = provider
+                .calls()
+                .into_iter()
+                .map(|(_, after)| after)
+                .collect();
+            assert_eq!(after_rejection, [false, true]);
+        }
+
         #[tokio::test]
         async fn test_replays_only_once() {
             let mut server = mockito::Server::new_async().await;
