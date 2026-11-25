@@ -165,9 +165,9 @@ impl AccessToken {
         self.reusable_until.is_some_and(|until| now < until)
     }
 
-    /// Whether the token is a bearer token of RFC 6750 (`b64token`): only visible
-    /// ASCII, which the transport can also read back from the header to drop
-    /// the token after a `401` (#341).
+    /// Whether the token is non-empty visible ASCII, so the transport can read
+    /// it back from the header and drop it after a `401` (#341). This checks
+    /// header round-tripping, not the full RFC 6750 `b64token` grammar.
     fn is_valid_bearer(&self) -> bool {
         !self.secret.is_empty() && self.secret.bytes().all(|byte| byte.is_ascii_graphic())
     }
