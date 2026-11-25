@@ -165,10 +165,11 @@ impl AccessToken {
         self.reusable_until.is_some_and(|until| now < until)
     }
 
+    /// Whether the token is non-empty visible ASCII, so the transport can read
+    /// it back from the header and drop it after a `401` (#341). This checks
+    /// header round-tripping, not the full RFC 6750 `b64token` grammar.
     fn is_valid_bearer(&self) -> bool {
-        !self.secret.is_empty()
-            && !self.secret.bytes().any(|byte| byte.is_ascii_whitespace())
-            && reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.secret)).is_ok()
+        !self.secret.is_empty() && self.secret.bytes().all(|byte| byte.is_ascii_graphic())
     }
 }
 
@@ -303,7 +304,7 @@ pub enum TokenProviderError {
         /// The provider's error.
         source: BoxError,
     },
-    /// The token is empty or has characters that an HTTP header can't hold.
+    /// The token is empty or has characters other than visible ASCII.
     InvalidToken {
         /// The audience the token was asked for.
         audience: String,
@@ -326,7 +327,7 @@ impl fmt::Display for TokenProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Failed { .. } => f.write_str("The token provider failed before the request was sent"),
-            Self::InvalidToken { .. } => f.write_str("The token provider gave an empty token or one that isn't a valid HTTP header value"),
+            Self::InvalidToken { .. } => f.write_str("The token provider gave an empty token or one with characters other than visible ASCII"),
         }
     }
 }

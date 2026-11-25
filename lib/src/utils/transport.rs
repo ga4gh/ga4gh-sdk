@@ -1678,29 +1678,37 @@ mod tests {
             server.abort();
         }
 
-        /// A token with bytes beyond ASCII is a valid header value, which
-        /// `reject_token` can't read back as text; the 401 still reaches the
-        /// caller.
+        /// A reusable token with all the punctuation of RFC 6750 `b64token` is
+        /// sent, and dropped after a 401, so that the next request asks the
+        /// provider again (#341).
         #[tokio::test]
-        async fn rejected_non_ascii_token_returns_the_401() {
+        async fn rejected_b64token_is_not_reused() {
             let mut server = mockito::Server::new_async().await;
             let provider = Arc::new(Recording {
-                token: Some("t\u{f6}ken"),
+                token: Some("a-._~+/b=="),
+                lifetime: Some(Duration::from_secs(60)),
                 ..Default::default()
             });
-            let transport = transport(&server, "auth-non-ascii", &provider);
+            let transport = transport(&server, "auth-b64token", &provider);
             let rejected = server
-                .mock("POST", "/auth-non-ascii/a")
+                .mock("POST", "/auth-b64token/a")
+                .match_header("authorization", "Bearer a-._~+/b==")
                 .with_status(401)
-                .expect(1)
+                .expect(2)
                 .create();
             let error = transport.post("a", None).await.unwrap_err();
             assert_eq!(
                 error.downcast_ref::<HttpError>().unwrap().status,
                 reqwest::StatusCode::UNAUTHORIZED
             );
+            assert!(transport.post("a", None).await.is_err());
             rejected.assert();
-            assert_eq!(provider.calls().len(), 1);
+            let after_rejection: Vec<bool> = provider
+                .calls()
+                .into_iter()
+                .map(|(_, after)| after)
+                .collect();
+            assert_eq!(after_rejection, [false, true]);
         }
 
         #[tokio::test]
@@ -1908,7 +1916,17 @@ mod tests {
         #[tokio::test]
         async fn test_invalid_tokens_are_not_sent_or_shown() {
             let mut server = mockito::Server::new_async().await;
-            for token in ["", "SENTINEL\nTOKEN", "SENTINEL TOKEN"] {
+            // Bytes beyond visible ASCII: whitespace, controls, and non-ASCII
+            // characters, which are valid header values that `reject_token`
+            // couldn't read back after a 401 (#341)
+            for token in [
+                "",
+                "SENTINEL\nTOKEN",
+                "SENTINEL TOKEN",
+                "SENTINEL\tTOKEN",
+                "SENTINEL\u{7f}TOKEN",
+                "SENTINEL_T\u{f6}KEN",
+            ] {
                 let provider = Arc::new(Recording {
                     token: Some(token),
                     lifetime: Some(Duration::from_secs(60)),

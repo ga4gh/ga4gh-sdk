@@ -237,11 +237,11 @@ tes = TES(config)
   submissions such as `TES.create()` and `WES.run()` are never sent twice. The
   provider isn't told about the rejection, so don't let it cache tokens itself:
   return a `(str, float)` tuple and let the SDK reuse the token instead.
-- If the provider raises, returns something else or a token that can't be an HTTP
-  header value, the call raises `RuntimeError` and the pending request is not
-  sent. A read-only request may already have received `401` before a failed
-  refresh. The default message omits the provider's exception text, which
-  could contain a secret.
+- If the provider raises, returns something else, or an empty token or one with
+  characters other than visible ASCII, the call raises `RuntimeError` and the
+  pending request is not sent. A read-only request may already have received
+  `401` before a failed refresh. The default message omits the provider's
+  exception text, which could contain a secret.
   HTTP errors such as `401` also raise `RuntimeError`; the message distinguishes
   them from provider failures.
 - A provider can't be combined with other credentials from the configuration file

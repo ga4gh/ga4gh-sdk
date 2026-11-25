@@ -97,11 +97,12 @@ def test_provider_errors_send_nothing(server):
     assert requests_since(server, before) == []
 
 
-def test_invalid_tokens_are_not_shown(server):
+@pytest.mark.parametrize("token", ["SENTINEL\nTOKEN", "SENTINEL_T\u00f6KEN"])
+def test_invalid_tokens_are_not_shown(server, token):
     with pytest.raises(RuntimeError) as error:
-        Transport(auth_config(server, lambda audience: "SENTINEL\nTOKEN")).get("tasks/task-1")
+        Transport(auth_config(server, lambda audience: token)).get("tasks/task-1")
     assert "SENTINEL" not in str(error.value)
-    assert "valid HTTP header value" in str(error.value)
+    assert "visible ASCII" in str(error.value)
 
 
 def test_set_token_provider_arguments(server):

@@ -386,7 +386,8 @@ contract:
   `Authorization` header then takes the place of a client's default header.
   The caller remains responsible for that client's redirect policy.
 - **Errors.** If the provider fails, or gives an empty token or one that
-  can't be an HTTP header value, the request fails with a
+  has characters other than visible ASCII (as RFC 6750 requires of bearer
+  tokens), the request fails with a
   `TokenProviderError` and the pending request is not sent. If this happens
   after a read-only request received `401`, that first attempt was sent. Its
   default `Display` and `Debug` output omits the provider's error text and

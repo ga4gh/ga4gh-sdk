@@ -170,7 +170,9 @@ class Configuration:
         Clients and `Transport` take the provider when they are built. After
         `401 Unauthorized`, the SDK drops a reused token and asks the provider again; a
         `GET` request is sent once more, submissions never. If the provider raises or
-        returns something else, the call raises `RuntimeError` and its request isn't sent.
+        returns something else, an empty token, or a token with characters other than
+        visible ASCII, the call raises `RuntimeError` and its pending request isn't sent.
+        A read-only request may already have received `401` before a failed refresh.
         Set the provider after `from_file()`, which replaces all settings.
 
         Args:
