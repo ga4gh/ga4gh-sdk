@@ -1678,31 +1678,6 @@ mod tests {
             server.abort();
         }
 
-        /// A token with bytes beyond ASCII is a valid header value, which
-        /// `reject_token` can't read back as text; the 401 still reaches the
-        /// caller.
-        #[tokio::test]
-        async fn rejected_non_ascii_token_returns_the_401() {
-            let mut server = mockito::Server::new_async().await;
-            let provider = Arc::new(Recording {
-                token: Some("t\u{f6}ken"),
-                ..Default::default()
-            });
-            let transport = transport(&server, "auth-non-ascii", &provider);
-            let rejected = server
-                .mock("POST", "/auth-non-ascii/a")
-                .with_status(401)
-                .expect(1)
-                .create();
-            let error = transport.post("a", None).await.unwrap_err();
-            assert_eq!(
-                error.downcast_ref::<HttpError>().unwrap().status,
-                reqwest::StatusCode::UNAUTHORIZED
-            );
-            rejected.assert();
-            assert_eq!(provider.calls().len(), 1);
-        }
-
         #[tokio::test]
         async fn test_replays_only_once() {
             let mut server = mockito::Server::new_async().await;
@@ -1908,7 +1883,17 @@ mod tests {
         #[tokio::test]
         async fn test_invalid_tokens_are_not_sent_or_shown() {
             let mut server = mockito::Server::new_async().await;
-            for token in ["", "SENTINEL\nTOKEN", "SENTINEL TOKEN"] {
+            // Bytes beyond visible ASCII: whitespace, controls, and non-ASCII
+            // characters, which are valid header values that `reject_token`
+            // couldn't read back after a 401 (#341)
+            for token in [
+                "",
+                "SENTINEL\nTOKEN",
+                "SENTINEL TOKEN",
+                "SENTINEL\tTOKEN",
+                "SENTINEL\u{7f}TOKEN",
+                "SENTINEL_T\u{f6}KEN",
+            ] {
                 let provider = Arc::new(Recording {
                     token: Some(token),
                     lifetime: Some(Duration::from_secs(60)),
