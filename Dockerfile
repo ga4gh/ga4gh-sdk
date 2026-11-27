@@ -9,7 +9,7 @@
 # version of the builder must match the channel in rust-toolchain.toml
 # (tests/run-image-tests.sh checks it); change both together.
 
-FROM docker.io/library/rust:1.100.0-slim-trixie@sha256:e9d95b74296f7126a83ae3d041aeaba1ff4c478f13abc5cc034fcf7c131c3d4a AS builder
+FROM docker.io/library/rust:1.100.0-slim-trixie@sha256:3b199fd6db7d709274df56565b8f4003f9e30d7bfcff9d53148c86053b7855e2 AS builder
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
