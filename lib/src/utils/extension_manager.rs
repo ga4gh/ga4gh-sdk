@@ -2,6 +2,7 @@
 
 use crate::utils::configuration::{Configuration, ServiceExtensionsConfiguration};
 use crate::utils::extension::{Extension, ExtensionMethod, InstalledExtension};
+use crate::utils::json_store::{JsonStore, JsonStoreIoError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use std::fs;
@@ -9,7 +10,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// A registry snapshot. Mutations update both the snapshot and the file.
-/// Use one writer at a time; reopen to observe changes made by another process.
+/// Mutations reload the registry under its shared writer lock. Reopen to observe
+/// other processes' changes without making a change yourself.
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionManager {
     extensions: Vec<InstalledExtension>,
@@ -30,6 +32,12 @@ fn validate_name(name: &str) -> crate::Result<()> {
     Ok(())
 }
 
+fn replacement_completed(error: &crate::Error) -> bool {
+    error
+        .downcast_ref::<JsonStoreIoError>()
+        .is_some_and(JsonStoreIoError::replacement_completed)
+}
+
 impl ExtensionManager {
     /// Opens metadata without loading code or creating files. A missing registry
     /// represents an empty installation.
@@ -39,11 +47,9 @@ impl ExtensionManager {
     /// Rejects unreadable or malformed registries and duplicate or invalid names.
     pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
         let path = path.as_ref();
-        let mut manager: Self = match fs::read(path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
-            Err(error) => return Err(error.into()),
-        };
+        let mut manager: Self = JsonStore::new(path, "Extension registry")
+            .read()?
+            .unwrap_or_default();
         let mut names = std::collections::HashSet::new();
         for extension in &manager.extensions {
             validate_name(&extension.name)?;
@@ -115,11 +121,7 @@ impl ExtensionManager {
         path: impl AsRef<Path>,
         config: &Configuration,
     ) -> crate::Result<Self> {
-        let selected = config
-            .extra
-            .get("extensions")
-            .map(|value| serde_json::from_value(value.clone()))
-            .transpose()?;
+        let selected = config.extra_as::<ServiceExtensionsConfiguration>("extensions")?;
         // SAFETY: delegated to this function's caller.
         unsafe { Self::init(path, selected) }
     }
@@ -159,19 +161,27 @@ impl ExtensionManager {
         Ok(root.join(name))
     }
 
-    fn save(&self) -> crate::Result<()> {
+    fn store(&self) -> crate::Result<JsonStore> {
         self.directory()?;
-        let parent = self
-            .config_path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        fs::create_dir_all(parent)?;
-        let mut file = tempfile::NamedTempFile::new_in(parent)?;
-        serde_json::to_writer_pretty(&mut file, self)?;
-        file.flush()?;
-        file.persist(&self.config_path)
-            .map_err(|error| error.error)?;
+        Ok(JsonStore::new(&self.config_path, "Extension registry"))
+    }
+
+    // Called under the store lock, retaining loaded code only for unchanged
+    // installation records. A registry reload must not initialize native code.
+    fn reload(&mut self, store: &JsonStore) -> crate::Result<()> {
+        let mut latest = Self::open(store.path())?;
+        for extension in &mut latest.extensions {
+            if let Some(previous) = self.extensions.iter().find(|previous| {
+                previous.name == extension.name
+                    && previous.version == extension.version
+                    && previous.definition_path == extension.definition_path
+                    && previous.library_path == extension.library_path
+                    && previous.enabled == extension.enabled
+            }) {
+                *extension = previous.clone();
+            }
+        }
+        *self = latest;
         Ok(())
     }
 
@@ -185,12 +195,7 @@ impl ExtensionManager {
     pub async fn add_extension(&mut self, manifest: impl AsRef<Path>) -> crate::Result<()> {
         let extension = Extension::from_file(manifest)?;
         let destination = self.extension_directory(&extension.name)?;
-        if self
-            .extensions
-            .iter()
-            .any(|installed| installed.name == extension.name)
-            || destination.exists()
-        {
+        if destination.exists() {
             return Err("Extension is already installed or its directory already exists".into());
         }
         if extension.checksum.len() != 128
@@ -239,10 +244,19 @@ impl ExtensionManager {
             return Err("Extension library checksum mismatch".into());
         }
         let definition = format!("{}.ga4gh-sdk-extension.json", extension.name);
-        fs::write(
-            staging.path().join(&definition),
-            serde_json::to_vec_pretty(&extension)?,
-        )?;
+        JsonStore::new(staging.path().join(&definition), "Extension manifest").write(&extension)?;
+        let store = self.store()?;
+        let _lock = store.lock()?;
+        self.reload(&store)?;
+        self.extension_directory(&extension.name)?;
+        if self
+            .extensions
+            .iter()
+            .any(|installed| installed.name == extension.name)
+            || destination.exists()
+        {
+            return Err("Extension is already installed or its directory already exists".into());
+        }
         let record = InstalledExtension::new(
             extension.name,
             extension.version,
@@ -259,12 +273,14 @@ impl ExtensionManager {
         );
         fs::rename(staging.path(), &destination)?;
         self.extensions.push(record);
-        if let Err(error) = self.save() {
-            self.extensions.pop();
-            fs::remove_dir_all(destination)?;
-            return Err(error);
+        let result = store.write(self);
+        if let Err(error) = &result {
+            if !replacement_completed(error) {
+                self.extensions.pop();
+                fs::remove_dir_all(destination)?;
+            }
         }
-        Ok(())
+        result
     }
 
     /// Removes a registered extension and its installation directory.
@@ -273,6 +289,10 @@ impl ExtensionManager {
     ///
     /// Rejects invalid or unknown names and symbolic links; returns I/O errors.
     pub fn remove_extension(&mut self, name: &str) -> crate::Result<()> {
+        validate_name(name)?;
+        let store = self.store()?;
+        let _lock = store.lock()?;
+        self.reload(&store)?;
         let directory = self.extension_directory(name)?;
         let index = self
             .extensions
@@ -288,24 +308,30 @@ impl ExtensionManager {
             fs::rename(&directory, &backup)?;
         }
         let record = self.extensions.remove(index);
-        if let Err(error) = self.save() {
-            self.extensions.insert(index, record);
-            if exists {
-                if let Err(restore_error) = fs::rename(backup, directory) {
-                    // Preserve the backup if restoring the original path also fails.
-                    let _ = removed.keep();
-                    return Err(restore_error.into());
+        let result = store.write(self);
+        if let Err(error) = &result {
+            if !replacement_completed(error) {
+                self.extensions.insert(index, record);
+                if exists {
+                    if let Err(restore_error) = fs::rename(backup, directory) {
+                        // Preserve the backup if restoring the original path also fails.
+                        let _ = removed.keep();
+                        return Err(restore_error.into());
+                    }
                 }
+                return result;
             }
-            return Err(error);
         }
         drop(record);
-        removed.close()?;
-        Ok(())
+        let cleanup = removed.close().map_err(crate::Error::from);
+        result.and(cleanup)
     }
 
     fn update_extension_status(&mut self, name: &str, enabled: bool) -> crate::Result<()> {
         validate_name(name)?;
+        let store = self.store()?;
+        let _lock = store.lock()?;
+        self.reload(&store)?;
         let index = self
             .extensions
             .iter()
@@ -313,14 +339,17 @@ impl ExtensionManager {
             .ok_or("Extension is not installed")?;
         let previous = self.extensions[index].enabled;
         self.extensions[index].enabled = enabled;
-        if let Err(error) = self.save() {
-            self.extensions[index].enabled = previous;
-            return Err(error);
+        let result = store.write(self);
+        if let Err(error) = &result {
+            if !replacement_completed(error) {
+                self.extensions[index].enabled = previous;
+                return result;
+            }
         }
         if !enabled {
             self.extensions[index].unload();
         }
-        Ok(())
+        result
     }
 
     /// Persists enabled status without loading native code.

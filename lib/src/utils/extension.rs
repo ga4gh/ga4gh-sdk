@@ -2,6 +2,7 @@
 //!
 //! Installation metadata can be read without executing native code.
 
+use crate::utils::json_store::JsonStore;
 use libloading::Library;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -83,9 +84,17 @@ impl Extension {
     ///
     /// # Errors
     ///
-    /// Returns an I/O or JSON error if the manifest cannot be read.
+    /// Returns I/O or malformed-data errors without including parser values.
     pub fn from_file(path: impl AsRef<Path>) -> crate::Result<Self> {
-        Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+        JsonStore::new(path.as_ref(), "Extension manifest")
+            .read()?
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Extension manifest does not exist",
+                )
+                .into()
+            })
     }
 }
 
@@ -140,9 +149,17 @@ impl InstalledExtension {
     ///
     /// # Errors
     ///
-    /// Returns an I/O or JSON error if the record cannot be read.
+    /// Returns I/O or malformed-data errors without including parser values.
     pub fn from_file(path: impl AsRef<Path>) -> crate::Result<Self> {
-        Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+        JsonStore::new(path.as_ref(), "Extension record")
+            .read()?
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Extension record does not exist",
+                )
+                .into()
+            })
     }
 
     /// Enables loading in memory; use the manager to persist the status.

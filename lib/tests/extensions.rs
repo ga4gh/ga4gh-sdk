@@ -1,7 +1,9 @@
 //! Installation, error and dynamic-library lifetime boundaries.
 
 use ga4gh_sdk::utils::configuration::Configuration;
+use ga4gh_sdk::utils::extension::{Extension, InstalledExtension};
 use ga4gh_sdk::utils::extension_manager::ExtensionManager;
+use ga4gh_sdk::utils::json_store::JsonStore;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha512};
 use std::fs;
@@ -15,6 +17,151 @@ fn manifest(dir: &Path, name: &str, url: &str, checksum: &str) -> PathBuf {
     )
     .unwrap();
     path
+}
+
+fn record(name: &str) -> Value {
+    json!({"name":name,"version":"1","definition-path":"missing.json","library-path":"missing.so","enabled":false})
+}
+
+#[test]
+fn stale_managers_preserve_updates_without_restoring_removed_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("extensions.json");
+    fs::write(
+        &registry,
+        json!({"extensions":[record("first"),record("second")]}).to_string(),
+    )
+    .unwrap();
+    let mut first = ExtensionManager::open(&registry).unwrap();
+    let mut second = ExtensionManager::open(&registry).unwrap();
+    first.enable_extension("first").unwrap();
+    second.enable_extension("second").unwrap();
+    assert!(ExtensionManager::open(&registry)
+        .unwrap()
+        .get_extensions()
+        .iter()
+        .all(|extension| extension.enabled));
+    second.remove_extension("first").unwrap();
+    first.disable_extension("second").unwrap();
+    let stored: Value = serde_json::from_slice(&fs::read(&registry).unwrap()).unwrap();
+    assert_eq!(stored, json!({"extensions":[record("second")]}));
+}
+
+#[test]
+fn concurrent_managers_keep_each_enabled_installation() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("extensions.json");
+    let names = ["first", "second", "third", "fourth"];
+    fs::write(
+        &registry,
+        json!({"extensions": names.map(record)}).to_string(),
+    )
+    .unwrap();
+    let ready = std::sync::Barrier::new(names.len());
+    std::thread::scope(|scope| {
+        let registry = &registry;
+        let ready = &ready;
+        let threads: Vec<_> = names
+            .iter()
+            .map(|name| {
+                scope.spawn(move || {
+                    let mut manager = ExtensionManager::open(registry).unwrap();
+                    ready.wait();
+                    manager.enable_extension(name).unwrap();
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+    });
+    let manager = ExtensionManager::open(&registry).unwrap();
+    assert_eq!(manager.get_extensions().len(), names.len());
+    assert!(manager
+        .get_extensions()
+        .iter()
+        .all(|extension| extension.enabled));
+}
+
+#[tokio::test]
+async fn installing_keeps_registry_changes_made_during_download() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("extensions.json");
+    let mut manager = ExtensionManager::open(&registry).unwrap();
+    let mut server = mockito::Server::new_async().await;
+    let concurrent_registry = registry.clone();
+    let bytes = b"downloaded library";
+    let request = server
+        .mock("GET", "/library.so")
+        .with_chunked_body(move |writer| {
+            JsonStore::new(&concurrent_registry, "Extension registry")
+                .update::<Value, _>(|value| {
+                    *value = json!({"extensions":[record("other")]});
+                    Ok(())
+                })
+                .unwrap();
+            writer.write_all(bytes)
+        })
+        .create_async()
+        .await;
+    let checksum: String = Sha512::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let definition = manifest(
+        dir.path(),
+        "downloaded",
+        &format!("{}/library.so", server.url()),
+        &checksum,
+    );
+    manager.add_extension(definition).await.unwrap();
+    request.assert_async().await;
+    let names: Vec<_> = manager
+        .get_extensions()
+        .iter()
+        .map(|extension| extension.name.as_str())
+        .collect();
+    assert_eq!(names, ["other", "downloaded"]);
+    assert_eq!(
+        ExtensionManager::open(&registry)
+            .unwrap()
+            .get_extensions()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn malformed_extension_settings_and_metadata_do_not_expose_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("extension.json");
+    fs::write(&path, r#"{"name":{"secret":"PRIVATE_VALUE"}}"#).unwrap();
+    for error in [
+        Extension::from_file(&path).unwrap_err(),
+        InstalledExtension::from_file(&path).unwrap_err(),
+        ExtensionManager::open(&path).unwrap_err(),
+    ] {
+        assert!(!format!("{error} {error:?}").contains("PRIVATE_VALUE"));
+    }
+    let mut config = Configuration::default();
+    config.extra.insert(
+        "extensions".into(),
+        json!([{"name":{"secret":"PRIVATE_VALUE"},"configuration":{}}]),
+    );
+    // SAFETY: malformed settings must fail before any native library loads.
+    let error = unsafe { ExtensionManager::from_configuration(&path, &config) }.unwrap_err();
+    assert!(matches!(error, ga4gh_sdk::Error::Configuration(_)));
+    assert!(!format!("{error} {error:?}").contains("PRIVATE_VALUE"));
+    let missing = dir.path().join("missing.json");
+    assert_eq!(
+        Extension::from_file(&missing)
+            .unwrap_err()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(!missing.exists());
 }
 
 #[tokio::test]
@@ -200,14 +347,39 @@ fn retained_methods_pin_the_library_until_last_drop() {
     let registry = dir.path().join("extensions.json");
     let dropped = dir.path().join("dropped");
     fs::write(&registry, json!({"extensions":[{"name":"fixture","version":"1","definition-path":"fixture.json","library-path":library,"enabled":true}]}).to_string()).unwrap();
-    let mut config = Configuration::default();
-    config.extra.insert(
-        "extensions".into(),
-        json!([{"name":"fixture","required":true,"configuration":{"on_drop":dropped}}]),
-    );
+    let config_path = dir.path().join("service.json");
+    fs::write(
+        &config_path,
+        json!({"profiles":{"site":{"CUSTOM":{
+            "base_path":"https://service.example.org/",
+            "bearer_access_token":"host-only-credential",
+            "extensions":[{"name":"not-selected","required":true,"configuration":{}}]
+        }}}})
+        .to_string(),
+    )
+    .unwrap();
+    let sources = Configuration::sources(&config_path, Some("site"), "CUSTOM")
+        .unwrap()
+        .merge(figment::providers::Serialized::defaults(
+            json!({"extensions":[{
+                "name":"fixture","required":true,"configuration":{"on_drop":dropped}
+            }]}),
+        ));
+    let config = Configuration::from_provider(sources).unwrap();
     // SAFETY: the fixture is built alongside this host with the same dependencies
     // and implements the documented ABI without extension-specific restrictions.
-    let manager = unsafe { ExtensionManager::from_configuration(&registry, &config) }.unwrap();
+    let mut manager = unsafe { ExtensionManager::from_configuration(&registry, &config) }.unwrap();
+    let method = manager
+        .lookup_extension_methods("test")
+        .into_iter()
+        .find(|method| method.internal_name == "configuration")
+        .unwrap();
+    assert_eq!(
+        unsafe { method.call(Value::Null) },
+        json!({"on_drop":dropped})
+    );
+    manager.enable_extension("fixture").unwrap();
+    assert!(manager.get_extensions()[0].is_loaded());
     let mut cloned = manager.clone();
     let method = cloned.lookup_extension_methods("test")[0].clone();
     drop(manager);

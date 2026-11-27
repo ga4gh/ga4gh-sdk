@@ -40,14 +40,25 @@ Management commands do not require a service configuration and never load code,
 including when enabling an installation.
 
 Downloads and checksums are verified before registering an installation. Registry
-writes replace the file atomically. Use a single writer at a time; manager
-instances are snapshots and do not merge concurrent edits.
+writes use the shared `JsonStore`: mutations reload the latest registry under
+its writer lock and replace the file atomically. Cooperating managers preserve
+each other's changes. Downloads finish before acquiring the lock. Read-only
+manager instances remain snapshots; reopen them to observe later changes.
+Use a trusted local directory, as required by the shared storage component.
+
+If a write fails before replacement, the manager attempts to roll back its
+installation change. If `JsonStoreIoError::replacement_completed()` reports that
+replacement already happened, the manager keeps the committed installation and
+returns the error; inspect the registry before retrying. See the
+[shared persistence contract](downstream.md) for error and recovery details.
 
 ## Load an extension in Rust
 
 Read service configuration through the existing `Configuration::from_path` or
-`from_path_with_profile` API. An optional service-section `extensions` array
-remains in `Configuration::extra`:
+`from_path_with_profile` API, or compose sources with Figment through
+`Configuration::sources` and `from_provider`. An optional service-section
+`extensions` array remains in `Configuration::extra` and is extracted through
+the shared `extra_as` API:
 
 ```json
 {
@@ -85,6 +96,7 @@ and client APIs are preserved; they do not implicitly load native extensions.
 | --- | --- |
 | Dynamic loading and installation commands | Retained here, with explicit loading, shared library ownership, validated paths and current SDK errors. |
 | Configuration paths, profiles, bearer auth, model constructors and CLI output | Use the implementations already merged into `main`. The old `~/.ga4gh` path and replacement constructor signatures are superseded. |
+| Configuration composition and JSON persistence | Reuse Figment-backed settings, typed extra settings and `JsonStore` from [#350](https://github.com/ga4gh/ga4gh-sdk/pull/350). Registry schema and installation rollback remain the manager's responsibility. |
 | TLS verification in `Transport::new` | Deferred to [#73](https://github.com/ga4gh/ga4gh-sdk/issues/73), as agreed in the [issue discussion](https://github.com/ga4gh/ga4gh-sdk/issues/64#issuecomment-2624490160). The certificate-fetching PoC and its disabled certificate validation are not restored. |
 | Attested TLS provider | Owned by [#72](https://github.com/ga4gh/ga4gh-sdk/issues/72), after #73. |
 

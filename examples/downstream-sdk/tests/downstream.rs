@@ -27,13 +27,14 @@ fn native_extensions_use_explicit_downstream_paths() {
     send_sync::<ExtensionManager>();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("extensions.json");
-    let mut config = Configuration::default();
-    config.extra.insert(
-        "extensions".into(),
-        json!([
-            {"name":"optional","required":false,"configuration":{}}
-        ]),
-    );
+    let mut config =
+        Configuration::from_provider(figment::providers::Serialized::defaults(json!({
+            "base_path":"https://service.example.org/",
+            "extensions":[
+                {"name":"optional","required":false,"configuration":{}}
+            ]
+        })))
+        .unwrap();
     // SAFETY: this registry is absent, so no native code can be loaded.
     let manager = unsafe { ExtensionManager::from_configuration(&path, &config) }.unwrap();
     assert!(manager.get_extensions().is_empty());

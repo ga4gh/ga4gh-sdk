@@ -9,7 +9,16 @@ static CONFIG: Mutex<Option<Value>> = Mutex::new(None);
 #[no_mangle]
 pub fn init(config: Value) -> Vec<&'static [&'static str]> {
     *CONFIG.lock().unwrap() = Some(config);
-    vec![&["test", "echo", "echo"]]
+    vec![
+        &["test", "echo", "echo"],
+        &["test", "configuration", "configuration"],
+    ]
+}
+
+/// Exposes the initializer's settings to the host's configuration boundary test.
+#[no_mangle]
+pub fn configuration(_: Value) -> Value {
+    CONFIG.lock().unwrap().clone().unwrap()
 }
 
 /// Echoes the input to prove the function still works after its original owner drops.

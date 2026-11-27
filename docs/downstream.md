@@ -105,9 +105,8 @@ endpoint and bearer header of a request through `UsageClient`.
 
 `ga4gh_sdk::utils::json_store::JsonStore` is public so the separate CLI crate
 can reuse persistence without putting token schemas or application paths into
-the SDK. Its current production consumer is the CLI token store; Extensions
-Manager ([#64](https://github.com/ga4gh/ga4gh-sdk/issues/64)) will adopt it
-separately. The assumptions future consumers must confirm are a local
+the SDK. The CLI token store and [Extensions Manager](extensions.md) reuse it.
+The assumptions consumers must confirm are a local
 filesystem, cooperating writers using the same path and lock file, and atomic
 replacement of one JSON document. The directory and its ancestors must be
 trusted: another user with directory write access can replace the lock file
@@ -369,5 +368,5 @@ The [experimental extension manager](extensions.md) loads shared libraries at
 runtime. It is separate from this guide's composition through downstream crates.
 Its CLI commands use the same `CliContext` configuration-directory ownership.
 The example's `native_extensions_use_explicit_downstream_paths` test exercises
-the loader through a downstream crate, including a missing required extension
-and the manager's `Send + Sync` contract.
+the loader through a downstream crate with shared typed configuration, including
+a missing required extension and the manager's `Send + Sync` contract.
