@@ -227,7 +227,8 @@ rules; adding an environment provider is an explicit Rust caller choice.
 `Configuration::extra_as::<T>(key)` deserializes an additional setting using a
 downstream schema, returning `None` for a missing key. Parser diagnostics name
 fields and sources where available while omitting values and custom messages
-that could contain credentials.
+that could contain credentials. Errors escape control characters in profile
+and service-section names before displaying them.
 
 ## Command-line tool
 

@@ -184,7 +184,9 @@ directory, if missing, with mode `0700`; it refuses to read a file that other
 users can access. The CLI never prints the tokens. On Windows, the file gets
 the default permissions of its directory. The CLI doesn't use an OS keyring.
 Processes that change the store take turns through the lock file
-`tokens.json.lock` next to it. `login` prints a confirmation, but no token,
+`tokens.json.lock` next to it. On Unix, an existing lock file that other users
+can access is rejected; set its mode to `0600` before retrying. `login` prints
+a confirmation, but no token,
 on standard error, leaves standard output empty and exits with code 0; it
 exits with code 1 if the configuration, the provider, or the approval fails.
 

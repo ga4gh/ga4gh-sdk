@@ -160,6 +160,35 @@ fn errors_identify_fields_and_files_without_echoing_values() {
 }
 
 #[test]
+fn missing_section_errors_escape_control_characters() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.json");
+    let section = "missing\n\r\t\u{1b}[31m";
+    for (document, profile) in [
+        (json!({}), None),
+        (json!({"profiles":{"Remote":{}}}), Some("Remote")),
+    ] {
+        fs::write(&path, document.to_string()).unwrap();
+        let error = Configuration::sources(&path, profile, section)
+            .err()
+            .unwrap();
+        let displayed = error.to_string();
+        assert!(
+            displayed.contains(r"missing\n\r\t\u{1b}[31m"),
+            "{displayed}"
+        );
+        assert!(!displayed.chars().any(char::is_control), "{displayed:?}");
+    }
+    // Escaping diagnostics must not change lookup of a real section name.
+    fs::write(
+        &path,
+        json!({section:{"base_path":"https://example.org/"}}).to_string(),
+    )
+    .unwrap();
+    assert!(Configuration::from_path(&path, section).is_ok());
+}
+
+#[test]
 fn extra_settings_use_a_caller_schema_without_exposing_parser_messages() {
     #[derive(Deserialize)]
     struct Routing {

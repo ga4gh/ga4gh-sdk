@@ -14,8 +14,9 @@ access; they do not use external services:
   source precedence, profile selection, nulls and array replacement, typed
   additional settings, credential conflicts, and secret-safe diagnostics.
 - [`json_store.rs`](../lib/tests/json_store.rs) checks atomic persistence,
-  failed updates, malformed input, exclusive locking during an update, and
-  preservation of changes from concurrent writers.
+  failed updates, malformed input, preserved I/O causes, private lock-file
+  permissions, exclusive locking during an update, and preservation of changes
+  from concurrent writers.
 
 Run both suites on their own with:
 

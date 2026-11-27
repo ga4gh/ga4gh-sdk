@@ -66,12 +66,15 @@ pub(super) fn file_source(
     let fields = sections
         .get(section)
         .and_then(Value::as_object)
-        .ok_or_else(|| match &profile {
-            None => format!("Configuration file must contain a '{section}' object"),
-            Some(name) => format!(
-                "Profile '{}' must contain a '{section}' object",
-                super::display_profile_name(name)
-            ),
+        .ok_or_else(|| {
+            let section = super::display_profile_name(section);
+            match &profile {
+                None => format!("Configuration file must contain a '{section}' object"),
+                Some(name) => format!(
+                    "Profile '{}' must contain a '{section}' object",
+                    super::display_profile_name(name)
+                ),
+            }
         })?;
     Ok(Figment::from(ServiceFile {
         path: path.to_owned(),

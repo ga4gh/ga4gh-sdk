@@ -103,6 +103,25 @@ setting into its own schema. The example test
 custom profile and overrides, extracts typed routing settings, and verifies the
 endpoint and bearer header of a request through `UsageClient`.
 
+`ga4gh_sdk::utils::json_store::JsonStore` is public so the separate CLI crate
+can reuse persistence without putting token schemas or application paths into
+the SDK. Its current production consumer is the CLI token store; Extensions
+Manager ([#64](https://github.com/ga4gh/ga4gh-sdk/issues/64)) will adopt it
+separately. The assumptions future consumers must confirm are a local
+filesystem, cooperating writers using the same path and lock file, and atomic
+replacement of one JSON document. Paths, schemas, missing-file defaults and
+access policies remain caller-owned. Use `private()` for credential stores;
+on Unix it rejects broadly accessible data and lock files.
+
+`write` syncs the temporary file before replacement and, on Unix, the parent
+directory afterwards. A failure before replacement preserves the old file;
+a directory-sync failure after replacement can leave the new file visible.
+Other platforms do not sync directories, and newly created ancestor
+directories are not synced. These operations do not promise power-loss
+durability on every filesystem. I/O errors preserve their original cause for
+`error.downcast_ref::<std::io::Error>()`; default diagnostics omit JSON values
+and custom serialization messages.
+
 ## A model that extends `TesTask`
 
 [`PrioritizedTask`](../examples/downstream-sdk/src/task.rs) embeds the SDK's

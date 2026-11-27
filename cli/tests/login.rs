@@ -752,7 +752,9 @@ async fn refreshed_tokens_are_used_when_the_store_cannot_be_written() {
         now() - 10,
     );
     // The lock file exists, so only the new store can't be created.
-    std::fs::write(store_dir.join("tokens.json.lock"), "").unwrap();
+    let lock_path = store_dir.join("tokens.json.lock");
+    std::fs::write(&lock_path, "").unwrap();
+    std::fs::set_permissions(lock_path, std::fs::Permissions::from_mode(0o600)).unwrap();
     std::fs::set_permissions(&store_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
     // Permissions don't stop a privileged user, such as root.
     let writable = std::fs::write(store_dir.join("probe"), "").is_ok();

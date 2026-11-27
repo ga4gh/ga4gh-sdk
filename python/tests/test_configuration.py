@@ -89,6 +89,17 @@ def test_shared_loader_preserves_extension_settings_and_unknown_values(write_con
     assert config.get_extra() == extra
 
 
+@pytest.mark.parametrize("document", [{}, {"profiles": {"default": {}}}])
+def test_missing_section_errors_escape_control_characters(write_config, document):
+    write_config(document)
+    config = Configuration("https://example.org/")
+    with pytest.raises(ValueError) as raised:
+        config.from_file("missing\n\r\t\x1b[31m")
+    message = str(raised.value)
+    assert r"missing\n\r\t\u{1b}[31m" in message
+    assert not any(character in message for character in "\n\r\t\x1b")
+
+
 def test_token_from_named_environment_variable(write_config, monkeypatch):
     write_config(
         {

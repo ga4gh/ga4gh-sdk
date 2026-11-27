@@ -114,7 +114,8 @@ describes the settings and commands.
 - The store, `tokens.json` next to the configuration file, is written with
   mode `0600` in a directory created with mode `0700`, and a store that other
   users can access is rejected. It is keyed by issuer, client ID and scope.
-  Processes lock `tokens.json.lock` while they change the store, and a
+  Processes lock `tokens.json.lock` while they change the store; on Unix,
+  both data and lock files must be private to their owner (`chmod 600`). A
   refresh starts from the stored tokens, so that processes don't reuse a
   refresh token that another one has replaced. A refresh doesn't store a
   login again that `logout` has deleted. If writing refreshed tokens fails,
