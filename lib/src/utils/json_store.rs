@@ -3,6 +3,9 @@
 //! Reads never create files. Hold [`StoreLock`] across a read–modify–write
 //! operation, or use [`JsonStore::update`], to avoid losing another writer's
 //! changes. All cooperating writers must use the same store path.
+//! The store directory and its ancestors must be trusted: another user with
+//! directory write access can replace the lock file and bypass cooperation.
+//! File modes and advisory locks do not protect against such interference.
 //!
 //! This interface is public so the separate CLI crate can reuse SDK persistence
 //! without making the SDK depend on CLI authentication or application paths.
@@ -104,7 +107,8 @@ impl JsonStore {
     /// users, and acquiring a lock rejects broadly accessible lock files.
     /// Creates new parent directories with mode `0700`. New files use mode
     /// `0600` on Unix in either policy. Existing parent directory permissions
-    /// are unchanged.
+    /// are unchanged; callers must ensure the directory and its ancestors
+    /// cannot be modified by untrusted users.
     pub fn private(mut self) -> Self {
         self.private = true;
         self
@@ -248,6 +252,16 @@ impl JsonStore {
         let mut name = self.path.as_os_str().to_owned();
         name.push(".lock");
         let path = PathBuf::from(name);
+        // Give a recovery hint even if opening a shared read-only lock fails.
+        // The descriptor check below remains authoritative after opening.
+        #[cfg(unix)]
+        if self.private {
+            if let Ok(metadata) = fs::metadata(&path) {
+                if metadata.is_file() {
+                    self.check_private_permissions(&metadata, &path)?;
+                }
+            }
+        }
         let mut options = fs::OpenOptions::new();
         options.create(true).truncate(false).write(true);
         #[cfg(unix)]
@@ -269,6 +283,9 @@ impl JsonStore {
 
     /// Reloads the latest data under the writer lock, applies `change`, and
     /// persists it. Missing data starts at `T::default()`.
+    /// Convert application errors with `map_err(crate::Error::other)` inside
+    /// the callback; the original type remains available through
+    /// [`crate::Error::downcast_ref`].
     ///
     /// # Errors
     ///

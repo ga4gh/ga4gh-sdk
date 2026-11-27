@@ -575,6 +575,22 @@ async fn layered_configuration_drives_a_downstream_authenticated_request() {
 fn json_store_supports_downstream_locked_updates() {
     use ga4gh_sdk::utils::json_store::{JsonStore, JsonStoreIoError};
 
+    #[derive(Debug, PartialEq)]
+    struct RejectedChange;
+
+    impl std::fmt::Display for RejectedChange {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("application rejected the change")
+        }
+    }
+
+    impl std::error::Error for RejectedChange {}
+
+    fn rejected_change(items: &mut Vec<String>) -> Result<(), RejectedChange> {
+        items.push("rejected item".into());
+        Err(RejectedChange)
+    }
+
     let dir = tempfile::tempdir().unwrap();
     let store = JsonStore::new(dir.path().join("state.json"), "application state");
     let count = store
@@ -588,6 +604,16 @@ fn json_store_supports_downstream_locked_updates() {
         store.read::<Vec<String>>().unwrap(),
         Some(vec!["new item".into()])
     );
+
+    let before = std::fs::read(store.path()).unwrap();
+    let error = store
+        .update::<Vec<String>, _>(|items| rejected_change(items).map_err(ga4gh_sdk::Error::other))
+        .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<RejectedChange>(),
+        Some(&RejectedChange)
+    );
+    assert_eq!(std::fs::read(store.path()).unwrap(), before);
 
     let invalid = JsonStore::new(dir.path().join("invalid\0.json"), "application state");
     let error = invalid.read::<Vec<String>>().unwrap_err();

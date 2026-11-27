@@ -109,9 +109,12 @@ the SDK. Its current production consumer is the CLI token store; Extensions
 Manager ([#64](https://github.com/ga4gh/ga4gh-sdk/issues/64)) will adopt it
 separately. The assumptions future consumers must confirm are a local
 filesystem, cooperating writers using the same path and lock file, and atomic
-replacement of one JSON document. Paths, schemas, missing-file defaults and
+replacement of one JSON document. The directory and its ancestors must be
+trusted: another user with directory write access can replace the lock file
+and bypass the lock. Paths, schemas, missing-file defaults and
 access policies remain caller-owned. Use `private()` for credential stores;
-on Unix it rejects broadly accessible data and lock files.
+on Unix it rejects broadly accessible data and lock files. It creates new
+parent directories with mode `0700` but does not secure existing directories.
 
 A caller can keep application state at its own path and update it under the
 writer lock:
@@ -127,7 +130,11 @@ let item_count = store.update::<Vec<String>, _>(|items| {
 ```
 
 The `json_store_supports_downstream_locked_updates` example test exercises
-this API and inspects the replacement status of an I/O failure.
+this API, preserves application errors, and inspects the replacement status
+of an I/O failure. Callbacks return `ga4gh_sdk::Result`; convert an application
+error with `app_operation(items).map_err(ga4gh_sdk::Error::other)?` inside the
+callback. The returned error retains its original type for
+`error.downcast_ref::<AppError>()`. A failed callback does not save its changes.
 
 `write` syncs the temporary file before replacement and, on Unix, the parent
 directory afterwards. A failure before replacement preserves the old file;

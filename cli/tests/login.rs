@@ -734,6 +734,32 @@ async fn login_without_a_refresh_token_says_that_it_expires() {
 
 #[tokio::test]
 async fn refreshed_tokens_are_used_when_store_replacement_fails() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct PersistenceWarning(AtomicBool);
+
+    impl log::Log for PersistenceWarning {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() == log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata())
+                && record.target() == "ga4gh_cli::login"
+                && record.args().to_string()
+                    == "Could not persist refreshed tokens; the next command may need a new login"
+            {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static WARNING: PersistenceWarning = PersistenceWarning(AtomicBool::new(false));
+    log::set_logger(&WARNING).unwrap();
+    log::set_max_level(log::LevelFilter::Warn);
+
     let mut server = mockito::Server::new_async().await;
     let prefix = "/login-refresh-write-failure";
     let dir = tempfile::TempDir::new().unwrap();
@@ -778,5 +804,9 @@ async fn refreshed_tokens_are_used_when_store_replacement_fails() {
     assert_eq!(
         std::fs::read_to_string(store_path.join("entry")).unwrap(),
         "preserved"
+    );
+    assert!(
+        WARNING.0.load(Ordering::SeqCst),
+        "a failed persistence attempt must warn that the next command may need a new login"
     );
 }

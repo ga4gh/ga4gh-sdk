@@ -156,19 +156,21 @@ fn private_stores_reject_an_existing_shared_lock_file() {
     store.write(&7).unwrap();
     let path = dir.path().join("state.json.lock");
     fs::write(&path, "existing lock file").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    for mode in [0o644, 0o444] {
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
 
-    let error = store.lock().unwrap_err();
-    assert!(error.to_string().contains("state.json.lock"));
-    assert!(error.to_string().contains("chmod 600"));
-    let result = store.update::<u64, ()>(|_| panic!("insecure lock must reject the update"));
-    assert!(result.is_err());
-    assert_eq!(store.read::<u64>().unwrap(), Some(7));
-    assert_eq!(fs::read_to_string(&path).unwrap(), "existing lock file");
-    assert_eq!(
-        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o644
-    );
+        let error = store.lock().unwrap_err();
+        assert!(error.to_string().contains("state.json.lock"));
+        assert!(error.to_string().contains("chmod 600"));
+        let result = store.update::<u64, ()>(|_| panic!("insecure lock must reject the update"));
+        assert!(result.is_err());
+        assert_eq!(store.read::<u64>().unwrap(), Some(7));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "existing lock file");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            mode
+        );
+    }
 
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     store
