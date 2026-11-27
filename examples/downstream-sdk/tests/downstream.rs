@@ -19,6 +19,39 @@ use std::process::Command;
 use std::process::ExitCode;
 use url::Url;
 
+#[test]
+fn native_extensions_use_explicit_downstream_paths() {
+    use ga4gh_sdk::utils::extension_manager::ExtensionManager;
+
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<ExtensionManager>();
+    send_sync::<ga4gh_sdk::utils::extension::ResolvedExtension>();
+    send_sync::<ga4gh_sdk::utils::extension::LoadedModule>();
+    send_sync::<ga4gh_sdk::utils::extension::ExtensionInstance>();
+    send_sync::<ga4gh_sdk::utils::extension::ExtensionMethod>();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("extensions.json");
+    let mut config =
+        Configuration::from_provider(figment::providers::Serialized::defaults(json!({
+            "base_path":"https://service.example.org/",
+            "extensions":[
+                {"name":"optional","required":false,"configuration":{}}
+            ]
+        })))
+        .unwrap();
+    // SAFETY: this registry is absent, so no native code can be loaded.
+    let manager = ExtensionManager::with_paths(&path, dir.path().join("native-artifacts")).unwrap();
+    let instances = unsafe { manager.from_configuration(&config) }.unwrap();
+    assert!(instances.is_empty());
+    config.extra["extensions"][0]["required"] = json!(true);
+    let error = unsafe { manager.from_configuration(&config) }.unwrap_err();
+    assert_eq!(
+        error.kind,
+        ga4gh_sdk::utils::extension::ExtensionErrorKind::Missing
+    );
+    assert!(!path.exists());
+}
+
 /// The API root `/<root>/ga4gh/tes/v1` on the mock server.
 fn api_root(server: &mockito::ServerGuard, root: &str) -> String {
     format!("{}/{root}/ga4gh/tes/v1", server.url())

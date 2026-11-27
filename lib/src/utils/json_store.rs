@@ -9,8 +9,8 @@
 //!
 //! This interface is public so the separate CLI crate can reuse SDK persistence
 //! without making the SDK depend on CLI authentication or application paths.
-//! Its current production consumer is the CLI token store; Extensions Manager
-//! is a future consumer tracked separately in issue #64. The shared invariant
+//! Its consumers are the CLI token store and the experimental Extensions
+//! Manager. The shared invariant
 //! is typed local JSON with atomic replacement and cooperating writer locks.
 //! Paths, schemas, missing-file defaults and access policies belong to callers;
 //! this does not establish an extension registry format or a database API.

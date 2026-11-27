@@ -36,6 +36,7 @@
 #![deny(missing_docs)]
 
 pub mod drs;
+pub mod extension;
 mod login;
 pub mod registry;
 mod render;
@@ -483,6 +484,7 @@ impl CliContext {
                     .help(profile_help),
             )
             .subcommand(drs::command())
+            .subcommand(extension::command())
             .subcommand(tes::command())
             .subcommand(trs::command())
             .subcommand(wes::command())
@@ -516,6 +518,7 @@ impl CliContext {
     pub async fn dispatch(&self, matches: &ArgMatches) -> anyhow::Result<Option<CommandOutput>> {
         let context = self.with_profile_from(matches);
         match matches.subcommand() {
+            Some(("extension", sub)) => return extension::run(sub, &context).await.map(Some),
             Some(("workflow", sub)) => {
                 return workflow::run_with_context(sub, None, &context)
                     .await
@@ -548,6 +551,7 @@ impl CliContext {
     ) -> anyhow::Result<Option<ExitCode>> {
         let context = self.with_profile_from(matches);
         let output = match matches.subcommand() {
+            Some(("extension", sub)) => Some(extension::run(sub, &context).await?),
             Some(("workflow", sub)) => Some(workflow::run_with_context(sub, None, &context).await?),
             Some(("login", sub)) => Some(login::run_login(sub, &context, stderr).await?),
             Some(("logout", sub)) => Some(login::run_logout(sub, &context)?),
@@ -568,7 +572,7 @@ impl CliContext {
 }
 
 /// The service whose configuration section a built-in command reads, or
-/// `None` for `workflow` and commands that this crate doesn't own.
+/// `None` for commands without a service section and downstream commands.
 /// `service-info` reads the section named by its `--service` option.
 fn built_in_service(matches: &ArgMatches) -> Option<ServiceType> {
     match matches.subcommand() {
@@ -601,7 +605,7 @@ pub async fn dispatch(matches: &ArgMatches) -> anyhow::Result<Option<CommandOutp
 /// Run a built-in command with a caller-supplied configuration for its service.
 ///
 /// Returns `None` for commands not owned by this crate, and for `login` and
-/// `logout`, which need a [`CliContext`]. The caller can inspect
+/// `logout` and `extension`, which need a [`CliContext`]. The caller can inspect
 /// or reformat both output streams without changing process-global state.
 pub async fn dispatch_with_config(
     matches: &ArgMatches,

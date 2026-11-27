@@ -12,6 +12,49 @@ use url::Url;
 
 mod sources;
 
+/// Settings passed to one explicitly loaded native extension.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServiceExtensionConfiguration {
+    /// The name in the installation registry.
+    #[serde(rename = "name")]
+    pub extension_name: String,
+    /// Whether absence or disabled status must fail initialization.
+    #[serde(default)]
+    pub required: bool,
+    /// Optional release version requirement. Absence uses the selected artifact.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Required capabilities and acceptable interface revisions.
+    #[serde(default)]
+    pub capabilities: crate::utils::extension::Capabilities,
+    /// Extension-specific JSON, defaulting to an empty object. Never in diagnostics.
+    #[serde(default = "empty_extension_configuration")]
+    pub configuration: Value,
+}
+fn empty_extension_configuration() -> Value {
+    Value::Object(Map::new())
+}
+
+/// The `extensions` array of a service section, retained in `Configuration::extra`.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct ServiceExtensionsConfiguration(Vec<ServiceExtensionConfiguration>);
+
+impl ServiceExtensionsConfiguration {
+    /// Returns the selected extensions in configuration order.
+    pub fn entries(&self) -> &[ServiceExtensionConfiguration] {
+        &self.0
+    }
+
+    /// Returns extension settings, or `None` if the name is not selected.
+    pub fn get_extension_config(&self, name: &str) -> Option<&Value> {
+        self.0
+            .iter()
+            .find(|entry| entry.extension_name == name)
+            .map(|entry| &entry.configuration)
+    }
+}
+
 /// Printed in `Debug` output in place of a value that is set but not meant to be shown.
 struct Redacted;
 

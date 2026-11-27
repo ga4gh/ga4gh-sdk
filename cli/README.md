@@ -939,3 +939,9 @@ variable or token variable describes them in a `ga4gh_cli::CliContext`:
 
 The guide [Build on this SDK](../docs/downstream.md) walks through an example
 crate.
+
+## Experimental extensions
+
+The `extension` commands install, list, enable, disable and remove native
+extensions without executing them. See the [extension guide](../docs/extensions.md)
+for manifests, configuration, migration from the PoC and the Rust loader API.

@@ -26,6 +26,26 @@ Run both suites on their own with:
 cargo test --locked -p ga4gh-lib --test configuration_sources --test json_store
 ```
 
+## Native extension manager
+
+The SDK's [`extensions.rs`](../lib/tests/extensions.rs) suite covers installation
+failures, registry locking across concurrent managers, settings from composed
+configuration sources, and the lifetime of a real shared library. It needs local
+HTTP sockets, temporary filesystem access, the repository's Rust toolchain, and
+a C compiler for the host target. The fixture compiles against the checked-in
+C ABI header. Tests cover buffer ownership, instance isolation and concurrency,
+admission during disable/removal, process version pins, and immutable updates.
+Python's `tests/test_extensions.py` compiles and calls the same C fixture through
+the bindings; it also requires a host C compiler. The CLI's
+[`extensions.rs`](../cli/tests/extensions.rs) checks caller-owned paths and command
+output. Both suites run with the default workspace tests and need no external
+services:
+
+```sh
+cargo test --locked -p ga4gh-lib --test extensions
+cargo test --locked -p ga4gh-cli --test extensions
+```
+
 ## Funnel/TES
 
 On Linux or macOS, download the matching archive from the
