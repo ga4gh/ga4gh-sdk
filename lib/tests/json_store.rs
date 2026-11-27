@@ -37,6 +37,32 @@ fn failed_changes_and_serialization_leave_previous_data_intact() {
 }
 
 #[test]
+fn update_holds_an_exclusive_lock_during_the_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JsonStore::new(dir.path().join("counter.json"), "counter");
+    // Create the documented lock file, then open an independent contender.
+    drop(store.lock().unwrap());
+    let contender = fs::OpenOptions::new()
+        .write(true)
+        .open(dir.path().join("counter.json.lock"))
+        .unwrap();
+    store
+        .update::<u64, _>(|counter| {
+            // This probe must contend even if all worker threads happen to
+            // run sequentially. Removing update's lock must fail this test.
+            assert!(matches!(
+                contender.try_lock(),
+                Err(fs::TryLockError::WouldBlock)
+            ));
+            *counter += 1;
+            Ok(())
+        })
+        .unwrap();
+    contender.try_lock().expect("update must release its lock");
+    assert_eq!(store.read::<u64>().unwrap(), Some(1));
+}
+
+#[test]
 fn independent_writers_reload_under_the_lock() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("counter.json");
