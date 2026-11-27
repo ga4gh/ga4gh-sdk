@@ -52,7 +52,7 @@ tests = [
 [dependency-groups]
 docs = [
     "mkdocs==1.6.1",
-    "mkdocs-material==9.8.1",
+    "mkdocs-material==9.8.2",
     "mkdocstrings==1.0.8",
     "mkdocstrings-python==2.0.11",
     "pymdown-extensions==13.1",
