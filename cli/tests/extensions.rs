@@ -11,7 +11,36 @@ async fn context_manages_extensions_without_a_service_configuration() {
     let context =
         CliContext::new("custom-cli", "1").with_config_path(dir.path().join("custom-config.json"));
     let registry = dir.path().join("extensions.json");
-    fs::write(&registry, json!({"registry_version":1,"extensions":[{"name":"example","selected":"0".repeat(128),"artifacts":[{"manifest":{"manifest_version":1,"name":"example","version":"1.0.0","target":"not-a-loadable-target","abi_version":1,"digest":"0".repeat(128),"capabilities":{},"path":"missing"},"library_path":dir.path().join("missing.so")}],"enabled":false}]}).to_string()).unwrap();
+    fs::write(
+        &registry,
+        json!({
+            "registry_version": 1,
+            "extensions": [
+                {
+                    "name": "example",
+                    "selected": "0".repeat(128),
+                    "artifacts": [
+                        {
+                            "manifest": {
+                                "manifest_version": 1,
+                                "name": "example",
+                                "version": "1.0.0",
+                                "target": "not-a-loadable-target",
+                                "abi_version": 1,
+                                "digest": "0".repeat(128),
+                                "capabilities": {},
+                                "path": "missing"
+                            },
+                            "library_path": dir.path().join("missing.so")
+                        }
+                    ],
+                    "enabled": false
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
     fs::write(dir.path().join("missing.so"), b"not executable").unwrap();
     for (operation, enabled) in [("enable", true), ("disable", false)] {
         let matches = context

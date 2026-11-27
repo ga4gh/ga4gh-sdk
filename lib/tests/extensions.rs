@@ -19,22 +19,43 @@ fn digest(bytes: &[u8]) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+
 fn manifest(dir: &Path, name: &str, version: &str, source: &str, bytes: &[u8]) -> PathBuf {
     let file = dir.join(format!("{name}-{version}-{}.json", digest(bytes)));
-    fs::write(&file,json!({"manifest_version":1,"name":name,"version":version,"path":source,"digest":digest(bytes),"target":HOST_TARGET,"abi_version":1,"capabilities":{"test":[1,2]}}).to_string()).unwrap();
+    fs::write(
+        &file,
+        json!({
+            "manifest_version": 1,
+            "name": name,
+            "version": version,
+            "path": source,
+            "digest": digest(bytes),
+            "target": HOST_TARGET,
+            "abi_version": 1,
+            "capabilities": {
+                "test": [1, 2]
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
     file
 }
+
 fn edit(path: &Path, change: impl FnOnce(&mut Value)) {
     let mut value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     change(&mut value);
     fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
 }
+
 fn caps() -> Capabilities {
-    serde_json::from_value(json!({"test":[1,2,3]})).unwrap()
+    serde_json::from_value(json!({"test": [1,2,3]})).unwrap()
 }
+
 fn manager(dir: &Path) -> ExtensionManager {
     ExtensionManager::with_paths(dir.join("registry.json"), dir.join("separate-artifacts")).unwrap()
 }
+
 async fn install_bytes(m: &mut ExtensionManager, dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
     let local = dir.join(format!("{name}-source"));
     fs::write(&local, bytes).unwrap();
@@ -42,6 +63,7 @@ async fn install_bytes(m: &mut ExtensionManager, dir: &Path, name: &str, bytes: 
     m.add_extension(&path).await.unwrap();
     path
 }
+
 fn compile(dir: &Path, name: &str, version: &str, extra: &[(&str, &str)]) -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let output = dir.join(format!("{name}-{version}{}", std::env::consts::DLL_SUFFIX));
@@ -102,6 +124,7 @@ fn compile(dir: &Path, name: &str, version: &str, extra: &[(&str, &str)]) -> Pat
     );
     output
 }
+
 fn wait(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !path.exists() {
@@ -109,6 +132,7 @@ fn wait(path: &Path) {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
+
 fn input(path: &Path) -> Vec<u8> {
     path.to_str().unwrap().as_bytes().to_vec()
 }
@@ -170,7 +194,10 @@ async fn metadata_operations_preserve_stale_and_concurrent_changes_without_loadi
         "LPT9.dll",
         "trailing.",
     ] {
-        assert!(first.remove_extension(name).is_err());
+        assert_eq!(
+            first.remove_extension(name).unwrap_err().kind,
+            ExtensionErrorKind::InvalidMetadata
+        );
     }
 }
 
@@ -187,7 +214,7 @@ async fn download_failures_and_concurrent_registry_updates() {
         .with_chunked_body(move |writer| {
             JsonStore::new(&registry_update, "Extension registry")
                 .update::<Value, _>(|v| {
-                    *v = json!({"registry_version":1,"extensions":[]});
+                    *v = json!({"registry_version": 1,"extensions": []});
                     Ok(())
                 })
                 .unwrap();
@@ -296,7 +323,7 @@ async fn explicit_resolution_negotiates_compatible_releases_without_fallback() {
             "resolver",
             None,
             None,
-            &serde_json::from_value(json!({"missing":[1]})).unwrap()
+            &serde_json::from_value(json!({"missing": [1]})).unwrap()
         )
         .unwrap_err()
         .kind,
@@ -318,14 +345,14 @@ async fn explicit_resolution_negotiates_compatible_releases_without_fallback() {
 async fn malformed_legacy_and_required_configuration_are_explicit_and_redacted() {
     let dir = tempfile::tempdir().unwrap();
     let registry = dir.path().join("registry.json");
-    fs::write(&registry, r#"{"extensions":[]}"#).unwrap();
+    fs::write(&registry, r#"{"extensions": []}"#).unwrap();
     assert_eq!(
         manager_error(dir.path()),
         ExtensionErrorKind::UnsupportedManifest
     );
     fs::write(
         &registry,
-        r#"{"registry_version":1,"extensions":[{"name":{"secret":"PRIVATE"}}]}"#,
+        r#"{"registry_version": 1,"extensions": [{"name": {"secret": "PRIVATE"}}]}"#,
     )
     .unwrap();
     let error = ExtensionManager::open(&registry).unwrap_err();
@@ -333,7 +360,23 @@ async fn malformed_legacy_and_required_configuration_are_explicit_and_redacted()
     fs::remove_file(&registry).unwrap();
     let m = manager(dir.path());
     let mut config = Configuration::default();
-    config.extra.insert("extensions".into(),json!([{"name":"missing","required":true,"configuration":{"secret":"PRIVATE"},"capabilities":{"test":[1]}}]));
+    config.extra.insert(
+        "extensions".into(),
+        json!([
+            {
+                "name": "missing",
+                "required": true,
+                "configuration": {
+                    "secret": "PRIVATE"
+                },
+                "capabilities": {
+                    "test": [
+                        1
+                    ]
+                }
+            }
+        ]),
+    );
     assert_eq!(
         unsafe { m.from_configuration(&config) }.unwrap_err().kind,
         ExtensionErrorKind::Missing
@@ -349,7 +392,7 @@ async fn malformed_legacy_and_required_configuration_are_explicit_and_redacted()
         .unwrap();
     assert_eq!(entries.get_extension_config("missing"), Some(&json!({})));
     assert!(unsafe { m.from_configuration(&config) }.unwrap().is_empty());
-    config.extra["extensions"] = json!({"secret":"PRIVATE"});
+    config.extra["extensions"] = json!({"secret": "PRIVATE"});
     let error = unsafe { m.from_configuration(&config) }.unwrap_err();
     assert!(!format!("{error:?} {error}").contains("PRIVATE"));
     assert!(!registry.exists());
@@ -357,14 +400,14 @@ async fn malformed_legacy_and_required_configuration_are_explicit_and_redacted()
     install_bytes(&mut present, dir.path(), "present", b"not executable").await;
     present.enable_extension("present").unwrap();
     config.extra["extensions"] =
-        json!([{"name":"present","required":false,"version":"^2","configuration":{}}]);
+        json!([{"name": "present","required": false,"version": "^2","configuration": {}}]);
     assert_eq!(
         unsafe { present.from_configuration(&config) }
             .unwrap_err()
             .kind,
         ExtensionErrorKind::NoMatchingArtifact
     );
-    config.extra["extensions"] = json!([{"name":"present","required":false,"capabilities":{"absent":[1]},"configuration":{}}]);
+    config.extra["extensions"] = json!([{"name": "present","required": false,"capabilities": {"absent": [1]},"configuration": {}}]);
     assert_eq!(
         unsafe { present.from_configuration(&config) }
             .unwrap_err()
@@ -378,6 +421,7 @@ async fn malformed_legacy_and_required_configuration_are_explicit_and_redacted()
         ExtensionErrorKind::UnsupportedManifest
     );
 }
+
 fn manager_error(dir: &Path) -> ExtensionErrorKind {
     ExtensionManager::open(dir.join("registry.json"))
         .unwrap_err()
@@ -551,14 +595,14 @@ async fn invalid_targets_and_resolver_failure_precedence_are_deterministic() {
             b"one".as_slice(),
             99,
             HOST_TARGET,
-            json!({"test":[1]}),
+            json!({"test": [1]}),
         ),
         (
             "2.0.0",
             b"two".as_slice(),
             1,
             "different-target",
-            json!({"test":[1]}),
+            json!({"test": [1]}),
         ),
         ("3.0.0", b"three".as_slice(), 1, HOST_TARGET, json!({})),
     ] {
@@ -717,12 +761,30 @@ async fn native_abi_lifetimes_instances_admission_and_process_versions() {
         assert!(touched.exists());
     });
     // Service configuration uses shared Figment sources; only instance JSON goes in.
-    let config=Configuration::from_provider(figment::providers::Serialized::defaults(json!({"base_path":"https://service.example/","bearer_access_token":"HOST_SECRET","extensions":[{"name":"fixture","required":true,"capabilities":{"test":[1]},"configuration":{"client":3}}]}))).unwrap();
+    let config = Configuration::from_provider(figment::providers::Serialized::defaults(json!({
+        "base_path": "https://service.example/",
+        "bearer_access_token": "HOST_SECRET",
+        "extensions": [
+            {
+                "name": "fixture",
+                "required": true,
+                "capabilities": {
+                    "test": [
+                        1
+                    ]
+                },
+                "configuration": {
+                    "client": 3
+                }
+            }
+        ]
+    })))
+    .unwrap();
     let selected = unsafe { m.from_configuration(&config) }.unwrap();
     assert_eq!(
         serde_json::from_slice::<Value>(&selected[0].invoke("test", "configuration", b"").unwrap())
             .unwrap(),
-        json!({"client":3})
+        json!({"client": 3})
     );
     drop(selected);
     // Installing/selecting v2 changes no active library and cannot retarget v1.
@@ -866,7 +928,7 @@ async fn api_header_checks_and_failed_validation_keep_the_process_pin() {
         library.to_str().unwrap(),
         &fs::read(&library).unwrap(),
     );
-    edit(&path, |v| v["capabilities"] = json!({"invented":[1]}));
+    edit(&path, |v| v["capabilities"] = json!({"invented": [1]}));
     m.add_extension(path).await.unwrap();
     m.enable_extension("descriptor").unwrap();
     let resolved = m

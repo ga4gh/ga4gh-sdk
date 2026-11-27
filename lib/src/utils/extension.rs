@@ -60,6 +60,7 @@ pub enum ExtensionErrorKind {
     /// Registry, installation, or coordination I/O failed.
     Storage,
 }
+
 /// Inspectable failure with redacted default formatting and explicit private details.
 pub struct ExtensionError {
     /// Failure classification.
@@ -73,6 +74,7 @@ pub struct ExtensionError {
     payload: Vec<u8>,
     cause: Option<crate::Error>,
 }
+
 impl ExtensionError {
     pub(crate) fn new(kind: ExtensionErrorKind) -> Self {
         Self {
@@ -84,27 +86,32 @@ impl ExtensionError {
             cause: None,
         }
     }
+
     pub(crate) fn caused(kind: ExtensionErrorKind, cause: impl Into<crate::Error>) -> Self {
         let mut e = Self::new(kind);
         e.cause = Some(cause.into());
         e
     }
+
     pub(crate) fn plugin(kind: ExtensionErrorKind, status: i32, payload: Vec<u8>) -> Self {
         let mut e = Self::new(kind);
         e.status = Some(status);
         e.payload = payload;
         e
     }
+
     /// Explicit access to plugin error bytes, which may include secrets.
     pub fn private_payload(&self) -> &[u8] {
         &self.payload
     }
 }
+
 impl fmt::Display for ExtensionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Extension error: {:?}", self.kind)
     }
 }
+
 impl fmt::Debug for ExtensionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ExtensionError")
@@ -113,11 +120,13 @@ impl fmt::Debug for ExtensionError {
             .finish_non_exhaustive()
     }
 }
+
 impl std::error::Error for ExtensionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.cause.as_ref().map(|x| x as _)
     }
 }
+
 /// Result of extension management, resolution, and execution.
 pub type ExtensionResult<T> = Result<T, ExtensionError>;
 
@@ -135,6 +144,7 @@ pub struct ArtifactIdentity {
     /// Native ABI revision.
     pub abi_version: u32,
 }
+
 /// Installation manifest. Reading it never executes native code.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Extension {
@@ -151,6 +161,7 @@ pub struct Extension {
     #[serde(default)]
     pub description: Option<String>,
 }
+
 impl fmt::Debug for Extension {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Extension")
@@ -160,6 +171,7 @@ impl fmt::Debug for Extension {
             .finish_non_exhaustive()
     }
 }
+
 /// Exported descriptor, encoded as UTF-8 JSON in the C API table.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtensionDescriptor {
@@ -174,6 +186,7 @@ pub struct ExtensionDescriptor {
     /// Advertised capability revisions.
     pub capabilities: Capabilities,
 }
+
 impl Extension {
     /// Reads and validates metadata without loading code. Legacy manifests need reinstalling.
     pub fn from_file(path: impl AsRef<Path>) -> ExtensionResult<Self> {
@@ -189,6 +202,7 @@ impl Extension {
         manifest.validate()?;
         Ok(manifest)
     }
+
     pub(crate) fn validate(&self) -> ExtensionResult<()> {
         if self.manifest_version != 1 {
             return Err(ExtensionError::new(ExtensionErrorKind::UnsupportedManifest));
@@ -218,6 +232,7 @@ impl Extension {
         }
         Ok(())
     }
+
     pub(crate) fn compatible(&self) -> ExtensionResult<()> {
         if self.artifact.abi_version != ga4gh_extension_abi::ABI_VERSION {
             return Err(ExtensionError::new(ExtensionErrorKind::UnsupportedAbi));
@@ -227,6 +242,7 @@ impl Extension {
         }
         Ok(())
     }
+
     pub(crate) fn descriptor(&self) -> ExtensionDescriptor {
         let mut capabilities = self.capabilities.clone();
         for revisions in capabilities.values_mut() {
@@ -241,6 +257,7 @@ impl Extension {
         }
     }
 }
+
 /// One immutable artifact installation. Contains no runtime state.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstalledArtifact {
@@ -249,6 +266,7 @@ pub struct InstalledArtifact {
     /// Managed library path.
     pub library_path: PathBuf,
 }
+
 /// Logical registration, with an explicit selected digest and multiple artifacts.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstalledExtension {
@@ -261,6 +279,7 @@ pub struct InstalledExtension {
     /// All registered artifacts of this extension.
     pub artifacts: Vec<InstalledArtifact>,
 }
+
 /// Exact, immutable resolver output; only the manager can construct it.
 #[derive(Debug, Clone)]
 pub struct ResolvedExtension {
@@ -268,15 +287,18 @@ pub struct ResolvedExtension {
     pub(crate) capabilities: NegotiatedCapabilities,
     pub(crate) registry: PathBuf,
 }
+
 impl ResolvedExtension {
     /// Exact name, release, target, digest, and ABI.
     pub fn artifact(&self) -> &ArtifactIdentity {
         &self.installation.manifest.artifact
     }
+
     /// Agreed interface revisions for requested capabilities.
     pub fn capabilities(&self) -> &NegotiatedCapabilities {
         &self.capabilities
     }
+
     /// Concrete managed library path.
     pub fn library_path(&self) -> &Path {
         &self.installation.library_path

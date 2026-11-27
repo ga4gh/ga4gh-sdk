@@ -9,9 +9,18 @@ extern "C" {
 #define GA4GH_EXTENSION_ABI_V1 1u
 #define GA4GH_EXTENSION_OK 0
 
-typedef struct { const uint8_t *data; size_t len; } Ga4ghBytes;
-typedef struct { uint8_t *data; size_t len; } Ga4ghOwnedBytes;
-typedef struct { uint32_t abi_version; uint32_t struct_size; } Ga4ghHeader;
+typedef struct {
+    const uint8_t *data;
+    size_t len;
+} Ga4ghBytes;
+typedef struct {
+    uint8_t *data;
+    size_t len;
+} Ga4ghOwnedBytes;
+typedef struct {
+    uint32_t abi_version;
+    uint32_t struct_size;
+} Ga4ghHeader;
 typedef struct Ga4ghExtensionApiV1 {
     Ga4ghHeader header;
     /* Borrowed UTF-8 JSON: name, version, target, abi_version, capabilities.

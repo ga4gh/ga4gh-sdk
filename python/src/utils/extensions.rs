@@ -47,6 +47,7 @@ fn release<T: Send>(value: T) {
 pub struct PyExtensionManager {
     pub inner: Manager,
 }
+
 #[pymethods]
 impl PyExtensionManager {
     /// Return this loader's full target triple for installation manifests.
@@ -185,6 +186,7 @@ impl PyExtensionManager {
 pub struct PyResolvedExtension {
     pub inner: ResolvedExtension,
 }
+
 #[pymethods]
 impl PyResolvedExtension {
     /// Return a copy of the exact version, target, digest, and ABI identity.
@@ -206,16 +208,19 @@ impl PyResolvedExtension {
 pub struct PyExtensionModule {
     inner: Option<Arc<LoadedModule>>,
 }
+
 impl PyExtensionModule {
     /// Wraps a valid SDK handle for downstream bindings.
     pub fn from_inner(inner: Arc<LoadedModule>) -> Self {
         Self { inner: Some(inner) }
     }
+
     /// Borrows the SDK handle without exposing the wrapper's release state.
     pub fn inner(&self) -> &Arc<LoadedModule> {
         self.inner.as_ref().expect("live native wrapper")
     }
 }
+
 #[pymethods]
 impl PyExtensionModule {
     /// Return a copy of the validated exported API descriptor.
@@ -227,6 +232,7 @@ impl PyExtensionModule {
         )
     }
 }
+
 impl Drop for PyExtensionModule {
     fn drop(&mut self) {
         release(self.inner.take());
@@ -238,16 +244,19 @@ impl Drop for PyExtensionModule {
 pub struct PyExtensionInstance {
     inner: Option<ExtensionInstance>,
 }
+
 impl PyExtensionInstance {
     /// Wraps a valid SDK handle for downstream bindings.
     pub fn from_inner(inner: ExtensionInstance) -> Self {
         Self { inner: Some(inner) }
     }
+
     /// Borrows the SDK handle without exposing the wrapper's release state.
     pub fn inner(&self) -> &ExtensionInstance {
         self.inner.as_ref().expect("live native wrapper")
     }
 }
+
 #[pymethods]
 impl PyExtensionInstance {
     /// Return a copy of the instance capability interface revisions.
@@ -302,6 +311,7 @@ impl PyExtensionInstance {
             .map_err(|e| error(py, e))
     }
 }
+
 impl Drop for PyExtensionInstance {
     fn drop(&mut self) {
         release(self.inner.take());
@@ -313,16 +323,19 @@ impl Drop for PyExtensionInstance {
 pub struct PyExtensionMethod {
     inner: Option<ExtensionMethod>,
 }
+
 impl PyExtensionMethod {
     /// Wraps a valid SDK handle for downstream bindings.
     pub fn from_inner(inner: ExtensionMethod) -> Self {
         Self { inner: Some(inner) }
     }
+
     /// Borrows the SDK handle without exposing the wrapper's release state.
     pub fn inner(&self) -> &ExtensionMethod {
         self.inner.as_ref().expect("live native wrapper")
     }
 }
+
 #[pymethods]
 impl PyExtensionMethod {
     /// Invoke the bound operation without the GIL.
@@ -336,11 +349,13 @@ impl PyExtensionMethod {
         Ok(PyBytes::new(py, &result).unbind())
     }
 }
+
 impl Drop for PyExtensionMethod {
     fn drop(&mut self) {
         release(self.inner.take());
     }
 }
+
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     let error = py.get_type::<ExtensionError>();
     error.setattr("kind", "")?;
