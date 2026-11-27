@@ -32,12 +32,25 @@ platform ABI. Rust callers can read `extension::HOST_TARGET`; Python callers use
 `ExtensionManager.host_target()`. Replace `digest` with the SHA-512 digest of the
 library bytes. Release versions use SemVer. Capability interface revisions are
 independent positive integers. Names contain ASCII letters, digits, `-`, `_`,
-and `.`; empty names, `.` and `..` are rejected.
+and `.`; empty names, `.`, `..`, trailing dots, and Windows device names
+such as `CON`, `NUL`, and `COM1` (including names with extensions) are rejected.
+Targets contain only ASCII letters, digits, `-`, `_`, and `.`.
 
 `path` accepts a local file relative to the manifest, an absolute local file, or
 an HTTP(S) URL without userinfo or a fragment. Local files are copied into managed
 storage; applications and Python packages need no download. Both source paths
 verify the bytes before publication. Installation never executes the library.
+Manifests are trusted installation instructions: the caller must approve their
+source paths and network destinations before installation. Private repositories
+are supported; the manager does not apply a public-network allowlist. HTTP
+redirects are rejected, so manifests must name the final artifact URL. HTTP(S)
+schemes are case insensitive. After download, persisted metadata replaces the
+source with the managed library filename, discarding URL query tokens and source
+paths. Debug output omits the source even before installation.
+
+Each artifact is limited to 512 MiB (`MAX_ARTIFACT_BYTES`), for local files,
+HTTP responses (including streamed bodies), and installed libraries at load time.
+Oversized artifacts return `ArtifactTooLarge`; hashing uses bounded chunks.
 
 Artifacts are published at
 `<installation-root>/<name>/<digest>/library.<platform suffix>`. Published files
@@ -106,7 +119,10 @@ artifact. A release requirement such as `Some("^1.2")` chooses the highest
 compatible installed release. A digest pins exact bytes. Matching releases with
 the same precedence and different digests require a pin or return
 `AmbiguousArtifact`. Each required capability negotiates its highest common
-interface revision. Resolution never loads code.
+interface revision. If no candidate is compatible, the error precedence is
+`MissingCapability`, `TargetMismatch`, `UnsupportedAbi`, then
+`NoMatchingArtifact`: the closest usable candidate determines the classification,
+independent of installation order. Resolution never loads code.
 
 `ResolvedExtension` freezes the version, target, digest, ABI, artifact location,
 and negotiated interfaces. Creation uses exactly that result. Selecting another
@@ -157,8 +173,10 @@ service's `extensions` array stays in `Configuration::extra`:
 
 `unsafe { manager.from_configuration(&configuration) }` returns independent
 instances. Only each entry's JSON `configuration` is passed to its creator;
-service credentials are not forwarded. Missing or disabled optional entries are
-skipped. A present enabled entry with incompatible requirements or failed
+service credentials are not forwarded. Omitted `configuration` defaults to an
+empty JSON object; an explicit `null` stays `null`. Missing or disabled optional
+entries are skipped, including when disabled or removed between resolution and
+instance admission. A present enabled entry with incompatible requirements or failed
 initialization returns an error. `required` enforces availability and loading,
 including required capabilities; it adds no attestation or appraisal policy.
 

@@ -126,6 +126,10 @@ explicit version requirement can select the highest compatible installed release
 Use a maintained semantic-version parser for release requirements. Two matching
 artifacts with the same release version and different digests require an exact
 selection or digest pin; resolution otherwise returns `AmbiguousArtifact`.
+When all matching artifacts are incompatible, classify the closest usable
+candidate deterministically: `MissingCapability` takes precedence over
+`TargetMismatch`, then `UnsupportedAbi`, then `NoMatchingArtifact`.
+Installation order does not change the failure classification.
 
 Before loading, verify the installed bytes against the resolved digest. After
 loading, verify the actual exported ABI, identity, and capability interfaces
@@ -193,13 +197,25 @@ The caller supplies registry and installation-root paths. Neither path depends
 on CLI defaults, the current directory, or service credentials. Installation
 accepts a downloaded artifact or a local artifact copied into managed storage.
 Both paths verify metadata and digest before registration; a network download
-is not required for Rust applications or Python packages.
+is not required for Rust applications or Python packages. A manifest is a trusted
+installation instruction: the caller approves its local source or network
+destination, including private repositories. The downloader rejects redirects
+and limits each artifact to 512 MiB, checking both declared and streamed sizes.
+Installed-library hashing also enforces the limit and uses bounded chunks.
+Persisted manifests replace source URLs/paths with the managed library filename;
+query tokens and other source details are not retained. Registry paths resolve
+existing symlinks and parent aliases before locking or atomic replacement.
 
 Artifacts use separate immutable paths identified by digest. Installing another
 release never overwrites a library that a process might use. Preparation happens
 outside the registry lock. Publishing registration and its selected-artifact
 pointer uses one atomic `JsonStore` update under the lock. Installing the first
 artifact leaves the extension disabled; changing versions preserves enablement.
+On Unix, staged contents and the published artifact directory and its ancestors
+are synced before the registry update. Other platforms retain JsonStore's
+file-sync behavior without directory sync; power-loss durability depends on the
+filesystem and platform. Publication or sync failure leaves artifacts unregistered
+or retained; it never deletes a previously published library.
 
 `remove` retains artifact files, including files potentially used by another
 process. CLI output and documentation must state that removal does not reclaim

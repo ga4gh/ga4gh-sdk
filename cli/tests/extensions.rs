@@ -56,7 +56,7 @@ async fn context_manages_extensions_without_a_service_configuration() {
     assert!(listed.contains("2.0.0"));
     assert!(listed.contains(&"1".repeat(128)));
     assert!(stderr.is_empty());
-    let digest = "0".repeat(128);
+    let digest = "1".repeat(128);
     let matches = context
         .command()
         .try_get_matches_from(["custom-cli", "extension", "select", "example", &digest])
@@ -68,6 +68,9 @@ async fn context_manages_extensions_without_a_service_configuration() {
         .unwrap()
         .stdout
         .is_empty());
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(&registry).unwrap()).unwrap();
+    assert_eq!(persisted["extensions"][0]["selected"], digest);
     let matches = context
         .command()
         .try_get_matches_from(["custom-cli", "extension", "remove", "example"])

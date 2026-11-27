@@ -1,5 +1,6 @@
 """The Python API uses the Rust C ABI loader and owns native resources safely."""
 from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import gc
 import hashlib
 import json
@@ -137,3 +138,50 @@ def test_management_never_executes_library(tmp_path):
     manager.disable("metadata-only")
     manager.remove("metadata-only")
     assert manager.list() == []
+
+
+def test_installation_sources_and_resource_errors_are_redacted(tmp_path):
+    body = b"metadata only"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            assert self.path == "/artifact?token=PRIVATE_TOKEN"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    registry = tmp_path / "registry.json"
+    manager = ExtensionManager(str(registry), str(tmp_path / "artifacts"))
+    manifest = tmp_path / "manifest.json"
+    metadata = {
+        "manifest_version": 1, "name": "python-source", "version": "1.0.0",
+        "target": manager.host_target(), "abi_version": 1,
+        "digest": hashlib.sha512(body).hexdigest(), "capabilities": {},
+    }
+    with HTTPServer(("127.0.0.1", 0), Handler) as server:
+        metadata["path"] = f"http://127.0.0.1:{server.server_port}/artifact?token=PRIVATE_TOKEN"
+        manifest.write_text(json.dumps(metadata))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(server.serve_forever)
+            try:
+                manager.install(str(manifest))
+            finally:
+                server.shutdown()
+            future.result(timeout=5)
+    installed = manager.list()
+    assert "PRIVATE_TOKEN" not in json.dumps(installed) + registry.read_text()
+    artifact = installed[0]["artifacts"][0]
+    assert artifact["manifest"]["path"] == Path(artifact["library_path"]).name
+    source = tmp_path / "too-large"
+    with source.open("wb") as stream:
+        stream.truncate(512 * 1024 * 1024 + 1)
+    metadata["path"] = str(source)
+    manifest.write_text(json.dumps(metadata))
+    with pytest.raises(ExtensionError) as failure:
+        manager.install(str(manifest))
+    assert failure.value.kind == "ArtifactTooLarge"
+    assert manager.list() == installed

@@ -34,12 +34,41 @@ pub struct ExtensionManager {
     root: PathBuf,
     snapshot: Registry,
 }
+// Resolve existing components, including symlinks, without creating missing paths.
 fn absolute(path: &Path) -> ExtensionResult<PathBuf> {
-    Ok(if path.is_absolute() {
-        path.to_owned()
-    } else {
-        std::env::current_dir().map_err(extension::io)?.join(path)
-    })
+    let absolute = std::path::absolute(path).map_err(extension::io)?;
+    let mut resolved = PathBuf::new();
+    for component in absolute.components() {
+        if component == std::path::Component::ParentDir {
+            resolved.pop();
+            continue;
+        }
+        resolved.push(component);
+        match fs::canonicalize(&resolved) {
+            Ok(path) => resolved = path,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // A dangling link must not later be replaced by an atomic write.
+                if fs::symlink_metadata(&resolved).is_ok() {
+                    return Err(extension::io(e));
+                }
+            }
+            Err(e) => return Err(extension::io(e)),
+        }
+    }
+    Ok(resolved)
+}
+// JsonStore syncs a replaced file's immediate parent. Artifact publication also
+// needs its renamed directory and ancestor entries persisted before registration.
+fn sync_artifact_directories(directory: &Path) -> ExtensionResult<()> {
+    #[cfg(unix)]
+    for path in directory.ancestors() {
+        fs::File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(extension::io)?;
+    }
+    #[cfg(not(unix))]
+    let _ = directory;
+    Ok(())
 }
 impl ExtensionManager {
     /// Opens metadata with installations beside the registry in `extensions/`.
@@ -144,7 +173,7 @@ impl ExtensionManager {
     /// Never executes native code. Unregistered files are retained on write failure.
     pub async fn add_extension(&mut self, path: impl AsRef<Path>) -> ExtensionResult<()> {
         let path = path.as_ref();
-        let manifest = Extension::from_file(path)?;
+        let mut manifest = Extension::from_file(path)?;
         self.check_root(&manifest.artifact.name)?;
         fs::create_dir_all(&self.root).map_err(extension::io)?;
         let root = fs::canonicalize(&self.root).map_err(extension::io)?;
@@ -152,15 +181,16 @@ impl ExtensionManager {
         let filename = format!("library{}", std::env::consts::DLL_SUFFIX);
         let prepared = staging.path().join(&filename);
         let mut file = fs::File::create(&prepared).map_err(extension::io)?;
-        let mut digest = Sha512::new();
-        if manifest.path.starts_with("http://") || manifest.path.starts_with("https://") {
-            let url = url::Url::parse(&manifest.path)
-                .map_err(|_| ExtensionError::new(ExtensionErrorKind::InvalidMetadata))?;
+        let parsed_url = url::Url::parse(&manifest.path).ok();
+        let digest = if let Some(url) =
+            parsed_url.filter(|url| matches!(url.scheme(), "http" | "https"))
+        {
             if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
                 return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
             }
             let mut response = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(60))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|e| ExtensionError::caused(ExtensionErrorKind::Storage, e))?
                 .get(url)
@@ -169,42 +199,40 @@ impl ExtensionManager {
                 .map_err(|e| ExtensionError::caused(ExtensionErrorKind::Storage, e))?
                 .error_for_status()
                 .map_err(|e| ExtensionError::caused(ExtensionErrorKind::Storage, e))?;
+            if !response.status().is_success() {
+                return Err(ExtensionError::new(ExtensionErrorKind::Storage));
+            }
+            extension::artifact_size(response.content_length().unwrap_or(0))?;
+            let mut digest = Sha512::new();
+            let mut length = 0;
             while let Some(chunk) = response
                 .chunk()
                 .await
                 .map_err(|e| ExtensionError::caused(ExtensionErrorKind::Storage, e))?
             {
+                length += chunk.len() as u64;
+                extension::artifact_size(length)?;
                 digest.update(&chunk);
                 file.write_all(&chunk).map_err(extension::io)?;
             }
+            extension::digest_hex(digest.finalize())
         } else {
             if manifest.path.contains("://") || manifest.path.is_empty() {
                 return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
             }
             let source = path.parent().unwrap_or(Path::new(".")).join(&manifest.path);
-            let mut source = fs::File::open(source).map_err(extension::io)?;
-            use std::io::Read;
-            let mut chunk = [0u8; 65536];
-            loop {
-                let n = source.read(&mut chunk).map_err(extension::io)?;
-                if n == 0 {
-                    break;
-                }
-                digest.update(&chunk[..n]);
-                file.write_all(&chunk[..n]).map_err(extension::io)?;
-            }
-        }
+            let source = fs::File::open(source).map_err(extension::io)?;
+            extension::artifact_size(source.metadata().map_err(extension::io)?.len())?;
+            extension::copy_artifact(source, &mut file)?
+        };
         file.sync_all().map_err(extension::io)?;
         drop(file);
-        if digest
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-            != manifest.artifact.digest
-        {
+        if digest != manifest.artifact.digest {
             return Err(ExtensionError::new(ExtensionErrorKind::DigestMismatch));
         }
+        // Installation sources may contain query tokens or private local paths.
+        // Persist only the relative filename of the verified managed artifact.
+        manifest.path = filename.clone();
         JsonStore::new(staging.path().join("manifest.json"), "Extension manifest")
             .write(&manifest)
             .map_err(extension::storage)?;
@@ -232,11 +260,7 @@ impl ExtensionManager {
                 if destination.join(&filename).is_symlink() {
                     return Err(ExtensionError::new(ExtensionErrorKind::Storage));
                 }
-                let bytes = fs::read(destination.join(&filename)).map_err(extension::io)?;
-                let existing_digest: String = Sha512::digest(&bytes)
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect();
+                let existing_digest = extension::hash_artifact(&destination.join(&filename))?;
                 if existing_digest != digest {
                     return Err(ExtensionError::new(ExtensionErrorKind::DigestMismatch));
                 }
@@ -247,9 +271,11 @@ impl ExtensionManager {
                     return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
                 }
             } else {
+                sync_artifact_directories(staging.path())?;
                 fs::rename(staging.path(), &destination).map_err(extension::io)?;
             }
         }
+        sync_artifact_directories(&destination)?;
         // Never overwrite published files, or delete artifacts on registry failure.
         let store = self.store();
         let _lock = store.lock().map_err(extension::storage)?;
@@ -348,7 +374,7 @@ impl ExtensionManager {
             Ok(())
         })
     }
-    /// Resolves fresh metadata without executing code. No requirement uses the
+    /// Resolves fresh metadata without executing code. Without a requirement, uses the
     /// selected digest; an explicit version requirement chooses the highest compatible
     /// release. Required capabilities map names to acceptable positive revisions.
     pub fn resolve(
@@ -379,7 +405,9 @@ impl ExtensionManager {
             return Err(ExtensionError::new(ExtensionErrorKind::Disabled));
         }
         let mut candidates = vec![];
-        let mut failure = ExtensionErrorKind::NoMatchingArtifact;
+        // Prefer the closest usable artifact: ABI supported, then host target,
+        // then capabilities. This classification is independent of install order.
+        let mut failures = [false; 3];
         for artifact in &record.artifacts {
             let identity = &artifact.manifest.artifact;
             if digest.is_some_and(|d| d != identity.digest)
@@ -391,7 +419,7 @@ impl ExtensionManager {
                 continue;
             }
             if let Err(e) = artifact.manifest.compatible() {
-                failure = e.kind;
+                failures[usize::from(e.kind == ExtensionErrorKind::TargetMismatch)] = true;
                 continue;
             }
             let mut negotiated = NegotiatedCapabilities::new();
@@ -406,7 +434,7 @@ impl ExtensionManager {
                 }
             }
             if negotiated.len() != required.len() {
-                failure = ExtensionErrorKind::MissingCapability;
+                failures[2] = true;
                 continue;
             }
             candidates.push((artifact, negotiated));
@@ -418,6 +446,15 @@ impl ExtensionManager {
                 .cmp_precedence(&a.0.manifest.artifact.version)
         });
         let Some((installation, capabilities)) = candidates.first() else {
+            let failure = if failures[2] {
+                ExtensionErrorKind::MissingCapability
+            } else if failures[1] {
+                ExtensionErrorKind::TargetMismatch
+            } else if failures[0] {
+                ExtensionErrorKind::UnsupportedAbi
+            } else {
+                ExtensionErrorKind::NoMatchingArtifact
+            };
             return Err(ExtensionError::new(failure));
         };
         if candidates.get(1).is_some_and(|other| {
@@ -500,27 +537,94 @@ impl ExtensionManager {
             if !seen.insert(&entry.extension_name) {
                 return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
             }
-            let resolved = match self.resolve(
-                &entry.extension_name,
-                entry.version.as_deref(),
-                None,
-                &entry.capabilities,
-            ) {
-                Err(e)
-                    if !entry.required
-                        && matches!(
-                            e.kind,
-                            ExtensionErrorKind::Missing | ExtensionErrorKind::Disabled
-                        ) =>
-                {
-                    continue
-                }
-                other => other?,
+            let Some(resolved) = optional_entry(
+                entry.required,
+                self.resolve(
+                    &entry.extension_name,
+                    entry.version.as_deref(),
+                    None,
+                    &entry.capabilities,
+                ),
+            )?
+            else {
+                continue;
             };
             let config = serde_json::to_vec(&entry.configuration)
                 .map_err(|_| ExtensionError::new(ExtensionErrorKind::InvalidMetadata))?;
-            instances.push(unsafe { self.create_instance(&resolved, &config) }?);
+            if let Some(instance) = optional_entry(entry.required, unsafe {
+                self.create_instance(&resolved, &config)
+            })? {
+                instances.push(instance);
+            }
         }
         Ok(instances)
+    }
+}
+
+// Apply the same optional-entry policy at resolution and at fresh admission.
+fn optional_entry<T>(required: bool, result: ExtensionResult<T>) -> ExtensionResult<Option<T>> {
+    match result {
+        Err(e)
+            if !required
+                && matches!(
+                    e.kind,
+                    ExtensionErrorKind::Missing | ExtensionErrorKind::Disabled
+                ) =>
+        {
+            Ok(None)
+        }
+        other => other.map(Some),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn optional_entries_skip_fresh_admission_failures_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut manager = ExtensionManager::open(dir.path().join("registry.json")).unwrap();
+        let source = dir.path().join("source");
+        fs::write(&source, b"not native code").unwrap();
+        let manifest = dir.path().join("manifest.json");
+        let value = serde_json::json!({"manifest_version":1,"name":"optional-race","version":"1.0.0","target":HOST_TARGET,"abi_version":1,"digest":extension::hash_artifact(&source).unwrap(),"path":"source","capabilities":{}});
+        fs::write(&manifest, value.to_string()).unwrap();
+        manager.add_extension(manifest).await.unwrap();
+        for expected in [ExtensionErrorKind::Disabled, ExtensionErrorKind::Missing] {
+            manager.enable_extension("optional-race").unwrap();
+            let resolved = manager
+                .resolve("optional-race", None, None, &Capabilities::new())
+                .unwrap();
+            // Resolve succeeds; another manager changes metadata before admission.
+            let mut concurrent = manager.clone();
+            if expected == ExtensionErrorKind::Disabled {
+                concurrent.disable_extension("optional-race").unwrap();
+            } else {
+                concurrent.remove_extension("optional-race").unwrap();
+            }
+            assert!(
+                optional_entry(false, unsafe { manager.create_instance(&resolved, b"{}") })
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                optional_entry(true, unsafe { manager.create_instance(&resolved, b"{}") })
+                    .unwrap_err()
+                    .kind,
+                expected
+            );
+        }
+        assert_eq!(
+            optional_entry::<()>(
+                false,
+                Err(ExtensionError::new(
+                    ExtensionErrorKind::InitializationFailed
+                ))
+            )
+            .unwrap_err()
+            .kind,
+            ExtensionErrorKind::InitializationFailed
+        );
     }
 }

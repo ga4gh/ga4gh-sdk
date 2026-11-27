@@ -51,16 +51,6 @@ pub(crate) fn is_loaded(name: &str) -> bool {
 // to implement the ABI, allocation, lifetime, and cross-thread contract.
 pub(crate) unsafe fn load(resolved: &ResolvedExtension) -> ExtensionResult<Arc<LoadedModule>> {
     let manifest = &resolved.installation.manifest;
-    manifest.compatible()?;
-    let bytes = std::fs::read(resolved.library_path()).map_err(io)?;
-    use sha2::{Digest, Sha512};
-    let digest = Sha512::digest(&bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    if digest != manifest.artifact.digest {
-        return Err(ExtensionError::new(ExtensionErrorKind::DigestMismatch));
-    }
     let slot = {
         let mut slots = guard(slots());
         slots
@@ -78,6 +68,10 @@ pub(crate) unsafe fn load(resolved: &ResolvedExtension) -> ExtensionResult<Arc<L
             e.requested = Some(Box::new(manifest.artifact.clone()));
             return Err(e);
         }
+    }
+    manifest.compatible()?;
+    if hash_artifact(resolved.library_path())? != manifest.artifact.digest {
+        return Err(ExtensionError::new(ExtensionErrorKind::DigestMismatch));
     }
     if let Some(module) = state.module.upgrade() {
         if module.descriptor != manifest.descriptor() {

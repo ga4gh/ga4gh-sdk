@@ -157,7 +157,19 @@ async fn metadata_operations_preserve_stale_and_concurrent_changes_without_loadi
     let artifact = first.get_extensions()[0].artifacts[0].library_path.clone();
     first.remove_extension("second").unwrap();
     assert!(artifact.exists());
-    for name in ["..", ".", "", "../outside", "a/b", "a\\b"] {
+    for name in [
+        "..",
+        ".",
+        "",
+        "../outside",
+        "a/b",
+        "a\\b",
+        "CON",
+        "nul",
+        "Com1",
+        "LPT9.dll",
+        "trailing.",
+    ] {
         assert!(first.remove_extension(name).is_err());
     }
 }
@@ -327,6 +339,15 @@ async fn malformed_legacy_and_required_configuration_are_explicit_and_redacted()
         ExtensionErrorKind::Missing
     );
     config.extra["extensions"][0]["required"] = json!(false);
+    config.extra["extensions"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("configuration");
+    let entries = config
+        .extra_as::<ga4gh_sdk::utils::configuration::ServiceExtensionsConfiguration>("extensions")
+        .unwrap()
+        .unwrap();
+    assert_eq!(entries.get_extension_config("missing"), Some(&json!({})));
     assert!(unsafe { m.from_configuration(&config) }.unwrap().is_empty());
     config.extra["extensions"] = json!({"secret":"PRIVATE"});
     let error = unsafe { m.from_configuration(&config) }.unwrap_err();
@@ -361,6 +382,222 @@ fn manager_error(dir: &Path) -> ExtensionErrorKind {
     ExtensionManager::open(dir.join("registry.json"))
         .unwrap_err()
         .kind
+}
+
+#[tokio::test]
+async fn downloads_bound_resources_redact_sources_and_never_follow_redirects() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut m = manager(dir.path());
+    let mut server = mockito::Server::new_async().await;
+    let bytes = b"verified artifact";
+    let request = server
+        .mock("GET", "/artifact?token=PRIVATE_TOKEN")
+        .with_body(bytes)
+        .create_async()
+        .await;
+    let source =
+        format!("{}/artifact?token=PRIVATE_TOKEN", server.url()).replacen("http:", "HtTp:", 1);
+    let path = manifest(dir.path(), "download-policy", "1.0.0", &source, bytes);
+    assert!(!format!("{:?}", Extension::from_file(&path).unwrap()).contains("PRIVATE_TOKEN"));
+    m.add_extension(&path).await.unwrap();
+    request.assert_async().await;
+    let installed = &m.get_extensions()[0].artifacts[0];
+    assert_eq!(
+        installed.manifest.path,
+        installed
+            .library_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    for path in [
+        dir.path().join("registry.json"),
+        installed
+            .library_path
+            .parent()
+            .unwrap()
+            .join("manifest.json"),
+    ] {
+        assert!(!fs::read_to_string(path).unwrap().contains("PRIVATE_TOKEN"));
+    }
+    assert!(!format!("{m:?}").contains("PRIVATE_TOKEN"));
+    let before = fs::read(dir.path().join("registry.json")).unwrap();
+    let destination = server
+        .mock("GET", "/never-requested")
+        .expect(0)
+        .create_async()
+        .await;
+    let redirect = server
+        .mock("GET", "/redirect")
+        .with_status(302)
+        .with_header("location", &format!("{}/never-requested", server.url()))
+        .create_async()
+        .await;
+    let path = manifest(
+        dir.path(),
+        "redirected",
+        "1.0.0",
+        &format!("{}/redirect", server.url()),
+        bytes,
+    );
+    assert_eq!(
+        m.add_extension(path).await.unwrap_err().kind,
+        ExtensionErrorKind::Storage
+    );
+    redirect.assert_async().await;
+    destination.assert_async().await;
+    // A raw response retains its declared length (mockito rewrites it to body size).
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let responder = std::thread::spawn(move || {
+        use std::io::{BufRead, Write};
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = std::io::BufReader::new(&mut socket);
+        let mut request = String::new();
+        loop {
+            assert!(reader.read_line(&mut request).unwrap() > 0);
+            assert!(request.len() <= 16384);
+            if request.ends_with("\r\n\r\n") {
+                break;
+            }
+        }
+        write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            MAX_ARTIFACT_BYTES + 1
+        )
+        .unwrap();
+    });
+    let path = manifest(
+        dir.path(),
+        "too-large",
+        "1.0.0",
+        &format!("http://{address}/large"),
+        bytes,
+    );
+    assert_eq!(
+        m.add_extension(path).await.unwrap_err().kind,
+        ExtensionErrorKind::ArtifactTooLarge
+    );
+    responder.join().unwrap();
+    let source = dir.path().join("sparse-library");
+    fs::File::create(&source)
+        .unwrap()
+        .set_len(MAX_ARTIFACT_BYTES + 1)
+        .unwrap();
+    let path = manifest(
+        dir.path(),
+        "too-large",
+        "1.0.0",
+        source.to_str().unwrap(),
+        bytes,
+    );
+    assert_eq!(
+        m.add_extension(path).await.unwrap_err().kind,
+        ExtensionErrorKind::ArtifactTooLarge
+    );
+    assert_eq!(before, fs::read(dir.path().join("registry.json")).unwrap());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn registry_aliases_share_updates_and_preserve_symlinks() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = manager(dir.path());
+    install_bytes(&mut first, dir.path(), "aliased", b"not executable").await;
+    let alias = dir.path().join("alias.json");
+    symlink(dir.path().join("registry.json"), &alias).unwrap();
+    let parent_alias = dir.path().join("parent-alias");
+    symlink(dir.path(), &parent_alias).unwrap();
+    let mut via_file = ExtensionManager::open(&alias).unwrap();
+    let mut via_parent = ExtensionManager::open(parent_alias.join("registry.json")).unwrap();
+    via_file.enable_extension("aliased").unwrap();
+    first.refresh().unwrap();
+    assert!(first.get_extensions()[0].enabled);
+    assert!(alias.is_symlink());
+    via_parent.disable_extension("aliased").unwrap();
+    via_file.refresh().unwrap();
+    assert!(!via_file.get_extensions()[0].enabled);
+    // Missing descendants and .. spellings get the same registry identity too.
+    let missing = parent_alias.join("new/../new/registry.json");
+    let mut a = ExtensionManager::open(missing).unwrap();
+    let mut b = ExtensionManager::open(dir.path().join("new/registry.json")).unwrap();
+    install_bytes(&mut a, dir.path(), "new-alias", b"not executable").await;
+    b.enable_extension("new-alias").unwrap();
+    a.refresh().unwrap();
+    assert!(a.get_extensions()[0].enabled);
+}
+
+#[tokio::test]
+async fn invalid_targets_and_resolver_failure_precedence_are_deterministic() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut m = manager(dir.path());
+    let path = manifest(dir.path(), "metadata", "1.0.0", "source", b"bytes");
+    for target in ["bad\u{1b}[2J", "bad\nline", "bad\ttab"] {
+        edit(&path, |v| v["target"] = json!(target));
+        assert_eq!(
+            Extension::from_file(&path).unwrap_err().kind,
+            ExtensionErrorKind::InvalidMetadata
+        );
+    }
+    for (version, bytes, abi, target, capabilities) in [
+        (
+            "1.0.0",
+            b"one".as_slice(),
+            99,
+            HOST_TARGET,
+            json!({"test":[1]}),
+        ),
+        (
+            "2.0.0",
+            b"two".as_slice(),
+            1,
+            "different-target",
+            json!({"test":[1]}),
+        ),
+        ("3.0.0", b"three".as_slice(), 1, HOST_TARGET, json!({})),
+    ] {
+        fs::write(dir.path().join("source"), bytes).unwrap();
+        let path = manifest(dir.path(), "failure-order", version, "source", bytes);
+        edit(&path, |v| {
+            v["abi_version"] = json!(abi);
+            v["target"] = json!(target);
+            v["capabilities"] = capabilities;
+        });
+        m.add_extension(path).await.unwrap();
+    }
+    m.enable_extension("failure-order").unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            m.resolve("failure-order", Some("*"), None, &caps())
+                .unwrap_err()
+                .kind,
+            ExtensionErrorKind::MissingCapability
+        );
+        assert_eq!(
+            m.resolve("failure-order", Some("<3"), None, &caps())
+                .unwrap_err()
+                .kind,
+            ExtensionErrorKind::TargetMismatch
+        );
+        assert_eq!(
+            m.resolve("failure-order", Some("<2"), None, &caps())
+                .unwrap_err()
+                .kind,
+            ExtensionErrorKind::UnsupportedAbi
+        );
+        edit(&dir.path().join("registry.json"), |v| {
+            v["extensions"][0]["artifacts"]
+                .as_array_mut()
+                .unwrap()
+                .reverse()
+        });
+    }
 }
 
 #[tokio::test]
@@ -521,6 +758,13 @@ async fn native_abi_lifetimes_instances_admission_and_process_versions() {
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );
+    // A different pinned artifact must report RestartRequired before touching disk.
+    fs::remove_file(updated.library_path()).unwrap();
+    assert_eq!(
+        unsafe { m.load(&updated) }.unwrap_err().kind,
+        ExtensionErrorKind::RestartRequired
+    );
+    fs::copy(&v2, updated.library_path()).unwrap();
     let method = instance.method("test", "echo").unwrap();
     let stale = m.clone();
     m.remove_extension("fixture").unwrap();

@@ -27,8 +27,12 @@ pub struct ServiceExtensionConfiguration {
     /// Required capabilities and acceptable interface revisions.
     #[serde(default)]
     pub capabilities: crate::utils::extension::Capabilities,
-    /// Extension-specific JSON. It is never included in default diagnostics.
+    /// Extension-specific JSON, defaulting to an empty object. Never in diagnostics.
+    #[serde(default = "empty_extension_configuration")]
     pub configuration: Value,
+}
+fn empty_extension_configuration() -> Value {
+    Value::Object(Map::new())
 }
 
 /// The `extensions` array of a service section, retained in `Configuration::extra`.

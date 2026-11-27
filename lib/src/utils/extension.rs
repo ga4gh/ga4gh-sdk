@@ -12,6 +12,8 @@ use std::{
 
 /// This build's full target triple, including its platform ABI.
 pub const HOST_TARGET: &str = env!("GA4GH_EXTENSION_TARGET");
+/// Maximum size of one installed or loaded library (512 MiB).
+pub const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 /// Capability name to explicit supported interface revisions.
 pub type Capabilities = BTreeMap<String, Vec<u32>>;
 /// Negotiated capability name to one interface revision.
@@ -37,6 +39,8 @@ pub enum ExtensionErrorKind {
     TargetMismatch,
     /// Library bytes differ from the recorded digest.
     DigestMismatch,
+    /// Artifact exceeds the installation and loading size limit.
+    ArtifactTooLarge,
     /// A required capability or interface revision is unavailable.
     MissingCapability,
     /// Multiple matching artifacts require an exact digest selection.
@@ -132,7 +136,7 @@ pub struct ArtifactIdentity {
     pub abi_version: u32,
 }
 /// Installation manifest. Reading it never executes native code.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Extension {
     /// Manifest schema revision; v1 accepts 1 only.
     pub manifest_version: u32,
@@ -141,11 +145,20 @@ pub struct Extension {
     pub artifact: ArtifactIdentity,
     /// Advertised capability revisions.
     pub capabilities: Capabilities,
-    /// HTTP(S) URL or local path relative to this manifest.
+    /// Installation source; persisted manifests use the managed library filename.
     pub path: String,
     /// Optional descriptive metadata.
     #[serde(default)]
     pub description: Option<String>,
+}
+impl fmt::Debug for Extension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Extension")
+            .field("manifest_version", &self.manifest_version)
+            .field("artifact", &self.artifact)
+            .field("capabilities", &self.capabilities)
+            .finish_non_exhaustive()
+    }
 }
 /// Exported descriptor, encoded as UTF-8 JSON in the C API table.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -188,6 +201,11 @@ impl Extension {
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             || self.artifact.target.is_empty()
+            || !self
+                .artifact
+                .target
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
         {
             return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
         }
@@ -265,7 +283,15 @@ impl ResolvedExtension {
     }
 }
 pub(crate) fn validate_name(name: &str) -> ExtensionResult<()> {
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            stem.strip_prefix(prefix)
+                .is_some_and(|suffix| matches!(suffix.as_bytes(), [b'1'..=b'9']))
+        });
     if matches!(name, "" | "." | "..")
+        || name.ends_with('.')
+        || reserved
         || !name
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
@@ -273,6 +299,41 @@ pub(crate) fn validate_name(name: &str) -> ExtensionResult<()> {
         return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
     }
     Ok(())
+}
+
+pub(crate) fn artifact_size(length: u64) -> ExtensionResult<()> {
+    if length > MAX_ARTIFACT_BYTES {
+        return Err(ExtensionError::new(ExtensionErrorKind::ArtifactTooLarge));
+    }
+    Ok(())
+}
+pub(crate) fn digest_hex(digest: impl IntoIterator<Item = u8>) -> String {
+    digest.into_iter().map(|b| format!("{b:02x}")).collect()
+}
+pub(crate) fn copy_artifact(
+    mut source: impl std::io::Read,
+    mut target: impl std::io::Write,
+) -> ExtensionResult<String> {
+    use sha2::{Digest, Sha512};
+    let mut digest = Sha512::new();
+    let mut length = 0;
+    let mut chunk = [0u8; 65536];
+    loop {
+        let n = source.read(&mut chunk).map_err(io)?;
+        if n == 0 {
+            break;
+        }
+        length += n as u64;
+        artifact_size(length)?;
+        target.write_all(&chunk[..n]).map_err(io)?;
+        digest.update(&chunk[..n]);
+    }
+    Ok(digest_hex(digest.finalize()))
+}
+pub(crate) fn hash_artifact(path: &Path) -> ExtensionResult<String> {
+    let file = std::fs::File::open(path).map_err(io)?;
+    artifact_size(file.metadata().map_err(io)?.len())?;
+    copy_artifact(file, std::io::sink())
 }
 pub(crate) fn storage(e: crate::Error) -> ExtensionError {
     ExtensionError::caused(ExtensionErrorKind::Storage, e)
