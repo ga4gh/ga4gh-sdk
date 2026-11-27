@@ -57,7 +57,7 @@ docs = [
     "mkdocstrings-python==2.0.11",
     "pymdown-extensions==13.1",
     "pytest==9.2.0",
-    "ruff==0.17.5",
+    "ruff==0.17.6",
 ]
 
 [tool.maturin]
