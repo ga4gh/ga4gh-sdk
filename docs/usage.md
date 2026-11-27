@@ -182,6 +182,53 @@ Each profile holds sections with the keys described above, and
   `oauth_access_token_env`, as `remote` does above; credentials are sent only
   where described in the previous section.
 
+## Layered configuration in Rust
+
+`Configuration::sources(path, profile, section)` reads one service from the
+existing file formats and returns a [Figment](https://docs.rs/figment/0.10.19/figment/)
+containing its fields. It validates profile selection before returning, with
+case-sensitive names and an error for a missing profile. The service name can
+contain dots. Fields are validated after all sources have been combined:
+
+```rust
+use figment::providers::{Env, Serialized};
+use ga4gh_sdk::utils::configuration::Configuration;
+use serde_json::json;
+
+let sources = Configuration::sources("config.json", Some("remote"), "TES")?
+    .merge(Env::prefixed("MY_APP_TES_").split("__"))
+    .merge(Serialized::defaults(json!({"timeouts": {"request": 90}})));
+let config = Configuration::from_provider(sources)?;
+```
+
+Add `figment = { version = "0.10.19", features = ["json", "env"] }` to a
+downstream crate that uses its providers. In this example, file values have
+the lowest priority, explicitly prefixed environment variables override them,
+and the programmatic `request` timeout has the highest priority. For example,
+`MY_APP_TES_TIMEOUTS__CONNECT=5` sets `timeouts.connect`. Figment parses environment
+values as structured data; quote a value when it must remain a string, for
+example the environment variable contents `"123"` for a numeric-looking token.
+Use an explicitly named token variable in the file to read token text verbatim.
+
+`merge` recursively combines objects and replaces arrays and scalar values.
+An absent field preserves the previous value. Explicit `null` clears an
+optional credential or restores the default timeouts; null extra settings
+remain null. `base_path` must always be a string. `join` fills missing values
+and can supply defaults. Authentication sources remain mutually exclusive after
+merging: overriding a bearer token does not silently discard Basic credentials
+from another source. Clear the previous credential explicitly when switching
+schemes.
+
+`Configuration::from_provider` also accepts a provider built entirely by the
+caller, without a file. Its input describes one service directly. The existing
+Rust, CLI and Python file-reading entry points use the same typed extraction
+and validation. They retain their existing environment and profile selection
+rules; adding an environment provider is an explicit Rust caller choice.
+`Configuration::extra_as::<T>(key)` deserializes an additional setting using a
+downstream schema, returning `None` for a missing key. Parser diagnostics name
+fields and sources where available while omitting values and custom messages
+that could contain credentials.
+
 ## Command-line tool
 
 The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`), WES

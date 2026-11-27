@@ -20,6 +20,7 @@ use clap::{Arg, ArgMatches, Command};
 use ga4gh_sdk::reqwest;
 use ga4gh_sdk::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest};
 use ga4gh_sdk::utils::configuration::Configuration;
+use ga4gh_sdk::utils::json_store::{JsonStore, StoreLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
@@ -271,47 +272,12 @@ impl TokenStore {
     /// Fails if the file can't be read or parsed, or, on Unix, if others
     /// than its owner may read or write it.
     fn read(path: &Path) -> anyhow::Result<Self> {
-        let contents = match std::fs::read_to_string(path) {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default())
-            }
-            Err(error) => anyhow::bail!("Cannot read token store {}: {error}", path.display()),
-        };
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(path)?.permissions().mode();
-            if mode & 0o077 != 0 {
-                anyhow::bail!(
-                    "Token store {} is accessible to other users; run 'chmod 600' on it",
-                    path.display()
-                );
-            }
-        }
-        // The parser's error can quote the file, so it is left out.
-        serde_json::from_str(&contents)
-            .map_err(|_| anyhow::anyhow!("Token store {} is malformed", path.display()))
+        Ok(token_store(path).read()?.unwrap_or_default())
     }
 
-    /// Writes the store to `path`, readable only by its owner, through a
-    /// temporary file in the same directory, so that readers never see a
-    /// partly written store.
+    /// Atomically replaces the private token store using shared SDK persistence.
     fn write(&self, path: &Path) -> anyhow::Result<()> {
-        let dir = match path.parent() {
-            Some(dir) if !dir.as_os_str().is_empty() => dir,
-            _ => Path::new("."),
-        };
-        create_private_dir(dir)?;
-        // `tempfile` creates the file with mode 0600 on Unix.
-        let mut file = tempfile::NamedTempFile::new_in(dir)?;
-        serde_json::to_writer_pretty(&mut file, self)?;
-        std::io::Write::write_all(&mut file, b"\n")?;
-        file.as_file().sync_all()?;
-        file.persist(path).map_err(|error| {
-            anyhow::anyhow!("Cannot write token store {}: {error}", path.display())
-        })?;
-        Ok(())
+        Ok(token_store(path).write(self)?)
     }
 
     /// Replaces the login of the same issuer, client and scope, or adds it.
@@ -325,45 +291,13 @@ impl TokenStore {
     }
 }
 
-/// An exclusive lock on the token store, held until it is dropped, so that
-/// processes don't overwrite each other's changes. It locks a separate file,
-/// `<store>.lock`, as the store itself is replaced on each write. Acquiring
-/// it waits while another process holds it.
-struct StoreLock {
-    _file: std::fs::File,
+/// Applies the credential store's access policy to shared persistence.
+fn token_store(path: &Path) -> JsonStore {
+    JsonStore::new(path, "token store").private()
 }
 
-impl StoreLock {
-    fn acquire(store: &Path) -> anyhow::Result<Self> {
-        let mut name = store.as_os_str().to_owned();
-        name.push(".lock");
-        let path = PathBuf::from(name);
-        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-            create_private_dir(dir)?;
-        }
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).truncate(false).write(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let file = options
-            .open(&path)
-            .map_err(|error| anyhow::anyhow!("Cannot open {}: {error}", path.display()))?;
-        file.lock()
-            .map_err(|error| anyhow::anyhow!("Cannot lock {}: {error}", path.display()))?;
-        Ok(Self { _file: file })
-    }
-}
-
-/// Creates `dir` and its parents if missing; on Unix, new directories get
-/// mode `0700`.
-fn create_private_dir(dir: &Path) -> anyhow::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder
-        .create(dir)
-        .map_err(|error| anyhow::anyhow!("Cannot create directory {}: {error}", dir.display()))
+fn lock_store(path: &Path) -> anyhow::Result<StoreLock> {
+    Ok(token_store(path).lock()?)
 }
 
 /// Seconds since the Unix epoch.
@@ -674,7 +608,7 @@ pub(crate) async fn run_login(
     let login = device_flow(&http_client()?, &settings, prompt, Polling::STANDARD).await?;
     let refreshable = login.refresh_token.is_some();
     // Read the store again: another process may have changed it meanwhile.
-    let _lock = StoreLock::acquire(&path)?;
+    let _lock = lock_store(&path)?;
     let mut store = TokenStore::read(&path)?;
     store.put(login);
     store.write(&path)?;
@@ -709,7 +643,7 @@ pub(crate) fn run_logout(
     let section = section_name(matches.get_one::<String>("section").expect("required"));
     let settings = section_settings(context, &section)?;
     let path = context.token_store_path()?;
-    let _lock = StoreLock::acquire(&path)?;
+    let _lock = lock_store(&path)?;
     let mut store = TokenStore::read(&path)?;
     let before = store.logins.len();
     store.logins.retain(|login| !settings.matches(login));
@@ -796,7 +730,7 @@ impl StoredLoginProvider {
         // refresh token that this process read.
         let path = self.path.clone();
         // Waiting for the lock blocks, so it doesn't run on a runtime thread.
-        let _lock = tokio::task::spawn_blocking(move || StoreLock::acquire(&path)).await??;
+        let _lock = tokio::task::spawn_blocking(move || lock_store(&path)).await??;
         let mut store = TokenStore::read(&self.path)?;
         let stored = store
             .logins
@@ -1465,7 +1399,7 @@ mod tests {
         let path = Path::new("tokens\0");
         let error = one_login_store().write(path).err().unwrap().to_string();
         assert!(error.starts_with("Cannot write token store"), "{error}");
-        let error = StoreLock::acquire(path).err().unwrap().to_string();
+        let error = lock_store(path).err().unwrap().to_string();
         assert!(error.starts_with("Cannot open tokens\0.lock"), "{error}");
     }
 

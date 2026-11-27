@@ -519,3 +519,54 @@ fn cli_binary_selects_a_profile_for_its_own_command() {
     );
     quota.assert();
 }
+
+#[tokio::test]
+async fn layered_configuration_drives_a_downstream_authenticated_request() {
+    use figment::providers::Serialized;
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    struct Routing {
+        queue: String,
+    }
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("GET", "/custom/tasks/task-1/usage")
+        .match_header("authorization", "Bearer downstream-token")
+        .with_body(r#"{"id":"task-1","cpu_seconds":4}"#)
+        .create_async()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("custom.json");
+    std::fs::write(
+        &path,
+        json!({"profiles":{"site":{"CUSTOM":{
+            "base_path":"https://unused.example.org/", "routing":{"queue":"batch"}
+        }}}})
+        .to_string(),
+    )
+    .unwrap();
+    let sources = Configuration::sources(&path, Some("site"), "CUSTOM")
+        .unwrap()
+        .merge(Serialized::defaults(json!({
+            "base_path":format!("{}/custom/", server.url()),
+            "bearer_access_token":"downstream-token"
+        })));
+    let config = Configuration::from_provider(sources).unwrap();
+    assert_eq!(
+        config
+            .extra_as::<Routing>("routing")
+            .unwrap()
+            .unwrap()
+            .queue,
+        "batch"
+    );
+    assert_eq!(
+        UsageClient::new(&config)
+            .task_usage("task-1")
+            .await
+            .unwrap()
+            .cpu_seconds,
+        Some(4.0)
+    );
+    request.assert_async().await;
+}

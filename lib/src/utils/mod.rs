@@ -4,6 +4,7 @@
 pub mod acknowledgement;
 pub mod auth;
 pub mod configuration;
+pub mod json_store;
 pub mod operation;
 pub mod query;
 pub mod test_utils;

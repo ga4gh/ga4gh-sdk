@@ -93,6 +93,16 @@ pub async fn task_usage(&self, id: &str) -> ga4gh_sdk::Result<TaskUsage> {
   unknown keys in `Configuration::extra`. See the
   [usage guide](usage.md#configuration-file).
 
+For layered settings, `Configuration::sources(path, profile, section)` returns
+a Figment for that service. Merge explicitly prefixed environment providers or
+programmatic overrides, then call `Configuration::from_provider`. The
+[configuration guide](usage.md#layered-configuration-in-rust) defines source
+precedence and null behavior. `config.extra_as::<T>(key)` reads a downstream
+setting into its own schema. The example test
+`layered_configuration_drives_a_downstream_authenticated_request` combines a
+custom profile and overrides, extracts typed routing settings, and verifies the
+endpoint and bearer header of a request through `UsageClient`.
+
 ## A model that extends `TesTask`
 
 [`PrioritizedTask`](../examples/downstream-sdk/src/task.rs) embeds the SDK's
