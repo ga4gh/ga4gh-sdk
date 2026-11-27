@@ -18,34 +18,70 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-struct StoreIoError {
+/// A filesystem failure with its original cause and replacement status.
+///
+/// Inspect this through [`crate::Error::downcast_ref`] when deciding how to
+/// handle a failed write or update. Default formatting omits cause text.
+pub struct JsonStoreIoError {
     context: String,
     cause: io::Error,
+    replacement_completed: bool,
 }
 
-impl fmt::Display for StoreIoError {
+impl JsonStoreIoError {
+    /// Whether the destination was replaced before the failure occurred.
+    ///
+    /// When true, do not repeat a non-idempotent update: its change is already
+    /// visible. Inspect the saved state and handle the durability failure
+    /// separately. False means no successful replacement was recorded by this
+    /// operation; it does not undo side effects of a caller's change callback.
+    pub fn replacement_completed(&self) -> bool {
+        self.replacement_completed
+    }
+}
+
+impl fmt::Display for JsonStoreIoError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.context, self.cause.kind())
     }
 }
 
-impl fmt::Debug for StoreIoError {
+impl fmt::Debug for JsonStoreIoError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
 
-impl std::error::Error for StoreIoError {
+impl std::error::Error for JsonStoreIoError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.cause)
     }
 }
 
 fn io_error(context: String, cause: io::Error) -> crate::Error {
-    crate::Error::other(StoreIoError { context, cause })
+    JsonStoreIoError {
+        context,
+        cause,
+        replacement_completed: false,
+    }
+    .into()
 }
 
 /// A JSON file whose location and access policy are chosen by the caller.
+///
+/// ```no_run
+/// use ga4gh_sdk::utils::json_store::JsonStore;
+/// # fn main() -> ga4gh_sdk::Result<()> {
+/// let store = JsonStore::new("my-app/state.json", "application state");
+/// store.update::<Vec<String>, _>(|items| {
+///     items.push("new item".into());
+///     Ok(())
+/// })?;
+/// let items = store.read::<Vec<String>>()?;
+/// # let _ = items;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug)]
 pub struct JsonStore {
     path: PathBuf,
@@ -64,8 +100,9 @@ impl JsonStore {
         }
     }
 
-    /// Rejects data and lock files accessible by other users on Unix and
-    /// creates new parent directories with mode `0700`. New files use mode
+    /// On Unix, reads and writes reject existing data files accessible by other
+    /// users, and acquiring a lock rejects broadly accessible lock files.
+    /// Creates new parent directories with mode `0700`. New files use mode
     /// `0600` on Unix in either policy. Existing parent directory permissions
     /// are unchanged.
     pub fn private(mut self) -> Self {
@@ -133,10 +170,32 @@ impl JsonStore {
     /// Returns directory, serialization or write errors. A failure before
     /// replacement leaves the previous destination untouched. A directory-sync
     /// error happens after replacement, so the new file may already be visible.
+    /// [`JsonStoreIoError::replacement_completed`] identifies this case. Do not
+    /// blindly retry a non-idempotent update after an error.
     /// I/O causes remain inspectable through [`crate::Error::downcast_ref`].
     /// Serialization errors omit custom messages, which can contain values.
     pub fn write<T: Serialize>(&self, value: &T) -> crate::Result<()> {
+        self.write_with_directory_sync(value, fs::File::sync_all)
+    }
+
+    fn write_with_directory_sync<T: Serialize>(
+        &self,
+        value: &T,
+        sync_directory: impl FnOnce(&fs::File) -> io::Result<()>,
+    ) -> crate::Result<()> {
         self.create_parent()?;
+        let writing = || format!("Cannot write {} {}", self.label, self.path.display());
+        #[cfg(unix)]
+        if self.private {
+            match fs::metadata(&self.path) {
+                Ok(metadata) if metadata.is_file() => {
+                    self.check_private_permissions(&metadata, &self.path)?;
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(io_error(writing(), error)),
+            }
+        }
         #[cfg(unix)]
         let directory = fs::File::open(self.parent()).map_err(|error| {
             io_error(
@@ -144,7 +203,6 @@ impl JsonStore {
                 error,
             )
         })?;
-        let writing = || format!("Cannot write {} {}", self.label, self.path.display());
         let mut file = tempfile::NamedTempFile::new_in(self.parent())
             .map_err(|error| io_error(writing(), error))?;
         serde_json::to_writer_pretty(&mut file, value).map_err(|error| {
@@ -162,17 +220,20 @@ impl JsonStore {
         file.persist(&self.path)
             .map_err(|error| io_error(writing(), error.error))?;
         #[cfg(unix)]
-        directory.sync_all().map_err(|error| {
-            io_error(
-                format!(
+        sync_directory(&directory).map_err(|cause| {
+            crate::Error::from(JsonStoreIoError {
+                context: format!(
                     "Cannot sync directory {} after writing {} {}",
                     self.parent().display(),
                     self.label,
                     self.path.display()
                 ),
-                error,
-            )
+                cause,
+                replacement_completed: true,
+            })
         })?;
+        #[cfg(not(unix))]
+        let _ = sync_directory;
         Ok(())
     }
 
@@ -212,6 +273,9 @@ impl JsonStore {
     /// # Errors
     ///
     /// Returns lock, read, change or write errors. A failed change is not saved.
+    /// A directory-sync failure can follow a completed replacement: inspect
+    /// [`JsonStoreIoError::replacement_completed`] instead of automatically
+    /// applying the change again. Callback side effects are not rolled back.
     pub fn update<T: DeserializeOwned + Serialize + Default, R>(
         &self,
         change: impl FnOnce(&mut T) -> crate::Result<R>,
@@ -264,4 +328,32 @@ impl JsonStore {
 #[derive(Debug)]
 pub struct StoreLock {
     _file: fs::File,
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_directory_sync_failure_reports_the_completed_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonStore::new(dir.path().join("state.json"), "test state");
+        store.write(&vec!["old"]).unwrap();
+        let error = store
+            .write_with_directory_sync(&vec!["new"], |_| Err(io::Error::other("SENTINEL_IO")))
+            .unwrap_err();
+        assert_eq!(
+            store.read::<Vec<String>>().unwrap(),
+            Some(vec!["new".into()])
+        );
+        assert!(error
+            .downcast_ref::<JsonStoreIoError>()
+            .unwrap()
+            .replacement_completed());
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().to_string(),
+            "SENTINEL_IO"
+        );
+        assert!(!format!("{error} {error:?}").contains("SENTINEL_IO"));
+    }
 }

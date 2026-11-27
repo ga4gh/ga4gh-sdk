@@ -14,9 +14,11 @@ access; they do not use external services:
   source precedence, profile selection, nulls and array replacement, typed
   additional settings, credential conflicts, and secret-safe diagnostics.
 - [`json_store.rs`](../lib/tests/json_store.rs) checks atomic persistence,
-  failed updates, malformed input, preserved I/O causes, private lock-file
-  permissions, exclusive locking during an update, and preservation of changes
-  from concurrent writers.
+  failed updates, malformed input, preserved I/O causes, permissions of private
+  data and lock files, exclusive locking during an update, and
+  preservation of changes from concurrent writers. A unit test in
+  [`json_store.rs`](../lib/src/utils/json_store.rs) injects a directory-sync
+  failure after real replacement and checks its machine-readable status.
 
 Run both suites on their own with:
 

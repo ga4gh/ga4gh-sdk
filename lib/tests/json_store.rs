@@ -1,6 +1,6 @@
 //! Complete updates, concurrent writers, and private persistence policies.
 
-use ga4gh_sdk::utils::json_store::JsonStore;
+use ga4gh_sdk::utils::json_store::{JsonStore, JsonStoreIoError};
 use serde::{Serialize, Serializer};
 use std::fs;
 
@@ -116,6 +116,10 @@ fn io_errors_keep_the_original_cause_and_operation_context() {
         (store.lock().unwrap_err(), "Cannot open"),
     ] {
         assert!(error.to_string().contains(operation), "{error}");
+        assert!(!error
+            .downcast_ref::<JsonStoreIoError>()
+            .unwrap()
+            .replacement_completed());
         assert_eq!(
             error.downcast_ref::<io::Error>().unwrap().kind(),
             io::ErrorKind::InvalidInput
@@ -174,4 +178,29 @@ fn private_stores_reject_an_existing_shared_lock_file() {
         })
         .unwrap();
     assert_eq!(store.read::<u64>().unwrap(), Some(8));
+}
+
+#[cfg(unix)]
+#[test]
+fn private_writes_reject_existing_shared_data_without_replacing_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = JsonStore::new(dir.path().join("state.json"), "test state").private();
+    store.write(&vec!["old"]).unwrap();
+    fs::set_permissions(store.path(), fs::Permissions::from_mode(0o644)).unwrap();
+    let before = fs::read(store.path()).unwrap();
+    let error = store.write(&vec!["new"]).unwrap_err();
+    assert!(error.to_string().contains("chmod 600"));
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+    assert_eq!(
+        fs::metadata(store.path()).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+    fs::set_permissions(store.path(), fs::Permissions::from_mode(0o600)).unwrap();
+    store.write(&vec!["new"]).unwrap();
+    assert_eq!(
+        store.read::<Vec<String>>().unwrap(),
+        Some(vec!["new".into()])
+    );
 }

@@ -113,6 +113,22 @@ replacement of one JSON document. Paths, schemas, missing-file defaults and
 access policies remain caller-owned. Use `private()` for credential stores;
 on Unix it rejects broadly accessible data and lock files.
 
+A caller can keep application state at its own path and update it under the
+writer lock:
+
+```rust
+use ga4gh_sdk::utils::json_store::JsonStore;
+
+let store = JsonStore::new("my-app/state.json", "application state");
+let item_count = store.update::<Vec<String>, _>(|items| {
+    items.push("new item".into());
+    Ok(items.len())
+})?;
+```
+
+The `json_store_supports_downstream_locked_updates` example test exercises
+this API and inspects the replacement status of an I/O failure.
+
 `write` syncs the temporary file before replacement and, on Unix, the parent
 directory afterwards. A failure before replacement preserves the old file;
 a directory-sync failure after replacement can leave the new file visible.
@@ -121,6 +137,13 @@ directories are not synced. These operations do not promise power-loss
 durability on every filesystem. I/O errors preserve their original cause for
 `error.downcast_ref::<std::io::Error>()`; default diagnostics omit JSON values
 and custom serialization messages.
+
+An I/O error also downcasts to `JsonStoreIoError`. If its
+`replacement_completed()` method returns true, the new document is already
+visible: do not repeat a non-idempotent update. Inspect the saved state and
+handle the durability failure separately. No automatic retry is safe merely
+because an operation returned an error; callback side effects are not rolled
+back.
 
 ## A model that extends `TesTask`
 

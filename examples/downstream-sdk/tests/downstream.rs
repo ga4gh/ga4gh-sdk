@@ -570,3 +570,29 @@ async fn layered_configuration_drives_a_downstream_authenticated_request() {
     );
     request.assert_async().await;
 }
+
+#[test]
+fn json_store_supports_downstream_locked_updates() {
+    use ga4gh_sdk::utils::json_store::{JsonStore, JsonStoreIoError};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = JsonStore::new(dir.path().join("state.json"), "application state");
+    let count = store
+        .update::<Vec<String>, _>(|items| {
+            items.push("new item".into());
+            Ok(items.len())
+        })
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        store.read::<Vec<String>>().unwrap(),
+        Some(vec!["new item".into()])
+    );
+
+    let invalid = JsonStore::new(dir.path().join("invalid\0.json"), "application state");
+    let error = invalid.read::<Vec<String>>().unwrap_err();
+    assert!(!error
+        .downcast_ref::<JsonStoreIoError>()
+        .unwrap()
+        .replacement_completed());
+}
