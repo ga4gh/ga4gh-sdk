@@ -82,7 +82,8 @@ impl Timeouts {
     /// # Errors
     ///
     /// Returns a message if `name` is unknown, or if `seconds` isn't a positive,
-    /// finite number of seconds that a `Duration` can hold.
+    /// finite number of seconds that a `Duration` can hold. Unknown names are
+    /// escaped before inclusion in the message.
     pub fn set_seconds(&mut self, name: &str, seconds: f64) -> Result<(), String> {
         let limit = match name {
             "connect" => &mut self.connect,
@@ -90,9 +91,10 @@ impl Timeouts {
             "discovery" => &mut self.discovery,
             "submission" => &mut self.submission,
             _ => {
+                let name: String = name.chars().flat_map(char::escape_default).collect();
                 return Err(format!(
                     "unknown timeout '{name}'; use connect, request, discovery or submission"
-                ))
+                ));
             }
         };
         *limit = Duration::try_from_secs_f64(seconds)
@@ -141,6 +143,12 @@ mod tests {
             timeouts.set_seconds("read", 1.0).unwrap_err(),
             "unknown timeout 'read'; use connect, request, discovery or submission"
         );
+        let error = timeouts.set_seconds("read\n\u{1b}[31m", 1.0).unwrap_err();
+        assert_eq!(
+            error,
+            r"unknown timeout 'read\n\u{1b}[31m'; use connect, request, discovery or submission"
+        );
+        assert!(!error.chars().any(char::is_control));
         for seconds in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e300] {
             assert_eq!(
                 timeouts.set_seconds("request", seconds).unwrap_err(),

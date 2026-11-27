@@ -228,7 +228,7 @@ rules; adding an environment provider is an explicit Rust caller choice.
 downstream schema, returning `None` for a missing key. Parser diagnostics name
 fields and sources where available while omitting values and custom messages
 that could contain credentials. Errors escape control characters in profile
-and service-section names before displaying them.
+and service-section names and unknown timeout keys before displaying them.
 
 ## Command-line tool
 

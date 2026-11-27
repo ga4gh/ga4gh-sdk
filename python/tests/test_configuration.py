@@ -100,6 +100,18 @@ def test_missing_section_errors_escape_control_characters(write_config, document
     assert not any(character in message for character in "\n\r\t\x1b")
 
 
+def test_timeout_validation_errors_escape_unknown_keys(write_config):
+    write_config(
+        {"TES": {"base_path": "https://example.org/", "timeouts": {"read\n\x1b[31m": 1}}}
+    )
+    config = Configuration("https://example.org/")
+    with pytest.raises(ValueError) as raised:
+        config.from_file("TES")
+    message = str(raised.value)
+    assert r"read\n\u{1b}[31m" in message
+    assert not any(character in message for character in "\n\x1b")
+
+
 def test_token_from_named_environment_variable(write_config, monkeypatch):
     write_config(
         {

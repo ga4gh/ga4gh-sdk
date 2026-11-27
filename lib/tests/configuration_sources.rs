@@ -189,6 +189,18 @@ fn missing_section_errors_escape_control_characters() {
 }
 
 #[test]
+fn timeout_validation_errors_escape_provider_keys() {
+    let key = "read\n\u{1b}[31m";
+    let error = Configuration::from_provider(Serialized::defaults(json!({
+        "base_path":"https://example.org/", "timeouts":{key:1}
+    })))
+    .unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains(r"read\n\u{1b}[31m"), "{message}");
+    assert!(!message.chars().any(char::is_control));
+}
+
+#[test]
 fn extra_settings_use_a_caller_schema_without_exposing_parser_messages() {
     #[derive(Deserialize)]
     struct Routing {
