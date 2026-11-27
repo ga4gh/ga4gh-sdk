@@ -138,6 +138,10 @@ For a task that is still running, call `task.cancel()`.
 
 ## Reading the configuration file
 
+File loading uses the shared SDK configuration layer. Combining Figment sources
+and extracting additional settings into Rust types are currently Rust-only
+APIs; Python retains the file-reading and `get_extra()` APIs described below.
+
 `config.from_file()` reads a section of `~/.ga4gh-cli/config.json` (format in
 the [usage guide](../docs/usage.md#configuration-file)). In a file with
 [profiles](../docs/usage.md#profiles), it reads the default profile. Name a

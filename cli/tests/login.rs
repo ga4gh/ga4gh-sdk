@@ -732,12 +732,36 @@ async fn login_without_a_refresh_token_says_that_it_expires() {
     assert!(store["logins"][0].get("refresh_token").is_none());
 }
 
-#[cfg(unix)]
 #[tokio::test]
-async fn refreshed_tokens_are_used_when_the_store_cannot_be_written() {
-    use std::os::unix::fs::PermissionsExt;
+async fn refreshed_tokens_are_used_when_store_replacement_fails() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct PersistenceWarning(AtomicBool);
+
+    impl log::Log for PersistenceWarning {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() == log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata())
+                && record.target() == "ga4gh_cli::login"
+                && record.args().to_string()
+                    == "Could not persist refreshed tokens; the next command may need a new login"
+            {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static WARNING: PersistenceWarning = PersistenceWarning(AtomicBool::new(false));
+    log::set_logger(&WARNING).unwrap();
+    log::set_max_level(log::LevelFilter::Warn);
+
     let mut server = mockito::Server::new_async().await;
-    let prefix = "/login-refresh-read-only";
+    let prefix = "/login-refresh-write-failure";
     let dir = tempfile::TempDir::new().unwrap();
     let store_dir = dir.path().join("store");
     std::fs::create_dir(&store_dir).unwrap();
@@ -751,28 +775,38 @@ async fn refreshed_tokens_are_used_when_the_store_cannot_be_written() {
         "old-refresh",
         now() - 10,
     );
-    // The lock file exists, so only the new store can't be created.
-    std::fs::write(store_dir.join("tokens.json.lock"), "").unwrap();
-    std::fs::set_permissions(&store_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
-    // Permissions don't stop a privileged user, such as root.
-    let writable = std::fs::write(store_dir.join("probe"), "").is_ok();
+    let store_path = store_dir.join("tokens.json");
+    let backup_path = dir.path().join("tokens-before-refresh.json");
+    let saved = backup_path.clone();
+    let destination = store_path.clone();
     let refresh = server
         .mock("POST", format!("{prefix}/idp/token").as_str())
-        .with_body(
-            json!({"access_token": "new-access", "token_type": "Bearer", "expires_in": 600})
-                .to_string(),
-        )
+        .with_chunked_body(move |writer| {
+            // Refresh has already read the store. Make its replacement fail
+            // independently of permissions, including for privileged users.
+            std::fs::rename(&destination, &saved)?;
+            std::fs::create_dir(&destination)?;
+            std::fs::write(destination.join("entry"), "preserved")?;
+            writer.write_all(
+                br#"{"access_token":"new-access","token_type":"Bearer","expires_in":600}"#,
+            )
+        })
         .expect(1)
         .create();
     let request = services(&mut server, prefix, "new-access");
 
     let (_, stderr, success) = run(&context, &["test-cli", "registry", "list"]).await;
-    std::fs::set_permissions(&store_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-    if !writable {
-        assert!(success, "{stderr}");
-        refresh.assert();
-        request.assert();
-        let store = read_store(&store_dir);
-        assert_eq!(store["logins"][0]["access_token"], "old-access");
-    }
+    assert!(success, "{stderr}");
+    refresh.assert();
+    request.assert();
+    let store: Value = serde_json::from_slice(&std::fs::read(backup_path).unwrap()).unwrap();
+    assert_eq!(store["logins"][0]["access_token"], "old-access");
+    assert_eq!(
+        std::fs::read_to_string(store_path.join("entry")).unwrap(),
+        "preserved"
+    );
+    assert!(
+        WARNING.0.load(Ordering::SeqCst),
+        "a failed persistence attempt must warn that the next command may need a new login"
+    );
 }
