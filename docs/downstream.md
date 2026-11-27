@@ -93,6 +93,65 @@ pub async fn task_usage(&self, id: &str) -> ga4gh_sdk::Result<TaskUsage> {
   unknown keys in `Configuration::extra`. See the
   [usage guide](usage.md#configuration-file).
 
+For layered settings, `Configuration::sources(path, profile, section)` returns
+a Figment for that service. Merge explicitly prefixed environment providers or
+programmatic overrides, then call `Configuration::from_provider`. The
+[configuration guide](usage.md#layered-configuration-in-rust) defines source
+precedence and null behavior. `config.extra_as::<T>(key)` reads a downstream
+setting into its own schema. The example test
+`layered_configuration_drives_a_downstream_authenticated_request` combines a
+custom profile and overrides, extracts typed routing settings, and verifies the
+endpoint and bearer header of a request through `UsageClient`.
+
+`ga4gh_sdk::utils::json_store::JsonStore` is public so the separate CLI crate
+can reuse persistence without putting token schemas or application paths into
+the SDK. Its current production consumer is the CLI token store; Extensions
+Manager ([#64](https://github.com/ga4gh/ga4gh-sdk/issues/64)) will adopt it
+separately. The assumptions future consumers must confirm are a local
+filesystem, cooperating writers using the same path and lock file, and atomic
+replacement of one JSON document. The directory and its ancestors must be
+trusted: another user with directory write access can replace the lock file
+and bypass the lock. Paths, schemas, missing-file defaults and
+access policies remain caller-owned. Use `private()` for credential stores;
+on Unix it rejects broadly accessible data and lock files. It creates new
+parent directories with mode `0700` but does not secure existing directories.
+
+A caller can keep application state at its own path and update it under the
+writer lock:
+
+```rust
+use ga4gh_sdk::utils::json_store::JsonStore;
+
+let store = JsonStore::new("my-app/state.json", "application state");
+let item_count = store.update::<Vec<String>, _>(|items| {
+    items.push("new item".into());
+    Ok(items.len())
+})?;
+```
+
+The `json_store_supports_downstream_locked_updates` example test exercises
+this API, preserves application errors, and inspects the replacement status
+of an I/O failure. Callbacks return `ga4gh_sdk::Result`; convert an application
+error with `app_operation(items).map_err(ga4gh_sdk::Error::other)?` inside the
+callback. The returned error retains its original type for
+`error.downcast_ref::<AppError>()`. A failed callback does not save its changes.
+
+`write` syncs the temporary file before replacement and, on Unix, the parent
+directory afterwards. A failure before replacement preserves the old file;
+a directory-sync failure after replacement can leave the new file visible.
+Other platforms do not sync directories, and newly created ancestor
+directories are not synced. These operations do not promise power-loss
+durability on every filesystem. I/O errors preserve their original cause for
+`error.downcast_ref::<std::io::Error>()`; default diagnostics omit JSON values
+and custom serialization messages.
+
+An I/O error also downcasts to `JsonStoreIoError`. If its
+`replacement_completed()` method returns true, the new document is already
+visible: do not repeat a non-idempotent update. Inspect the saved state and
+handle the durability failure separately. No automatic retry is safe merely
+because an operation returned an error; callback side effects are not rolled
+back.
+
 ## A model that extends `TesTask`
 
 [`PrioritizedTask`](../examples/downstream-sdk/src/task.rs) embeds the SDK's

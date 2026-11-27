@@ -66,6 +66,52 @@ def test_custom_section_keeps_extra_keys(write_config):
     assert config.get_extra() == {"timeout_seconds": 30, "routing": {"region": "eu"}}
 
 
+def test_shared_loader_preserves_extension_settings_and_unknown_values(write_config):
+    extra = {
+        "extensions": [
+            {"name": "example", "required": True, "configuration": {"key": None}}
+        ],
+        "custom": {"values": [None, True, 2**64 - 1, -(2**63), "text"]},
+    }
+    write_config(
+        {
+            "default_profile": "Remote",
+            "profiles": {
+                "Remote": {
+                    "CUSTOM": {"base_path": "https://example.org/custom/", **extra}
+                }
+            },
+        }
+    )
+    config = Configuration("https://wrong.example")
+    config.from_file("CUSTOM")
+    assert config.get_base_path() == "https://example.org/custom/"
+    assert config.get_extra() == extra
+
+
+@pytest.mark.parametrize("document", [{}, {"profiles": {"default": {}}}])
+def test_missing_section_errors_escape_control_characters(write_config, document):
+    write_config(document)
+    config = Configuration("https://example.org/")
+    with pytest.raises(ValueError) as raised:
+        config.from_file("missing\n\r\t\x1b[31m")
+    message = str(raised.value)
+    assert r"missing\n\r\t\u{1b}[31m" in message
+    assert not any(character in message for character in "\n\r\t\x1b")
+
+
+def test_timeout_validation_errors_escape_unknown_keys(write_config):
+    write_config(
+        {"TES": {"base_path": "https://example.org/", "timeouts": {"read\n\x1b[31m": 1}}}
+    )
+    config = Configuration("https://example.org/")
+    with pytest.raises(ValueError) as raised:
+        config.from_file("TES")
+    message = str(raised.value)
+    assert r"read\n\u{1b}[31m" in message
+    assert not any(character in message for character in "\n\x1b")
+
+
 def test_token_from_named_environment_variable(write_config, monkeypatch):
     write_config(
         {

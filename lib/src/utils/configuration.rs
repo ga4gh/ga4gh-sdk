@@ -10,6 +10,8 @@ use std::path::Path;
 use std::sync::Arc;
 use url::Url;
 
+mod sources;
+
 /// Settings passed to one explicitly loaded native extension.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServiceExtensionConfiguration {
@@ -66,18 +68,6 @@ impl fmt::Debug for RedactedValues<'_> {
             .finish()
     }
 }
-
-/// The keys of a configuration file section that `Configuration::from_path` reads itself.
-const SECTION_KEYS: [&str; 8] = [
-    "base_path",
-    "basic_auth",
-    "oauth_access_token",
-    "oauth_access_token_env",
-    "bearer_access_token",
-    "bearer_access_token_env",
-    "api_key",
-    "timeouts",
-];
 
 /// Reads the `timeouts` object of a configuration file section: each key is a
 /// limit of [`Timeouts`] in seconds; missing keys keep their defaults.
@@ -197,25 +187,17 @@ fn token_from_env(name: &str) -> Result<String, String> {
 
 /// Read one direct token or an explicitly named environment variable.
 fn token_field(
-    fields: &Map<String, Value>,
+    token: Option<String>,
+    variable: Option<String>,
     direct: &'static str,
     env_field: &'static str,
-    section: &str,
 ) -> Result<Option<String>, crate::error::BoxError> {
-    let token = match fields.get(direct) {
-        None | Some(Value::Null) => None,
-        Some(Value::String(token)) => Some(token.clone()),
-        _ => return Err(format!("{direct} must be a string").into()),
-    };
-    match fields.get(env_field) {
-        None | Some(Value::Null) => Ok(token),
-        Some(Value::String(_)) if token.is_some() => {
-            Err(format!("Set either {direct} or {env_field}, not both").into())
-        }
-        Some(Value::String(name)) => token_from_env(name)
+    match (token, variable) {
+        (Some(_), Some(_)) => Err(format!("Set either {direct} or {env_field}, not both").into()),
+        (token, None) => Ok(token),
+        (None, Some(name)) => token_from_env(&name)
             .map(Some)
-            .map_err(|error| format!("{error}; it is named by {env_field} in '{section}'").into()),
-        _ => Err(format!("{env_field} must be a string").into()),
+            .map_err(|error| format!("{error}; it is named by {env_field}").into()),
     }
 }
 
@@ -283,7 +265,7 @@ pub struct Configuration {
 }
 
 /// Represents the basic authentication credentials.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BasicAuth {
     /// The username for basic authentication.
     pub username: String,
@@ -778,94 +760,31 @@ impl Configuration {
         profile: Option<&str>,
         section: &str,
     ) -> crate::Result<Self> {
-        Self::load(path.as_ref(), profile, section).map_err(crate::Error::Configuration)
+        Self::from_provider(Self::sources(path, profile, section)?)
     }
 
-    // Reads a section as `from_path_with_profile` does.
-    fn load(
-        path: &Path,
-        profile: Option<&str>,
-        section: &str,
-    ) -> Result<Self, crate::error::BoxError> {
-        let contents = std::fs::read_to_string(path).map_err(|error| {
-            std::io::Error::new(
-                error.kind(),
-                format!("Cannot read configuration file {}: {error}", path.display()),
-            )
-        })?;
-        let document: Value = serde_json::from_str(&contents).map_err(|error| {
-            format!(
-                "Invalid JSON in configuration file {}: {error}",
-                path.display()
-            )
-        })?;
-        let root = document
-            .as_object()
-            .ok_or("Configuration file must be a JSON object")?;
-        let (profile, sections) = profile_sections(root, profile)?;
-        let fields = sections
-            .get(section)
-            .and_then(Value::as_object)
-            .ok_or_else(|| match &profile {
-                None => format!("Configuration file must contain a '{section}' object"),
-                Some(name) => format!(
-                    "Profile '{}' must contain a '{section}' object",
-                    display_profile_name(name)
-                ),
-            })?;
-        let base_path = fields
-            .get("base_path")
-            .and_then(Value::as_str)
-            .ok_or("Configuration section must contain a 'base_path' string")?;
-        let base_path = Url::parse(base_path)
-            .map_err(|error| format!("Invalid base_path in '{section}' configuration: {error}"))?;
-        let mut config = Configuration::new(base_path);
-
-        match fields.get("basic_auth") {
-            None | Some(Value::Null) => {}
-            Some(Value::Object(auth)) => {
-                let username = auth
-                    .get("username")
-                    .and_then(Value::as_str)
-                    .ok_or("basic_auth.username must be a string")?;
-                let password = match auth.get("password") {
-                    None | Some(Value::Null) => None,
-                    Some(Value::String(password)) => Some(password.clone()),
-                    _ => return Err("basic_auth.password must be a string".into()),
-                };
-                config.basic_auth = Some(BasicAuth {
-                    username: username.to_owned(),
-                    password,
-                });
-            }
-            _ => return Err("basic_auth must be an object".into()),
-        }
-        config.oauth_access_token = token_field(
-            fields,
-            "oauth_access_token",
-            "oauth_access_token_env",
-            section,
-        )?;
-        config.bearer_access_token = token_field(
-            fields,
-            "bearer_access_token",
-            "bearer_access_token_env",
-            section,
-        )?;
-        if fields.get("api_key").is_some_and(|value| !value.is_null()) {
-            return Err(AuthError::Unsupported { source: "api_key" }.into());
-        }
-        match fields.get("timeouts") {
-            None | Some(Value::Null) => {}
-            Some(value) => config.timeouts = timeouts_from_value(value)?,
-        }
-        config.extra = fields
-            .iter()
-            .filter(|(key, _)| !SECTION_KEYS.contains(&key.as_str()))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect();
-        config.configured_auth()?;
-        Ok(config)
+    /// Deserializes an optional extra setting using the caller's schema.
+    /// Missing keys return `None`; a present null is passed to the schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns a configuration error naming the setting if it does not match
+    /// the schema. Values and custom parser messages are omitted.
+    pub fn extra_as<T: serde::de::DeserializeOwned>(&self, key: &str) -> crate::Result<Option<T>> {
+        self.extra
+            .get(key)
+            .map(|value| {
+                serde_json::from_value(value.clone()).map_err(|_| {
+                    crate::Error::Configuration(
+                        format!(
+                            "Invalid configuration setting '{}'",
+                            display_profile_name(key)
+                        )
+                        .into(),
+                    )
+                })
+            })
+            .transpose()
     }
 }
 
@@ -1328,7 +1247,7 @@ mod tests {
             ),
             (
                 r#"{"custom":{"base_path":"https://example.org","oauth_access_token_env":"GA4GH_SDK_TEST_TOKEN_UNSET"}}"#,
-                "Environment variable 'GA4GH_SDK_TEST_TOKEN_UNSET' is not set; it is named by oauth_access_token_env in 'custom'",
+                "Environment variable 'GA4GH_SDK_TEST_TOKEN_UNSET' is not set; it is named by oauth_access_token_env",
             ),
         ];
         for (document, expected_message) in cases {

@@ -1,8 +1,30 @@
 # Integration suites and test fixtures
 
-The default `cargo test` does not enable the integration suites below. Run
-their commands from the repository root. They need local HTTP access and the
-services described in each section.
+Run these commands from the repository root. The configuration and JSON
+persistence suites run by default with `cargo test --workspace`. The service
+integration suites require explicit commands or features, local HTTP access,
+and the services described in their sections.
+
+## Configuration and JSON persistence
+
+These suites need the repository's Rust toolchain and temporary filesystem
+access; they do not use external services:
+
+- [`configuration_sources.rs`](../lib/tests/configuration_sources.rs) checks
+  source precedence, profile selection, nulls and array replacement, typed
+  additional settings, credential conflicts, and secret-safe diagnostics.
+- [`json_store.rs`](../lib/tests/json_store.rs) checks atomic persistence,
+  failed updates, malformed input, preserved I/O causes, permissions of private
+  data and lock files, exclusive locking during an update, and
+  preservation of changes from concurrent writers. A unit test in
+  [`json_store.rs`](../lib/src/utils/json_store.rs) injects a directory-sync
+  failure after real replacement and checks its machine-readable status.
+
+Run both suites on their own with:
+
+```sh
+cargo test --locked -p ga4gh-lib --test configuration_sources --test json_store
+```
 
 ## Funnel/TES
 

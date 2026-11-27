@@ -256,6 +256,7 @@ from_other!(
     crate::utils::auth::AuthConflictError,
     crate::utils::auth::TokenProviderError,
     crate::utils::configuration::AuthError,
+    crate::utils::json_store::JsonStoreIoError,
     crate::utils::operation::AmbiguousSubmissionError,
     crate::utils::operation::OperationError,
     crate::utils::query::QueryError,
