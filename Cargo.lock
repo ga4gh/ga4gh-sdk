@@ -418,12 +418,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "difference"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "524cbf6897b527295dff137cec09ecf3a05f4fddffd7dfcd1585403449e74198"
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -477,9 +471,9 @@ dependencies = [
 
 [[package]]
 name = "downcast"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bb454f0228b18c7f4c3b0ebbee346ed9c52e7443b0999cd543ff3571205701d"
+checksum = "1435fa1053d8b2fbbe9be7e97eca7f33d37b28409959813daefc1446a14247f1"
 
 [[package]]
 name = "either"
@@ -588,15 +582,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
 
 [[package]]
-name = "float-cmp"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1267f4ac4f343772758f7b1bdcbe767c218bbab93bb432acbf5162bbf85a6c4"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "fluent-uri"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -651,15 +636,6 @@ checksum = "e246562084dde8ebbcc943b261c406ce4f68e5032ec28029a251a47d6a295500"
 dependencies = [
  "num",
  "num-bigint",
-]
-
-[[package]]
-name = "fragile"
-version = "1.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7464c5c4a3f014d9b2ec4073650e5c06596f385060af740fc45ad5a19f959e8"
-dependencies = [
- "fragile 2.1.0",
 ]
 
 [[package]]
@@ -1416,14 +1392,13 @@ dependencies = [
 
 [[package]]
 name = "mockall"
-version = "0.10.2"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ab571328afa78ae322493cacca3efac6a0f2e0a67305b4df31fd439ef129ac0"
+checksum = "1a6ceddfe3ce334925e96bf420fdb2dcee5bed6c632a168ece622676dadeaf8a"
 dependencies = [
  "cfg-if",
  "downcast",
- "fragile 1.2.2",
- "lazy_static",
+ "fragile",
  "mockall_derive",
  "predicates",
  "predicates-tree",
@@ -1431,14 +1406,14 @@ dependencies = [
 
 [[package]]
 name = "mockall_derive"
-version = "0.10.2"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7e25b214433f669161f414959594216d8e6ba83b6679d3db96899c0b4639033"
+checksum = "9cfe16fbe8a314aeec0b861ac24e60b1e123e97634bab045475b9d6a18416fd8"
 dependencies = [
  "cfg-if",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1509,12 +1484,6 @@ dependencies = [
  "security-framework-sys",
  "tempfile",
 ]
-
-[[package]]
-name = "normalize-line-endings"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61807f77802ff30975e01f4f071c8ba10c022052f98b3294119f3e615d13e5be"
 
 [[package]]
 name = "num"
@@ -1799,15 +1768,12 @@ dependencies = [
 
 [[package]]
 name = "predicates"
-version = "1.0.8"
+version = "3.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f49cfaf7fdaa3bfacc6fa3e7054e65148878354a5cfddcf661df4c851f8021df"
+checksum = "ada8f2932f28a27ee7b70dd6c1c39ea0675c55a36879ab92f3a715eaa1e63cfe"
 dependencies = [
- "difference",
- "float-cmp",
- "normalize-line-endings",
+ "anstyle",
  "predicates-core",
- "regex",
 ]
 
 [[package]]
@@ -2522,17 +2488,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "syn"
-version = "1.0.109"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-ident",
-]
 
 [[package]]
 name = "syn"
