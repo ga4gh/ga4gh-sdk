@@ -116,6 +116,7 @@ nav:
       - Downstream use: docs/downstream.md
       - Experimental:
           - Native extensions: docs/extensions.md
+          - Extension Manager v1 design: docs/extension-manager-v1.md
           - Workflow contracts: docs/workflow-contracts.md
           - Result reuse: docs/result-reuse.md
           - Sequence QC example: examples/sequence-qc/README.md

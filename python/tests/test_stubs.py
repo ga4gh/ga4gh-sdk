@@ -213,6 +213,8 @@ def runtime_docstrings(name):
         member = vars(cls).get(function.name)
         if function.name == "__init__" or isinstance(member, types.WrapperDescriptorType):
             continue
+        if isinstance(member, (staticmethod, classmethod)):
+            member = member.__func__
         doc = inspect.cleandoc(member.__doc__) if member.__doc__ else None
         pairs[function.name] = (ast.get_docstring(function), doc)
     return pairs

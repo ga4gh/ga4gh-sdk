@@ -21,6 +21,12 @@ pub struct ServiceExtensionConfiguration {
     /// Whether absence or disabled status must fail initialization.
     #[serde(default)]
     pub required: bool,
+    /// Optional release version requirement. Absence uses the selected artifact.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Required capabilities and acceptable interface revisions.
+    #[serde(default)]
+    pub capabilities: crate::utils::extension::Capabilities,
     /// Extension-specific JSON. It is never included in default diagnostics.
     pub configuration: Value,
 }

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-exclude = ["lib/tests/fixtures/native-extension"]
 members = [
+    "extension-abi",
     "lib",
     "cli",
     "python"

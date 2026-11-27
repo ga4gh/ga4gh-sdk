@@ -1,73 +1,136 @@
-//! Installation, error and dynamic-library lifetime boundaries.
-
-use ga4gh_sdk::utils::configuration::Configuration;
-use ga4gh_sdk::utils::extension::{Extension, InstalledExtension};
-use ga4gh_sdk::utils::extension_manager::ExtensionManager;
-use ga4gh_sdk::utils::json_store::JsonStore;
+//! Public management, native ABI, concurrency, and lifecycle boundaries.
+use ga4gh_sdk::utils::{
+    configuration::Configuration, extension::*, extension_manager::ExtensionManager,
+    json_store::JsonStore,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha512};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-fn manifest(dir: &Path, name: &str, url: &str, checksum: &str) -> PathBuf {
-    let path = dir.join("manifest.json");
-    fs::write(
-        &path,
-        json!({"name":name,"version":"1.0","path":url,"checksum":checksum}).to_string(),
-    )
-    .unwrap();
+fn digest(bytes: &[u8]) -> String {
+    Sha512::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+fn manifest(dir: &Path, name: &str, version: &str, source: &str, bytes: &[u8]) -> PathBuf {
+    let file = dir.join(format!("{name}-{version}-{}.json", digest(bytes)));
+    fs::write(&file,json!({"manifest_version":1,"name":name,"version":version,"path":source,"digest":digest(bytes),"target":HOST_TARGET,"abi_version":1,"capabilities":{"test":[1,2]}}).to_string()).unwrap();
+    file
+}
+fn edit(path: &Path, change: impl FnOnce(&mut Value)) {
+    let mut value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    change(&mut value);
+    fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+}
+fn caps() -> Capabilities {
+    serde_json::from_value(json!({"test":[1,2,3]})).unwrap()
+}
+fn manager(dir: &Path) -> ExtensionManager {
+    ExtensionManager::with_paths(dir.join("registry.json"), dir.join("separate-artifacts")).unwrap()
+}
+async fn install_bytes(m: &mut ExtensionManager, dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
+    let local = dir.join(format!("{name}-source"));
+    fs::write(&local, bytes).unwrap();
+    let path = manifest(dir, name, "1.0.0", local.to_str().unwrap(), bytes);
+    m.add_extension(&path).await.unwrap();
     path
 }
-
-fn record(name: &str) -> Value {
-    json!({"name":name,"version":"1","definition-path":"missing.json","library-path":"missing.so","enabled":false})
+fn compile(dir: &Path, name: &str, version: &str, extra: &[(&str, &str)]) -> PathBuf {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let output = dir.join(format!("{name}-{version}{}", std::env::consts::DLL_SUFFIX));
+    let mut build = cc::Build::new();
+    build
+        .cargo_metadata(false)
+        .host(HOST_TARGET)
+        .target(HOST_TARGET)
+        .opt_level(0)
+        .out_dir(dir);
+    let compiler = build.get_compiler();
+    let mut command = compiler.to_command();
+    if compiler.is_like_msvc() {
+        command.args(["/LD", "/W4"]);
+        command.arg(format!("/Fe:{}", output.display()));
+        command.arg(format!(
+            "/I{}",
+            root.join("extension-abi/include").display()
+        ));
+    } else {
+        command
+            .arg(if cfg!(target_os = "macos") {
+                "-dynamiclib"
+            } else {
+                "-shared"
+            })
+            .arg("-fPIC")
+            .arg("-o")
+            .arg(&output)
+            .arg("-I")
+            .arg(root.join("extension-abi/include"));
+    }
+    for (key, value) in [
+        ("PLUGIN_NAME", format!("\"{name}\"")),
+        ("PLUGIN_VERSION", format!("\"{version}\"")),
+        ("TARGET_TRIPLE", format!("\"{HOST_TARGET}\"")),
+    ]
+    .iter()
+    .map(|(a, b)| (*a, b.as_str()))
+    .chain(extra.iter().copied())
+    {
+        command.arg(format!(
+            "{}{}={}",
+            if compiler.is_like_msvc() { "/D" } else { "-D" },
+            key,
+            value
+        ));
+    }
+    let result = command
+        .arg(root.join("lib/tests/fixtures/native-extension/extension.c"))
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    output
+}
+fn wait(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !path.exists() {
+        assert!(Instant::now() < deadline, "timed out: {}", path.display());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+fn input(path: &Path) -> Vec<u8> {
+    path.to_str().unwrap().as_bytes().to_vec()
 }
 
-#[test]
-fn stale_managers_preserve_updates_without_restoring_removed_records() {
+#[tokio::test]
+async fn metadata_operations_preserve_stale_and_concurrent_changes_without_loading() {
     let dir = tempfile::tempdir().unwrap();
-    let registry = dir.path().join("extensions.json");
-    fs::write(
-        &registry,
-        json!({"extensions":[record("first"),record("second")]}).to_string(),
-    )
-    .unwrap();
-    let mut first = ExtensionManager::open(&registry).unwrap();
-    let mut second = ExtensionManager::open(&registry).unwrap();
-    first.enable_extension("first").unwrap();
-    second.enable_extension("second").unwrap();
-    assert!(ExtensionManager::open(&registry)
-        .unwrap()
-        .get_extensions()
-        .iter()
-        .all(|extension| extension.enabled));
-    second.remove_extension("first").unwrap();
-    first.disable_extension("second").unwrap();
-    let stored: Value = serde_json::from_slice(&fs::read(&registry).unwrap()).unwrap();
-    assert_eq!(stored, json!({"extensions":[record("second")]}));
-}
-
-#[test]
-fn concurrent_managers_keep_each_enabled_installation() {
-    let dir = tempfile::tempdir().unwrap();
-    let registry = dir.path().join("extensions.json");
-    let names = ["first", "second", "third", "fourth"];
-    fs::write(
-        &registry,
-        json!({"extensions": names.map(record)}).to_string(),
-    )
-    .unwrap();
-    let ready = std::sync::Barrier::new(names.len());
+    let mut first = manager(dir.path());
+    assert!(!dir.path().join("registry.json").exists());
+    for name in ["first", "second", "third", "fourth"] {
+        install_bytes(&mut first, dir.path(), name, b"not executable").await;
+    }
+    let barrier = Arc::new(std::sync::Barrier::new(4));
     std::thread::scope(|scope| {
-        let registry = &registry;
-        let ready = &ready;
-        let threads: Vec<_> = names
-            .iter()
+        let threads: Vec<_> = ["first", "second", "third", "fourth"]
+            .into_iter()
             .map(|name| {
+                let mut m = first.clone();
+                let barrier = barrier.clone();
                 scope.spawn(move || {
-                    let mut manager = ExtensionManager::open(registry).unwrap();
-                    ready.wait();
-                    manager.enable_extension(name).unwrap();
+                    barrier.wait();
+                    m.enable_extension(name).unwrap();
                 })
             })
             .collect();
@@ -75,28 +138,44 @@ fn concurrent_managers_keep_each_enabled_installation() {
             thread.join().unwrap();
         }
     });
-    let manager = ExtensionManager::open(&registry).unwrap();
-    assert_eq!(manager.get_extensions().len(), names.len());
-    assert!(manager
-        .get_extensions()
-        .iter()
-        .all(|extension| extension.enabled));
+    first.refresh().unwrap();
+    assert!(first.get_extensions().iter().all(|e| e.enabled));
+    let mut stale = first.clone();
+    first.remove_extension("first").unwrap();
+    stale.disable_extension("second").unwrap();
+    first.refresh().unwrap();
+    assert_eq!(first.get_extensions().len(), 3);
+    assert!(
+        !first
+            .get_extensions()
+            .iter()
+            .find(|e| e.name == "second")
+            .unwrap()
+            .enabled
+    );
+    // Source-independent immutable copies survive removal and can be registered again.
+    let artifact = first.get_extensions()[0].artifacts[0].library_path.clone();
+    first.remove_extension("second").unwrap();
+    assert!(artifact.exists());
+    for name in ["..", ".", "", "../outside", "a/b", "a\\b"] {
+        assert!(first.remove_extension(name).is_err());
+    }
 }
 
 #[tokio::test]
-async fn installing_keeps_registry_changes_made_during_download() {
+async fn download_failures_and_concurrent_registry_updates() {
     let dir = tempfile::tempdir().unwrap();
-    let registry = dir.path().join("extensions.json");
-    let mut manager = ExtensionManager::open(&registry).unwrap();
+    let mut m = manager(dir.path());
+    let registry = dir.path().join("registry.json");
     let mut server = mockito::Server::new_async().await;
-    let concurrent_registry = registry.clone();
-    let bytes = b"downloaded library";
+    let bytes = b"downloaded bytes";
+    let registry_update = registry.clone();
     let request = server
-        .mock("GET", "/library.so")
+        .mock("GET", "/plugin.so")
         .with_chunked_body(move |writer| {
-            JsonStore::new(&concurrent_registry, "Extension registry")
-                .update::<Value, _>(|value| {
-                    *value = json!({"extensions":[record("other")]});
+            JsonStore::new(&registry_update, "Extension registry")
+                .update::<Value, _>(|v| {
+                    *v = json!({"registry_version":1,"extensions":[]});
                     Ok(())
                 })
                 .unwrap();
@@ -104,290 +183,609 @@ async fn installing_keeps_registry_changes_made_during_download() {
         })
         .create_async()
         .await;
-    let checksum: String = Sha512::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let definition = manifest(
+    let path = manifest(
         dir.path(),
         "downloaded",
-        &format!("{}/library.so", server.url()),
-        &checksum,
-    );
-    manager.add_extension(definition).await.unwrap();
-    request.assert_async().await;
-    let names: Vec<_> = manager
-        .get_extensions()
-        .iter()
-        .map(|extension| extension.name.as_str())
-        .collect();
-    assert_eq!(names, ["other", "downloaded"]);
-    assert_eq!(
-        ExtensionManager::open(&registry)
-            .unwrap()
-            .get_extensions()
-            .len(),
-        2
-    );
-}
-
-#[test]
-fn malformed_extension_settings_and_metadata_do_not_expose_values() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("extension.json");
-    fs::write(&path, r#"{"name":{"secret":"PRIVATE_VALUE"}}"#).unwrap();
-    for error in [
-        Extension::from_file(&path).unwrap_err(),
-        InstalledExtension::from_file(&path).unwrap_err(),
-        ExtensionManager::open(&path).unwrap_err(),
-    ] {
-        assert!(!format!("{error} {error:?}").contains("PRIVATE_VALUE"));
-    }
-    let mut config = Configuration::default();
-    config.extra.insert(
-        "extensions".into(),
-        json!([{"name":{"secret":"PRIVATE_VALUE"},"configuration":{}}]),
-    );
-    // SAFETY: malformed settings must fail before any native library loads.
-    let error = unsafe { ExtensionManager::from_configuration(&path, &config) }.unwrap_err();
-    assert!(matches!(error, ga4gh_sdk::Error::Configuration(_)));
-    assert!(!format!("{error} {error:?}").contains("PRIVATE_VALUE"));
-    let missing = dir.path().join("missing.json");
-    assert_eq!(
-        Extension::from_file(&missing)
-            .unwrap_err()
-            .downcast_ref::<std::io::Error>()
-            .unwrap()
-            .kind(),
-        std::io::ErrorKind::NotFound
-    );
-    assert!(!missing.exists());
-}
-
-#[tokio::test]
-async fn install_enable_reopen_disable_remove() {
-    let dir = tempfile::tempdir().unwrap();
-    let registry = dir.path().join("extensions.json");
-    let mut manager = ExtensionManager::open(&registry).unwrap();
-    assert!(!registry.exists());
-    let mut server = mockito::Server::new_async().await;
-    let bytes = b"fixture bytes, not executable";
-    let download = server
-        .mock("GET", "/plugin.so")
-        .with_body(bytes)
-        .expect(1)
-        .create_async()
-        .await;
-    let checksum: String = Sha512::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let definition = manifest(
-        dir.path(),
-        "example",
+        "1.0.0",
         &format!("{}/plugin.so", server.url()),
-        &checksum,
+        bytes,
     );
-    manager.add_extension(&definition).await.unwrap();
-    download.assert_async().await;
-    let installed = &manager.get_extensions()[0];
-    assert!(!installed.enabled);
-    assert!(!installed.is_loaded());
-    assert_eq!(fs::read(&installed.library_path).unwrap(), bytes);
-    assert!(Path::new(&installed.definition_path).exists());
-    assert!(installed
-        .library_path
-        .ends_with(std::env::consts::DLL_SUFFIX));
-    let library = PathBuf::from(&installed.library_path);
-    let original_registry = fs::read(&registry).unwrap();
-    fs::remove_file(&registry).unwrap();
-    fs::create_dir(&registry).unwrap();
-    assert!(manager.remove_extension("example").is_err());
-    assert_eq!(fs::read(&library).unwrap(), bytes);
-    assert_eq!(manager.get_extensions().len(), 1);
-    assert!(manager.enable_extension("example").is_err());
-    assert!(!manager.get_extensions()[0].enabled);
-    fs::remove_dir(&registry).unwrap();
-    fs::write(&registry, original_registry).unwrap();
-    assert!(manager.add_extension(&definition).await.is_err());
-    manager.enable_extension("example").unwrap();
-    let mut reopened = ExtensionManager::open(&registry).unwrap();
-    assert!(reopened.get_extensions()[0].enabled);
-    assert!(!reopened.get_extensions()[0].is_loaded());
-    reopened.disable_extension("example").unwrap();
-    assert!(!ExtensionManager::open(&registry).unwrap().get_extensions()[0].enabled);
-    reopened.remove_extension("example").unwrap();
-    assert!(!dir.path().join("extensions/example").exists());
-    assert!(ExtensionManager::open(&registry)
-        .unwrap()
-        .get_extensions()
-        .is_empty());
-}
-
-#[tokio::test]
-async fn failed_downloads_and_checksums_do_not_install() {
-    let dir = tempfile::tempdir().unwrap();
-    let registry = dir.path().join("extensions.json");
-    let mut manager = ExtensionManager::open(&registry).unwrap();
-    let mut server = mockito::Server::new_async().await;
-    for (status, name) in [(503, "unavailable"), (200, "bad-checksum")] {
+    m.add_extension(&path).await.unwrap();
+    request.assert_async().await;
+    let before = fs::read(&registry).unwrap();
+    for status in [503, 200] {
         let request = server
-            .mock("GET", "/plugin.so")
+            .mock("GET", "/bad.so")
             .with_status(status)
             .with_body("wrong bytes")
             .create_async()
             .await;
-        let definition = manifest(
+        let path = manifest(
             dir.path(),
-            name,
-            &format!("{}/plugin.so", server.url()),
-            &"0".repeat(128),
+            "bad",
+            "1.0.0",
+            &format!("{}/bad.so", server.url()),
+            b"expected bytes",
         );
-        let error = manager.add_extension(definition).await.unwrap_err();
-        if status == 503 {
-            assert!(
-                matches!(error, ga4gh_sdk::Error::Transport(ref source) if source.status().unwrap().as_u16() == 503)
-            );
+        let error = m.add_extension(path).await.unwrap_err();
+        if status == 200 {
+            assert_eq!(error.kind, ExtensionErrorKind::DigestMismatch);
         } else {
-            assert!(error.to_string().contains("checksum mismatch"));
+            use std::error::Error;
+            let source = error
+                .source()
+                .unwrap()
+                .downcast_ref::<ga4gh_sdk::Error>()
+                .unwrap();
+            assert!(
+                matches!(source,ga4gh_sdk::Error::Transport(e) if e.status().unwrap().as_u16()==503)
+            );
         }
-        assert!(!dir.path().join(format!("extensions/{name}")).exists());
-        assert!(!registry.exists());
-        assert!(manager.get_extensions().is_empty());
+        assert_eq!(before, fs::read(&registry).unwrap());
         request.assert_async().await;
     }
 }
 
 #[tokio::test]
-async fn invalid_names_cannot_escape_installation_directory() {
+async fn explicit_resolution_negotiates_compatible_releases_without_fallback() {
     let dir = tempfile::tempdir().unwrap();
-    let registry = dir.path().join("extensions.json");
-    let sentinel = dir.path().join("keep.txt");
-    fs::write(&sentinel, "keep").unwrap();
-    let mut manager = ExtensionManager::open(&registry).unwrap();
-    for name in ["..", ".", "", "../outside", "a/b", "a\\b", "/tmp/outside"] {
-        assert!(manager.remove_extension(name).is_err());
-        assert!(manager.enable_extension(name).is_err());
-        let definition = manifest(
-            dir.path(),
-            name,
-            "http://127.0.0.1:1/plugin.so",
-            &"0".repeat(128),
-        );
-        assert!(manager.add_extension(definition).await.is_err());
-    }
-    assert!(manager.remove_extension("unknown").is_err());
-    assert_eq!(fs::read_to_string(sentinel).unwrap(), "keep");
-    assert!(!registry.exists());
-}
-
-#[test]
-fn corrupt_registry_and_missing_required_extension_fail() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("extensions.json");
-    fs::write(&path, "{malformed").unwrap();
-    assert!(ExtensionManager::open(&path).is_err());
-    assert_eq!(fs::read_to_string(&path).unwrap(), "{malformed");
-    fs::remove_file(&path).unwrap();
-    let mut config = Configuration::default();
-    config.extra.insert(
-        "extensions".into(),
-        json!([{"name":"missing","required":true,"configuration":{}}]),
+    let mut m = manager(dir.path());
+    let first = install_bytes(&mut m, dir.path(), "resolver", b"first bytes").await;
+    m.enable_extension("resolver").unwrap();
+    let old = m.resolve("resolver", None, None, &caps()).unwrap();
+    assert_eq!(old.capabilities()["test"], 2);
+    let second = manifest(dir.path(), "resolver", "2.0.0", "other", b"second bytes");
+    fs::write(dir.path().join("other"), b"second bytes").unwrap();
+    m.add_extension(&second).await.unwrap();
+    assert_eq!(
+        m.resolve("resolver", None, None, &caps())
+            .unwrap()
+            .artifact()
+            .version
+            .to_string(),
+        "2.0.0"
     );
-    // SAFETY: the empty registry cannot load native code.
-    let result = unsafe { ExtensionManager::from_configuration(&path, &config) };
-    assert!(result
+    assert_eq!(
+        m.resolve("resolver", Some("^1"), None, &caps())
+            .unwrap()
+            .artifact(),
+        old.artifact()
+    );
+    // A same-version different digest cannot be selected by version alone.
+    fs::write(dir.path().join("other"), b"repacked").unwrap();
+    edit(&second, |v| v["digest"] = json!(digest(b"repacked")));
+    m.add_extension(second).await.unwrap();
+    assert_eq!(
+        m.resolve("resolver", Some("^2"), None, &caps())
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::AmbiguousArtifact
+    );
+    assert_eq!(
+        m.resolve(
+            "resolver",
+            Some("^2"),
+            Some(&digest(b"second bytes")),
+            &caps()
+        )
+        .unwrap()
+        .artifact()
+        .digest,
+        digest(b"second bytes")
+    );
+    let incompatible = manifest(dir.path(), "resolver", "3.0.0", "other", b"repacked");
+    edit(&incompatible, |v| {
+        v["target"] = json!("other-os-architecture")
+    });
+    // The same bytes cannot be registered with conflicting metadata.
+    assert!(m.add_extension(incompatible).await.is_err());
+    assert_eq!(
+        m.resolve(
+            "resolver",
+            None,
+            None,
+            &serde_json::from_value(json!({"missing":[1]})).unwrap()
+        )
         .unwrap_err()
-        .to_string()
-        .contains("Required extension"));
-    config.extra["extensions"][0]["required"] = json!(false);
-    assert!(unsafe { ExtensionManager::from_configuration(&path, &config) }.is_ok());
-    config.extra.insert("extensions".into(), json!({}));
-    assert!(unsafe { ExtensionManager::from_configuration(&path, &config) }.is_err());
+        .kind,
+        ExtensionErrorKind::MissingCapability
+    );
+    assert_eq!(
+        m.resolve("resolver", Some("nonsense"), None, &caps())
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::InvalidMetadata
+    );
+    // Old resolution is not re-resolved even though selection has changed.
+    let error = unsafe { m.create_instance(&old, b"{}") }.unwrap_err();
+    assert_eq!(error.kind, ExtensionErrorKind::LoadFailed);
+    assert!(first.exists());
 }
 
-#[test]
-fn retained_methods_pin_the_library_until_last_drop() {
+#[tokio::test]
+async fn malformed_legacy_and_required_configuration_are_explicit_and_redacted() {
     let dir = tempfile::tempdir().unwrap();
-    let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/native-extension/Cargo.toml");
-    let build = std::process::Command::new(env!("CARGO"))
-        .args([
-            "build",
-            "--offline",
-            "--locked",
-            "--message-format=json",
-            "--manifest-path",
-        ])
-        .arg(fixture)
-        .arg("--target-dir")
-        .arg(dir.path().join("target"))
+    let registry = dir.path().join("registry.json");
+    fs::write(&registry, r#"{"extensions":[]}"#).unwrap();
+    assert_eq!(
+        manager_error(dir.path()),
+        ExtensionErrorKind::UnsupportedManifest
+    );
+    fs::write(
+        &registry,
+        r#"{"registry_version":1,"extensions":[{"name":{"secret":"PRIVATE"}}]}"#,
+    )
+    .unwrap();
+    let error = ExtensionManager::open(&registry).unwrap_err();
+    assert!(!format!("{error:?} {error}").contains("PRIVATE"));
+    fs::remove_file(&registry).unwrap();
+    let m = manager(dir.path());
+    let mut config = Configuration::default();
+    config.extra.insert("extensions".into(),json!([{"name":"missing","required":true,"configuration":{"secret":"PRIVATE"},"capabilities":{"test":[1]}}]));
+    assert_eq!(
+        unsafe { m.from_configuration(&config) }.unwrap_err().kind,
+        ExtensionErrorKind::Missing
+    );
+    config.extra["extensions"][0]["required"] = json!(false);
+    assert!(unsafe { m.from_configuration(&config) }.unwrap().is_empty());
+    config.extra["extensions"] = json!({"secret":"PRIVATE"});
+    let error = unsafe { m.from_configuration(&config) }.unwrap_err();
+    assert!(!format!("{error:?} {error}").contains("PRIVATE"));
+    assert!(!registry.exists());
+    let mut present = manager(dir.path());
+    install_bytes(&mut present, dir.path(), "present", b"not executable").await;
+    present.enable_extension("present").unwrap();
+    config.extra["extensions"] =
+        json!([{"name":"present","required":false,"version":"^2","configuration":{}}]);
+    assert_eq!(
+        unsafe { present.from_configuration(&config) }
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::NoMatchingArtifact
+    );
+    config.extra["extensions"] = json!([{"name":"present","required":false,"capabilities":{"absent":[1]},"configuration":{}}]);
+    assert_eq!(
+        unsafe { present.from_configuration(&config) }
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::MissingCapability
+    );
+    let path = manifest(dir.path(), "unsupported", "1.0.0", "unused", b"bytes");
+    edit(&path, |v| v["manifest_version"] = json!(2));
+    assert_eq!(
+        Extension::from_file(path).unwrap_err().kind,
+        ExtensionErrorKind::UnsupportedManifest
+    );
+}
+fn manager_error(dir: &Path) -> ExtensionErrorKind {
+    ExtensionManager::open(dir.join("registry.json"))
+        .unwrap_err()
+        .kind
+}
+
+#[tokio::test]
+async fn native_abi_lifetimes_instances_admission_and_process_versions() {
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<ExtensionManager>();
+    send_sync::<ExtensionInstance>();
+    send_sync::<ExtensionMethod>();
+    send_sync::<LoadedModule>();
+    let dir = tempfile::tempdir().unwrap();
+    let mut m = manager(dir.path());
+    let library = compile(
+        dir.path(),
+        "fixture",
+        "1.0.0",
+        &[(
+            "TABLE_SIZE",
+            "(sizeof(Ga4ghExtensionApiV1)+sizeof(uint64_t))",
+        )],
+    );
+    let path = manifest(
+        dir.path(),
+        "fixture",
+        "1.0.0",
+        library.to_str().unwrap(),
+        &fs::read(&library).unwrap(),
+    );
+    m.add_extension(&path).await.unwrap();
+    m.enable_extension("fixture").unwrap();
+    let resolved = m.resolve("fixture", None, None, &caps()).unwrap();
+    let other = m.clone();
+    let resolved_thread = resolved.clone();
+    let instance = std::thread::spawn(move || {
+        unsafe { other.create_instance(&resolved_thread, b"first config") }.unwrap()
+    })
+    .join()
+    .unwrap();
+    let second = unsafe { m.create_instance(&resolved, b"second config") }.unwrap();
+    assert_eq!(
+        instance.invoke("test", "configuration", b"").unwrap(),
+        b"first config"
+    );
+    assert_eq!(
+        second.invoke("test", "configuration", b"").unwrap(),
+        b"second config"
+    );
+    assert_eq!(
+        instance.invoke("absent", "echo", b"").unwrap_err().kind,
+        ExtensionErrorKind::MissingCapability
+    );
+    let failed = unsafe { m.create_instance(&resolved, b"fail SECRET_CONFIG") }.unwrap_err();
+    assert_eq!(failed.kind, ExtensionErrorKind::InitializationFailed);
+    assert_eq!(failed.private_payload(), b"fail SECRET_CONFIG");
+    assert!(!format!("{failed:?} {failed}").contains("SECRET_CONFIG"));
+    let failed = instance
+        .invoke("test", "fail", b"SECRET_RESULT")
+        .unwrap_err();
+    assert_eq!(failed.status, Some(8));
+    assert_eq!(failed.private_payload(), b"SECRET_RESULT");
+    assert!(!format!("{failed:?} {failed}").contains("SECRET_RESULT"));
+    let dropped = dir.path().join("destroyed");
+    instance
+        .invoke("test", "set_drop_path", &input(&dropped))
+        .unwrap();
+    // Concurrent distinct instances enter native code before either is released.
+    let prefixes = [dir.path().join("one"), dir.path().join("two")];
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            instance
+                .invoke("test", "wait", &input(&prefixes[0]))
+                .unwrap()
+        });
+        let second_call =
+            scope.spawn(|| second.invoke("test", "wait", &input(&prefixes[1])).unwrap());
+        for prefix in &prefixes {
+            wait(&prefix.with_extension("entered"));
+        }
+        // Registry lock is not held across native invocation; stale manager must
+        // read this new disable on its next admission.
+        let stale = m.clone();
+        m.disable_extension("fixture").unwrap();
+        assert_eq!(
+            unsafe { stale.create_instance(&resolved, b"{}") }
+                .unwrap_err()
+                .kind,
+            ExtensionErrorKind::Disabled
+        );
+        for prefix in &prefixes {
+            fs::write(prefix.with_extension("release"), "").unwrap();
+        }
+        first.join().unwrap();
+        second_call.join().unwrap();
+    });
+    m.enable_extension("fixture").unwrap();
+    // One instance serializes operations through copying/freeing the result.
+    let blocked = dir.path().join("serialized");
+    let touched = dir.path().join("touch");
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| instance.invoke("test", "wait", &input(&blocked)).unwrap());
+        wait(&blocked.with_extension("entered"));
+        let started = Arc::new(std::sync::Barrier::new(2));
+        let ready = started.clone();
+        let instance_ref = &instance;
+        let touched_ref = &touched;
+        let second_call = scope.spawn(move || {
+            ready.wait();
+            instance_ref
+                .invoke("test", "touch", &input(touched_ref))
+                .unwrap()
+        });
+        started.wait();
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(!touched.exists());
+        fs::write(blocked.with_extension("release"), "").unwrap();
+        first.join().unwrap();
+        second_call.join().unwrap();
+        assert!(touched.exists());
+    });
+    // Service configuration uses shared Figment sources; only instance JSON goes in.
+    let config=Configuration::from_provider(figment::providers::Serialized::defaults(json!({"base_path":"https://service.example/","bearer_access_token":"HOST_SECRET","extensions":[{"name":"fixture","required":true,"capabilities":{"test":[1]},"configuration":{"client":3}}]}))).unwrap();
+    let selected = unsafe { m.from_configuration(&config) }.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&selected[0].invoke("test", "configuration", b"").unwrap())
+            .unwrap(),
+        json!({"client":3})
+    );
+    drop(selected);
+    // Installing/selecting v2 changes no active library and cannot retarget v1.
+    let v2 = compile(dir.path(), "fixture", "2.0.0", &[]);
+    let manifest_v2 = manifest(
+        dir.path(),
+        "fixture",
+        "2.0.0",
+        v2.to_str().unwrap(),
+        &fs::read(&v2).unwrap(),
+    );
+    m.add_extension(&manifest_v2).await.unwrap();
+    assert_eq!(
+        unsafe { m.create_instance(&resolved, b"old exact") }
+            .unwrap()
+            .invoke("test", "configuration", b"")
+            .unwrap(),
+        b"old exact"
+    );
+    let updated = m.resolve("fixture", None, None, &caps()).unwrap();
+    let restart = unsafe { m.create_instance(&updated, b"new") }.unwrap_err();
+    assert_eq!(restart.kind, ExtensionErrorKind::RestartRequired);
+    assert_eq!(restart.current.unwrap().digest, resolved.artifact().digest);
+    // A fresh process loads the newly selected artifact.
+    let result = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "fresh_process_load", "--nocapture"])
+        .env("GA4GH_FIXTURE_REGISTRY", dir.path().join("registry.json"))
         .output()
         .unwrap();
     assert!(
-        build.status.success(),
-        "{}",
-        String::from_utf8_lossy(&build.stderr)
+        result.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
     );
-    let library = String::from_utf8(build.stdout)
-        .unwrap()
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|message| {
-            message["reason"] == "compiler-artifact"
-                && message["target"]["name"] == "ga4gh_extension_fixture"
-        })
-        .flat_map(|message| message["filenames"].as_array().cloned().unwrap_or_default())
-        .filter_map(|value| value.as_str().map(PathBuf::from))
-        .find(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == &std::env::consts::DLL_SUFFIX[1..])
-        })
-        .expect("fixture build must produce a shared library");
-    let registry = dir.path().join("extensions.json");
-    let dropped = dir.path().join("dropped");
-    fs::write(&registry, json!({"extensions":[{"name":"fixture","version":"1","definition-path":"fixture.json","library-path":library,"enabled":true}]}).to_string()).unwrap();
-    let config_path = dir.path().join("service.json");
-    fs::write(
-        &config_path,
-        json!({"profiles":{"site":{"CUSTOM":{
-            "base_path":"https://service.example.org/",
-            "bearer_access_token":"host-only-credential",
-            "extensions":[{"name":"not-selected","required":true,"configuration":{}}]
-        }}}})
-        .to_string(),
-    )
-    .unwrap();
-    let sources = Configuration::sources(&config_path, Some("site"), "CUSTOM")
-        .unwrap()
-        .merge(figment::providers::Serialized::defaults(
-            json!({"extensions":[{
-                "name":"fixture","required":true,"configuration":{"on_drop":dropped}
-            }]}),
-        ));
-    let config = Configuration::from_provider(sources).unwrap();
-    // SAFETY: the fixture is built alongside this host with the same dependencies
-    // and implements the documented ABI without extension-specific restrictions.
-    let mut manager = unsafe { ExtensionManager::from_configuration(&registry, &config) }.unwrap();
-    let method = manager
-        .lookup_extension_methods("test")
-        .into_iter()
-        .find(|method| method.internal_name == "configuration")
+    let method = instance.method("test", "echo").unwrap();
+    let stale = m.clone();
+    m.remove_extension("fixture").unwrap();
+    assert!(resolved.library_path().exists());
+    assert!(updated.library_path().exists());
+    assert_eq!(
+        unsafe { stale.create_instance(&resolved, b"{}") }
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::Missing
+    );
+    drop(instance);
+    drop(second);
+    drop(stale);
+    drop(m);
+    assert!(!dropped.exists());
+    assert_eq!(method.call(b"still callable").unwrap(), b"still callable");
+    std::thread::spawn(move || drop(method)).join().unwrap();
+    assert_eq!(fs::read_to_string(dropped).unwrap(), "destroyed");
+    // Pin remains after the last runtime handle is released.
+    let mut m = manager(dir.path());
+    m.add_extension(manifest_v2).await.unwrap();
+    m.enable_extension("fixture").unwrap();
+    let updated = m.resolve("fixture", None, None, &caps()).unwrap();
+    assert_eq!(
+        unsafe { m.create_instance(&updated, b"{}") }
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::RestartRequired
+    );
+}
+
+#[test]
+fn fresh_process_load() {
+    let Some(registry) = std::env::var_os("GA4GH_FIXTURE_REGISTRY") else {
+        return;
+    };
+    let m = ExtensionManager::open(registry).unwrap();
+    let resolved = m.resolve("fixture", None, None, &caps()).unwrap();
+    let instance = unsafe { m.create_instance(&resolved, b"child") }.unwrap();
+    assert_eq!(instance.invoke("test", "echo", b"child").unwrap(), b"child");
+}
+
+#[tokio::test]
+async fn api_header_checks_and_failed_validation_keep_the_process_pin() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut m = manager(dir.path());
+    for (name, extra, kind) in [
+        (
+            "badabi",
+            vec![("TABLE_ABI", "9")],
+            ExtensionErrorKind::UnsupportedAbi,
+        ),
+        (
+            "short",
+            vec![("TABLE_SIZE", "sizeof(Ga4ghHeader)")],
+            ExtensionErrorKind::InvalidApi,
+        ),
+    ] {
+        let library = compile(dir.path(), name, "1.0.0", &extra);
+        let path = manifest(
+            dir.path(),
+            name,
+            "1.0.0",
+            library.to_str().unwrap(),
+            &fs::read(&library).unwrap(),
+        );
+        m.add_extension(path).await.unwrap();
+        m.enable_extension(name).unwrap();
+        let resolved = m.resolve(name, None, None, &caps()).unwrap();
+        assert_eq!(
+            unsafe { m.create_instance(&resolved, b"{}") }
+                .unwrap_err()
+                .kind,
+            kind
+        );
+        let fixed = compile(dir.path(), name, "1.0.0", &[]);
+        let path = manifest(
+            dir.path(),
+            name,
+            "1.0.0",
+            fixed.to_str().unwrap(),
+            &fs::read(&fixed).unwrap(),
+        );
+        m.add_extension(path).await.unwrap();
+        let resolved = m.resolve(name, None, None, &caps()).unwrap();
+        assert_eq!(
+            unsafe { m.create_instance(&resolved, b"{}") }
+                .unwrap_err()
+                .kind,
+            ExtensionErrorKind::RestartRequired
+        );
+    }
+    let library = compile(dir.path(), "descriptor", "1.0.0", &[]);
+    let path = manifest(
+        dir.path(),
+        "descriptor",
+        "1.0.0",
+        library.to_str().unwrap(),
+        &fs::read(&library).unwrap(),
+    );
+    edit(&path, |v| v["capabilities"] = json!({"invented":[1]}));
+    m.add_extension(path).await.unwrap();
+    m.enable_extension("descriptor").unwrap();
+    let resolved = m
+        .resolve("descriptor", None, None, &Capabilities::new())
         .unwrap();
     assert_eq!(
-        unsafe { method.call(Value::Null) },
-        json!({"on_drop":dropped})
+        unsafe { m.load(&resolved) }.unwrap_err().kind,
+        ExtensionErrorKind::InvalidApi
     );
-    manager.enable_extension("fixture").unwrap();
-    assert!(manager.get_extensions()[0].is_loaded());
-    let mut cloned = manager.clone();
-    let method = cloned.lookup_extension_methods("test")[0].clone();
-    drop(manager);
-    cloned.disable_extension("fixture").unwrap();
-    drop(cloned);
-    assert!(!dropped.exists());
-    let input: Value = json!({"still":"callable"});
-    assert_eq!(unsafe { method.call(input.clone()) }, input);
-    drop(method);
-    assert_eq!(fs::read_to_string(dropped).unwrap(), "deinitialized");
+}
+
+#[tokio::test]
+async fn admitted_creation_finishes_after_disable_without_a_registry_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut m = manager(dir.path());
+    let prefix = dir.path().join("admission");
+    let quoted = serde_json::to_string(&prefix.to_str().unwrap().replace('\\', "/")).unwrap();
+    let library = compile(
+        dir.path(),
+        "admission",
+        "1.0.0",
+        &[("ENTRY_WAIT_PREFIX", &quoted)],
+    );
+    let manifest = manifest(
+        dir.path(),
+        "admission",
+        "1.0.0",
+        library.to_str().unwrap(),
+        &fs::read(&library).unwrap(),
+    );
+    m.add_extension(manifest).await.unwrap();
+    m.enable_extension("admission").unwrap();
+    let resolved = m.resolve("admission", None, None, &caps()).unwrap();
+    let stale = m.clone();
+    let loading = m.clone();
+    let admitted = resolved.clone();
+    let thread =
+        std::thread::spawn(move || unsafe { loading.create_instance(&admitted, b"admitted") });
+    wait(&prefix.with_extension("entered"));
+    // API discovery is blocked in native code. This mutation must still complete.
+    m.disable_extension("admission").unwrap();
+    assert_eq!(
+        unsafe { stale.create_instance(&resolved, b"late") }
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::Disabled
+    );
+    m.remove_extension("admission").unwrap();
+    fs::write(prefix.with_extension("release"), "").unwrap();
+    let instance = thread.join().unwrap().unwrap();
+    assert_eq!(
+        instance.invoke("test", "configuration", b"").unwrap(),
+        b"admitted"
+    );
+    assert_eq!(
+        unsafe { stale.create_instance(&resolved, b"later") }
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::Missing
+    );
+}
+
+#[tokio::test]
+async fn concurrent_artifacts_have_one_process_winner_across_managers() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut m = manager(dir.path());
+    let mut resolved = vec![];
+    for version in ["1.0.0", "2.0.0"] {
+        let library = compile(dir.path(), "race", version, &[]);
+        let path = manifest(
+            dir.path(),
+            "race",
+            version,
+            library.to_str().unwrap(),
+            &fs::read(&library).unwrap(),
+        );
+        m.add_extension(path).await.unwrap();
+        m.enable_extension("race").unwrap();
+        resolved.push(m.resolve("race", None, None, &caps()).unwrap());
+    }
+    let ready = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        let threads: Vec<_> = resolved
+            .iter()
+            .map(|resolved| {
+                let m = &m;
+                let ready = &ready;
+                scope.spawn(move || {
+                    ready.wait();
+                    unsafe { m.create_instance(resolved, b"race") }
+                })
+            })
+            .collect();
+        let outcomes: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        assert_eq!(outcomes.iter().filter(|r| r.is_ok()).count(), 1);
+        assert_eq!(
+            outcomes.into_iter().find_map(Result::err).unwrap().kind,
+            ExtensionErrorKind::RestartRequired
+        );
+    });
+    // A different registry and installation root cannot bypass that process pin.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let mut other = manager(elsewhere.path());
+    let library = compile(elsewhere.path(), "race", "3.0.0", &[]);
+    let path = manifest(
+        elsewhere.path(),
+        "race",
+        "3.0.0",
+        library.to_str().unwrap(),
+        &fs::read(&library).unwrap(),
+    );
+    other.add_extension(path).await.unwrap();
+    other.enable_extension("race").unwrap();
+    let resolved = other.resolve("race", None, None, &caps()).unwrap();
+    assert_eq!(
+        unsafe { other.create_instance(&resolved, b"{}") }
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::RestartRequired
+    );
+}
+
+#[tokio::test]
+async fn load_checks_target_abi_and_digest_before_executing_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut m = manager(dir.path());
+    let path = install_bytes(&mut m, dir.path(), "preflight", b"not executable").await;
+    m.enable_extension("preflight").unwrap();
+    let resolved = m.resolve("preflight", None, None, &caps()).unwrap();
+    fs::write(resolved.library_path(), b"tampered").unwrap();
+    assert_eq!(
+        unsafe { m.create_instance(&resolved, b"{}") }
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::DigestMismatch
+    );
+    m.remove_extension("preflight").unwrap();
+    // Independent bytes avoid a conflicting re-registration of the original digest.
+    fs::write(dir.path().join("source-target"), b"target bytes").unwrap();
+    let target = manifest(
+        dir.path(),
+        "target",
+        "1.0.0",
+        "source-target",
+        b"target bytes",
+    );
+    edit(&target, |v| v["target"] = json!("other-target"));
+    m.add_extension(target).await.unwrap();
+    m.enable_extension("target").unwrap();
+    assert_eq!(
+        m.resolve("target", None, None, &caps()).unwrap_err().kind,
+        ExtensionErrorKind::TargetMismatch
+    );
+    edit(&path, |v| {
+        v["name"] = json!("unsupported-abi");
+        v["abi_version"] = json!(99);
+    });
+    m.add_extension(path).await.unwrap();
+    m.enable_extension("unsupported-abi").unwrap();
+    assert_eq!(
+        m.resolve("unsupported-abi", None, None, &caps())
+            .unwrap_err()
+            .kind,
+        ExtensionErrorKind::UnsupportedAbi
+    );
 }

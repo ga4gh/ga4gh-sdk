@@ -4,3 +4,5 @@ pub mod json;
 pub(crate) mod runtime;
 pub mod transport;
 pub mod validate;
+
+pub mod extensions;

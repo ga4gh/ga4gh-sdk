@@ -17,7 +17,10 @@ pub fn command() -> Command {
                 .arg(Arg::new("file").required(true)),
         );
     for (name, description) in [
-        ("remove", "Remove an installed extension"),
+        (
+            "remove",
+            "Unregister an extension; retain artifact files and disk usage",
+        ),
         ("enable", "Enable an extension for explicit loading"),
         ("disable", "Disable an installed extension"),
     ] {
@@ -27,7 +30,12 @@ pub fn command() -> Command {
                 .arg(Arg::new("name").required(true)),
         );
     }
-    command
+    command.subcommand(
+        Command::new("select")
+            .about("Select an installed artifact without loading it")
+            .arg(Arg::new("name").required(true))
+            .arg(Arg::new("digest").required(true)),
+    )
 }
 
 /// Runs an installation command using `extensions.json` beside this context's
@@ -49,9 +57,24 @@ pub async fn run(matches: &ArgMatches, context: &CliContext) -> anyhow::Result<C
         anyhow::bail!("An extension subcommand is required");
     };
     if command == "list" {
-        let mut output = format!("{:<25} {}\n", "Extension Name", "Enabled");
+        let mut output = format!(
+            "{:<25} {:<12} {:<8} {:<9} {:<30} {}\n",
+            "Extension Name", "Version", "Enabled", "Selected", "Target", "Digest"
+        );
         for extension in manager.get_extensions() {
-            output.push_str(&format!("{:<25} {}\n", extension.name, extension.enabled));
+            for artifact in &extension.artifacts {
+                let identity = &artifact.manifest.artifact;
+                let version = identity.version.to_string();
+                output.push_str(&format!(
+                    "{:<25} {:<12} {:<8} {:<9} {:<30} {}\n",
+                    extension.name,
+                    version,
+                    extension.enabled,
+                    extension.selected == identity.digest,
+                    identity.target,
+                    identity.digest
+                ));
+            }
         }
         return Ok(CommandOutput::success(output));
     }
@@ -66,7 +89,15 @@ pub async fn run(matches: &ArgMatches, context: &CliContext) -> anyhow::Result<C
         "remove" => manager.remove_extension(value)?,
         "enable" => manager.enable_extension(value)?,
         "disable" => manager.disable_extension(value)?,
+        "select" => manager.select_extension(
+            value,
+            sub.get_one::<String>("digest").expect("required digest"),
+        )?,
         _ => anyhow::bail!("Unknown extension subcommand"),
     }
-    Ok(CommandOutput::success(String::new()))
+    Ok(CommandOutput::success(if command == "remove" {
+        "Registration removed; artifact files retained. Disk space is not reclaimed.\n".to_owned()
+    } else {
+        String::new()
+    }))
 }

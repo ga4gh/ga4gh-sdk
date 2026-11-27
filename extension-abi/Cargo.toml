@@ -1,0 +1,7 @@
+[package]
+name = "ga4gh-extension-abi"
+description = "C ABI v1 for GA4GH native extensions"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true

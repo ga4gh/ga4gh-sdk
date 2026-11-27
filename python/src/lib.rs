@@ -137,6 +137,7 @@ fn ga4gh_sdk(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyConfiguration>()?;
     m.add_class::<PyServiceInfo>()?;
     m.add_class::<PyTransport>()?;
+    utils::extensions::register(py, m)?;
     clients::wes::register(py, m)?;
     clients::tes::register(py, m)?;
     clients::drs::register(py, m)?;

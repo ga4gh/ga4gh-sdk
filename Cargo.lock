@@ -774,14 +774,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ga4gh-extension-abi"
+version = "0.1.0"
+
+[[package]]
 name = "ga4gh-lib"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cc",
  "dirs",
  "env_logger",
  "figment",
  "futures-util",
+ "ga4gh-extension-abi",
  "http-body-util",
  "httpdate",
  "jsonschema",
@@ -794,6 +800,7 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_derive",
  "serde_json",
@@ -2371,6 +2378,16 @@ checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "semver"
+version = "1.0.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

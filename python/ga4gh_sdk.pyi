@@ -2331,3 +2331,150 @@ class AsyncTask:
         Raises:
             ValueError: An argument is invalid, when the method is called.
         """
+
+class ExtensionError(RuntimeError):
+    """A classified native extension failure with redacted default diagnostics."""
+
+    kind: str
+    """Machine-readable Rust failure classification."""
+    status: int | None
+    """Plugin status code, when applicable."""
+    current: dict[str, Any] | None
+    """Pinned process artifact for RestartRequired."""
+    requested: dict[str, Any] | None
+    """Requested artifact for RestartRequired."""
+    private_payload: bytes
+    """Explicit plugin error bytes; these may contain secrets."""
+
+class ExtensionManager:
+    """Manage native installations with explicit registry and artifact paths."""
+
+    @staticmethod
+    def host_target() -> str:
+        """Return this loader's full target triple for installation manifests."""
+        ...
+
+    def __init__(self, registry_path: str, installation_root: str) -> None:
+        """Open metadata without loading code.
+
+        Args:
+            registry_path: Path to the JSON registry.
+            installation_root: Directory for immutable artifacts."""
+        ...
+
+    def install(self, manifest: str) -> None:
+        """Install and select local or downloaded bytes without executing them.
+
+        Args:
+            manifest: Path to a v1 JSON manifest."""
+        ...
+
+    def list(self) -> list[dict[str, Any]]:
+        """Read the latest installation metadata without loading code."""
+        ...
+
+    def enable(self, name: str) -> None:
+        """Enable future instance creation without loading code.
+
+        Args:
+            name: Registered extension name."""
+        ...
+
+    def disable(self, name: str) -> None:
+        """Block new instances while existing handles continue working.
+
+        Args:
+            name: Registered extension name."""
+        ...
+
+    def remove(self, name: str) -> None:
+        """Remove registration; retain artifact files and their disk usage.
+
+        Args:
+            name: Registered extension name."""
+        ...
+
+    def select(self, name: str, digest: str) -> None:
+        """Select installed bytes without loading or switching existing clients.
+
+        Args:
+            name: Registered extension name.
+            digest: Exact SHA-512 artifact digest."""
+        ...
+
+    def resolve(self, name: str, version: str | None = None, digest: str | None = None, capabilities: dict[str, list[int]] | None = None) -> ResolvedExtension:
+        """Resolve one exact artifact and negotiate required interfaces.
+
+        Args:
+            name: Registered extension name.
+            version: Release requirement; None uses the selected artifact.
+            digest: Optional exact SHA-512 pin.
+            capabilities: Required names and acceptable interface revisions."""
+        ...
+
+    def load(self, resolved: ResolvedExtension) -> ExtensionModule:
+        """Explicitly load trusted native code without creating an instance.
+
+        Args:
+            resolved: Exact artifact implementing the C ABI v1 trust contract."""
+        ...
+
+    def create_instance(self, resolved: ResolvedExtension, configuration: bytes) -> ExtensionInstance:
+        """Create an independent instance of trusted native code without the GIL.
+
+        Args:
+            resolved: Exact artifact implementing the C ABI v1 trust contract.
+            configuration: Opaque instance configuration bytes."""
+        ...
+
+class ResolvedExtension:
+    """An immutable artifact resolution and negotiated capability revisions."""
+
+    def artifact(self) -> dict[str, Any]:
+        """Return a copy of the exact version, target, digest, and ABI identity."""
+        ...
+
+    def capabilities(self) -> dict[str, int]:
+        """Return a copy of negotiated capability interface revisions."""
+        ...
+
+class ExtensionModule:
+    """A loaded native module retained independently of its manager."""
+
+    def descriptor(self) -> dict[str, Any]:
+        """Return a copy of the validated exported API descriptor."""
+        ...
+
+class ExtensionInstance:
+    """An independent native instance whose operations are serialized across threads."""
+
+    def capabilities(self) -> dict[str, int]:
+        """Return a copy of the instance capability interface revisions."""
+        ...
+
+    def invoke(self, capability: str, operation: str, input: bytes) -> bytes:
+        """Invoke a negotiated interface without the GIL and copy its result.
+
+        Args:
+            capability: Negotiated capability name.
+            operation: Adapter-defined operation name.
+            input: Opaque operation input bytes."""
+        ...
+
+    def method(self, capability: str, operation: str) -> ExtensionMethod:
+        """Retain this instance in a bound invocation handle.
+
+        Args:
+            capability: Negotiated capability name.
+            operation: Adapter-defined operation name."""
+        ...
+
+class ExtensionMethod:
+    """A bound operation retaining its native instance and module."""
+
+    def call(self, input: bytes) -> bytes:
+        """Invoke the bound operation without the GIL.
+
+        Args:
+            input: Opaque operation input bytes."""
+        ...

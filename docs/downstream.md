@@ -368,5 +368,8 @@ The [experimental extension manager](extensions.md) loads shared libraries at
 runtime. It is separate from this guide's composition through downstream crates.
 Its CLI commands use the same `CliContext` configuration-directory ownership.
 The example's `native_extensions_use_explicit_downstream_paths` test exercises
-the loader through a downstream crate with shared typed configuration, including
-a missing required extension and the manager's `Send + Sync` contract.
+the manager through a downstream crate with separate caller-supplied registry and
+artifact paths and shared typed configuration. It checks a missing required
+extension and the public runtime types' `Send + Sync` contract. The C ABI,
+resolver, instance lifecycle, and experimental Rust ABI migration are described
+in the extension guide.

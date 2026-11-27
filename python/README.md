@@ -93,7 +93,7 @@ GA4GH_TRS_PUBLIC_TESTS=1 pytest tests/test_trs_public.py
 | `WES`, `Run`, `RunRequest` | Start runs (with workflow attachments), list, inspect, poll, and cancel WES runs, and read their tasks; read full JSON including unknown fields. See [Using WES](#using-wes). |
 | `TRS`, `Tool`, `ToolVersion`, `FileWrapper`, `ToolFile`, `ToolPage` | List tools page by page, read tools, versions, descriptors, test files, file lists, ZIP archives and container files of TRS 2.0.1 and 2.0.2 registries; read full JSON including unknown fields. See [Using TRS](#using-trs). |
 | Service Registry | Available in the Rust SDK, not yet as a Python client class. |
-| Native extension manager | Experimental Rust-only loader; Python does not implicitly load shared libraries. See the [extension guide](../docs/extensions.md). |
+| Native extension manager | Explicit C ABI v1 installation, resolution, modules, instances and invocation handles through `ExtensionManager`. Native calls release the GIL; raw pointers are not exposed. See the [extension guide](../docs/extensions.md#python). |
 
 The Python API is maintained by hand; a new Rust SDK method or model does not
 appear in Python automatically. For each SDK change, decide whether to expose

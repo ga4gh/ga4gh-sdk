@@ -25,6 +25,10 @@ fn native_extensions_use_explicit_downstream_paths() {
 
     fn send_sync<T: Send + Sync>() {}
     send_sync::<ExtensionManager>();
+    send_sync::<ga4gh_sdk::utils::extension::ResolvedExtension>();
+    send_sync::<ga4gh_sdk::utils::extension::LoadedModule>();
+    send_sync::<ga4gh_sdk::utils::extension::ExtensionInstance>();
+    send_sync::<ga4gh_sdk::utils::extension::ExtensionMethod>();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("extensions.json");
     let mut config =
@@ -36,11 +40,15 @@ fn native_extensions_use_explicit_downstream_paths() {
         })))
         .unwrap();
     // SAFETY: this registry is absent, so no native code can be loaded.
-    let manager = unsafe { ExtensionManager::from_configuration(&path, &config) }.unwrap();
-    assert!(manager.get_extensions().is_empty());
+    let manager = ExtensionManager::with_paths(&path, dir.path().join("native-artifacts")).unwrap();
+    let instances = unsafe { manager.from_configuration(&config) }.unwrap();
+    assert!(instances.is_empty());
     config.extra["extensions"][0]["required"] = json!(true);
-    let error = unsafe { ExtensionManager::from_configuration(&path, &config) }.unwrap_err();
-    assert!(error.to_string().contains("Required extension"));
+    let error = unsafe { manager.from_configuration(&config) }.unwrap_err();
+    assert_eq!(
+        error.kind,
+        ga4gh_sdk::utils::extension::ExtensionErrorKind::Missing
+    );
     assert!(!path.exists());
 }
 

@@ -1,249 +1,282 @@
-//! Experimental native extensions, loaded only through an explicit unsafe call.
-//!
-//! Installation metadata can be read without executing native code.
+//! Versioned extension metadata and explicit C ABI loading.
+pub(crate) mod runtime;
+pub use runtime::{ExtensionInstance, ExtensionMethod, LoadedModule};
 
 use crate::utils::json_store::JsonStore;
-use libloading::Library;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
+use std::{
+    collections::BTreeMap,
+    fmt,
+    path::{Path, PathBuf},
+};
 
-type Init = unsafe extern "Rust" fn(Value) -> Vec<&'static [&'static str]>;
-type Method = unsafe extern "Rust" fn(Value) -> Value;
-type Deinit = unsafe extern "C" fn();
+/// This build's full target triple, including its platform ABI.
+pub const HOST_TARGET: &str = env!("GA4GH_EXTENSION_TARGET");
+/// Capability name to explicit supported interface revisions.
+pub type Capabilities = BTreeMap<String, Vec<u32>>;
+/// Negotiated capability name to one interface revision.
+pub type NegotiatedCapabilities = BTreeMap<String, u32>;
 
-struct LoadedLibrary {
-    library: Library,
-    deinit: Option<Deinit>,
+/// Machine-readable failure classification; default diagnostics contain no payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ExtensionErrorKind {
+    /// Invalid name, version requirement, or metadata.
+    InvalidMetadata,
+    /// Unsupported or legacy manifest/registry format; convert or reinstall explicitly.
+    UnsupportedManifest,
+    /// Missing extension registration or compatible release.
+    Missing,
+    /// No installed artifact matches an explicit release or digest request.
+    NoMatchingArtifact,
+    /// Extension is registered but disabled.
+    Disabled,
+    /// Unsupported native ABI.
+    UnsupportedAbi,
+    /// OS, architecture, or platform ABI does not match.
+    TargetMismatch,
+    /// Library bytes differ from the recorded digest.
+    DigestMismatch,
+    /// A required capability or interface revision is unavailable.
+    MissingCapability,
+    /// Multiple matching artifacts require an exact digest selection.
+    AmbiguousArtifact,
+    /// An earlier resolution is no longer registered or belongs to another registry.
+    StaleResolution,
+    /// The process has already loaded another artifact of this extension.
+    RestartRequired,
+    /// OS library loading or symbol lookup failed.
+    LoadFailed,
+    /// Exported API is malformed or disagrees with the manifest.
+    InvalidApi,
+    /// Plugin instance creation failed.
+    InitializationFailed,
+    /// Plugin operation failed.
+    InvocationFailed,
+    /// Registry, installation, or coordination I/O failed.
+    Storage,
 }
-
-impl Drop for LoadedLibrary {
-    fn drop(&mut self) {
-        if let Some(deinit) = self.deinit {
-            // SAFETY: load's caller accepts the library's ABI and lifecycle contract.
-            unsafe { deinit() };
+/// Inspectable failure with redacted default formatting and explicit private details.
+pub struct ExtensionError {
+    /// Failure classification.
+    pub kind: ExtensionErrorKind,
+    /// Loaded artifact when a restart is required.
+    pub current: Option<Box<ArtifactIdentity>>,
+    /// Requested artifact when a restart is required.
+    pub requested: Option<Box<ArtifactIdentity>>,
+    /// Plugin status, when applicable.
+    pub status: Option<i32>,
+    payload: Vec<u8>,
+    cause: Option<crate::Error>,
+}
+impl ExtensionError {
+    pub(crate) fn new(kind: ExtensionErrorKind) -> Self {
+        Self {
+            kind,
+            current: None,
+            requested: None,
+            status: None,
+            payload: vec![],
+            cause: None,
         }
     }
+    pub(crate) fn caused(kind: ExtensionErrorKind, cause: impl Into<crate::Error>) -> Self {
+        let mut e = Self::new(kind);
+        e.cause = Some(cause.into());
+        e
+    }
+    pub(crate) fn plugin(kind: ExtensionErrorKind, status: i32, payload: Vec<u8>) -> Self {
+        let mut e = Self::new(kind);
+        e.status = Some(status);
+        e.payload = payload;
+        e
+    }
+    /// Explicit access to plugin error bytes, which may include secrets.
+    pub fn private_payload(&self) -> &[u8] {
+        &self.payload
+    }
 }
-
-/// A method exported by an extension. Clones keep its library loaded.
-#[derive(Clone)]
-pub struct ExtensionMethod {
-    /// The extension providing this method.
-    pub extension_name: String,
-    /// The method category, such as `tls-verifier`.
-    pub unified_name: String,
-    /// The extension's name for the method.
-    pub internal_name: String,
-    method: Method,
-    owner: Arc<LoadedLibrary>,
+impl fmt::Display for ExtensionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Extension error: {:?}", self.kind)
+    }
 }
-
-impl std::fmt::Debug for ExtensionMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExtensionMethod")
-            .field("extension_name", &self.extension_name)
-            .field("unified_name", &self.unified_name)
-            .field("internal_name", &self.internal_name)
+impl fmt::Debug for ExtensionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtensionError")
+            .field("kind", &self.kind)
+            .field("status", &self.status)
             .finish_non_exhaustive()
     }
 }
-
-impl ExtensionMethod {
-    /// Calls the method with extension-specific JSON.
-    ///
-    /// # Safety
-    ///
-    /// The caller must meet the extension's input and threading requirements.
-    pub unsafe fn call(&self, input: Value) -> Value {
-        let _keep_alive = &self.owner;
-        // SAFETY: the caller accepts the method's contract; owner pins its code.
-        unsafe { (self.method)(input) }
+impl std::error::Error for ExtensionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.cause.as_ref().map(|x| x as _)
     }
 }
+/// Result of extension management, resolution, and execution.
+pub type ExtensionResult<T> = Result<T, ExtensionError>;
 
-/// An installation manifest for a shared library.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Extension {
-    /// A single directory-safe extension name.
+/// Exact binary identity. A release number alone cannot identify a loaded artifact.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArtifactIdentity {
+    /// Logical extension identity, shared across registries in one process.
     pub name: String,
-    /// The extension version.
-    pub version: String,
-    /// The HTTP or HTTPS URL of the shared library.
+    /// Extension release version.
+    pub version: semver::Version,
+    /// Full target triple.
+    pub target: String,
+    /// Lowercase SHA-512 hex digest (the v1 digest algorithm).
+    pub digest: String,
+    /// Native ABI revision.
+    pub abi_version: u32,
+}
+/// Installation manifest. Reading it never executes native code.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Extension {
+    /// Manifest schema revision; v1 accepts 1 only.
+    pub manifest_version: u32,
+    /// Exact binary identity; fields are flattened into JSON.
+    #[serde(flatten)]
+    pub artifact: ArtifactIdentity,
+    /// Advertised capability revisions.
+    pub capabilities: Capabilities,
+    /// HTTP(S) URL or local path relative to this manifest.
     pub path: String,
-    /// The library's SHA-512 hex digest.
-    pub checksum: String,
-    /// An optional description.
+    /// Optional descriptive metadata.
+    #[serde(default)]
     pub description: Option<String>,
 }
-
-impl Extension {
-    /// Reads a manifest without executing code.
-    ///
-    /// # Errors
-    ///
-    /// Returns I/O or malformed-data errors without including parser values.
-    pub fn from_file(path: impl AsRef<Path>) -> crate::Result<Self> {
-        JsonStore::new(path.as_ref(), "Extension manifest")
-            .read()?
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Extension manifest does not exist",
-                )
-                .into()
-            })
-    }
-}
-
-/// An installed extension and its optional runtime state. Serialized records
-/// contain metadata only; clones share ownership of a loaded library.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct InstalledExtension {
-    /// The extension name.
+/// Exported descriptor, encoded as UTF-8 JSON in the C API table.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionDescriptor {
+    /// Logical extension name.
     pub name: String,
-    /// The installed version.
-    pub version: String,
-    /// The installed manifest path.
-    #[serde(rename = "definition-path")]
-    pub definition_path: String,
-    /// The installed shared library path.
-    #[serde(rename = "library-path")]
-    pub library_path: String,
-    /// Whether this installation is enabled for explicit loading.
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(skip)]
-    library: Option<Arc<LoadedLibrary>>,
-    #[serde(skip)]
-    methods: HashMap<String, Vec<ExtensionMethod>>,
+    /// Extension release version.
+    pub version: semver::Version,
+    /// Full target triple.
+    pub target: String,
+    /// Native ABI revision.
+    pub abi_version: u32,
+    /// Advertised capability revisions.
+    pub capabilities: Capabilities,
 }
-
-impl std::fmt::Debug for InstalledExtension {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InstalledExtension")
-            .field("name", &self.name)
-            .field("version", &self.version)
-            .field("enabled", &self.enabled)
-            .field("loaded", &self.is_loaded())
-            .finish_non_exhaustive()
-    }
-}
-
-impl InstalledExtension {
-    pub(crate) fn new(name: String, version: String, definition: String, library: String) -> Self {
-        Self {
-            name,
-            version,
-            definition_path: definition,
-            library_path: library,
-            enabled: false,
-            library: None,
-            methods: HashMap::new(),
+impl Extension {
+    /// Reads and validates metadata without loading code. Legacy manifests need reinstalling.
+    pub fn from_file(path: impl AsRef<Path>) -> ExtensionResult<Self> {
+        let value: serde_json::Value = JsonStore::new(path.as_ref(), "Extension manifest")
+            .read()
+            .map_err(storage)?
+            .ok_or_else(|| ExtensionError::new(ExtensionErrorKind::Missing))?;
+        if value.get("manifest_version").and_then(|v| v.as_u64()) != Some(1) {
+            return Err(ExtensionError::new(ExtensionErrorKind::UnsupportedManifest));
         }
+        let manifest: Self = serde_json::from_value(value)
+            .map_err(|_| ExtensionError::new(ExtensionErrorKind::InvalidMetadata))?;
+        manifest.validate()?;
+        Ok(manifest)
     }
-
-    /// Reads installation metadata without executing code.
-    ///
-    /// # Errors
-    ///
-    /// Returns I/O or malformed-data errors without including parser values.
-    pub fn from_file(path: impl AsRef<Path>) -> crate::Result<Self> {
-        JsonStore::new(path.as_ref(), "Extension record")
-            .read()?
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Extension record does not exist",
-                )
-                .into()
-            })
-    }
-
-    /// Enables loading in memory; use the manager to persist the status.
-    pub fn enable(&mut self) {
-        self.enabled = true;
-    }
-
-    /// Disables loading and releases this record's runtime handles.
-    pub fn disable(&mut self) {
-        self.enabled = false;
-        self.unload();
-    }
-
-    /// Whether this record owns a loaded library.
-    pub fn is_loaded(&self) -> bool {
-        self.library.is_some()
-    }
-
-    pub(crate) fn methods(&self, category: &str) -> impl Iterator<Item = &ExtensionMethod> {
-        self.methods.get(category).into_iter().flatten()
-    }
-
-    /// Loads an enabled library and calls `init`. Disabled or loaded records
-    /// are left unchanged.
-    ///
-    /// # Safety
-    ///
-    /// The library must be trusted and built with the same Rust compiler and
-    /// compatible dependency builds as the host. `init` must have type
-    /// `unsafe extern "Rust" fn(Value) -> Vec<&'static [&'static str]>`.
-    /// Each entry must contain category, internal name and symbol name; every
-    /// named method must be `unsafe extern "Rust" fn(Value) -> Value`.
-    /// Returned references must remain valid while the library is loaded.
-    /// Optional `deinit` must be `unsafe extern "C" fn()` and safe on the thread
-    /// dropping the last handle. Initializers and finalizers must not unwind.
-    /// The caller must meet any extension-specific threading requirements.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for missing libraries or symbols and invalid descriptors.
-    pub unsafe fn load(&mut self, service_config: Value) -> crate::Result<()> {
-        if !self.enabled || self.is_loaded() {
-            return Ok(());
+    pub(crate) fn validate(&self) -> ExtensionResult<()> {
+        if self.manifest_version != 1 {
+            return Err(ExtensionError::new(ExtensionErrorKind::UnsupportedManifest));
         }
-        // SAFETY: the caller accepts the native code and ABI contract above.
-        let library = unsafe { Library::new(&self.library_path) }.map_err(crate::Error::other)?;
-        let descriptors = {
-            // SAFETY: the caller guarantees the initializer's signature.
-            let init = unsafe { library.get::<Init>(b"init") }.map_err(crate::Error::other)?;
-            unsafe { init(service_config) }
-        };
-        // SAFETY: if present, deinit has the signature promised by the caller.
-        let deinit = unsafe { library.get::<Deinit>(b"deinit") }
-            .ok()
-            .map(|symbol| *symbol);
-        let owner = Arc::new(LoadedLibrary { library, deinit });
-        let mut methods: HashMap<String, Vec<ExtensionMethod>> = HashMap::new();
-        for descriptor in descriptors {
-            let [category, name, symbol] = descriptor else {
-                return Err("Extension method descriptor must contain three strings".into());
-            };
-            // SAFETY: load's caller guarantees the method ABI; owner pins the code.
-            let method = *unsafe { owner.library.get::<Method>(symbol.as_bytes()) }
-                .map_err(crate::Error::other)?;
-            methods
-                .entry(category.to_string())
-                .or_default()
-                .push(ExtensionMethod {
-                    extension_name: self.name.clone(),
-                    unified_name: category.to_string(),
-                    internal_name: name.to_string(),
-                    method,
-                    owner: owner.clone(),
-                });
+        validate_name(&self.artifact.name)?;
+        if self.artifact.digest.len() != 128
+            || !self
+                .artifact
+                .digest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || self.artifact.target.is_empty()
+        {
+            return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
         }
-        self.methods = methods;
-        self.library = Some(owner);
+        for (name, revisions) in &self.capabilities {
+            validate_name(name)?;
+            let unique: std::collections::BTreeSet<_> = revisions.iter().collect();
+            if revisions.is_empty() || revisions.contains(&0) || unique.len() != revisions.len() {
+                return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
+            }
+        }
         Ok(())
     }
-
-    /// Releases this record's handles. Retained record or method clones keep the
-    /// library alive; optional `deinit` runs when the last owner is dropped.
-    pub fn unload(&mut self) {
-        self.methods.clear();
-        self.library = None;
+    pub(crate) fn compatible(&self) -> ExtensionResult<()> {
+        if self.artifact.abi_version != ga4gh_extension_abi::ABI_VERSION {
+            return Err(ExtensionError::new(ExtensionErrorKind::UnsupportedAbi));
+        }
+        if self.artifact.target != HOST_TARGET {
+            return Err(ExtensionError::new(ExtensionErrorKind::TargetMismatch));
+        }
+        Ok(())
     }
+    pub(crate) fn descriptor(&self) -> ExtensionDescriptor {
+        let mut capabilities = self.capabilities.clone();
+        for revisions in capabilities.values_mut() {
+            revisions.sort_unstable();
+        }
+        ExtensionDescriptor {
+            name: self.artifact.name.clone(),
+            version: self.artifact.version.clone(),
+            target: self.artifact.target.clone(),
+            abi_version: self.artifact.abi_version,
+            capabilities,
+        }
+    }
+}
+/// One immutable artifact installation. Contains no runtime state.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstalledArtifact {
+    /// Verified installation metadata.
+    pub manifest: Extension,
+    /// Managed library path.
+    pub library_path: PathBuf,
+}
+/// Logical registration, with an explicit selected digest and multiple artifacts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstalledExtension {
+    /// Logical extension name.
+    pub name: String,
+    /// Whether new instances may be admitted.
+    pub enabled: bool,
+    /// Selected artifact digest.
+    pub selected: String,
+    /// All registered artifacts of this extension.
+    pub artifacts: Vec<InstalledArtifact>,
+}
+/// Exact, immutable resolver output; only the manager can construct it.
+#[derive(Debug, Clone)]
+pub struct ResolvedExtension {
+    pub(crate) installation: InstalledArtifact,
+    pub(crate) capabilities: NegotiatedCapabilities,
+    pub(crate) registry: PathBuf,
+}
+impl ResolvedExtension {
+    /// Exact name, release, target, digest, and ABI.
+    pub fn artifact(&self) -> &ArtifactIdentity {
+        &self.installation.manifest.artifact
+    }
+    /// Agreed interface revisions for requested capabilities.
+    pub fn capabilities(&self) -> &NegotiatedCapabilities {
+        &self.capabilities
+    }
+    /// Concrete managed library path.
+    pub fn library_path(&self) -> &Path {
+        &self.installation.library_path
+    }
+}
+pub(crate) fn validate_name(name: &str) -> ExtensionResult<()> {
+    if matches!(name, "" | "." | "..")
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+    {
+        return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
+    }
+    Ok(())
+}
+pub(crate) fn storage(e: crate::Error) -> ExtensionError {
+    ExtensionError::caused(ExtensionErrorKind::Storage, e)
+}
+pub(crate) fn io(e: std::io::Error) -> ExtensionError {
+    ExtensionError::caused(ExtensionErrorKind::Storage, e)
 }

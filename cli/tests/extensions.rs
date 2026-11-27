@@ -11,7 +11,8 @@ async fn context_manages_extensions_without_a_service_configuration() {
     let context =
         CliContext::new("custom-cli", "1").with_config_path(dir.path().join("custom-config.json"));
     let registry = dir.path().join("extensions.json");
-    fs::write(&registry, json!({"extensions":[{"name":"example","version":"1","definition-path":"missing.json","library-path":"missing.so","enabled":false}]}).to_string()).unwrap();
+    fs::write(&registry, json!({"registry_version":1,"extensions":[{"name":"example","selected":"0".repeat(128),"artifacts":[{"manifest":{"manifest_version":1,"name":"example","version":"1.0.0","target":"not-a-loadable-target","abi_version":1,"digest":"0".repeat(128),"capabilities":{},"path":"missing"},"library_path":dir.path().join("missing.so")}],"enabled":false}]}).to_string()).unwrap();
+    fs::write(dir.path().join("missing.so"), b"not executable").unwrap();
     for (operation, enabled) in [("enable", true), ("disable", false)] {
         let matches = context
             .command()
@@ -25,6 +26,17 @@ async fn context_manages_extensions_without_a_service_configuration() {
             serde_json::from_slice(&fs::read(&registry).unwrap()).unwrap();
         assert_eq!(persisted["extensions"][0]["enabled"], enabled);
     }
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&fs::read(&registry).unwrap()).unwrap();
+    let mut second = stored["extensions"][0]["artifacts"][0].clone();
+    second["manifest"]["version"] = json!("2.0.0");
+    second["manifest"]["digest"] = json!("1".repeat(128));
+    second["library_path"] = json!(dir.path().join("another-missing.so"));
+    stored["extensions"][0]["artifacts"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    fs::write(&registry, serde_json::to_vec(&stored).unwrap()).unwrap();
     let matches = context
         .command()
         .try_get_matches_from(["custom-cli", "extension", "list"])
@@ -38,8 +50,35 @@ async fn context_manages_extensions_without_a_service_configuration() {
             .unwrap(),
         Some(ExitCode::SUCCESS)
     );
-    assert!(String::from_utf8(stdout).unwrap().contains("example"));
+    let listed = String::from_utf8(stdout).unwrap();
+    assert!(listed.contains("example"));
+    assert!(listed.contains("1.0.0"));
+    assert!(listed.contains("2.0.0"));
+    assert!(listed.contains(&"1".repeat(128)));
     assert!(stderr.is_empty());
+    let digest = "0".repeat(128);
+    let matches = context
+        .command()
+        .try_get_matches_from(["custom-cli", "extension", "select", "example", &digest])
+        .unwrap();
+    assert!(context
+        .dispatch(&matches)
+        .await
+        .unwrap()
+        .unwrap()
+        .stdout
+        .is_empty());
+    let matches = context
+        .command()
+        .try_get_matches_from(["custom-cli", "extension", "remove", "example"])
+        .unwrap();
+    let output = context.dispatch(&matches).await.unwrap().unwrap();
+    assert!(output.stdout.contains("artifact files retained"));
+    assert!(output.stdout.contains("not reclaimed"));
+    assert_eq!(
+        fs::read(dir.path().join("missing.so")).unwrap(),
+        b"not executable"
+    );
     assert!(!dir.path().join("custom-config.json").exists());
 }
 
@@ -65,6 +104,6 @@ fn binary_lists_without_creating_config_and_rejects_traversal() {
     let rejected = run(&["extension", "remove", ".."]);
     assert!(!rejected.status.success());
     assert!(rejected.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&rejected.stderr).contains("Extension name"));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("InvalidMetadata"));
     assert_eq!(fs::read_to_string(config_dir.join("keep")).unwrap(), "keep");
 }
