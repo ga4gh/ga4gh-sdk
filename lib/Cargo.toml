@@ -3,7 +3,7 @@ name = "ga4gh-lib"
 description = """
 Generic SDK and CLI for GA4GH API services
 """
-repository = "https://github.com/elixir-cloud-aai/ga4gh-sdk/tree/main/lib"
+repository = "https://github.com/ga4gh/ga4gh-sdk/tree/main/lib"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -12,30 +12,58 @@ license-file.workspace = true
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-serde = { version = "^1.0", features = ["derive"] }
-serde_derive = "^1.0"
+serde = { version = "^1.0.181", features = ["derive"] }
+serde_derive = "^1.0.181"
 serde_json = "^1.0"
+uuid = { version = "^1.0", features = ["serde", "v4"] }
 log = "0.4"
-env_logger = "0.9"
+env_logger = "0.11"
 once_cell = "1.8.0"
 url = "2.5.2"
-dirs = "5.0.1"
+async-trait = "0.1.81"
+dirs = "7.0.0"
+tokio-util = { version = "0.7", features = ["rt", "io"] }
+httpdate = "1"
+sha2 = "0.11"
+futures-util = "0.3"
+# Maintained fork of serde_yaml; keep the existing Rust import path.
+serde_yaml = { package = "yaml_serde", version = "0.10" }
+percent-encoding = "2"
 libloading = "0.8.5"
-base64 = "0.22.1"
-sha2 = "0.10.8"
+tempfile = "3.2"
 
+num-bigint = { version = "0.4", optional = true }
+num-rational = { version = "0.4", optional = true }
+jsonschema = { version = "0.61", default-features = false, optional = true }
+
+# `charset`, `http2` and `system-proxy` keep what reqwest 0.11 always did:
+# decode response text by its charset, offer HTTP/2 and use the system proxy
+# settings of macOS and Windows. The TLS backend comes from the features below.
 [dependencies.reqwest]
-version = "^0.12"
-features = ["json", "multipart"]
+version = "0.12"
+default-features = false
+features = ["json", "multipart", "stream", "charset", "http2", "system-proxy"]
 
 [dev-dependencies]
-mockito = "0.31"
+# Polls a reqwest body directly, for a body error in the tests of `error.rs`
+http-body-util = "0.1"
+mockito = "1.7"
 mockall = "0.10.2"
-cargo-nextest = "0.9.30"  
+tempfile = "3.2"
+tokio = { version = "1", features = ["test-util"] }
 
 [lib]
 name = "ga4gh_sdk"
 path = "src/lib.rs"
 
 [features]
+default = ["reqwest/default-tls"]
+# Python wheels opt into rustls with the host's trusted certificate roots.
+rustls-native-roots = ["reqwest/rustls-tls-native-roots"]
+workflow-contracts = ["dep:jsonschema", "dep:num-bigint", "dep:num-rational"]
 integration_tests = []
+wes_docker_integration_tests = []
+# Runs the TES client against proTES and Funnel; see tests/README.md.
+protes_integration_tests = []
+# Runs the TRS client against TRS-Filer; see tests/README.md.
+trs_filer_integration_tests = []

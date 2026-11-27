@@ -3,20 +3,65 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "GA4GH-SDK"
-requires-python = ">=3.12"
+name = "ga4gh-sdk"
+description = "Python bindings for GA4GH API service clients"
+readme = { text = """
+# GA4GH SDK for Python
+
+Python clients for GA4GH TES, WES, DRS, TRS, and Service Info APIs.
+
+Install with `pip install ga4gh-sdk` and import classes from `ga4gh_sdk`.
+For examples, supported Python APIs, and configuration, see the
+[Python bindings guide](https://github.com/ga4gh/ga4gh-sdk/blob/main/python/README.md).
+""", content-type = "text/markdown" }
+license = "Apache-2.0"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/ga4gh/ga4gh-sdk"
+Documentation = "https://github.com/ga4gh/ga4gh-sdk/blob/main/python/README.md"
+Issues = "https://github.com/ga4gh/ga4gh-sdk/issues"
 
 [project.optional-dependencies]
 tests = [
     "pytest",
 ]
 
+# Not needed by the bindings: the tools that build the repository's
+# documentation site (`mkdocs.yml`) on Read the Docs (`.readthedocs.yaml`)
+# and in CI (`docs` job). Install them with
+# `python -m pip install --group python/pyproject.toml:docs` (pip 25.1 or
+# later). Exact versions of the packages that `mkdocs.yml` uses, as for the
+# other tools of CI, so that their upgrades, which may add warnings that
+# fail the strict build, are deliberate (their own dependencies are not
+# pinned). Review each pinned-tool update explicitly. Pytest runs the
+# tests in `docs/` (the build's hooks and the Python API reference);
+# mkdocstrings formats the signatures of the Python API reference with Ruff
+[dependency-groups]
+docs = [
+    "mkdocs==1.6.1",
+    "mkdocs-material==9.8.1",
+    "mkdocstrings==1.0.8",
+    "mkdocstrings-python==2.0.11",
+    "pymdown-extensions==13.1",
+    "pytest==9.2.0",
+    "ruff==0.17.5",
+]
+
 [tool.maturin]
 bindings = "pyo3"
-module-name = "GA4GH"
+module-name = "ga4gh_sdk"
+# Generate Python import libraries when cross-compiling for Windows, including aarch64.
+features = ["pyo3/generate-import-lib"]

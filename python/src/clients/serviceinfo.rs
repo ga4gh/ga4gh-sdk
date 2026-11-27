@@ -1,32 +1,53 @@
-use pyo3::prelude::*;
-use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
+use crate::utils::convert::check_extra_args;
 use crate::PyConfiguration;
+use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple, PyType};
 
-#[pyclass(name = "ServiceInfo", module = "GA4GH")]
+/// Reads a service's service info.
+#[pyclass(name = "ServiceInfo", module = "ga4gh_sdk", subclass)]
 pub struct PyServiceInfo {
-    inner: ServiceInfo,
+    pub inner: ServiceInfo,
+}
+
+impl PyServiceInfo {
+    pub fn new(py_config: &PyConfiguration) -> PyResult<Self> {
+        let service_info = ServiceInfo::new(&py_config.inner)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyServiceInfo {
+            inner: service_info,
+        })
+    }
 }
 
 #[pymethods]
 impl PyServiceInfo {
     #[new]
-    pub fn new(py_config: &PyConfiguration) -> PyResult<Self> {
-        let service_info = ServiceInfo::new(&py_config.inner).unwrap();
-        Ok(PyServiceInfo {
-            inner: service_info,
-        })
+    #[classmethod]
+    #[pyo3(signature = (py_config, *args, **kwargs))]
+    fn py_new(
+        cls: &Bound<'_, PyType>,
+        py_config: &PyConfiguration,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        check_extra_args::<Self>(cls, args, kwargs)?;
+        Self::new(py_config)
     }
 
-    pub fn get_service_info(&self) -> PyResult<String> {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(self.inner.get());
-
-        match result {
-            Ok(service_info) => Ok(format!("Service: {:?}", service_info)),
-            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Failed to get service info: {}",
-                e
-            ))),
-        }
+    /// Reads the service info.
+    ///
+    /// Returns:
+    ///     The service info as formatted text (`"Service: ..."`), not as a typed model.
+    ///
+    /// Raises:
+    ///     RuntimeError: The request failed, for example because of conflicting
+    ///         credentials, or the response is not a service info.
+    pub fn get_service_info(&self, py: Python<'_>) -> PyResult<String> {
+        crate::utils::runtime::io(py, |rt| {
+            rt.block_on(self.inner.get())
+                .map(|service| format!("Service: {service:?}"))
+                .map_err(|e| format!("Failed to get service info: {e}"))
+        })
     }
 }

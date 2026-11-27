@@ -1,23 +1,58 @@
 [package]
 name = "ga4gh-cli"
-description = "A versatile, cross-platform command-line tool built around the GA4GH-SDK for working with GA4GH federated cloud environments."
-repository = "https://github.com/elixir-cloud-aai/ga4gh-sdk/tree/main/cli"
+description = """
+A cross-platform command-line tool leveraging the GA4GH SDK
+"""
+repository = "https://github.com/ga4gh/ga4gh-sdk/tree/main/cli"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+readme.workspace = true
 license-file.workspace = true
-readme = "README.md"
 
 [dependencies]
-ga4gh-lib = { path = "../lib" }
-clap = "3.0"
+ga4gh-lib = { path = "../lib", features = ["workflow-contracts"] }
+clap = "4"
 tokio = { version = "1", features = ["full"] }
-serde_json = "1.0.0"
-dirs = "5.0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "^1.0"
+tempfile = "3.2"
+async-trait = "0.1"
+dirs = "7.0.0"
 anyhow = "1.0.86"
 url = "2.5.2"
 log = "0.4.22"
 env_logger = "0.11.5"
+futures-util = "0.3"
+percent-encoding = "2"
+# Same major version as ga4gh-lib; `stream` reads downloads in chunks.
+reqwest = { version = "0.12", features = ["stream"] }
+# S3 downloads, using object_store's AWS configuration and credential chain.
+# `aws-base`, `reqwest` and `ring` instead of `aws`, which would add rustls
+# with aws-lc-rs: requests are signed with ring, and sent with OpenSSL like
+# the CLI's other requests (see `object-store-reqwest`).
+object_store = { version = "0.14", default-features = false, features = ["aws-base", "reqwest", "ring"] }
+# Not used directly: picks the TLS backend (`native-tls`, i.e. OpenSSL on
+# Linux) and the system proxy settings for object_store's reqwest 0.13.
+# Keep its major version at object_store's: without a TLS backend there,
+# object_store does not compile.
+object-store-reqwest = { package = "reqwest", version = "0.13", default-features = false, features = ["native-tls", "system-proxy"] }
+
+[features]
+# Runs the CLI against Starter Kit WES; see tests/README.md.
+wes_docker_integration_tests = []
+# Runs the `tes` commands against proTES with an access token; see
+# tests/README.md.
+protes_integration_tests = []
+# Runs the `tes` commands against Funnel; see tests/README.md.
+integration_tests = []
+# Runs the CLI against TRS-Filer; see tests/README.md.
+trs_filer_integration_tests = []
+# Runs `login`, refreshes and `logout` against Keycloak; see tests/README.md.
+keycloak_integration_tests = []
+
+[dev-dependencies]
+mockito = "1.7"
 
 [[bin]]
 name = "ga4gh-cli"

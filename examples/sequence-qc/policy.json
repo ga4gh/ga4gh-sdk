@@ -1,0 +1,38 @@
+{
+  "id": "sequence-qc/1",
+  "version": 1,
+  "outputs": {
+    "/metrics/sequence_count": {
+      "comparator": "json_metrics",
+      "version": 1,
+      "absolute_tolerance": 0,
+      "relative_tolerance": 0,
+      "ignored_pointers": [],
+      "unordered_arrays": false,
+      "max_nodes": 100
+    },
+    "/metrics/total_length": {
+      "comparator": "json_metrics",
+      "version": 1,
+      "absolute_tolerance": 0,
+      "relative_tolerance": 0,
+      "ignored_pointers": [],
+      "unordered_arrays": false,
+      "max_nodes": 100
+    },
+    "/metrics/mean_length": {
+      "comparator": "json_metrics",
+      "version": 1,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 0,
+      "ignored_pointers": [],
+      "unordered_arrays": false,
+      "max_nodes": 100
+    }
+  },
+  "required_context": [
+    "schema_digest",
+    "workflow_digest",
+    "input_digest"
+  ]
+}

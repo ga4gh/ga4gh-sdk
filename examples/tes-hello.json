@@ -1,0 +1,9 @@
+{
+  "name": "Hello from TES",
+  "executors": [
+    {
+      "image": "alpine",
+      "command": ["sh", "-c", "echo Hello from TES"]
+    }
+  ]
+}

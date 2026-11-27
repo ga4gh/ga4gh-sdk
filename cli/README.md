@@ -1,72 +1,307 @@
 # GA4GH-CLI
 
-The `ga4gh-cli` is a command line tool that leverages `ga4gh-sdk` library to provide user-frienly interface to work with the GA4GH API services. Currently, it supports GA4GH ServiceInfo and TES APIs with HTTP Basic Authorization or Token-Based Authorization.
+The `ga4gh-cli` uses the GA4GH SDK to work with GA4GH API services. It
+currently provides TES, WES, DRS, TRS and Service Registry commands, and a
+[`service-info` command](#service-info-command) for any configured service.
+The Rust library also provides a `ServiceInfo` client (see the
+[usage guide](../docs/usage.md)).
+
+## Installation
+
+Releases include ready-made binaries; see
+[Download the CLI](../README.md#download-the-cli). To build from source, run
+from the repository root:
+
+```sh
+cargo install --path cli --locked
+ga4gh-cli --help
+```
+
+The CLI can also run as an OCI image for `linux/amd64` and `linux/arm64`;
+see the [container image guide](../docs/container-image.md).
 
 ## Configuration
 
-The `ga4gh-cli` expects configuration in `~/.ga4gh/config.json` file. 
+The `ga4gh-cli` expects configuration in `~/.ga4gh-cli/config.json` file.
+
+The file and the section for the selected service (`TES`, `WES`, `DRS`, `TRS`
+or `REGISTRY`) must exist;
+the CLI reports an error instead of silently using `http://localhost` when
+either is missing. Only `base_path` is required. `basic_auth` may omit
+`password`, in which case no password is set.
+Present authentication fields must have the documented types; malformed values
+are errors rather than being ignored.
 
 ### Configuration Example
 
 ```json
 {
     "TES": {
-        "base_path": "http://localhost:8000",
-        "basic_auth": {
-            "username": "your_username",
-            "password": "your_password"
-        },
-        "oauth_access_token": "your_oauth_access_token"
+        "base_path": "http://localhost:8000/ga4gh/tes/v1"
+    },
+    "WES": {
+        "base_path": "https://wes.example.org/ga4gh/wes/v1",
+        "timeouts": {"discovery": 30, "submission": 600}
+    },
+    "DRS": {
+        "base_path": "https://drs.example.org/ga4gh/drs/v1"
+    },
+    "TRS": {
+        "base_path": "https://workflowhub.eu/ga4gh/trs/v2"
+    },
+    "REGISTRY": {
+        "base_path": "https://registry.example.org/ga4gh/registry/v1"
     }
 }
 ```
 
-## Usage 
+Each `base_path` is the service's API root, with or without a trailing slash.
+The CLI requests `service-info` and other endpoints below it. Do not include
+a query string or fragment. Configs that previously contained only the host
+must add the deployed service prefix, such as `/ga4gh/tes/v1`,
+`/ga4gh/wes/v1` or `/ga4gh/drs/v1` in the example above. A service behind a
+gateway keeps its whole prefix, for example
+`https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+
+### Profiles
+
+The file can hold named profiles for different deployments. Each profile
+contains the same service sections as the file above:
+
+```json
+{
+    "default_profile": "local",
+    "profiles": {
+        "local": {
+            "TES": {"base_path": "http://localhost:8000/ga4gh/tes/v1"}
+        },
+        "remote": {
+            "TES": {
+                "base_path": "https://tes.example.org/ga4gh/tes/v1",
+                "oauth_access_token_env": "REMOTE_TES_TOKEN"
+            }
+        }
+    }
+}
+```
+
+Select a profile with `--profile`, before or after a subcommand, or with
+`GA4GH_CLI_PROFILE`:
+
+```sh
+ga4gh-cli --profile remote tes list
+GA4GH_CLI_PROFILE=remote ga4gh-cli tes list
+```
+
+The option takes precedence over the variable, and the variable over
+`default_profile`. Without any selection, the CLI uses the profile `default`.
+Files without `profiles` retain their existing format and count as that
+`default` profile. An unknown or empty profile name is an error; for an
+unknown name, the error lists available profiles.
+See the [usage guide](../docs/usage.md#profiles) for the file rules.
+
+`timeouts` sets time limits in seconds for the commands of that section:
+`connect` (default 10), `request` (default 60), `discovery` (the service-info
+check and the `service-info` command, default 10) and `submission`
+(`tes create` and `wes run`, including uploads, default 300). `tes save`
+applies `request` to each wait for data of a download instead of to the whole
+download. A submission is sent once;
+if it runs out of time
+after its request started, the error says that it may have been accepted, so look
+for the task or run before you submit it again. The
+[usage guide](../docs/usage.md#timeouts) has the details. Downstream binaries
+that call `dispatch_with_config()` set them with
+`Configuration::with_timeouts`.
+
+### Authentication
+
+Each built-in service command sends the single configured Basic, OAuth bearer,
+or generic bearer credential to its service, including discovery and
+submission. `workflow submit` uses the WES section and the same policy as
+`wes run`. Conflicting sources, unsupported `api_key` or URL userinfo, and
+invalid tokens fail before a request. An `_env` field can name a variable that
+holds the token. Keep the file private (`chmod 600 ~/.ga4gh-cli/config.json`).
+SDK-owned clients do not follow redirects. A section with `oidc` settings
+gets its tokens from the stored login (see
+[Logging in with OpenID Connect](#logging-in-with-openid-connect)). See the
+[authentication guide](../docs/authentication.md) for the source and redirect
+contracts, and for the token providers of the Rust and Python APIs.
+
+### Logging in with OpenID Connect
+
+Instead of pasting a token, you can log in with an OpenID Connect provider
+that supports the
+[device authorization grant](https://www.rfc-editor.org/rfc/rfc8628) (device
+flow). Give each section that should use the login an `oidc` object with the
+provider's issuer and a public client ID that the provider has registered for
+the device flow:
+
+```json
+{
+    "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oidc": {
+            "issuer": "https://login.example.org/realms/example",
+            "client_id": "my-cli-client"
+        }
+    }
+}
+```
+
+- `issuer` (string, required): the provider's issuer URL. The CLI reads the
+  provider's endpoints from `<issuer>/.well-known/openid-configuration`.
+  It must use HTTPS; HTTP is accepted only for loopback addresses, such as a
+  local test provider.
+- `client_id` (string, required): a public client. The CLI sends no client
+  secret, and the configuration can't hold one.
+- `scope` (string, optional): the scopes to request, separated by spaces.
+  The default is `openid offline_access`; `offline_access` asks for a refresh
+  token. Some providers need other scopes, for example one that sets the
+  token's audience.
+
+A section with `oidc` can't also set `basic_auth`, `oauth_access_token`,
+`bearer_access_token` or their `_env` variants. Other keys of `oidc` are
+errors. `ga4gh-cli` itself has no token variable; to use a token from the
+environment for a section, remove `oidc` and set `oauth_access_token_env`.
+Binaries built on this CLI with a token variable (see the
+[downstream guide](../docs/downstream.md)) use the variable's token instead of
+the login when the variable is set.
+
+Then log in, naming the section (the service commands' names, such as `tes`,
+stand for their sections):
+
+```sh
+ga4gh-cli login tes
+```
+
+The CLI shows a URL and a code on standard error. Open the URL in a browser,
+enter the code and approve the login. The CLI asks the provider at the
+interval the provider sets (by default every 5 seconds, and never more
+often than once a second) until you have approved, denied, or the code has expired. It then
+stores the tokens in `tokens.json` next to the configuration file
+(`~/.ga4gh-cli/tokens.json`). It creates the file with mode `0600` and its
+directory, if missing, with mode `0700`; it refuses to read a file that other
+users can access. The CLI never prints the tokens. On Windows, the file gets
+the default permissions of its directory. The CLI doesn't use an OS keyring.
+Processes that change the store take turns through the lock file
+`tokens.json.lock` next to it. `login` prints a confirmation, but no token,
+on standard error, leaves standard output empty and exits with code 0; it
+exits with code 1 if the configuration, the provider, or the approval fails.
+
+Sections with `oidc` now send the stored access token. When it has expired, or
+will within 30 seconds, the CLI refreshes it with the refresh token before the
+command and stores the new tokens. If a service rejects the token with `401`,
+the CLI refreshes it once and sends a read-only request again; submissions are
+not resent. If another process has refreshed the tokens in the meantime, the
+CLI uses its tokens instead. If the provider issued no refresh token, or
+rejects the refresh token (`invalid_grant`), the command fails and asks you
+to log in again; other recognized refresh errors are reported by their OAuth
+error code, while unknown codes receive a generic message.
+If the CLI can't store refreshed tokens, it still uses them and logs a
+warning on standard error. Downstream applications control their own logging.
+Tokens are stored per issuer, client ID and scope, so all sections with the
+same `oidc` settings share one login, in every profile. Sections with different
+scopes keep separate logins. The token store's directory must be writable.
+
+```sh
+ga4gh-cli logout tes
+```
+
+`logout` deletes the stored tokens of the section's issuer, client ID and scope and
+says so on standard error; it exits with code 0, also if you weren't logged
+in. It doesn't revoke the tokens at the provider; they stay valid there until
+they expire. Commands that are still running then can't refresh their token
+and don't store it again.
+
+`--profile` selects the profile whose section `login` and `logout` read.
+
+#### Example: Keycloak
+
+With [Keycloak](https://www.keycloak.org/), the issuer is the realm's URL:
+
+```json
+{
+    "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oidc": {
+            "issuer": "https://keycloak.example.org/realms/example",
+            "client_id": "ga4gh-cli"
+        }
+    }
+}
+```
+
+The client must be public ("Client authentication" off) and have the
+"OAuth 2.0 Device Authorization Grant" enabled. For the default scope
+`openid offline_access`, users need the realm role `offline_access`, which
+Keycloak's default roles include. Without it, Keycloak refuses the login
+with its own error code `not_allowed`, which isn't an OAuth error code, so
+`login` reports `unrecognized_error`. In the browser, Keycloak asks the user
+to sign in and then to grant the client access. If the realm rotates refresh
+tokens ("Revoke Refresh Token"), each refresh stores the new refresh token;
+Keycloak ends the login if an older one is used again, for example from a
+copy of the token store, and the CLI then asks you to log in again.
+
+An integration suite checks this setup against a Keycloak container; see the
+[integration test guide](../tests/README.md#keycloakcli-login) and the test
+realm in [`tests/keycloak/realm.json`](../tests/keycloak/realm.json).
+
+## Usage
 
 ### Basic local setup
 
-In order to quickly setup a TES server locally, you can use Funnel. Dockerized Funnel version doesn't have ServiceInfo end-point on the expected path, which is requirement by the GA4GH-SDK.
+For a local TES server, install Funnel and Docker, then:
 
-1. Deploy Funnel locally following the [offical documentation](https://ohsu-comp-bio.github.io/funnel/download/).
+1. Install Funnel following the [official documentation](https://ohsu-comp-bio.github.io/funnel/download/).
 
-2. Run Funnel server with the port specifed:
+2. Run the Funnel server on port 8000:
 
 ```sh
-funnel server start --Server.HTTPPort=[available-port]
+funnel server run --Server.HTTPPort=8000
 ```
 
-3. Configure the CLI in `~/.ga4gh-cli/config.json` using example above. Only the `base_path` needed.
+3. Configure the CLI in `~/.ga4gh-cli/config.json` using the example above.
+Only `base_path` is needed. Docker must be running for Funnel to execute tasks.
 
 ### CLI Examples
 
-#### Working with GA4GH Task Execution Service instances
-
-1. To create a new task run the `tes create` command. You can provide task definition json data as text:
-
-```sh
-ga4gh-cli tes create '{
-    "name": "Hello world",
-    "inputs": [{
-        "url": "s3://funnel-bucket/hello.txt",
-        "path": "/inputs/hello.txt"
-    }],
-    "outputs": [{
-        "url": "s3://funnel-bucket/output.txt",
-        "path": "/outputs/stdout"
-    }],
-    "executors": [{
-        "image": "alpine",
-        "command": ["cat", "/inputs/hello.txt"],
-        "stdout": "/outputs/stdout"
-    }]
-}'
-```
-
-Or as a file:
+1. From the repository root, submit the checked-in
+[example task](../examples/tes-hello.json). It runs `echo` in an Alpine
+container and has no external inputs or outputs. Save the returned ID for later
+commands:
 
 ```sh
-ga4gh-cli tes create ./tests/sample.tes
+task_id=$(ga4gh-cli tes create examples/tes-hello.json)
+printf '%s\n' "$task_id"
 ```
+
+The CLI also accepts JSON text directly or from standard input:
+
+```sh
+ga4gh-cli tes create "$(cat examples/tes-hello.json)"
+cat examples/tes-hello.json | ga4gh-cli tes create -
+```
+
+Whatever the source, the CLI sends the task as the JSON it parsed from the
+input, including fields that the SDK's TES model doesn't know, at the task
+level or nested, for example in an executor. Explicit `null`s are kept, and
+integers stay integers. Numbers are read as 64-bit integers or as
+double-precision floats, so an integer beyond that range or a decimal with
+more digits than a double holds is sent rounded. Whitespace and key order may
+differ from the input. Whether the service accepts or uses an additional field is up to
+the service; it may reject the task. Before contacting the service, the CLI
+checks the input: input that isn't valid JSON fails with `Failed to parse
+JSON`, and a task that doesn't match the TES model, such as an executor
+without `image`, fails with `Invalid TES task`. Both print the reason to
+stderr and exit with code 1 without sending a request.
+
+By default the command prints the new task ID as text. For scripts that must
+recover an opaque ID exactly, use `tes create --format json`: it prints
+`{"id":"..."}` with JSON escapes and does not need a subsequent list request.
+The shell example above assumes an ordinary ID; command substitution cannot
+represent a NUL byte and strips trailing newlines. If the service rejects the
+task, the CLI prints the HTTP status to stderr and exits with code 1. It does
+not print the server's error body, which may contain echoed credentials.
 
 2. To retrieve the list of tasks run `tes list` command:
 
@@ -74,73 +309,637 @@ ga4gh-cli tes create ./tests/sample.tes
 ga4gh-cli tes list
 ```
 
+Repeat `-k` and `-v` to filter by several tags. Values match keys in the
+same order. When the response includes a next page token, the CLI prints it
+after the task table; pass it to `-t` to fetch the next page:
+
+```sh
+ga4gh-cli tes list -k project -v analysis -k owner -v alice
+ga4gh-cli tes list -t 'next page token'
+```
+
+To fetch successive pages as one JSON object per line, use:
+
+```sh
+ga4gh-cli tes list --all --format jsonl
+```
+
+`--max-pages` and `--max-items` limit the export. If the limit stops listing
+before the final page, the command exits with code 1 and writes a resume
+checkpoint to stderr; already written JSONL stays on stdout.
+
 Example output:
 
 ```sh
-TASK ID                   State          
-csei52hrqek3h222k9f0      Complete   
-csei52hrqek3h222k9eg      Initializing   
-csei52hrqek3h222k9e0      Canceled       
-csei52hrqek3h222k9dg      Running 
-csei52hrqek3h222k9df      Queued 
-csei52hrqek3h222k9de      Queued 
+TASK ID                   State
+csei52hrqek3h222k9f0      Complete
+csei52hrqek3h222k9eg      Initializing
+csei52hrqek3h222k9e0      Canceled
+csei52hrqek3h222k9dg      Running
+csei52hrqek3h222k9df      Queued
+csei52hrqek3h222k9de      Queued
 ```
 
-3. To get the infromation about the task run the `tes get` command:
+3. To get task details, run the `tes get` command:
 
 ```sh
-ga4gh-cli tes get [TASK-ID] [VIEW]
+ga4gh-cli tes get "$task_id" FULL
 ```
 
-Possible `VIEW` option values: `BASIC`, `FULL`.
+Possible `VIEW` values: `MINIMAL`, `BASIC` and `FULL`, in any case. `tes list`
+takes the same values with `-w`.
+The command preserves the server's JSON values and fields unknown to the
+current SDK models. Terminal formatting characters inside strings are written
+as equivalent JSON escapes.
 
 4. To retrieve the task status run the `tes status` command:
 
 ```sh
-ga4gh-cli tes status [TASK-ID]      
+ga4gh-cli tes status "$task_id"
 ```
 
-5. To cancel the task run the `tes cancel` command:
+The command prints the TES state, such as `QUEUED`, or `UNKNOWN` for a state
+that the TES specification doesn't define (see
+[Undefined states](#undefined-states)).
+
+5. To cancel a task that is still running, use its ID with `tes cancel`:
 
 ```sh
-ga4gh-cli tes cancel [TASK-ID]      
+ga4gh-cli tes cancel 'running-task-id'
 ```
 
-#### Adding an Extension
+All five TES commands exit with code 0 on success and code 1 on request or
+server errors. Missing commands or arguments use Clap's exit code 2. Task IDs,
+page tokens and error messages are text output, so control characters in them
+are escaped (see [Text and JSON output](#text-and-json-output)).
 
-1. To add an extension, use the following command:
+### TES logs and output files
 
-```sh
-ga4gh-cli extension add path/to/extension.json
-```
+Three more commands read a task's `FULL` view and work with its logs and
+output files. Nothing is downloaded unless you select it.
 
-2. After adding the extension, enable it with this command:
-
-```sh
-ga4gh-cli extension enable [extension-name] 
-```
-
-3. List installed extensions:
+1. To see what a task has, run `tes files`. Each row has a selector for the
+   other two commands:
 
 ```sh
-ga4gh-cli extension list
+ga4gh-cli tes files "$task_id"
 ```
 
 Example output:
-```
-Extension Name            Enabled        
-confido                   true     
-```
-
-
-4. Disable the extension:
 
 ```sh
-ga4gh-cli extension disable [extension-name] 
+SELECTOR       SIZE       DESCRIPTION
+output:0       -          declared output file: s3://bucket/results/out.txt (path /outputs/out.txt)
+stdout:0:0     6          executor stdout, 6 bytes, exit code 0
+stderr:0:0     0          executor stderr, 0 bytes, exit code 0
+system:0       21         system logs, 2 lines
+file:0:0       6          output file: s3://bucket/results/out.txt (path /outputs/out.txt)
 ```
 
-5. Remove the extension:
+| Selector | What it names |
+| --- | --- |
+| `stdout:ATTEMPT:EXECUTOR`, `stderr:ATTEMPT:EXECUTOR` | The `stdout` or `stderr` field of an executor log, as text in the response |
+| `system:ATTEMPT` | The `system_logs` of an attempt, one line per entry |
+| `output:INDEX` | An output that the task declares in `outputs` |
+| `file:ATTEMPT:INDEX` | An output file that the server reports in the attempt's `outputs` log, with its size |
+
+Attempts and executors are counted from 0, in the order of the response.
+Notes on stderr say what the response lacks, for example when the task is
+still running, has no logs yet, or an executor log has no `stdout` field. URLs
+are shown without user names, passwords, query strings and fragments; `?...`
+marks a removed query string or fragment, which may hold the signature of a
+pre-signed URL. `tes get "$task_id" FULL` shows the complete response.
+`tes log` and `tes save` print these notes only when they fail.
+
+2. To show an inline log, run `tes log` with its selector. Control and
+   bidirectional formatting characters are escaped; line breaks are kept:
 
 ```sh
-ga4gh-cli extension remove [extension-name] 
+ga4gh-cli tes log "$task_id" stdout:0:0
 ```
+
+3. To save logs and output files, run `tes save` with one or more selectors
+   and a directory:
+
+```sh
+ga4gh-cli tes save "$task_id" stdout:0:0 file:0:0 --dir results
+ga4gh-cli tes save "$task_id" output:0 --dir results --name out-copy.txt
+```
+
+The directory is created if it is missing. Inline logs are saved as written
+in the response, without escapes, as `stdout-0-0.txt`, `stderr-0-0.txt` or
+`system-0.txt`. A file is named after the last part of its `path`, or of its
+URL if the path is empty. `--name` sets the name instead, for a single
+selector. Every file goes into the directory itself: a name with a path
+separator, `..`, or control or bidirectional formatting characters is refused,
+whether it comes from the server or from `--name`, and so is an absolute
+`--name`. An existing file is kept, and the command fails, unless you add
+`--force`, which replaces it.
+
+The command checks all selections and names before it downloads anything. It
+then saves the selections in order and stops at the first error; the files
+saved before it are listed on stdout. Each download goes to a temporary file in
+the directory, which is moved to its name only when the transfer is complete
+and, for a `file:` selector, the number of bytes matches the task's
+`size_bytes`. An HTTP error status, a broken connection, a missing object or a
+size mismatch leaves no file behind.
+
+Inline `stdout` and `stderr` are whatever the server put in the response: TES
+servers may cut them short or leave them out. To keep complete output, have
+the executor write it to a file (with the executor's `stdout` and `stderr`
+paths) and declare that file in `outputs`, then save it as a `file:` or
+`output:` selection.
+
+Supported URL schemes:
+
+- `http` and `https`: The CLI sends a plain `GET` request and follows
+  redirects. It sends no
+  credentials from the configuration file, since output URLs can point to
+  any host. Use URLs that need no credentials, such as pre-signed URLs.
+  Proxy environment variables apply.
+- `s3`: `s3://BUCKET/KEY`. Region and endpoint come from standard AWS
+  environment variables. Credentials can come from `AWS_*` variables or,
+  when no static keys are set, from the credential providers used by
+  `object_store`, including cloud instance metadata. A selected S3 URL may
+  therefore use the machine's instance role. Relevant variables include
+  `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+  `AWS_REGION` (default
+  `us-east-1`) and `AWS_ENDPOINT` (for S3-compatible storage such as MinIO;
+  add `AWS_ALLOW_HTTP=true` for a plain HTTP endpoint). Set
+  `AWS_SKIP_SIGNATURE=true` for public buckets. Requests that fail
+  temporarily are retried up to three times.
+
+Both use the `connect` time of the `TES` section for a connection. The
+`request` time (default 60 seconds) bounds the wait for the storage response
+and each later wait for body data; a download as a whole has no time limit.
+Saved files get the permissions that the umask allows, as with other new files.
+Debug logs of the HTTP libraries
+show full URLs, so the CLI logs them only when `RUST_LOG` names them, for
+example `RUST_LOG=debug,reqwest=debug`. The CLI reads `RUST_LOG` as
+[env_logger](https://docs.rs/env_logger/0.11/env_logger/#enabling-logging)
+does, and only a directive with the exact name (`reqwest`, `hyper` or
+`hyper_util`) and a valid level counts. `RUST_LOG=debug,reqwest::connect=debug`
+logs at debug level for that module only, and `reqwest =debug`, with a space,
+names no target.
+
+Other schemes, such as `file`, `gs` or `ftp`, are refused with an error, and
+so are declared outputs of type `DIRECTORY` or with a wildcard: save the files
+that the server reports under `file:` instead. A declared output counts as a
+wildcard when its `path` contains `*`, `?` or `[`, or when it has a non-empty
+`path_prefix`; an empty `path_prefix`, which some servers send for single
+files, leaves a `FILE` output a file.
+
+The three commands exit with code 0 on success and code 1 on request, server,
+selection or download errors; missing arguments, such as `--dir`, use exit
+code 2. Invalid selectors and `--name` values fail before the CLI contacts
+the service.
+
+### DRS examples
+
+Add a `DRS` section with the service's API root to the configuration file, as
+shown above. Use `drs get` to read object metadata, then use an `access_id` from
+its `access_methods` to request a URL for the object's bytes:
+
+```sh
+ga4gh-cli drs get 'object-id'
+ga4gh-cli drs access 'object-id' 'access-id'
+```
+
+Both commands preserve the server's JSON values. The `access` result may
+contain headers needed to fetch the bytes. Service failures print an error to
+stderr, escaped as described in [Text and JSON output](#text-and-json-output),
+and exit with code 1; missing arguments use exit code 2.
+
+### WES examples
+
+Add a `WES` section with the service's API root to the configuration file, as
+shown above. The commands follow the TES commands: submit a run, then track it
+by its ID.
+
+1. To submit a workflow, run `wes run` with the workflow URL, the workflow type
+   and the version of the type. Parameters are optional (an empty object by
+   default) and, as with `tes create`, can be a JSON file, inline JSON or `-`
+   for standard input. By default the command prints the new run ID as text:
+
+```sh
+run_id=$(ga4gh-cli wes run 'https://example.org/workflows/main.cwl' \
+    --type CWL --type_version v1.2 --params params.json)
+printf '%s\n' "$run_id"
+```
+
+For an exact machine-readable ID, use `wes run --format json`. Its output is
+`{"run_id":"..."}` with JSON escapes. The shell example assumes an ordinary
+ID; command substitution cannot represent a NUL byte and strips trailing
+newlines.
+
+Repeat `--attachment` (`-a`) to upload workflow files with the request. Each
+file is uploaded under the relative path given, so run the command from the
+directory that the paths are relative to; absolute paths and `..` are
+rejected. Symbolic links are followed, so check the files of a repository
+that you don't trust before you attach them. `WORKFLOW_URL` can then name an
+attached file, if the service supports attachments:
+
+```sh
+ga4gh-cli wes run main.cwl --type CWL --type_version v1.2 \
+    -a main.cwl -a tools/step.cwl --params '{"reads": "a.fastq"}'
+```
+
+`--tag KEY=VALUE` and `--engine_parameter KEY=VALUE` can be repeated;
+`--engine` and `--engine_version` select a workflow engine if the service
+offers several. Input errors, such as invalid JSON or a missing attachment, are
+reported before the CLI contacts the service.
+
+2. To list runs, run `wes list`:
+
+```sh
+ga4gh-cli wes list
+```
+
+Example output:
+
+```sh
+RUN ID                                STATE
+3f2a0b6e-58c2-4e8a-9d1e-0c5b7a1d2e3f  RUNNING
+9c1d4e2a-7b3f-4a6e-8d5c-1e2f3a4b5c6d  COMPLETE
+Next page token: next
+```
+
+As with `tes list`, `-p` sets the page size, `-t` passes the next page token,
+and `--all --format jsonl` writes every run as one JSON object per line, with
+the same `--max-pages` and `--max-items` limits.
+
+3. To get the details of a run, including its request, logs and outputs, run
+   `wes get`. It preserves the server's JSON values, escaping terminal
+   formatting characters inside strings:
+
+```sh
+ga4gh-cli wes get "$run_id"
+```
+
+4. To get the state of a run, such as `RUNNING` or `COMPLETE`, run
+   `wes status`. A state that the WES specification doesn't define is printed
+   as `UNKNOWN` (see [Undefined states](#undefined-states)):
+
+```sh
+ga4gh-cli wes status "$run_id"
+```
+
+5. To cancel a run, run `wes cancel`. It prints the ID of the canceled run:
+
+```sh
+ga4gh-cli wes cancel "$run_id"
+```
+
+All five WES commands exit with code 0 on success and code 1 on request or
+server errors; missing commands or arguments use exit code 2. In the table,
+the printed run IDs and the error messages, control and bidirectional
+formatting characters from the server are escaped, such as `\u{1b}`; JSONL
+records use JSON escapes such as `\u001b`. Like `tes get` and `drs get`,
+`wes get` preserves the server's JSON values and unknown fields.
+
+### TRS examples
+
+The `trs` commands browse a GA4GH Tool Registry Service (TRS), such as
+WorkflowHub or Dockstore, and download workflow files from it. They only read
+from the registry; nothing is changed there.
+
+The CLI uses the SDK's [TRS compatibility policy](../docs/api_compatibility.md).
+`--api-version auto` (default) recognizes 2.0.1 and 2.0.2. An unknown declaration
+uses the 2.0.1 read contract without assuming tag-filter support.
+`--api-version strict` requires a recognized declaration;
+`--api-version 2.0.1` or `2.0.2` selects an API profile explicitly.
+These flags can appear before or after a TRS subcommand.
+
+`--tag-filter enabled` allows a known deployment's backported tag filter;
+`--tag-filter disabled` blocks filtering on a deployment that does not implement
+it. Neither option changes the response contract. Use overrides only with
+independent knowledge of the server, not just because it returned HTTP 200.
+For a known endpoint without usable service-info, combine `--no-discovery`
+with an explicit version. Discovery failures never trigger this automatically.
+
+```sh
+# Require a recognized server declaration.
+ga4gh-cli trs --api-version strict tools --limit 1
+# Use a known 2.0.1 deployment's backported tag filter.
+ga4gh-cli trs --api-version 2.0.1 --tag-filter enabled tools --tag genomics
+# Read a known endpoint that does not expose service-info.
+ga4gh-cli trs --no-discovery --api-version 2.0.1 tools --limit 1
+```
+
+#### 1. Configure the registry
+
+The `trs` commands need to know which registry to talk to. They read it from
+the `TRS` section of the CLI's configuration file, `~/.ga4gh-cli/config.json`
+(see [Configuration](#configuration)). The CLI uses one registry at a time.
+
+**a. Choose a registry.** Its `base_path` is the registry's TRS API root.
+
+| Registry    | `base_path`                               | Tool IDs look like                  |
+|-------------|-------------------------------------------|-------------------------------------|
+| WorkflowHub | `https://workflowhub.eu/ga4gh/trs/v2`     | `26`                                |
+| Dockstore   | `https://dockstore.org/api/ga4gh/trs/v2`  | `#workflow/github.com/org/repo`     |
+
+**b. Add the `TRS` section to the configuration file.** For a file containing
+only TRS configuration, the full JSON is:
+
+```json
+{
+    "TRS": {
+        "base_path": "https://workflowhub.eu/ga4gh/trs/v2"
+    }
+}
+```
+
+**c. Check the connection.** This lists one tool from the registry:
+
+```sh
+ga4gh-cli trs tools --limit 1
+```
+
+#### 2. Find a tool, pick a version, download its files
+
+A registry holds **tools**. Each tool has **versions**, and each version has
+one or more **descriptors**: workflow files written in a language such as CWL
+or WDL. Replace `TOOL_ID` and `VERSION_ID` below with values returned by the
+registry:
+
+```sh
+# Find tools. All filters are optional; repeat --tag for several tags.
+ga4gh-cli trs tools --tool-class Workflow --descriptor-type CWL --limit 5
+
+# Look at one tool and its versions.
+ga4gh-cli trs tool 'TOOL_ID'
+ga4gh-cli trs versions 'TOOL_ID'
+ga4gh-cli trs version 'TOOL_ID' 'VERSION_ID'
+
+# See which files the version has, then download the main workflow file.
+ga4gh-cli trs files 'TOOL_ID' 'VERSION_ID' --type CWL
+ga4gh-cli trs descriptor 'TOOL_ID' 'VERSION_ID' --type CWL --plain > main.cwl
+
+# Or download all files of the version as one ZIP archive.
+ga4gh-cli trs files 'TOOL_ID' 'VERSION_ID' --type CWL --zip workflow.zip
+```
+
+#### Commands
+
+| Command | Result |
+| --- | --- |
+| `trs tools [filters]` | A list of tools, optionally filtered by `--tool-class`, `--descriptor-type`, `--organization`, `--name` and `--tag` (repeatable), paged with `--offset` and `--limit`. |
+| `trs tool <TOOL_ID>` | One tool and its versions. |
+| `trs versions <TOOL_ID>` | The versions of a tool. |
+| `trs version <TOOL_ID> <VERSION_ID>` | One version, its descriptor types and, if the registry sends one, its description. |
+| `trs files <TOOL_ID> <VERSION_ID> --type <TYPE>` | The paths and types of its files; `--zip <FILE>` writes all files as one ZIP archive to `FILE` instead. |
+| `trs descriptor <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its primary descriptor; `--path <RELATIVE_PATH>` selects another file. |
+| `trs tests <TOOL_ID> <VERSION_ID> --type <TYPE>` | Its test parameter files. |
+
+Results are JSON by default. `trs descriptor --plain` prints the descriptor
+content without a JSON wrapper. `trs tests --plain` prints one inline test file;
+if the server returns several files or only a URL, omit `--plain` to inspect
+their JSON instead. The commands exit with code 0 on success and 1 on request
+or server errors; missing arguments use exit code 2. `--zip` never replaces
+an existing file, doesn't extract the archive, and downloads at most 64 MiB;
+the file appears under its name only when it is complete (until then, it is a
+hidden `.<name>.partial-<pid>` file in the same directory, which an interrupted
+download may leave behind, so the name may be up to about 18 bytes shorter than
+the filesystem allows). On filesystems without hard links, such as FAT, the
+archive is written to the file directly.
+A tag must not be empty or contain a comma, because the registry receives all
+tags as one comma-separated value. Error messages and JSON
+output escape terminal control and bidirectional formatting characters.
+
+## Service Registry commands
+
+The `registry` commands read a [GA4GH Service Registry](https://github.com/ga4gh-discovery/ga4gh-service-registry),
+such as a [cloud-registry](https://github.com/elixir-cloud-aai/cloud-registry)
+deployment, to find the base URLs of TES, WES and other services. They use the
+`REGISTRY` section of `~/.ga4gh-cli/config.json`, which needs only `base_path`,
+the registry's API root:
+
+```json
+{
+    "REGISTRY": {
+        "base_path": "https://registry.example.org/ga4gh/registry/v1"
+    }
+}
+```
+
+Replace `registry.example.org` with your registry's host.
+The CLI requests `services`, `services/{id}` and `services/types` below this
+path. Public reads need no token; a deployment that requires authentication
+can use one of the configured sources in the
+[authentication guide](../docs/authentication.md).
+
+1. To list the services, optionally only those of one type artifact (case
+   ignored), run `registry list`:
+
+```sh
+ga4gh-cli registry list --type tes
+```
+
+Example output:
+
+```sh
+ID               TYPE                 URL
+org.example.tes  org.ga4gh:tes:1.1.0  https://example.org/ga4gh/tes/v1
+```
+
+2. To get one service as JSON, run `registry get` with its ID:
+
+```sh
+ga4gh-cli registry get org.example.tes
+```
+
+3. To list the service types in the registry, one `group:artifact:version` per
+   line, run `registry types`:
+
+```sh
+ga4gh-cli registry types
+```
+
+The specification has no server-side filter, so `--type` fetches all services
+and filters them in the CLI.
+
+`list` and `types` print only fields of the Service Registry specification;
+`get` also prints the fields that a registry adds. Control and bidirectional
+formatting characters from the registry, in values and in error messages, are
+printed escaped, such as `\n` or `\u{1b}`; `get` uses JSON escapes such as `\u001b`,
+so its output stays valid JSON. The commands exit with code 0 on
+success and code 1 on request or server errors. A 404 from `list` or `types`
+adds a hint to check `base_path`; from `get`, a 404 means that no service has
+that ID.
+
+## Service Info command
+
+`service-info` prints the [service info](https://github.com/ga4gh-discovery/ga4gh-service-info)
+of one configured service. It can include an ID, name, type, organization,
+version and provider-specific fields. `--service` names the section of the
+configuration file to read, such as `TES`, `WES`, `DRS`, `TRS`, `REGISTRY` or a
+custom section; names are case sensitive. `--profile` selects the profile as
+for the other commands:
+
+```sh
+ga4gh-cli service-info --service TES
+ga4gh-cli --profile staging service-info --service MY_SERVICE
+```
+
+The command requests `service-info` below the section's `base_path`, with or
+without a trailing slash, using the section's credentials (see
+[Authentication](#authentication)) and its `discovery` timeout (see
+[Profiles](#profiles)). It needs no other setting, so a custom section with only
+`base_path` works:
+
+```json
+{
+    "MY_SERVICE": {
+        "base_path": "https://my.example.org/api/v1"
+    }
+}
+```
+
+Example output, as the service sent it:
+
+```json
+{"id":"org.example.tes","name":"Example TES","type":{"group":"org.ga4gh","artifact":"tes","version":"1.1.0"},"organization":{"name":"Example","url":"https://example.org"},"version":"1.0.0","storage":["s3://bucket"]}
+```
+
+On success, stdout holds the response body and nothing else, like `tes get`:
+the server's values, field order, whitespace and number spelling are kept,
+including the fields that the service adds at the top level and in `type` and
+`organization`. Control and bidirectional formatting characters inside strings
+are printed as JSON escapes such as `\u001b`, so the output stays valid JSON
+with the same values. Pipe it through a JSON tool, such as `jq .`, to indent it.
+
+The body must be a JSON object. The command prints its fields without checking
+them against the generic `ServiceInfo::get()` model. This also works with the
+native WES 1.0 service-info shape, which omits some generic fields. The typed
+Rust and Python `ServiceInfo` clients still apply their documented model
+contract; use them when you need those fields checked. The CLI's output alone
+does not certify that a service conforms to a particular schema.
+
+The command exits with code 0 on success and code 1 on errors, with one
+message on stderr and nothing on stdout:
+
+- a missing configuration file, profile or section, or a missing login or
+  token variable, is reported before any request is sent;
+- an HTTP error status is reported with the status but without the response
+  body; a 404 adds a hint to check that `base_path` is the section's API root;
+- malformed JSON or a JSON value that is not an object is reported as
+  `Invalid service info from section '<SECTION>'`;
+- a connection failure or an exceeded `discovery` timeout is reported by
+  category, without exposing the URL or lower-level source text.
+
+Credentials are never printed. A missing or empty `--service` is a usage error
+with exit code 2.
+
+## Experimental workflow contracts
+
+`wes` operates the WES service API: submit a run and inspect its state and
+outputs. `workflow` provides client-side contracts around a run: validate a
+pinned request, submit it explicitly through WES, project and verify selected
+results, and compare runs against a policy. It is not a second workflow
+execution service. See the [workflow contracts guide](../docs/workflow-contracts.md)
+for the commands and their evidence boundaries.
+
+## Text and JSON output
+
+All commands treat values from a service the same way:
+
+- Text output, such as tables, bare task and run IDs, page tokens, and error
+  and log messages on stderr, shows control and bidirectional formatting characters as
+  Rust escapes, such as `\n`, `\u{1b}` or `\u{202e}`. Other characters,
+  including backslashes, are printed as they are, so an escaped value can't be
+  told apart from a value that contains the same backslash sequence. Values
+  without such characters are printed unchanged.
+- `tes get`, `wes get`, `drs get`, `drs access` and `service-info` preserve
+  the server's JSON values, field order, whitespace and number spelling. Raw
+  control and bidirectional formatting characters inside strings become
+  equivalent JSON `\u` escapes. A response that isn't valid JSON is reported as an error on
+  stderr, with exit code 1. JSON may still contain layout whitespace between
+  values; its strings cannot contain unescaped C0 controls such as ESC.
+- `tes list --all --format jsonl` and `wes list --all --format jsonl` write
+  each record with JSON escapes, such as `\u001b`, which decode to the
+  original value. `registry get` and the JSON output of the `trs` commands
+  use JSON escapes in the same way.
+- `trs descriptor --plain` and `trs tests --plain` print the file content as
+  received, since it is meant to be saved as a file.
+- `tes log` escapes each line of a log like other text output and keeps the
+  line breaks. `tes save` writes logs and files as received, without escapes.
+
+Escaping changes only what is printed. The SDK keeps the values it received,
+and commands send the IDs given to them unchanged. For a newly submitted ID,
+use `tes create --format json` or `wes run --format json` and parse the `id`
+or `run_id` field in the calling program. For an ID shown in a table, the
+JSONL exports retain its original value: `tes list --all --format jsonl` and
+`wes list --all --format jsonl`.
+
+### Undefined states
+
+A server may report a task or run state that its specification doesn't
+define, such as `SUSPENDED`. The commands that read the state into the SDK
+models show such a state as the specification's `UNKNOWN`: `tes status`,
+`wes status` and the `wes list` table print `UNKNOWN`, and the `tes list`
+table prints `Unknown`. The `wes list` table also shows a run without a state
+as `UNKNOWN`, while the `tes list` table shows `None`. `tes get` and `wes get`
+show the server's value as it is, and so do the JSONL exports of
+`tes list --all` and `wes list --all`. Use one of those to see which state the
+server actually reported.
+
+## Extending the CLI in Rust
+
+The `ga4gh-cli` package also exposes a Rust library. A downstream binary can
+add its own Clap 4 subcommands to `ga4gh_cli::command()`. Call
+`ga4gh_cli::dispatch()` for the built-in commands, or
+`ga4gh_cli::dispatch_with_config()` to supply a service configuration directly.
+Both return `None` when the downstream binary should handle its own command.
+Built-in commands return stdout, stderr, and an exit code in `CommandOutput`,
+so the downstream binary can write or reformat their output; `stderr` and the
+text parts of `stdout` are already escaped as described above.
+`ga4gh_cli::printable()` escapes a value in the same way for a downstream
+binary's own text output. SDK log messages can hold a service's response, so
+a downstream binary that writes logs should pass them through `printable()`
+too, as the `ga4gh-cli` binary does in [its logger setup](src/main.rs). See the
+[downstream CLI test](tests/downstream_cli.rs) for a working example. A
+downstream command that shares the `ga4gh-cli` file can read its own section
+with `Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))`;
+keys that the SDK doesn't use itself are in `Configuration::extra`.
+`dispatch()` runs `service-info` with the section that `--service` names, also
+a downstream binary's own section; `dispatch_with_config()` uses the supplied
+configuration, and `--service` then only names the section in error messages.
+
+A downstream binary with its own name, version, configuration file, profile
+variable or token variable describes them in a `ga4gh_cli::CliContext`:
+
+- `CliContext::new("my-cli", env!("CARGO_PKG_VERSION"))` sets the name and
+  version; `with_about()` sets the help text.
+- The configuration file defaults to `~/.my-cli/config.json`. The name must
+  then be usable as a directory name; `with_config_path()` sets another
+  path. `load_config()` reads a section from the file, for built-in and
+  custom services alike.
+- `with_profile_env("MY_CLI_PROFILE")` reads a selected profile from a
+  variable. `ga4gh-cli` reads `GA4GH_CLI_PROFILE`; other contexts read none
+  unless configured. `with_profile()` selects one directly. The command tree
+  has a global `--profile` option, which `dispatch()` and `dispatch_to()`
+  apply. For a custom command, call `with_profile_from(&matches)` before
+  `load_config()`. The long option name `--profile` is reserved in the tree.
+- `with_token_env("MY_CLI_TOKEN", [ServiceType::Custom("MY_SERVICE".into())])`
+  supplies an OAuth access token to the listed sections when they set no
+  credentials. Other sections never receive it. If a listed section has no
+  credential, the variable must be present and contain a valid token;
+  otherwise the command fails before sending a request.
+- Its `command()`, `dispatch()` and `dispatch_to()` replace the free
+  functions, which keep the settings of `ga4gh-cli`. `dispatch_with_config()`
+  and `dispatch_with_config_to()` take a configuration from the caller and
+  don't need a context.
+- Its own commands can build their output as the built-in ones do:
+  `CommandOutput::json()` and `failure()` escape their content and set the
+  exit code, `success()` takes text that is already escaped, and
+  `write_to()` writes both streams and returns the exit code.
+
+The guide [Build on this SDK](../docs/downstream.md) walks through an example
+crate.
+
+## Experimental extensions
+
+The `extension` commands install, list, enable, disable and remove native
+extensions without executing them. See the [extension guide](../docs/extensions.md)
+for manifests, configuration, migration from the PoC and the Rust loader API.

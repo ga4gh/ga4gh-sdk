@@ -1,69 +1,88 @@
-#![allow(non_snake_case)] // allow the Python module to be named as GA4GH instead of ga4gh; should be the first line.
-/// This module provides Python bindings for the GA4GH SDK using PyO3.
-/// It exposes several key structs and their methods to Python, allowing for interaction with GA4GH services.
-///
-/// # Classes
-///
-/// - `Task`: Represents a task in the GA4GH TES service.
-/// - `TES`: Represents the GA4GH TES service.
-/// - `Configuration`: Represents the configuration for connecting to GA4GH services.
-/// - `ServiceInfo`: Provides information about the GA4GH service.
-/// - `Transport`: Handles HTTP transport for GA4GH services.
-/// - `PyTesTask`: Represents a TES task.
-/// - `ListTasksParams`: Represents parameters for listing TES tasks.
-///
-/// # Example
-///
-/// ```python
-/// from ga4gh import Configuration, TES, Task, ServiceInfo, Transport
-///
-/// # Create a configuration
-/// config = Configuration("http://example.com")
-///
-/// # Create a TES instance
-/// tes = TES(config)
-///
-/// # Create a task
-/// task = Task("task_id", transport)
-///
-/// # Get task status
-/// status = task.status()
-///
-/// # Cancel a task
-/// task.cancel()
-///
-/// # Get service info
-/// service_info = ServiceInfo(config)
-/// info = service_info.get_service_info()
-///
-/// # Perform HTTP GET request
-/// transport = Transport(config)
-/// response = transport.get("/endpoint", None)
-/// ```
-///
-/// # Notes
-///
-/// - The `Runtime::new().unwrap()` calls are used to create a Tokio runtime for asynchronous operations.
-/// - Error handling is done using `PyResult` and `pyo3::exceptions::PyRuntimeError`.
-/// - The `#[pymodule]` attribute is used to define the Python module initialization function.
+//! This module provides Python bindings for the GA4GH SDK using PyO3.
+//! It exposes several key structs and their methods to Python, allowing for interaction with GA4GH services.
+//!
+//! # Classes
+//!
+//! - `Configuration`: the API root and settings for connecting to a GA4GH service.
+//! - `ServiceInfo`: reads a service's service info.
+//! - `Transport`: sends requests below the API root (GET, POST, PUT, DELETE, multipart).
+//! - `DRS`: a DRS client for objects and access URLs, one at a time or in bulk;
+//!   `DrsResolver` turns `drs://` URIs into `AccessPlan`s. `DrsObject`, `AccessURL` and
+//!   `BulkAccessURL` are results with their full JSON; `PendingResolution`, `BulkPolicy`,
+//!   `BulkReport`, `BulkOutcome` and `DrsUri` go with them.
+//! - `TES`: a TES client; `Task`: a TES task addressed by its ID.
+//! - `AsyncTES` and `AsyncTask`: the same for `asyncio`; their methods return awaitables.
+//! - `TesTask`: a task to create or as returned by the server, with its full JSON
+//!   (`PyTesTask` is an alias).
+//! - `TesState`: the state of a task, a `str` enum.
+//! - `WaitTimeoutError`: raised when `Task.wait()` or `AsyncTask.wait()` runs out of time.
+//! - `ListTasksParams` and `ListTasksResponse`: filters and results of `TES.list()`.
+//! - `TRS`: a TRS client (TRS 2.0.1 and 2.0.2) for tools, versions, descriptors and files.
+//!   `Tool`, `ToolVersion`, `FileWrapper` and `ToolFile` are results with their full JSON;
+//!   `ToolPage` is one page of tools.
+//! - `WES`: a WES client; `Run`: a WES run addressed by its ID; `RunRequest`: a run to
+//!   start; `WesState`: the state of a run, a `str` enum. `RunLog`, `RunSummary`,
+//!   `RunListResponse`, `TaskLog` and `TaskListResponse` are results with their full JSON.
+//!
+//! All classes except the enums can be subclassed in Python. Rust crates can depend on this
+//! crate (`rlib`) to build further bindings on these classes; their `inner` fields hold the
+//! library types.
+//!
+//! # Example
+//!
+//! ```python
+//! from ga4gh_sdk import Configuration, ListTasksParams, TES, TesState, Transport
+//!
+//! config = Configuration("http://localhost:8000/ga4gh/tes/v1")
+//! tes = TES(config)
+//! task = tes.create({"executors": [{"image": "alpine", "command": ["echo", "hello"]}]})
+//! if task.status() is TesState.QUEUED:
+//!     task.cancel()
+//! print(tes.get("FULL", task.id).to_dict())
+//! for task in tes.list(ListTasksParams(state=TesState.RUNNING)).tasks:
+//!     print(task.id)
+//!
+//! response = Transport(config).get("tasks", {"view": "MINIMAL"})
+//! ```
+//!
+//! # Notes
+//!
+//! - Synchronous network calls release the GIL and share a persistent Tokio runtime. The
+//!   async classes run their requests on the same runtime.
+//! - Request failures raise `RuntimeError`; invalid arguments raise `ValueError`. A wait
+//!   that runs out of time raises `WaitTimeoutError`, a `TimeoutError`.
 
+use ::ga4gh_sdk::clients::ServiceType;
 use pyo3::prelude::*;
-use ga4gh_sdk::clients::ServiceType;
 
 pub mod clients;
 pub mod utils;
 use crate::clients::serviceinfo::PyServiceInfo;
-use crate::clients::tes::{PyTask, PyTesTask, PyTES};
 use crate::utils::configuration::PyConfiguration;
-use crate::utils::transport::PyTransport; 
+use crate::utils::transport::PyTransport;
 
-#[pyclass(name = "ServiceType", module = "GA4GH", eq, eq_int)]
+/// A built-in section of the configuration file, for `Configuration.from_file()`.
+///
+/// Other sections are named by a `str`.
+#[pyclass(name = "ServiceType", module = "ga4gh_sdk", eq, eq_int)]
 #[derive(Clone, PartialEq, Eq)]
 pub enum PyServiceType {
     TES,
     DRS,
     TRS,
     AAI,
+    WES,
+    REGISTRY,
+}
+
+// PyO3 0.30 no longer extracts owned pyclasses automatically. Keep the
+// existing Rust method signatures by cloning the Python-owned enum.
+impl<'a, 'py> FromPyObject<'a, 'py> for PyServiceType {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(value.cast::<Self>()?.borrow().clone())
+    }
 }
 
 impl From<PyServiceType> for ServiceType {
@@ -73,24 +92,54 @@ impl From<PyServiceType> for ServiceType {
             PyServiceType::DRS => ServiceType::DRS,
             PyServiceType::TRS => ServiceType::TRS,
             PyServiceType::AAI => ServiceType::AAI,
+            PyServiceType::WES => ServiceType::WES,
+            PyServiceType::REGISTRY => ServiceType::REGISTRY,
         }
     }
 }
 
-impl From<PyServiceType> for Option<ServiceType> {
-    fn from(py_service_type: PyServiceType) -> Self {
-        Some(ServiceType::from(py_service_type))
+/// A section of the configuration file: a `ServiceType`, or the name of any other
+/// section as a `str`, which becomes `ServiceType::Custom`.
+pub enum ServiceSection {
+    BuiltIn(PyServiceType),
+    Custom(String),
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for ServiceSection {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if let Ok(service_type) = value.extract::<PyServiceType>() {
+            return Ok(ServiceSection::BuiltIn(service_type));
+        }
+        if let Ok(name) = value.extract::<String>() {
+            return Ok(ServiceSection::Custom(name));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "service_type must be a ServiceType or a str, not {}",
+            value.get_type().qualname()?
+        )))
+    }
+}
+
+impl From<ServiceSection> for ServiceType {
+    fn from(section: ServiceSection) -> Self {
+        match section {
+            ServiceSection::BuiltIn(service_type) => service_type.into(),
+            ServiceSection::Custom(name) => ServiceType::Custom(name),
+        }
     }
 }
 
 #[pymodule]
-fn GA4GH(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn ga4gh_sdk(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyServiceType>()?;
     m.add_class::<PyConfiguration>()?;
     m.add_class::<PyServiceInfo>()?;
     m.add_class::<PyTransport>()?;
-    m.add_class::<PyTES>()?;
-    m.add_class::<PyTesTask>()?;
-    m.add_class::<PyTask>()?;
+    clients::wes::register(py, m)?;
+    clients::tes::register(py, m)?;
+    clients::drs::register(py, m)?;
+    clients::trs::register(py, m)?;
     Ok(())
 }

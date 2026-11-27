@@ -1,0 +1,234 @@
+//! Invariants of client state for the supported construction paths: a
+//! client's configuration is its transport's, and a discovered client and its
+//! capability snapshot come from one service-info response. See
+//! `docs/state_ownership.md`.
+
+use ga4gh_sdk::{
+    clients::{
+        drs::DRS,
+        serviceinfo::models::{Service, ServiceType},
+        tes::TES,
+        wes::WES,
+    },
+    reqwest,
+    utils::{configuration::Configuration, transport::Transport},
+};
+use serde_json::json;
+use std::time::Duration;
+
+/// A service-info document of `artifact` with this `id`.
+fn info(artifact: &str, id: &str) -> serde_json::Value {
+    json!({
+        "id": id,
+        "name": "Example",
+        "type": {"group": "org.ga4gh", "artifact": artifact, "version": "1.1.0"},
+        "organization": {"name": "Example", "url": "https://example.org"},
+        "version": "1.0.0"
+    })
+}
+
+/// A configuration for the API root `/<root>/` on the mock server, with a
+/// user agent that only this configuration sends.
+fn config_below(server: &mockito::ServerGuard, root: &str) -> Configuration {
+    let mut config =
+        Configuration::new(url::Url::parse(&format!("{}/{root}/", server.url())).unwrap());
+    config.user_agent = Some(format!("client-state/{root}"));
+    config
+}
+
+/// A service info that names `artifact`, without a request.
+fn known_service(artifact: &str) -> Service {
+    Service {
+        id: format!("org.example.{artifact}"),
+        r#type: Box::new(ServiceType {
+            artifact: artifact.into(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn without_discovery_keeps_the_transport_and_service() {
+    // No server listens here: the constructors must not send a request.
+    let config =
+        Configuration::new(url::Url::parse("https://example.invalid/ga4gh/x/v1/").unwrap());
+    let transport =
+        Transport::with_timeouts(&config, Duration::from_secs(3), Duration::from_secs(7)).unwrap();
+
+    let tes = TES::without_discovery(transport.clone(), known_service("tes"));
+    let wes = WES::without_discovery(transport.clone(), known_service("wes"));
+    let drs = DRS::without_discovery(transport, known_service("drs"));
+
+    for (configuration, own, service, artifact) in [
+        (
+            tes.configuration(),
+            tes.transport().configuration(),
+            tes.discovered_service_info(),
+            "tes",
+        ),
+        (
+            wes.configuration(),
+            wes.transport().configuration(),
+            wes.discovered_service_info(),
+            "wes",
+        ),
+        (
+            drs.configuration(),
+            drs.transport().configuration(),
+            drs.discovered_service_info(),
+            "drs",
+        ),
+    ] {
+        // Pins that `configuration()` is the transport's own value, not a copy.
+        assert!(std::ptr::eq(configuration, own), "{artifact}");
+        assert_eq!(configuration.base_path, config.base_path, "{artifact}");
+        assert_eq!(configuration.timeouts.request, Duration::from_secs(7));
+        assert_eq!(service.id, format!("org.example.{artifact}"));
+        assert_eq!(service.r#type.artifact, artifact);
+    }
+}
+
+/// Checks that each client reads the transport's configuration and the
+/// service info of `config`'s root, as every constructor must.
+macro_rules! assert_constructed {
+    ($config:expr, $artifact:expr, [$($client:expr),+ $(,)?]) => {{
+        $(
+            let client = $client;
+            assert_eq!(client.configuration().base_path, $config.base_path, "{}", $artifact);
+            assert_eq!(client.configuration().user_agent, $config.user_agent, "{}", $artifact);
+            assert_eq!(
+                client.transport().configuration().base_path,
+                $config.base_path,
+                "{}",
+                $artifact
+            );
+            assert_eq!(client.discovered_service_info().id, "org.example.constructors");
+        )+
+    }};
+}
+
+#[tokio::test]
+async fn every_constructor_reads_the_transports_configuration() {
+    let mut server = mockito::Server::new_async().await;
+    for artifact in ["tes", "wes", "drs"] {
+        let root = format!("constructors/ga4gh/{artifact}/v1");
+        let _info = server
+            .mock("GET", format!("/{root}/service-info").as_str())
+            .match_header("user-agent", format!("client-state/{root}").as_str())
+            .with_body(info(artifact, "org.example.constructors").to_string())
+            .create();
+        let config = config_below(&server, &root);
+        let transport = Transport::new(&config);
+        let max_age = Duration::from_secs(60);
+        match artifact {
+            "tes" => assert_constructed!(
+                config,
+                artifact,
+                [
+                    TES::new(&config).await.unwrap(),
+                    TES::with_transport(transport.clone()).await.unwrap(),
+                    TES::with_artifact(transport.clone(), "tes").await.unwrap(),
+                    TES::discover(&config, max_age)
+                        .await
+                        .unwrap()
+                        .into_parts()
+                        .0,
+                    TES::discover_with_transport(transport.clone(), max_age)
+                        .await
+                        .unwrap()
+                        .into_parts()
+                        .0,
+                ]
+            ),
+            "wes" => assert_constructed!(
+                config,
+                artifact,
+                [
+                    WES::new(&config).await.unwrap(),
+                    WES::with_transport(transport.clone()).await.unwrap(),
+                    WES::with_artifact(transport.clone(), "wes").await.unwrap(),
+                    WES::discover(&config, max_age)
+                        .await
+                        .unwrap()
+                        .into_parts()
+                        .0,
+                    WES::discover_with_transport(transport.clone(), max_age)
+                        .await
+                        .unwrap()
+                        .into_parts()
+                        .0,
+                ]
+            ),
+            // DRS has no `discover`.
+            "drs" => assert_constructed!(
+                config,
+                artifact,
+                [
+                    DRS::new(&config).await.unwrap(),
+                    DRS::with_transport(transport.clone()).await.unwrap(),
+                    DRS::with_artifact(transport.clone(), "drs").await.unwrap(),
+                ]
+            ),
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// An HTTP client that sends `x-client: injected`, which the default
+/// client never sends: a request with it proves that the transport was kept.
+fn injected_client() -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("x-client", "injected".parse().unwrap());
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap()
+}
+
+/// Checks that `refresh` of a discovered `$client` sends its request through
+/// the original transport and replaces service and snapshot together.
+macro_rules! assert_refresh_keeps_transport {
+    ($client:ident, $artifact:expr) => {{
+        let mut server = mockito::Server::new_async().await;
+        let root = format!("refresh-transport/ga4gh/{}/v1", $artifact);
+        let config = config_below(&server, &root);
+        let path = format!("/{root}/service-info");
+        let first = server
+            .mock("GET", path.as_str())
+            .match_header("x-client", "injected")
+            .with_body(info($artifact, "first").to_string())
+            .expect(1)
+            .create();
+        let mut discovered = $client::discover_with_transport(
+            Transport::with_client(&config, injected_client()),
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+        first.assert();
+        first.remove();
+        assert_eq!(discovered.client().discovered_service_info().id, "first");
+        assert_eq!(discovered.capabilities().raw["id"], "first");
+
+        let second = server
+            .mock("GET", path.as_str())
+            .match_header("x-client", "injected")
+            .with_body(info($artifact, "second").to_string())
+            .expect(1)
+            .create();
+        discovered.refresh().await.unwrap();
+        second.assert();
+
+        assert_eq!(discovered.client().discovered_service_info().id, "second");
+        assert_eq!(discovered.capabilities().raw["id"], "second");
+        assert_eq!(discovered.configuration().base_path, config.base_path);
+        assert_eq!(discovered.configuration().user_agent, config.user_agent);
+    }};
+}
+
+#[tokio::test]
+async fn refresh_keeps_the_transport_and_one_response() {
+    assert_refresh_keeps_transport!(TES, "tes");
+    assert_refresh_keeps_transport!(WES, "wes");
+}

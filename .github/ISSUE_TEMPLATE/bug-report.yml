@@ -1,0 +1,56 @@
+---
+name: Bug report
+description: Report something that doesn't work as expected.
+labels: ["type: bug", "status: new", "topic: ga4gh-sdk"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for taking the time to report a bug! Please search the open
+        issues first, to see whether it has been reported already. Never
+        report vulnerabilities here: follow the [GA4GH security reporting
+        guidance](https://www.ga4gh.org/work_stream/data-security-work-stream/)
+        instead.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happens, and what did you expect to happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >-
+        How can others reproduce the bug? A minimal example (code, CLI
+        commands, configuration, the GA4GH service you call) helps most.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >-
+        Which version (release or commit) are you using, and which part
+        (Rust library, CLI, Python bindings)?
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        Relevant log output or error messages, without secrets. They are
+        formatted as code automatically.
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: >-
+        Anything else that helps: environment (operating system, Rust or
+        Python version), links, a possible solution. Attach screenshots and
+        files here.

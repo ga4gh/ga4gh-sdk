@@ -1,327 +1,343 @@
-//! Extension Manager
-//!
-//! This module provides functionality to manage extensions, including adding, removing, enabling, and disabling extensions.
-//! It handles reading and writing the extensions configuration file, managing the extension files and directories, and updating the status of extensions.
-//!
-//! # Example
-//!
-//! ```rust
-//! use extension_manager::ExtensionManager;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let mut manager = ExtensionManager::default();
-//!
-//!     // Initialize the manager with a configuration path
-//!     manager.init("/path/to/config.json")?;
-//!
-//!     // Add a new extension
-//!     manager.add_extension("/path/to/extension-file.json").await?;
-//!
-//!     // Enable an extension by name
-//!     manager.enable_extension("extension-name")?;
-//!
-//!     // Disable an extension by name
-//!     manager.disable_extension("extension-name")?;
-//!
-//!     // Remove an extension by name
-//!     manager.remove_extension("extension-name")?;
-//!
-//!     Ok(())
-//! }
-//! ```
+//! Installation records and explicit loading of experimental native extensions.
 
-use crate::utils::extension::Extension;
-use crate::utils::extension::ExtensionMethod;
-use crate::utils::extension::InstalledExtension;
-use crate::utils::configuration::ServiceExtensionsConfiguration;
-use log::{debug, info, warn, error};
-use std::error::Error;
+use crate::utils::configuration::{Configuration, ServiceExtensionsConfiguration};
+use crate::utils::extension::{Extension, ExtensionMethod, InstalledExtension};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha512};
 use std::fs;
-use crate::utils::expand_path_with_home_dir;
-use std::io::Read;
-use serde_json::Value;
-use std::collections::HashMap;
-use sha2::{Sha512, Digest};
-use std::fs::File;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-type InstalledExtensions = Vec<InstalledExtension>;
-
+/// A registry snapshot. Mutations update both the snapshot and the file.
+/// Use one writer at a time; reopen to observe changes made by another process.
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionManager {
-    extensions: InstalledExtensions,
+    extensions: Vec<InstalledExtension>,
     #[serde(skip)]
-    config_path: String,
+    config_path: PathBuf,
+}
+
+fn validate_name(name: &str) -> crate::Result<()> {
+    if matches!(name, "" | "." | "..")
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+    {
+        return Err(
+            "Extension name must be one nonempty ASCII filename, excluding '.' and '..'".into(),
+        );
+    }
+    Ok(())
 }
 
 impl ExtensionManager {
-    /// Initializes the `ExtensionManager` by reading the extensions configuration file.
+    /// Opens metadata without loading code or creating files. A missing registry
+    /// represents an empty installation.
     ///
-    /// This method reads the configuration file specified by `extensions_config_path` and initializes
-    /// the extensions. It also optionally takes a `ServiceExtensionsConfiguration` for additional
-    /// configuration of the extensions.
+    /// # Errors
     ///
-    /// Example configuration JSON of the globally installed extensions:
-    /// ```json
-    /// {
-    ///     "extensions": [
-    ///       {
-    ///         "name": "extension-name",
-    ///         "path": "/full/path/to/extension-name.ga4gh-sdk-extension.json",
-    ///         "enabled": true
-    ///       }
-    ///     ]
-    /// }
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `extensions_config_path` - A string slice that holds the path to the extensions configuration file.
-    /// * `service_config` - An optional `ServiceExtensionsConfiguration` that provides additional configuration for the extensions.
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Self, Box<dyn Error>>` - Returns an `ExtensionManager` instance on success, or an error on failure.
-    pub fn init(extensions_config_path: &str, service_config: Option<ServiceExtensionsConfiguration>) -> Result<Self, Box<dyn Error>> {
-        debug!("Reading extensions configuration file: {}", extensions_config_path);
-        let mut file = crate::utils::open_or_create_file(extensions_config_path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-
-        let mut installed_extensions: ExtensionManager = if contents.is_empty() {
-            let default_extensions = ExtensionManager::default();
-            serde_json::to_writer_pretty(&mut file, &default_extensions)?;
-            default_extensions
-        } else {
-            serde_json::from_str(&contents).unwrap_or_else(|_| ExtensionManager::default())
+    /// Rejects unreadable or malformed registries and duplicate or invalid names.
+    pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
+        let path = path.as_ref();
+        let mut manager: Self = match fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(error) => return Err(error.into()),
         };
-
-        for instaslled_extension in &mut installed_extensions.extensions {
-            if let Some(service_config) = &service_config {
-                instaslled_extension.load(service_config.get_extension_config(&instaslled_extension.name).clone());
+        let mut names = std::collections::HashSet::new();
+        for extension in &manager.extensions {
+            validate_name(&extension.name)?;
+            if !names.insert(&extension.name) {
+                return Err("Duplicate extension name in registry".into());
             }
         }
-
-        installed_extensions.config_path = extensions_config_path.to_string();
-
-        Ok(installed_extensions)
+        manager.config_path = path.to_owned();
+        Ok(manager)
     }
 
-    /// Returns a reference to the list of installed extensions.
+    /// Opens the registry and loads enabled extensions selected by a service.
+    /// Unselected installations are never initialized. Required extensions must
+    /// be installed and enabled; absent optional extensions are skipped.
     ///
-    /// # Returns
+    /// # Safety
     ///
-    /// * `&Vec<InstalledExtension>` - A reference to the vector of installed extensions.
-    pub fn get_extensions(&self) -> &Vec<InstalledExtension> {
-        &self.extensions
-    }
-
-    /// Registers a new extension by adding it to the list of installed extensions.
+    /// Each selected library must meet [`InstalledExtension::load`]'s contract.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `extension` - An `InstalledExtension` instance to be added to the list of installed extensions.
-    pub fn register_extension(&mut self, extension: InstalledExtension) {
-        self.extensions.push(extension);
-    }
-
-    /// Looks up extension methods by their unified method name.
-    ///
-    /// # Arguments
-    ///
-    /// * `unified_method_name` - A string slice that holds the unified method name to look up.
-    ///
-    /// # Returns
-    ///
-    /// * `Vec<&ExtensionMethod>` - A vector of references to `ExtensionMethod` instances that match the unified method name.
-    pub fn lookup_extension_methods(&self, unified_method_name: &str) -> Vec<&ExtensionMethod> {
-        debug!("Looking up extension methods for '{}'", unified_method_name);
-        self.extensions
-            .iter()
-            .filter(|e| e.enabled)
-            .flat_map(|e| e.methods.values().flatten())
-            .filter(|m| m.unified_name == unified_method_name)
-            .collect::<Vec<_>>()
-    }
-
-    /// Adds a new extension by reading the extension file, copying it to the appropriate directory,
-    /// and updating the extensions configuration file.
-    ///
-    /// # Arguments
-    ///
-    /// * `extension_file` - A string slice that holds the path to the extension file to be added.
-    ///
-    /// # Returns
-    ///
-    /// * `Result<(), Box<dyn std::error::Error>>` - Returns `Ok(())` on success, or an error on failure.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let manager = ExtensionManager::default();
-    /// manager.add_extension("/path/to/extension-file.json").await?;
-    /// ```
-    pub async fn add_extension(&self, extension_file: &str) -> Result<(), Box<dyn std::error::Error>> {
-        info!("Adding extension record for file: {}", extension_file);
-        let extension: Extension = Extension::from_file(extension_file)?;
-        
-        let mut file = crate::utils::open_or_create_file(self.config_path.as_str())?;
-        let mut extensions_json_content = String::new();
-        file.read_to_string(&mut extensions_json_content)?;
-        debug!("Reading extensions configuration file: {}", self.config_path);
-        let mut extensions_json: ExtensionManager = serde_json::from_str(&extensions_json_content)?;
-
-        if extensions_json.extensions.iter().any(|ext| ext.name == extension.name) {
-            warn!("Extension '{}' already exists in the configuration.", extension.name);
-            return Ok(());
-        } 
-
-        let extension_lib_filename = crate::utils::extract_filename_from_url(extension.path.as_str()).unwrap();
-        let extension_folder_path = expand_path_with_home_dir(format!(".ga4gh/extensions/{}/", extension.name).as_str());
-        if let Err(e) = fs::create_dir_all(&extension_folder_path) {
-            error!("Failed to create directory: {}", e);
-        };
-        let local_extension_lib_path = format!("{}/{}", extension_folder_path, extension_lib_filename);
-        debug!("Copying extension file to {}", extension_folder_path);
-        crate::utils::copy_file_to_folder(extension_file, &extension_folder_path)?;
-        debug!("Downloading extension library from {} to {}", extension.path.as_str(), local_extension_lib_path);
-        crate::utils::download_file(&extension.path, local_extension_lib_path.as_str()).await;
-
-        // Calculate the checksum of the downloaded file
-        let mut file = File::open(&local_extension_lib_path)?;
-        let mut hasher = Sha512::new();
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        hasher.update(&buffer);
-        let calculated_checksum = format!("{:x}", hasher.finalize());
-
-        if calculated_checksum != extension.checksum {
-            error!("Checksum mismatch for extension '{}'.\nExpected:   {}\nCalculated: {}", extension.name, extension.checksum, calculated_checksum);
-            std::fs::remove_dir_all(&extension_folder_path)?;
-            return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Checksum mismatch")));
-        }
-
-        let installed_definition_file_path = expand_path_with_home_dir(format!(".ga4gh/extensions/{}/{}.ga4gh-sdk-extension.json", extension.name, extension.name).as_str());
-        let full_definition_file_path = fs::canonicalize(&installed_definition_file_path)?.to_str().unwrap().to_string();
-        let new_extension_record = InstalledExtension {
-            name: extension.name.clone(),
-            version: extension.version.clone(),
-            definition_path: full_definition_file_path,
-            library_path: local_extension_lib_path,
-            enabled: false,
-            loaded: false,
-            library: None,
-            methods: HashMap::new(),
-        };
-        debug!("Adding extension record: {:?}", new_extension_record);
-        extensions_json.extensions.push(new_extension_record); // TODO: should the struct be updated?
-        debug!("Added extension '{}' to the configuration.", extension_file);
-    
-        // Write the updated JSON back to the file
-        fs::write(&self.config_path, serde_json::to_string_pretty(&extensions_json)?)?;
-    
-        Ok(())
-    }
-
-    /// Removes an extension by its name from the configuration file and deletes its directory.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - A string slice that holds the name of the extension to be removed.
-    ///
-    /// # Returns
-    ///
-    /// * `Result<(), Box<dyn std::error::Error>>` - Returns `Ok(())` on success, or an error on failure.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let manager = ExtensionManager::default();
-    /// manager.remove_extension("extension-name")?;
-    /// ```
-    pub fn remove_extension(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
-        info!("Removing extension: {}", name);
-        let contents = fs::read_to_string(&self.config_path)?;
-        let mut extensions_json: Value = serde_json::from_str(&contents)?;
-        if let Some(extensions) = extensions_json["extensions"].as_array_mut() {
-            extensions.retain(|extension| extension["name"] != name);
-        }
-        fs::write(&self.config_path, serde_json::to_string_pretty(&extensions_json)?)?;
-
-        let extension_folder_path = expand_path_with_home_dir(format!(".ga4gh/extensions/{}/", name).as_str());
-        if fs::metadata(&extension_folder_path).is_ok() {
-            fs::remove_dir_all(&extension_folder_path)?;
-        }
-
-        Ok(())
-    }
-
-    /// Updates the status of an extension (enabled or disabled) in the configuration file.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - A string slice that holds the name of the extension to be updated.
-    /// * `enabled` - A boolean indicating whether the extension should be enabled (`true`) or disabled (`false`).
-    ///
-    /// # Returns
-    ///
-    /// * `Result<(), Box<dyn std::error::Error>>` - Returns `Ok(())` on success, or an error on failure.
-    fn update_extension_status(&self, name: &str, enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
-        let status = if enabled { "Enabling" } else { "Disabling" };
-        info!("{} extension: {}", status, name);
-
-        let contents = fs::read_to_string(&self.config_path)?;
-        let mut extensions_json: Value = serde_json::from_str(&contents)?;
-
-        if let Some(extensions) = extensions_json["extensions"].as_array_mut() {
-            for extension in extensions.iter_mut() {
-                if extension["name"] == name {
-                    extension["enabled"] = enabled.into();
+    /// Fails for invalid metadata, unavailable required extensions, or load errors.
+    pub unsafe fn init(
+        path: impl AsRef<Path>,
+        service_config: Option<ServiceExtensionsConfiguration>,
+    ) -> crate::Result<Self> {
+        let mut manager = Self::open(path)?;
+        if let Some(config) = service_config {
+            let mut selected_names = std::collections::HashSet::new();
+            for selected in config.entries() {
+                validate_name(&selected.extension_name)?;
+                if !selected_names.insert(&selected.extension_name) {
+                    return Err("Duplicate extension in service configuration".into());
+                }
+                let extension = manager.extensions.iter_mut().find(|extension| {
+                    extension.name == selected.extension_name && extension.enabled
+                });
+                match extension {
+                    Some(extension) => {
+                        // SAFETY: delegated to init's caller for each selected library.
+                        unsafe { extension.load(selected.configuration.clone()) }?;
+                    }
+                    None if selected.required => {
+                        return Err(format!(
+                            "Required extension '{}' is not installed and enabled",
+                            selected.extension_name
+                        )
+                        .into())
+                    }
+                    None => {}
                 }
             }
         }
+        Ok(manager)
+    }
 
-        fs::write(&self.config_path, serde_json::to_string_pretty(&extensions_json)?)?;
+    /// Reads an `extensions` array from a current SDK configuration's `extra`
+    /// map and loads it using an explicit registry path. Other settings and
+    /// credentials are not passed to native initializers.
+    ///
+    /// # Safety
+    ///
+    /// Each selected library must meet [`InstalledExtension::load`]'s contract.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`Self::init`] does, or if the service array is malformed.
+    pub unsafe fn from_configuration(
+        path: impl AsRef<Path>,
+        config: &Configuration,
+    ) -> crate::Result<Self> {
+        let selected = config
+            .extra
+            .get("extensions")
+            .map(|value| serde_json::from_value(value.clone()))
+            .transpose()?;
+        // SAFETY: delegated to this function's caller.
+        unsafe { Self::init(path, selected) }
+    }
+
+    /// The installed records, including their current loading status.
+    pub fn get_extensions(&self) -> &[InstalledExtension] {
+        &self.extensions
+    }
+
+    /// Finds enabled methods in a category. A cloned method keeps its library
+    /// alive even after the manager is dropped or its record is unloaded.
+    pub fn lookup_extension_methods(&self, category: &str) -> Vec<&ExtensionMethod> {
+        self.extensions
+            .iter()
+            .filter(|extension| extension.enabled)
+            .flat_map(|extension| extension.methods(category))
+            .collect()
+    }
+
+    fn directory(&self) -> crate::Result<PathBuf> {
+        if self.config_path.as_os_str().is_empty() {
+            return Err("Open an extension registry before changing installations".into());
+        }
+        Ok(self
+            .config_path
+            .parent()
+            .unwrap_or(Path::new(""))
+            .join("extensions"))
+    }
+
+    fn extension_directory(&self, name: &str) -> crate::Result<PathBuf> {
+        validate_name(name)?;
+        let root = self.directory()?;
+        if root.is_symlink() || root.join(name).is_symlink() {
+            return Err("Extension directories must not be symbolic links".into());
+        }
+        Ok(root.join(name))
+    }
+
+    fn save(&self) -> crate::Result<()> {
+        self.directory()?;
+        let parent = self
+            .config_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        fs::create_dir_all(parent)?;
+        let mut file = tempfile::NamedTempFile::new_in(parent)?;
+        serde_json::to_writer_pretty(&mut file, self)?;
+        file.flush()?;
+        file.persist(&self.config_path)
+            .map_err(|error| error.error)?;
         Ok(())
     }
 
-    /// Enables an extension by its name in the configuration file.
+    /// Downloads a manifest's library, verifies SHA-512, then installs it disabled
+    /// beside the registry in `extensions/<name>/`. Never executes the library.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `name` - A string slice that holds the name of the extension to be enabled.
+    /// Rejects invalid names or URLs, duplicates, HTTP failures, checksum
+    /// mismatches and I/O errors. Failed downloads leave existing installs intact.
+    pub async fn add_extension(&mut self, manifest: impl AsRef<Path>) -> crate::Result<()> {
+        let extension = Extension::from_file(manifest)?;
+        let destination = self.extension_directory(&extension.name)?;
+        if self
+            .extensions
+            .iter()
+            .any(|installed| installed.name == extension.name)
+            || destination.exists()
+        {
+            return Err("Extension is already installed or its directory already exists".into());
+        }
+        if extension.checksum.len() != 128
+            || !extension.checksum.bytes().all(|c| c.is_ascii_hexdigit())
+        {
+            return Err("Extension checksum must be a SHA-512 hex digest".into());
+        }
+        let url = url::Url::parse(&extension.path)?;
+        if !matches!(url.scheme(), "http" | "https")
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err("Extension library URL must use HTTP or HTTPS without userinfo".into());
+        }
+        let filename = url
+            .path_segments()
+            .and_then(|mut segments| segments.next_back())
+            .ok_or("Extension URL must end in a library filename")?;
+        validate_name(filename)?;
+        let root = self.directory()?;
+        fs::create_dir_all(&root)?;
+        let destination = fs::canonicalize(&root)?.join(&extension.name);
+        let staging = tempfile::tempdir_in(&root)?;
+        // LoadLibrary on Windows appends .dll to extensionless paths.
+        let library_name = format!("library{}", std::env::consts::DLL_SUFFIX);
+        let mut response = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()?
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?;
+        let mut file = fs::File::create(staging.path().join(&library_name))?;
+        let mut digest = Sha512::new();
+        while let Some(chunk) = response.chunk().await? {
+            digest.update(&chunk);
+            file.write_all(&chunk)?;
+        }
+        drop(file);
+        let checksum: String = digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if checksum != extension.checksum.to_ascii_lowercase() {
+            return Err("Extension library checksum mismatch".into());
+        }
+        let definition = format!("{}.ga4gh-sdk-extension.json", extension.name);
+        fs::write(
+            staging.path().join(&definition),
+            serde_json::to_vec_pretty(&extension)?,
+        )?;
+        let record = InstalledExtension::new(
+            extension.name,
+            extension.version,
+            destination
+                .join(definition)
+                .to_str()
+                .ok_or("Extension path is not Unicode")?
+                .to_owned(),
+            destination
+                .join(library_name)
+                .to_str()
+                .ok_or("Extension path is not Unicode")?
+                .to_owned(),
+        );
+        fs::rename(staging.path(), &destination)?;
+        self.extensions.push(record);
+        if let Err(error) = self.save() {
+            self.extensions.pop();
+            fs::remove_dir_all(destination)?;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Removes a registered extension and its installation directory.
     ///
-    /// # Returns
+    /// # Errors
     ///
-    /// * `Result<(), Box<dyn std::error::Error>>` - Returns `Ok(())` on success, or an error on failure.
+    /// Rejects invalid or unknown names and symbolic links; returns I/O errors.
+    pub fn remove_extension(&mut self, name: &str) -> crate::Result<()> {
+        let directory = self.extension_directory(name)?;
+        let index = self
+            .extensions
+            .iter()
+            .position(|extension| extension.name == name)
+            .ok_or("Extension is not installed")?;
+        let root = self.directory()?;
+        fs::create_dir_all(&root)?;
+        let removed = tempfile::tempdir_in(root)?;
+        let backup = removed.path().join("installation");
+        let exists = directory.exists();
+        if exists {
+            fs::rename(&directory, &backup)?;
+        }
+        let record = self.extensions.remove(index);
+        if let Err(error) = self.save() {
+            self.extensions.insert(index, record);
+            if exists {
+                if let Err(restore_error) = fs::rename(backup, directory) {
+                    // Preserve the backup if restoring the original path also fails.
+                    let _ = removed.keep();
+                    return Err(restore_error.into());
+                }
+            }
+            return Err(error);
+        }
+        drop(record);
+        removed.close()?;
+        Ok(())
+    }
+
+    fn update_extension_status(&mut self, name: &str, enabled: bool) -> crate::Result<()> {
+        validate_name(name)?;
+        let index = self
+            .extensions
+            .iter()
+            .position(|extension| extension.name == name)
+            .ok_or("Extension is not installed")?;
+        let previous = self.extensions[index].enabled;
+        self.extensions[index].enabled = enabled;
+        if let Err(error) = self.save() {
+            self.extensions[index].enabled = previous;
+            return Err(error);
+        }
+        if !enabled {
+            self.extensions[index].unload();
+        }
+        Ok(())
+    }
+
+    /// Persists enabled status without loading native code.
     ///
-    /// # Example
+    /// # Errors
     ///
-    /// ```rust
-    /// let manager = ExtensionManager::default();
-    /// manager.enable_extension("extension-name")?;
-    /// ```
-    pub fn enable_extension(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    /// Fails for invalid or unknown names or an unwritable registry.
+    pub fn enable_extension(&mut self, name: &str) -> crate::Result<()> {
         self.update_extension_status(name, true)
     }
 
-    /// Disables an extension by its name in the configuration file.
+    /// Persists disabled status and releases this manager's runtime handles.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `name` - A string slice that holds the name of the extension to be disabled.
-    ///
-    /// # Returns
-    ///
-    /// * `Result<(), Box<dyn std::error::Error>>` - Returns `Ok(())` on success, or an error on failure.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let manager = ExtensionManager::default();
-    /// manager.disable_extension("extension-name")?;
-    /// ```
-    pub fn disable_extension(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    /// Fails for invalid or unknown names or an unwritable registry.
+    pub fn disable_extension(&mut self, name: &str) -> crate::Result<()> {
         self.update_extension_status(name, false)
     }
 }

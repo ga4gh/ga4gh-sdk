@@ -1,291 +1,232 @@
-//! Extension Module
+//! Experimental native extensions, loaded only through an explicit unsafe call.
 //!
-//! This module provides structures and functions to manage extensions, including loading, initializing, and invoking methods from extensions.
-//!
-//! # Example
-//!
-//! ```rust
-//! use extension_manager::InstalledExtension;
-//!
-//! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Load an extension from a file
-//!     let extension = InstalledExtension::from_file("/path/to/extension.json")?;
-//!     println!("Loaded extension: {:?}", extension);
-//!     Ok(())
-//! }
-//! ```
+//! Installation metadata can be read without executing native code.
 
-use log::{info, debug};
-use libloading::{Library, Symbol};
-use std::collections::HashMap;
+use libloading::Library;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs;
-use std::fs::File;
-use std::io::Read;
-use std::error::Error;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
 
-type ExtensionInitFunction = unsafe extern "Rust" fn(Value) -> Vec<&'static [&'static str]>;
-type ExtensionMethodFunction = unsafe extern "Rust" fn(Value) -> Value;
+type Init = unsafe extern "Rust" fn(Value) -> Vec<&'static [&'static str]>;
+type Method = unsafe extern "Rust" fn(Value) -> Value;
+type Deinit = unsafe extern "C" fn();
 
-/// Represents a method provided by an extension.
-#[derive(Debug, Clone)]
-pub struct ExtensionMethod {
-    /// The name of the extension providing this method.
-    pub extension_name: String,
-    /// The unified name of the method.
-    pub unified_name: String,
-    /// The internal name of the method.
-    pub internal_name: String,
-    /// The function pointer to the method implementation.
-    pub method: Symbol<'static, ExtensionMethodFunction>,
+struct LoadedLibrary {
+    library: Library,
+    deinit: Option<Deinit>,
 }
 
-/// Represents an extension with its metadata.
-#[derive(Debug, Serialize, Deserialize)]
+impl Drop for LoadedLibrary {
+    fn drop(&mut self) {
+        if let Some(deinit) = self.deinit {
+            // SAFETY: load's caller accepts the library's ABI and lifecycle contract.
+            unsafe { deinit() };
+        }
+    }
+}
+
+/// A method exported by an extension. Clones keep its library loaded.
+#[derive(Clone)]
+pub struct ExtensionMethod {
+    /// The extension providing this method.
+    pub extension_name: String,
+    /// The method category, such as `tls-verifier`.
+    pub unified_name: String,
+    /// The extension's name for the method.
+    pub internal_name: String,
+    method: Method,
+    owner: Arc<LoadedLibrary>,
+}
+
+impl std::fmt::Debug for ExtensionMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExtensionMethod")
+            .field("extension_name", &self.extension_name)
+            .field("unified_name", &self.unified_name)
+            .field("internal_name", &self.internal_name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ExtensionMethod {
+    /// Calls the method with extension-specific JSON.
+    ///
+    /// # Safety
+    ///
+    /// The caller must meet the extension's input and threading requirements.
+    pub unsafe fn call(&self, input: Value) -> Value {
+        let _keep_alive = &self.owner;
+        // SAFETY: the caller accepts the method's contract; owner pins its code.
+        unsafe { (self.method)(input) }
+    }
+}
+
+/// An installation manifest for a shared library.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Extension {
-    /// The name of the extension.
+    /// A single directory-safe extension name.
     pub name: String,
-    /// The version of the extension.
+    /// The extension version.
     pub version: String,
-    /// The file path to the extension.
+    /// The HTTP or HTTPS URL of the shared library.
     pub path: String,
-    /// SHA512 checksum of the extension binary.
+    /// The library's SHA-512 hex digest.
     pub checksum: String,
-    /// An optional description of the extension.
+    /// An optional description.
     pub description: Option<String>,
 }
 
-/// Represents an installed extension with its runtime state.
-#[derive(Debug, Serialize, Deserialize)]
+impl Extension {
+    /// Reads a manifest without executing code.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O or JSON error if the manifest cannot be read.
+    pub fn from_file(path: impl AsRef<Path>) -> crate::Result<Self> {
+        Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+    }
+}
+
+/// An installed extension and its optional runtime state. Serialized records
+/// contain metadata only; clones share ownership of a loaded library.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct InstalledExtension {
-    /// The name of the extension.
+    /// The extension name.
     pub name: String,
-    /// The version of the extension.
+    /// The installed version.
     pub version: String,
-    /// The path to the extension's definition file.
+    /// The installed manifest path.
     #[serde(rename = "definition-path")]
     pub definition_path: String,
-    /// The path to the extension's library file.
+    /// The installed shared library path.
     #[serde(rename = "library-path")]
     pub library_path: String,
-
-    /// Indicates whether the extension is enabled.
-    #[serde(skip_serializing, default)]
+    /// Whether this installation is enabled for explicit loading.
+    #[serde(default)]
     pub enabled: bool,
-    /// Indicates whether the extension is loaded.
-    #[serde(skip_serializing, default)]
-    pub loaded: bool,
-    /// The loaded library of the extension.
     #[serde(skip)]
-    pub library: Option<Library>,
-    /// The methods provided by the extension.
-    #[serde(skip, default)]
-    pub methods: HashMap<String, Vec<ExtensionMethod>>,
+    library: Option<Arc<LoadedLibrary>>,
+    #[serde(skip)]
+    methods: HashMap<String, Vec<ExtensionMethod>>,
+}
+
+impl std::fmt::Debug for InstalledExtension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InstalledExtension")
+            .field("name", &self.name)
+            .field("version", &self.version)
+            .field("enabled", &self.enabled)
+            .field("loaded", &self.is_loaded())
+            .finish_non_exhaustive()
+    }
 }
 
 impl InstalledExtension {
-    /// Loads an `InstalledExtension` from a JSON file.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - A string slice that holds the path to the JSON file.
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Self, Box<dyn Error>>` - Returns an `InstalledExtension` on success, or an error on failure.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let extension = InstalledExtension::from_file("/path/to/extension.json")?;
-    /// println!("Loaded extension: {:?}", extension);
-    /// ```
-    pub fn from_file(file_path: &str) -> Result<Self, Box<dyn Error>> {
-        let mut file = File::open(file_path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-
-        let json: Value = serde_json::from_str(&contents)?;
-        if !json.is_object() {
-            return Err(format!("Extension definition file is not a valid JSON object: {}", file_path).into());
+    pub(crate) fn new(name: String, version: String, definition: String, library: String) -> Self {
+        Self {
+            name,
+            version,
+            definition_path: definition,
+            library_path: library,
+            enabled: false,
+            library: None,
+            methods: HashMap::new(),
         }
-        let mut extension: InstalledExtension = serde_json::from_value(json)?;
-
-        extension.loaded = false;
-        extension.library = None;
-        extension.methods = HashMap::new();
-
-        Ok(extension)
     }
 
-    /// Enables the extension.
+    /// Reads installation metadata without executing code.
     ///
-    /// This method sets the `enabled` flag to `true`.
+    /// # Errors
     ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut extension = InstalledExtension::from_file("/path/to/extension.json")?;
-    /// extension.enable();
-    /// assert!(extension.enabled);
-    /// ```
+    /// Returns an I/O or JSON error if the record cannot be read.
+    pub fn from_file(path: impl AsRef<Path>) -> crate::Result<Self> {
+        Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+    }
+
+    /// Enables loading in memory; use the manager to persist the status.
     pub fn enable(&mut self) {
         self.enabled = true;
     }
 
-    /// Disables the extension.
-    ///
-    /// This method sets the `enabled` flag to `false`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut extension = InstalledExtension::from_file("/path/to/extension.json")?;
-    /// extension.disable();
-    /// assert!(!extension.enabled);
-    /// ```
+    /// Disables loading and releases this record's runtime handles.
     pub fn disable(&mut self) {
         self.enabled = false;
+        self.unload();
     }
 
-    /// Loads the extension if it is enabled.
-    ///
-    /// This method attempts to load the extension's shared library and initialize it with the provided service configuration.
-    /// It retrieves the extension's methods and stores them in the `methods` map.
-    ///
-    /// # Arguments
-    ///
-    /// * `service_config` - A `serde_json::Value` containing the service configuration to pass to the extension's initialization function.
+    /// Whether this record owns a loaded library.
+    pub fn is_loaded(&self) -> bool {
+        self.library.is_some()
+    }
+
+    pub(crate) fn methods(&self, category: &str) -> impl Iterator<Item = &ExtensionMethod> {
+        self.methods.get(category).into_iter().flatten()
+    }
+
+    /// Loads an enabled library and calls `init`. Disabled or loaded records
+    /// are left unchanged.
     ///
     /// # Safety
     ///
-    /// This function is unsafe because it involves loading a shared library and calling external functions.
+    /// The library must be trusted and built with the same Rust compiler and
+    /// compatible dependency builds as the host. `init` must have type
+    /// `unsafe extern "Rust" fn(Value) -> Vec<&'static [&'static str]>`.
+    /// Each entry must contain category, internal name and symbol name; every
+    /// named method must be `unsafe extern "Rust" fn(Value) -> Value`.
+    /// Returned references must remain valid while the library is loaded.
+    /// Optional `deinit` must be `unsafe extern "C" fn()` and safe on the thread
+    /// dropping the last handle. Initializers and finalizers must not unwind.
+    /// The caller must meet any extension-specific threading requirements.
     ///
-    /// # Example
+    /// # Errors
     ///
-    /// ```rust
-    /// let mut extension = InstalledExtension::from_file("/path/to/extension.json")?;
-    /// let service_config = serde_json::json!({});
-    /// extension.load(service_config);
-    /// assert!(extension.loaded);
-    /// ```
-    pub fn load(&mut self, service_config: Value) {
-        if self.enabled {
-            debug!("Loading extension lib: {} v{}", self.name, self.version);
-            info!("Path: {}", self.library_path);
-            unsafe {
-                self.library = Some(Library::new(&self.library_path).expect("Failed to load extension shared library"));
-                debug!("Library loaded successfully");
-
-                if let Some(lib) = &self.library {
-                    debug!("Getting init function");
-                    let init_func: Symbol<ExtensionInitFunction> = lib.get(b"init").expect("Failed to load symbol");
-                    debug!("Calling init function to obtain extension methods");
-            
-                    let methods = init_func(service_config);
-                    debug!("Init function called successfully, methods obtained:");
-                    for method in methods {
-                        let unified_method_name = method[0];
-                        let internal_method_name = method[1];
-                        let symbol_name = method[2];
-                        debug!("category={}, method={}, symbol_name={}", unified_method_name, internal_method_name, symbol_name);
-                        debug!("Getting `{}` function symbol", symbol_name);
-                        let symbol: Symbol<ExtensionMethodFunction> = lib.get(symbol_name.as_bytes()).expect("Failed to load symbol");
-                        self.methods.entry(unified_method_name.to_string()).or_insert_with(Vec::new).push(ExtensionMethod {
-                            extension_name: self.name.clone(),
-                            unified_name: unified_method_name.to_string(),
-                            internal_name: internal_method_name.to_string(),
-                            method: std::mem::transmute::<Symbol<ExtensionMethodFunction>, Symbol<'static, ExtensionMethodFunction>>(symbol),
-                        });
-                        debug!("Symbol loaded successfully");
-                        info!("Method loaded: {}", internal_method_name);
-                    }
-                    self.loaded = true;
-                }
-            }
-        } else {
-            debug!("Extension {} is disabled", self.name);
+    /// Returns an error for missing libraries or symbols and invalid descriptors.
+    pub unsafe fn load(&mut self, service_config: Value) -> crate::Result<()> {
+        if !self.enabled || self.is_loaded() {
+            return Ok(());
         }
+        // SAFETY: the caller accepts the native code and ABI contract above.
+        let library = unsafe { Library::new(&self.library_path) }.map_err(crate::Error::other)?;
+        let descriptors = {
+            // SAFETY: the caller guarantees the initializer's signature.
+            let init = unsafe { library.get::<Init>(b"init") }.map_err(crate::Error::other)?;
+            unsafe { init(service_config) }
+        };
+        // SAFETY: if present, deinit has the signature promised by the caller.
+        let deinit = unsafe { library.get::<Deinit>(b"deinit") }
+            .ok()
+            .map(|symbol| *symbol);
+        let owner = Arc::new(LoadedLibrary { library, deinit });
+        let mut methods: HashMap<String, Vec<ExtensionMethod>> = HashMap::new();
+        for descriptor in descriptors {
+            let [category, name, symbol] = descriptor else {
+                return Err("Extension method descriptor must contain three strings".into());
+            };
+            // SAFETY: load's caller guarantees the method ABI; owner pins the code.
+            let method = *unsafe { owner.library.get::<Method>(symbol.as_bytes()) }
+                .map_err(crate::Error::other)?;
+            methods
+                .entry(category.to_string())
+                .or_default()
+                .push(ExtensionMethod {
+                    extension_name: self.name.clone(),
+                    unified_name: category.to_string(),
+                    internal_name: name.to_string(),
+                    method,
+                    owner: owner.clone(),
+                });
+        }
+        self.methods = methods;
+        self.library = Some(owner);
+        Ok(())
     }
 
-    /// Unloads the extension by calling its `deinit` function.
-    ///
-    /// This method checks if the extension is currently loaded. If it is, it attempts to load the extension's shared library
-    /// and retrieve the `deinit` function symbol. It then calls the `deinit` function to properly unload the extension.
-    ///
-    /// # Safety
-    ///
-    /// This function is unsafe because it involves loading a shared library and calling an external function.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut extension = InstalledExtension::from_file("/path/to/extension.json")?;
-    /// extension.load(serde_json::json!({}));
-    /// extension.unload();
-    /// assert!(!extension.loaded);
-    /// ```
+    /// Releases this record's handles. Retained record or method clones keep the
+    /// library alive; optional `deinit` runs when the last owner is dropped.
     pub fn unload(&mut self) {
-        if self.loaded {
-            debug!("Unloading extension: {} v{}", self.name, self.version);
-            info!("Path: {}", self.library_path);
-            unsafe {
-                let lib = Library::new(&self.library_path).expect("Failed to load extension shared library");
-                let deinit_func: Symbol<unsafe extern "C" fn()> = lib.get(b"deinit").expect("Failed to load symbol");
-                debug!("Calling deinit function");
-                deinit_func();
-                self.loaded = false;
-                debug!("Deinit function called successfully");
-            }
-        } else {
-            debug!("Extension {} is disabled", self.name);
-        }
+        self.methods.clear();
+        self.library = None;
     }
 }
-
-impl Clone for InstalledExtension {
-    /// Creates a clone of the `InstalledExtension`.
-    ///
-    /// This method creates a new `InstalledExtension` instance with the same values for all fields except for the `library` field,
-    /// which is set to `None` in the cloned instance. This is because the `library` field represents a loaded shared library,
-    /// which cannot be safely cloned.
-    fn clone(&self) -> Self {
-        InstalledExtension {
-            name: self.name.clone(),
-            version: self.version.clone(),
-            definition_path: self.definition_path.clone(),
-            library_path: self.library_path.clone(),
-            enabled: self.enabled,
-            loaded: self.loaded,
-            library: None, // Exclude the library field from cloning
-            methods: self.methods.clone(),
-        }
-    }
-}
-
-impl Extension {
-    /// Loads an `Extension` from a JSON file.
-    ///
-    /// This method reads the contents of the specified JSON file and deserializes it into an `Extension` instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `file` - A string slice that holds the path to the JSON file.
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Self, Box<dyn std::error::Error>>` - Returns an `Extension` on success, or an error on failure.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let extension = Extension::from_file("/path/to/extension.json")?;
-    /// println!("Loaded extension: {:?}", extension);
-    /// ```
-    pub fn from_file(file: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let contents = fs::read_to_string(file)?;
-        let extension: Extension = serde_json::from_str(&contents)?;
-        Ok(extension)
-    }
-}
-

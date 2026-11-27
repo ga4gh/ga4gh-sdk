@@ -1,0 +1,40 @@
+---
+name: Feature request
+description: Propose a new feature or an improvement.
+labels: ["type: feature", "status: new", "topic: ga4gh-sdk"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for your idea! Please search the open issues first, to see
+        whether it has been proposed already.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: >-
+        What problem would the feature solve, and for whom? Describe the use
+        case rather than the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: >-
+        How could the problem be solved? Name the parts it affects (Rust
+        library, CLI, Python bindings) and the GA4GH APIs involved.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Which other solutions or workarounds have you considered?
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: >-
+        Anything else that helps: links to specifications or related issues,
+        examples, screenshots.

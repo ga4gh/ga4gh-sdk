@@ -1,20 +1,16 @@
 [workspace]
+resolver = "2"
+exclude = ["lib/tests/fixtures/native-extension"]
 members = [
     "lib",
     "cli",
     "python"
 ]
-resolver = "2"  # Use the edition 2021 resolver
 
 [workspace.package]
-version = "0.1.6"
-
-authors = [
-    "Aarav Mehta <aarav05mehta@gmail.com> (Google Summer of Code Contributor)",
-    "Pavel Nikonorov <pavel@genxt.network> (Google Summer of Code Mentor, GENXT)",
-    "ELIXIR Cloud & AAI <cloud-service@elixir-europe.org> (ELIXIR Europe)"
-]
+version = "0.1.0"
+authors = ["Aarav Mehta <aarav05mehta@gmail.com>", "Pavel Nikonorov <pavel@genxt.network>", "ELIXIR Cloud & AAI <cloud-service@elixir-europe.org> (ELIXIR Europe)"]
 edition = "2021"
 readme = "./README.md"
 license-file = "LICENSE"
-repository = "https://github.com/elixir-cloud-aai/ga4gh-sdk.git"
+repository = "https://github.com/ga4gh/ga4gh-sdk"

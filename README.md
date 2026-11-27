@@ -1,55 +1,606 @@
 # GA4GH SDK
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Documentation](https://readthedocs.org/projects/ga4gh-sdk/badge/?version=latest)](https://ga4gh-sdk.readthedocs.io/en/latest/)
+[![Coverage](https://codecov.io/gh/ga4gh/ga4gh-sdk/graph/badge.svg?branch=main)](https://codecov.io/gh/ga4gh/ga4gh-sdk)
 
 ## Synopsis
 
 A Generic SDK and CLI for GA4GH API services.
 
+The [documentation](https://ga4gh-sdk.readthedocs.io/) has this README, the
+usage, CLI and Python guides, the Rust API reference and the development
+guides on one site.
+
 ## Basic usage
-TBA
+
+Set `Configuration.base_path` to the API root, including the service's path
+prefix. For example, use `https://example.org/ga4gh/tes/v1` for TES,
+`https://example.org/ga4gh/drs/v1` for DRS, or
+`https://example.org/ga4gh/wes/v1` for WES. A trailing slash is optional.
+The SDK resolves `service-info`, `tasks`, `objects`, and `runs` below that root.
+The API root must not contain a query string or fragment.
+
+```rust
+use ga4gh_sdk::clients::tes::TES;
+use ga4gh_sdk::utils::configuration::Configuration;
+
+let config = Configuration::new(
+    url::Url::parse("https://example.org/ga4gh/tes/v1")?
+);
+let tes = TES::new(&config).await?;
+```
+
+Read a client's state with its accessors: `configuration()` returns the
+configuration of the client's transport, which its requests use;
+`transport()` the transport, for example to share it with a client for an
+added endpoint; and `discovered_service_info()` the service info read at
+construction. `TES`, `WES`, `DRS`, and `TRS` have these accessors (on `TRS`,
+`discovered_service_info()` returns an `Option`, as a `TRS` client can be
+built without discovery), and `Transport::configuration()` returns a
+transport's configuration. To change the API root, credentials, or HTTP
+client, build a new client, for example with `with_transport`.
+`without_discovery(transport, service)` builds a `TES`, `WES`, or `DRS`
+client from values the caller already has, without a service-info request,
+as `TRS::without_discovery` does.
+
+The `service` and `transport` fields of `TES`, `WES`, and `DRS`, the
+`client` and `capabilities` fields of `Discovered`, and the `config` field
+of `Transport` are private, and the `config` copy of `TES`, `WES`, and `DRS`
+is gone. The [client state ownership record](docs/state_ownership.md#migration)
+lists the replacement of each former public field.
+
+### Migration notes
+
+Configs that previously used only the host must include the service path prefix
+shown above. `Transport::endpoint` now accepts only relative paths inside that
+root and returns `EndpointError` for invalid paths or roots; callers should not
+pass absolute URLs or `.` and `..` path segments. `tes::urlencode` and
+`wes::urlencode` now encode a path segment (so a space becomes `%20`, not `+`);
+use form encoding for query values. `Transport` now returns `HttpStatusError`
+for non-2xx HTTP responses rather than `std::io::Error`.
+
+The library returns its own error type, `ga4gh_sdk::Error`, in place of
+`Box<dyn std::error::Error>` (see [Errors](docs/usage.md#errors)). It is an enum
+of the kinds of failure (`Http`, `Transport`, `Endpoint`, `Parse`,
+`Configuration`, `UnexpectedService`, `Other`) and is `Send + Sync`, so
+clients and their futures can move between threads. This breaks some code:
+
+- Functions that return `Box<dyn Error>` still accept the SDK's errors with
+  `?`. But `downcast_ref::<HttpError>()` on such a box no longer finds the HTTP
+  error, nor does it on an `anyhow::Error` or in a `source()` chain: downcast
+  to `ga4gh_sdk::Error` and call its `downcast_ref`, or match on its variants.
+- An error status in answer to the service-info request of `DRS::new` and
+  `WES::new` is an `Other` error (with a hint on the API root for a 404),
+  not `Http`; its `downcast_ref` returns the HTTP error. `TES::new` and
+  `TRS::new` return `Http`. Other failures of that request keep their
+  variant, such as `Transport` for a failed connection, and no longer have
+  the "Error accessing … service" prefix.
+- Implementations of `DescriptorFetcher` and the attempts passed to
+  `drs::resolution::resolve_until` return `ga4gh_sdk::Error`; `?` or
+  `Error::other(error)` converts other errors.
+- An invalid Service Registry response is now `Error::Parse` with the
+  `serde_json` diagnostic, instead of a string prefixed with the registry
+  endpoint. Match the variant to handle it without parsing the message. The
+  CLI still includes the endpoint in its error output.
+- The `service` field of `TES`, `WES` and `DRS` is now a `Service`
+  instead of a `Result`; the constructors return the errors. Struct literals of
+  the clients set `service: Service::default()` or the service info itself.
+- The error of `ResolveCause::Request` and of the workflow contracts
+  (`ContractError`) is `ga4gh_sdk::Error`.
+
+`TES`, `WES` and `DRS` check the service type only in their constructors.
+No TES or WES method checks it again (`TES::create`, `create_value`,
+`WES::run_workflow` and `run_workflow_with_attachments` did), so a client
+built as a struct literal with another `service` sends its requests. Use
+`with_artifact` for a service whose service info names another artifact
+(see [Build on this SDK](docs/downstream.md)).
+
+The WES models follow WES 1.1.0 and use the schema names of the spec:
+`WesRunRequest` is now `RunRequest`, `WesRunLog` is `RunLog`, `WesState` is
+`State`, and so on (the `Wes` prefix is gone). `RunRequest::new` takes the
+required `workflow_type`, `workflow_type_version` and `workflow_url`, which are
+now `String`; `tags` and `workflow_engine_parameters` are string maps. Run list
+items are `RunListResponseRunsInner` and deprecated task log items are
+`RunLogTaskLogsInner`. `Run::list_tasks` and `Run::get_task` call the new task
+endpoints.
+
+All models now keep what their spec doesn't define (see
+[Models](docs/usage.md#models)). This breaks some code:
+
+- Model structs have a new public field, `extra`. Struct literals of models
+  must set it or end with `..Default::default()`; prefer the models' `new`
+  functions.
+- Enums have a new variant, `Unrecognized(String)`, and are no longer `Copy`.
+  `match` statements need an arm for it, and code that copies an enum value
+  must `.clone()` it. `TesState` and the WES `State` are not affected: they
+  stay `Copy` and read unknown states as `Unknown`, which is now their last
+  variant (this changes their `Ord` order). They write such states back as
+  `UNKNOWN`.
+- Model enums of a single property, such as the DRS `access_method::Type`,
+  now implement `Display`.
+- `extra` keys with the name of a field of the model are sent twice in the
+  JSON; only WES `run_workflow` rejects them.
+- Unknown fields are no longer dropped: serializing a model, or
+  `ga4gh-cli registry get`, now includes the fields that the server added.
+- WES `run_workflow` sends `RunRequest.extra` as further form parts; names of
+  the request's own parts are an error.
+- TRS methods that take a descriptor type encode it as a path segment and
+  reject `Unrecognized` values that are empty, `.` or `..`.
+- `TesTask::new(executors)` now sets `executors`; it used to ignore them.
+
+The SDK uses reqwest 0.12 instead of 0.11:
+
+- `ga4gh_sdk::reqwest` re-exports 0.12, and `Transport::with_client` and
+  `with_client_and_configured_auth` take a reqwest 0.12 `Client`. Build it
+  with `ga4gh_sdk::reqwest`, or move your own `reqwest` dependency to 0.12.
+  Its header, method and status types come from `http` 1.
+- The Python wheels verify TLS certificates with rustls 0.23. The CLI's S3
+  downloads in `tes save` use OpenSSL, like its other requests.
+- Charset decoding, HTTP/2 and the system proxy settings work as before.
+  A `Transport` error reports a safe failure category by default; its
+  `reqwest::Error` and source chain remain available for explicit inspection.
+
+A service-info response that isn't valid UTF-8 is now an error of
+`ServiceInfo::get`, `get_at`, the discovery of `TES::new`, `WES::new` and
+`DRS::new`, and capability discovery, as it already was for `TRS::new`;
+such text used to be repaired with replacement characters. See
+[Service Info](docs/api_compatibility.md#service-info).
 
 ## Installation
-TBA
+
+[Release 0.1.0](https://github.com/ga4gh/ga4gh-sdk/releases/tag/v0.1.0)
+ships the Python package on PyPI, binaries of the CLI and a CLI container
+image. It is a prerelease: the APIs may still change before 1.0. The Rust
+library isn't on crates.io; use it as a Git dependency (see
+[Rust library](#rust-library)).
+
+### Python package
+
+The PyPI package `ga4gh-sdk` contains the Python bindings (import name
+`ga4gh_sdk`) for CPython 3.11 and newer; PyPy and free-threaded CPython
+builds are not supported. It doesn't include the CLI. Install it into a
+virtual environment:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install ga4gh-sdk==0.1.0
+python -c 'from ga4gh_sdk import TES; print(TES.__name__)'
+```
+
+The [Python README](python/README.md#install-from-pypi) lists the platforms
+with prebuilt wheels and what pip needs elsewhere.
+
+### Download the CLI
+
+Each [release](https://github.com/ga4gh/ga4gh-sdk/releases) has an archive of
+`ga4gh-cli` per platform, named `ga4gh-cli-<version>-<target>`, and a
+`SHA256SUMS` file with the checksums of all archives:
+
+| Platform | Target | Archive |
+| --- | --- | --- |
+| Linux x86-64 | `x86_64-unknown-linux-gnu` | `.tar.gz` |
+| Linux aarch64 | `aarch64-unknown-linux-gnu` | `.tar.gz` |
+| macOS x86-64 | `x86_64-apple-darwin` | `.tar.gz` |
+| macOS arm64 | `aarch64-apple-darwin` | `.tar.gz` |
+| Windows x86-64 | `x86_64-pc-windows-msvc` | `.zip` |
+| Windows arm64 | `aarch64-pc-windows-msvc` | `.zip` |
+
+The Linux binaries need glibc 2.34 or newer (for example Ubuntu 22.04,
+Debian 12, RHEL 9 or newer), the OpenSSL 3 library (`libssl3` on Debian and
+Ubuntu, `openssl-libs` on Fedora and RHEL) and CA certificates
+(`ca-certificates`); minimal container images may lack the last two.
+Elsewhere, build from source as below. The binaries aren't signed, so macOS
+may block them until you remove the quarantine attribute
+(`xattr -d com.apple.quarantine ga4gh-cli`). For example, on Linux x86-64,
+download 0.1.0, check it against the release's `SHA256SUMS` and, optionally,
+its build provenance, then unpack it and run it:
+
+```sh
+version=0.1.0
+target=x86_64-unknown-linux-gnu
+archive="ga4gh-cli-$version-$target.tar.gz"
+base="https://github.com/ga4gh/ga4gh-sdk/releases/download/v$version"
+curl --fail --location --remote-name "$base/$archive"
+curl --fail --location --remote-name "$base/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify "$archive" --repo ga4gh/ga4gh-sdk  # needs the GitHub CLI
+tar -xzf "$archive"
+"ga4gh-cli-$version-$target/ga4gh-cli" --version
+```
+
+The archive unpacks into the directory `ga4gh-cli-<version>-<target>`, with
+the binary (`ga4gh-cli`, or `ga4gh-cli.exe` on Windows), `README.md` and
+`LICENSE`. Move the binary to a directory on your `PATH`, such as
+`~/.local/bin`, to run it as `ga4gh-cli`.
+
+### Container image
+
+The image `ghcr.io/ga4gh/ga4gh-cli:0.1.0` runs the CLI for `linux/amd64`
+and `linux/arm64`; pulling it needs no login. Its entrypoint is
+`ga4gh-cli`, so the arguments after the image name are CLI arguments:
+
+```sh
+docker run --rm ghcr.io/ga4gh/ga4gh-cli:0.1.0 --version
+```
+
+The CLI in the container reads its configuration from
+`/home/ga4gh/.ga4gh-cli/config.json`; mount yours read-only, and mount task
+files under the working directory `/work`. The container runs as UID 10001
+by default; `--user` runs it with your UID instead, so that it can read a
+configuration file that only you can read. Run this example from the root of
+a clone of this repository:
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" \
+  --volume "$HOME/.ga4gh-cli:/home/ga4gh/.ga4gh-cli:ro" \
+  --volume "$PWD/examples:/work:ro" \
+  ghcr.io/ga4gh/ga4gh-cli:0.1.0 tes create tes-hello.json
+```
+
+The [container image guide](docs/container-image.md) covers pinning the
+image digest, verifying its provenance, credentials, file permissions and
+running it as a Kubernetes Job.
+
+### Rust library
+
+Add the library as a Git dependency on the release tag (package
+`ga4gh-lib`, crate `ga4gh_sdk`):
+
+```toml
+[dependencies]
+ga4gh-lib = { git = "https://github.com/ga4gh/ga4gh-sdk", tag = "v0.1.0" }
+```
+
+Building it needs the prerequisites of [Build from source](#build-from-source).
+
+### Build from source
+
+These instructions install the SDK from this source repository.
+
+**Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) via
+`rustup` and Git. The repository pins its toolchain in
+[`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs that version
+on the first build. On Linux, the library and CLI also need the OpenSSL
+development files and `pkg-config` (for example `libssl-dev pkg-config` on
+Debian and Ubuntu).
+
+Install the command-line tool `ga4gh-cli` into `~/.cargo/bin`:
+
+```sh
+git clone https://github.com/ga4gh/ga4gh-sdk.git
+cd ga4gh-sdk
+cargo install --path cli --locked
+ga4gh-cli --help
+```
+
+To build the container image yourself, see
+[Building the image](docs/container-image.md#building-the-image). To build
+the Python bindings (with [maturin](https://www.maturin.rs/)), see the
+[Python README](python/README.md#installation). Maintainers can follow the
+[release guide](docs/releasing.md).
+
+## Quick start
+
+Install [Funnel](https://ohsu-comp-bio.github.io/funnel/download/) and Docker,
+then start a local TES server in another terminal. The repository's integration
+suite uses Funnel v0.11.14; Docker is needed to execute tasks.
+
+```sh
+funnel server run --Server.HTTPPort=8000
+```
+
+Point the CLI at that service by writing `~/.ga4gh-cli/config.json`.
+`base_path` is the API root, including the service's path prefix:
+
+```sh
+mkdir -p ~/.ga4gh-cli
+cat > ~/.ga4gh-cli/config.json <<'JSON'
+{
+  "TES": {
+    "base_path": "http://localhost:8000/ga4gh/tes/v1"
+  }
+}
+JSON
+```
+
+Submit the checked-in [task file](examples/tes-hello.json), which runs a
+greeting in an Alpine container without external storage. Then check its status
+and list tasks:
+
+```sh
+task_id=$(ga4gh-cli tes create examples/tes-hello.json)
+ga4gh-cli tes status "$task_id"
+ga4gh-cli tes list
+```
+
+For scripts that need to preserve arbitrary server-provided IDs, use
+`ga4gh-cli tes create examples/tes-hello.json --format json` and parse its
+`id` field. The text output above is intended for ordinary IDs.
+
+Docker may download the Alpine image on the first run.
+
+The [CLI README](cli/README.md) describes all CLI commands. The
+[usage guide](docs/usage.md) covers configuration, authentication, and the
+Rust library's `ServiceInfo`, `TES`, `WES`, `DRS`, `TRS`, and `ServiceRegistry`
+clients. The CLI also has [WES commands](cli/README.md#wes-examples),
+[Service Registry commands](cli/README.md#service-registry-commands) and a
+[`service-info` command](cli/README.md#service-info-command).
+
+The [provider contract proposals](docs/rfcs/README.md) describe possible
+extensions for leased interactive sessions and workload-bound secrets. They
+are not implemented SDK features.
+
+## Advanced transport
+
+Advanced transport callers can use `request_response` for status and headers
+before parsing, then consume `reqwest::Response::chunk()` incrementally or call
+`utils::transport::read_bounded` for lossless bytes. Dropping the response stops
+consumption. The existing text helpers remain available and now bound success
+bodies to 8 MiB and error bodies to 16 KiB while reading, including chunked bodies.
+Use `request_text` with explicit `BodyLimits` for different bounds. A
+`BodyLimitError` retains HTTP status even for an oversized error response.
+`Transport::with_client` and `request_builder` support custom client budgets and
+headers; HTTP types are re-exported as `ga4gh_sdk::reqwest`.
+
+`clients::trs::responses` offers tools pages with all pagination headers, follows
+the server's `next_page` URL within the same tools API root, and returns an
+opaque `files_zip` response without extraction or text conversion. These helpers
+compose with a configured `Transport` independently of the basic TRS client.
+
+By default, connecting may take 10 seconds and a request 60 seconds; the
+service-info check of the TES, WES, DRS and TRS clients may take 10 seconds and a
+TES task or WES run submission, including uploads, 300 seconds. Set them with
+`Configuration::with_timeouts` (or the `timeouts` object of a configuration file
+section); `Transport::with_timeouts` sets only the first two. The clients'
+`with_transport` constructors take a ready `Transport`, such as one with an
+injected client. The [usage guide](docs/usage.md#timeouts) says which limit
+applies to which request.
+
+For a multi-attempt operation, `RequestOptions` holds one absolute deadline, a local cancellation
+token, body bounds and an explicit replay classification. Retries are opt-in,
+capped at 32 attempts, and use exponential backoff with jitter; 429/503 honor
+delta/date `Retry-After` within that same deadline. Mark only protocol-defined
+reads as `ReadOnly` (including appropriate lookup POSTs). A non-replayable
+operation gets one attempt and reports lost-response ambiguity for reconciliation.
+`send_once` also covers multipart headers/body and permits an explicit larger
+upload budget. Dropping a future or canceling its token stops local I/O.
+If cancellation or an expired deadline prevents the send future from being
+polled, submission returns an inspectable `OperationError` and makes no attempt.
+Once the send future is polled, interruption remains an
+`AmbiguousSubmissionError`: the server may have accepted the request, so reconcile
+remote state before resubmitting. Local interruption never cancels a remote job.
+
+DRS `get_object_once` and `get_access_url_once` return `Resolution::Ready` or
+`Pending` with a credential-free resume reference. The immediate convenience
+methods return a downcastable `PendingResolution` error on 202. Opt-in
+`resolve_object`/`resolve_access_url` honor integral-second `Retry-After`, one
+absolute `Operation` budget, cancellation and an attempt bound; failures retain
+the reference and last pending state. Zero delay becomes one second; missing,
+malformed, overflow or greater-than-one-hour delays are protocol errors.
+Authentication and malformed 200 responses remain errors, without pending retries.
+
+`clients::drs::uri::DrsResolver` accepts hostname-based `drs://host/encoded-id`
+references, decodes IDs once, and returns an explicit access plan (URL and
+object-store headers). Configure an authority-to-`Transport` mapping for gateways
+and per-service credentials; unmapped authorities get a fresh anonymous HTTPS
+transport. Protocol/region preferences and an explicit method index control
+selection. Direct URLs and access-ID negotiation share deferred resolution;
+pending, unsupported/unavailable methods and local interruption stay distinct.
+The host is a name or an IPv4 address, without a port. IPv6 literals and
+compact identifier forms are explicitly unsupported in this MVP. It never
+downloads object bytes or copies DRS credentials into an object-store request.
+
+DRS `get_bulk_objects` and `get_bulk_access_urls` accept optional Passports and
+one service/credential context per call. `BulkPolicy` bounds chunk size,
+concurrency, total HTTP attempts and 413 split depth; an advertised
+`maxBulkRequestLength` can lower the caller-selected chunk size. Missing metadata
+stays unknown. Replies are correlated by object/access identity rather than
+position, with successful siblings, grouped failures, duplicate/omitted identity
+diagnostics and pending outcomes retained. Duplicate inputs collapse. The MVP
+requires one access ID per object per call, so object-only grouped errors never
+receive fabricated per-access attribution. A 202 retains pending keys and delay;
+resume through the same bulk API with caller-supplied credentials/Passports.
+There is no singular or anonymous fallback. Compatibility is verified against
+protocol fixtures, without a claim of broad real-service interoperability.
+
+Bulk requests always use the published DRS 1.4/1.5 shape. For object lookups,
+the SDK also reads one documented Gen3 (indexd) reply difference: resolved
+objects in `resolved_drs_objects` instead of `resolved_drs_object`.
+`BulkReport::dialects` lists the shapes (`Standard`, `Gen3`) seen in a call's
+replies, merged over all chunks. If a reply has both arrays, the standard one
+wins and a diagnostic is added; a `null` array counts as absent.
+Gen3 objects can carry `created_time: null`, which the typed `DrsObject` cannot
+represent. `get_bulk_objects` reports such an entry as an error in its outcome
+and never invents a timestamp; `get_bulk_objects_raw` returns each requested
+resolved entry as JSON, correlated by `id`. Single-object `get_object` has the
+same limit for these objects; use `get_object_raw`. The Gen3 bulk access reply
+is not read in another shape, because it was not verified without credentials.
+Checked against CanineDC on 2026-11-10; see the [opt-in live check](tests/README.md#gen3-drs-caninedc).
+
+The GA4GH Starter Kit DRS bulk routes (`1.3.0experimental`) are not supported.
+In its [`develop` branch at `2b76a63`](https://github.com/ga4gh/ga4gh-starter-kit-drs/blob/2b76a635161daa5bfbed669a9e2755fed31503cd/src/main/java/org/ga4gh/starterkit/drs/controller/Objects.java)
+(read on 2026-11-10, not run), they expect `selection` instead of
+`bulk_object_ids`, report failures in an `unresolved_drs_object` map, and
+return bulk access URLs as a bare array without object or access IDs, which
+cannot be correlated safely. The SDK sends only standard requests. In a reply,
+it ignores the `unresolved_drs_object` map, adds a diagnostic and records no
+dialect. Because the Starter Kit does not read `bulk_object_ids`, its resolved
+array stays empty and the requested IDs are reported as omitted.
+
+## Service composition
+
+`TES::discover` and `WES::discover` return a `Discovered<T>` wrapper with a
+cached `CapabilitySnapshot`. One service-info request supplies both the client
+and the snapshot; typed/raw accessors make no requests and `refresh()` is
+explicit; it replaces the client's discovered service and the snapshot
+together. `client()` and `capabilities()` read the two parts, `into_parts()`
+splits the wrapper, and `Deref` still reaches the client's methods. Raw
+extensions are preserved. Preflight diagnostics distinguish
+supported, unsupported and unknown/stale metadata. `create_validated` and
+`run_validated` accept an explicit strict flag; ordinary submission stays
+advisory. TES backend keys are case insensitive and storage is nonexhaustive.
+
+`Task::wait` and `Run::wait` accept `WaitOptions` with an operation budget, local
+cancellation and polling/retry settings. The result distinguishes successful
+completion, executor/system failures, preemption, cancellation, polling failure
+and observation interruption, retaining the last state and a credential-free
+`RemoteHandle`. Rebuild observation with caller-supplied configuration. Dropping
+or canceling observation never cancels remote work; `cancel_and_wait` is an
+explicit separate action. Optional failure logs are fetched once.
+
+TES/WES `pages` return a lazy `Pager` with `next_page` and `next_item` methods.
+It preserves filters/view and opaque tokens, continues past empty intermediate
+pages, detects token cycles, and bounds requests/items. Memory holds one page
+plus fixed-size token digests bounded by `max_requests` (default 1000). Checkpoints bind
+service, API root and query; a failed request retains the valid continuation.
+At a partially consumed or truncated page, a checkpoint replays that page.
+Mutable listings provide neither snapshot isolation nor exactly-once processing;
+callers reconcile replays. Credentials are supplied separately when resuming.
+
+Query parameters are a JSON object. `Transport`, `Pager` and the Python
+bindings encode them with one policy, documented in `utils::query`: a string,
+number or boolean gives one parameter, `null` leaves the parameter out, and a
+list of strings, numbers and booleans repeats it once per item, in order
+(`tag_key=a&tag_key=b`; an empty list sends nothing). Keys are sorted. Keys and
+values are form encoded, so a space becomes `+`. Objects, nested lists and
+`null` inside a list are rejected before a request is sent, because TES pairs
+`tag_key` and `tag_value` items by position.
+
+**Behavior change:** `Pager` used to send objects and nested lists as JSON text,
+and `Pager` and the Python `Transport` left out `null` list items.
+`Pager::new` and the Python methods now return an error for them instead;
+remove such values from the query before the call.
+
+The CLI streams `tes list --all --format jsonl` and `wes list --all --format
+jsonl` through caller-owned writers, with one JSON object per stdout line.
+`--max-pages` and `--max-items` bound work; limits or later failures preserve
+emitted records, report a resume checkpoint on stderr and return a nonzero exit
+code. Reusable CLIs use `dispatch_to` or
+`dispatch_with_config_to`; existing buffered dispatch remains available for
+ordinary commands.
+
+`WES::run_workflow_streaming` accepts `StreamingAttachment` sources as bytes,
+files or owned async readers, with optional known lengths. Multipart content
+follows backpressure and shares the normal transport header policy. Paths are
+validated before I/O, nested relative filenames stay intact, and one absolute
+operation budget covers preparation, upload and response. A consumed source
+is never replayed; cancellation or a lost response after transmission reports
+that submission may have been accepted. The existing bytes API remains usable.
+`clients::bundle::PreparedBundle::prepare` stages a CWL workflow and its declared
+TRS descriptors without submitting it. It validates paths/collisions and the
+static `run`, `$import` and `$include` dependency graph, verifies advertised
+SHA-256 digests, and computes local digests over original staged bytes. Version
+metadata (`is_production`, `meta_version`) and retrieved digests are preserved;
+an explicit TRS version is not assumed immutable. Unsupported checksums fail by
+default; explicit opt-in records them as unverified. The small MVP supports a
+primary Workflow in CWL v1.0/v1.1/v1.2; packed/fragment, external and dynamic
+dependencies are rejected before submission.
+
+Preparation exposes a reviewable request plan and a credential-free provenance
+manifest. Wrapper URLs require an explicit `DescriptorFetcher`; the provided
+anonymous allowlist accepts only bare HTTP(S) origins, never reuses registry
+credentials, and never follows redirects.
+`submit` is a separate explicit call and uploads the same immutable staged bytes
+that were hashed, returning a run plus manifest/execution linkage. Workflow
+parameters, bearer tokens and signed descriptor URLs are excluded from provenance.
+See the [named Toil integration check](tests/README.md) for an actual CWL execution.
+
+## Experimental workflow contracts
+
+Enable `ga4gh-lib/workflow-contracts` for pinned local I/O validation, immutable
+WES invocation plans, typed results with selected artifact evidence, and explicit
+scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
+`results`, `verify` and `compare`. See the [workflow guide](docs/workflow-contracts.md)
+for the public sequence-QC example, offline commands and evidence boundaries.
+The same optional feature provides [exact result reuse](docs/result-reuse.md)
+from a trusted receipt and freshly checked artifacts; it does not submit a job.
+
+## Build on this SDK
+
+An SDK for a service with API extensions can build on this SDK without
+forking it: add clients that share its transport, extend its models and add
+CLI subcommands. The guide [Build on this SDK](docs/downstream.md) walks
+through an example crate that CI builds and tests.
 
 ## Building
 
 **Developer note:** If you want to update any of the [OpenAPI](https://www.openapis.org/) specifications supported by this tool or extend it to support any other OpenAPI-backed services (e.g., not currently supported GA4GH API-based services or your own services), please refer to our [documentation for auto-generating OpenAPI models](docs/autogenerate_OAI_models.md).
 
 To build the project:
+```sh
+cargo build --workspace --locked
 ```
-cargo build
+
+## TRS client
+
+The library includes a client for the
+[GA4GH Tool Registry Service (TRS) API][trs], versions 2.0.1 and 2.0.2, for registries such as
+[WorkflowHub][workflowhub] or [Dockstore][dockstore]. Set
+`Configuration.base_path` to the TRS API root, including its path prefix,
+with or without a trailing slash, e.g. `https://workflowhub.eu/ga4gh/trs/v2`
+or `https://dockstore.org/api/ga4gh/trs/v2`.
+
+```rust
+use ga4gh_sdk::clients::trs::models::DescriptorTypeWithPlain;
+use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
+use ga4gh_sdk::utils::configuration::Configuration;
+
+let config = Configuration::new(url::Url::parse("https://workflowhub.eu/ga4gh/trs/v2")?);
+let trs = TRS::new(&config).await?; // fetches and checks service-info
+let filter = ToolFilter {
+    tool_class: Some("Workflow".into()),
+    limit: Some(10),
+    ..Default::default()
+};
+let tools = trs.list_tools(&filter).await?;
+let descriptor = trs
+    .get_descriptor("2", "1", DescriptorTypeWithPlain::PlainGalaxy)
+    .await?;
 ```
+
+`TRS` covers `service-info`, `toolClasses`, `tools` with all filters
+(including the `tags` filter of 2.0.2), single tools, versions, descriptors
+(also by relative path), test files, file listings, ZIP archives of all files
+of a version (`get_files_zip`, read into memory up to a limit you choose) and
+container files. Tool IDs, version IDs and relative paths are
+percent-encoded as single path segments, so Dockstore IDs such as
+`#workflow/github.com/org/repo` work as they are. For `PLAIN_*` descriptor
+types, the bare file is returned as a `FileWrapper` with only `content` set;
+`list_tests` then returns a list with that one wrapper (or the wrappers, if
+the registry sends a JSON array of them). Dockstore sends the
+service-info timestamps `createdAt` and `updatedAt` as numbers; the client
+drops such non-string values instead of failing.
+The basic `list_tools` method returns a page without headers. Use
+`clients::trs::responses` with `&trs` for server-provided paging URLs, retaining
+the selected version profile (pass `ToolFilter::query()` as parameters).
+Use `responses::files_zip(trs.transport(), ...)` to stream large archives.
+The [compatibility guide](docs/api_compatibility.md) explains version selection,
+tag-filter capabilities, and connecting to deployments without usable discovery.
+The default transport does not apply tokens from `Configuration`. For an
+authenticated registry, supply a configured `reqwest::Client` through
+`Transport::with_client` and `TRS::with_transport`; see the
+[usage guide](docs/usage.md#timeouts). The CLI's `trs` commands use the default
+transport and currently work with public endpoints; see the
+[CLI README](cli/README.md#trs-examples).
 
 ## Testing
-There are 2 types of Tests: Unit tests and integration tests.
+Unit tests run by default. Integration suites are opt-in.
 
-To run the unit tests, which are being tested with mock servers, you can simply run
-```
-cargo test
+To run the workspace's unit and documentation tests, use:
+
+```sh
+cargo test --workspace --locked
 ```
 
-To test the integration tests:
-Before running the integration tests, you need to install Funnel, a task execution system that is compatible with the GA4GH TES API. Follow the instructions in the Funnel Developer's Guide to install Funnel: https://ohsu-comp-bio.github.io/funnel/docs/development/developers/. Note that the link may change over time, so refer to the official Funnel repository or website for the most up-to-date information.
+For opt-in integration suites, see the [integration test guide](tests/README.md)
+for prerequisites, commands, and service-specific behavior.
 
-Once you have installed Funnel, you can run the tests. This will automatically run Funnel as well:
+Optional tools for running or measuring the default tests:
 
-```
-bash ./run-tests.sh
-```
-or, you can run using:
-```
+```sh
 cargo nextest run
-```
-For checking the unit coverage, you can run:
-```
 cargo llvm-cov nextest
-```
-
-To test the CI/CD workflow locally, install `act` and run the following command:
-```
-act -j build --container-architecture linux/amd64 -P ubuntu-latest=ubuntu:24.04 --reuse
-# Note: The specified Ubuntu version (24.04) may change in the future. 
-# Please check for the latest version when running this command.
 ```
 
 ## Versioning
@@ -61,19 +612,23 @@ including breaking changes, may occur at any time without further notice.
 
 This project is a community effort and lives off your contributions, be it in
 the form of bug reports, feature requests, discussions, ideas, fixes, or other
-code changes. Please read [these guidelines][docs-contributing] if you want to
-contribute. And please mind the [code of conduct][docs-coc] for all
+code changes. Please read [these guidelines][contributing] if you want to
+contribute. And please mind the [code of conduct][code-of-conduct] for all
 interactions with the community.
+
+New developers start with the [developer guide](DEVELOPER_GUIDE.md): the
+repository layout, setup, tests, documentation and how to add a client.
+For local checks, coverage, and hooks, see the [development guide](docs/development.md).
 
 ## License
 
-This project is covered by the [Apache License 2.0](badge-url-license) also
+This project is covered by the [Apache License 2.0][badge-license-url] also
 [shipped with this repository][license].
 
 ## Contact
 The project is maintained by [ELIXIR Cloud & AAI][elixir-cloud-aai], a Driver
 Project of the [Global Alliance for Genomics and Health (GA4GH)][ga4gh], under
-the umbrella of the [ELIXIR] [Compute Platform][elixir-compute].
+the umbrella of the [ELIXIR][elixir] [Compute Platform][elixir-compute].
 
 To get in touch with us, please use one of the following routes:
 
@@ -90,12 +645,16 @@ To get in touch with us, please use one of the following routes:
 [badge-license-url]: http://www.apache.org/licenses/LICENSE-2.0
 [code-of-conduct]: https://elixir-cloud-aai.github.io/about/code-of-conduct/
 [contributing]: https://elixir-cloud-aai.github.io/guides/guide-contributor/
+[dockstore]: https://dockstore.org/
 [elixir]: https://elixir-europe.org/
 [elixir-cloud-aai]: https://elixir-cloud.dcc.sib.swiss/
 [elixir-compute]: https://elixir-europe.org/platforms/compute
 [email]: mailto:cloud-service@elixir-europe.org
 [ga4gh]: https://ga4gh.org/
+[issue-tracker]: https://github.com/ga4gh/ga4gh-sdk/issues
 [license]: LICENSE
 [logo-elixir]: ./images/logo-elixir.svg
 [logo-elixir-cloud-aai]: ./images/logo-elixir-cloud-aai.svg
 [semver]: https://semver.org/
+[trs]: https://ga4gh.github.io/tool-registry-service-schemas/
+[workflowhub]: https://workflowhub.eu/

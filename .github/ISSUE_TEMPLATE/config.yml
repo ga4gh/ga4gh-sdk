@@ -1,0 +1,14 @@
+---
+blank_issues_enabled: true
+contact_links:
+  - name: Ask a question
+    url: https://github.com/ga4gh/ga4gh-sdk/discussions
+    about: Ask questions about the SDK on the discussion board.
+  - name: Chat with the community
+    url: https://join.slack.com/t/elixir-cloud/shared_invite/zt-4f6zdhi84-X4YBkJHxhYmVIHJkRfY2JQ
+    about: Join the ELIXIR Cloud & AAI Slack workspace for informal discussions.
+  - name: Report a vulnerability
+    url: https://www.ga4gh.org/work_stream/data-security-work-stream/
+    about: >-
+      Email security-notification@ga4gh.org for potential security flaws
+      in GA4GH technical tools; do not use public issues.

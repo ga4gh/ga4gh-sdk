@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/uniqueg/ga4gh-io-schema/main/schemas/ga4gh-io-profile.schema.json",
+  "$id": "https://ga4gh.org/schemas/workflow-io-profile/v1",
+  "title": "RNA-Seq Pipeline",
+  "description": "Bulk RNA-Seq alignment and QC workflow.",
+  "type": "object",
+  "properties": {
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "sample_manifest": {
+          "type": "string",
+          "format": "uri",
+          "title": "Sample Manifest",
+          "description": "Path to a CSV sample sheet containing biological replicate information.",
+          "x-ga4gh-drs-uri": true,
+          "x-ga4gh-tabular-schema": {
+            "type": "array",
+            "description": "Validates the internal columns of the provided CSV file.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sample_id": { "type": "string", "title": "Sample ID", "pattern": "^[a-zA-Z0-9_]+$" },
+                "fastq_1": { "type": "string", "title": "Read 1 FASTQ", "format": "uri" },
+                "condition": { "type": "string", "title": "Condition", "enum": ["control", "treatment"] }
+              },
+              "required": ["sample_id", "fastq_1", "condition"]
+            }
+          }
+        }
+      },
+      "required": ["sample_manifest"]
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "qc_report": {
+          "type": "string",
+          "format": "uri",
+          "title": "QC HTML Report",
+          "x-ga4gh-ui-widget": "html-viewer"
+        }
+      }
+    }
+  }
+}

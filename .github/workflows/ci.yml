@@ -1,0 +1,387 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Keep every main run: its full release-platform matrix is the post-merge gate.
+  # Only superseded pull-request heads should cancel each other.
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run unit and documentation tests
+        run: cargo test --workspace --locked
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check dependency lockfile
+        run: cargo metadata --format-version 1 --locked > /dev/null
+      - name: Build library alone
+        run: cargo build --locked -p ga4gh-lib
+      - name: Build CLI alone
+        run: cargo build --locked -p ga4gh-cli
+
+  # Known advisories (RustSec) for the crates in `Cargo.lock`; accepted ones
+  # are listed with a reason in `deny.toml`.
+  advisories:
+    name: Advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Check advisories
+        run: cargo deny --locked check advisories
+
+  python:
+    name: Python tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The lowest supported and newest released Python versions.
+        python: ['3.11', '3.15']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install Maturin and pytest
+        run: python -m pip install 'maturin==1.16.0' 'pytest==9.0.3'
+      - name: Build and install the bindings
+        working-directory: python
+        run: |
+          maturin build --locked --interpreter python --out "$RUNNER_TEMP/wheels"
+          python -m pip install "$RUNNER_TEMP"/wheels/*.whl
+      - name: Run Python tests
+        working-directory: python
+        run: python -m pytest
+
+  # Build the full release matrix after merges to main and on manual dispatch.
+  # PRs keep the Python binding tests above; maintainers can dispatch CI on a
+  # PR branch before merge when packaging or platform support changes.
+  wheels:
+    name: Python wheels
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/wheels.yml
+
+  # Builds the CLI image of every supported platform and checks it, on
+  # linux/amd64 also against Funnel; nothing is pushed. Unlike the wheels,
+  # this runs on PRs: it takes about two minutes per platform and is the
+  # only check of the Dockerfile, build context and site check script.
+  image:
+    name: CLI image
+    uses: ./.github/workflows/image.yml
+
+  # Builds and runs the CLI binary of every release platform, like the
+  # wheels above: after merges to main and on manual dispatch; nothing is
+  # published.
+  binaries:
+    name: CLI binaries
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/binaries.yml
+
+  integration:
+    name: Integration (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [funnel, protes, wes-starter-kit, trs-filer, keycloak]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check whether this suite is affected
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SUITE: ${{ matrix.suite }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch || -z "$BASE_SHA" ]]; then
+            run_suite=true
+          else
+            common=(.github/workflows/ci.yml Cargo.toml Cargo.lock lib/Cargo.toml rust-toolchain.toml)
+            if [[ "$SUITE" == funnel ]]; then
+              paths=("${common[@]}" run-integration-tests.sh lib/src/clients/tes/
+                lib/src/clients/serviceinfo/ lib/src/utils/ lib/src/clients/mod.rs
+                lib/src/lib.rs lib/tests/funnel_tes.rs lib/tests/funnel_service_info.rs
+                cli/Cargo.toml cli/src/ cli/tests/funnel_cli.rs
+                cli/tests/funnel_tes_files.rs)
+            elif [[ "$SUITE" == protes ]]; then
+              paths=("${common[@]}" tests/run-protes-integration.sh tests/protes/
+                lib/src/clients/tes/ lib/src/clients/serviceinfo/ lib/src/clients/wait.rs
+                lib/src/utils/ lib/src/clients/mod.rs lib/src/lib.rs lib/tests/protes_tes.rs
+                cli/Cargo.toml cli/src/ cli/tests/protes_cli.rs)
+            elif [[ "$SUITE" == trs-filer ]]; then
+              paths=("${common[@]}" tests/run-trs-filer-integration.sh tests/fixtures/trs-filer/
+                lib/src/clients/trs/ lib/src/clients/serviceinfo/ lib/src/utils/
+                lib/src/clients/mod.rs lib/src/lib.rs lib/tests/trs_filer.rs
+                cli/Cargo.toml cli/src/ cli/tests/trs_filer.rs)
+            elif [[ "$SUITE" == keycloak ]]; then
+              paths=("${common[@]}" tests/run-keycloak-integration.sh tests/keycloak/
+                lib/src/clients/registry/ lib/src/utils/ lib/src/clients/mod.rs
+                lib/src/lib.rs cli/Cargo.toml cli/src/ cli/tests/keycloak_login.rs)
+            else
+              paths=("${common[@]}" tests/run-wes-docker-integration.sh
+                tests/fixtures/wes-nextflow/ lib/src/clients/wes/ lib/src/utils/
+                lib/src/clients/mod.rs lib/src/lib.rs lib/tests/wes_starter_kit_docker.rs
+                cli/Cargo.toml cli/src/ cli/tests/wes_starter_kit_docker.rs)
+            fi
+            if git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- "${paths[@]}"; then
+              run_suite=false
+            else
+              run_suite=true
+            fi
+          fi
+          echo "run=$run_suite" >> "$GITHUB_OUTPUT"
+          echo "$SUITE: run=$run_suite" >> "$GITHUB_STEP_SUMMARY"
+      # Also for proTES, which relays tasks to Funnel
+      - name: Install Funnel
+        if: contains(fromJSON('["funnel", "protes"]'), matrix.suite) && steps.changes.outputs.run == 'true'
+        shell: bash
+        run: |
+          archive=funnel-linux-amd64-v0.11.14.tar.gz
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/calypr/funnel/releases/download/v0.11.14/$archive"
+          echo "007e85ee808f131034854f6868efc9b11d3205f2fc1c778f339b484e9271996b  $RUNNER_TEMP/$archive" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" funnel
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Test against Funnel
+        if: matrix.suite == 'funnel' && steps.changes.outputs.run == 'true'
+        run: bash run-integration-tests.sh
+      - name: Test against proTES
+        if: matrix.suite == 'protes' && steps.changes.outputs.run == 'true'
+        run: tests/run-protes-integration.sh
+      - name: Test against Starter Kit WES
+        if: matrix.suite == 'wes-starter-kit' && steps.changes.outputs.run == 'true'
+        run: tests/run-wes-docker-integration.sh
+      - name: Test against TRS-Filer
+        if: matrix.suite == 'trs-filer' && steps.changes.outputs.run == 'true'
+        run: tests/run-trs-filer-integration.sh
+      - name: Test login against Keycloak
+        if: matrix.suite == 'keycloak' && steps.changes.outputs.run == 'true'
+        run: tests/run-keycloak-integration.sh
+
+  # Coverage of the Rust unit tests and the Python binding tests, without
+  # the generated models; the report goes to the job summary and the
+  # `coverage` artifact (LCOV), which the `codecov` job uploads
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain and LLVM tools
+        run: |
+          rustup toolchain install
+          rustup component add llvm-tools-preview
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      # The lowest supported Python version of the `python` job
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+      # The versions of the `python` job
+      - name: Install Maturin and pytest
+        run: python -m pip install 'maturin==1.16.0' 'pytest==9.0.3'
+      - name: Test the report filter
+        run: python -m pytest utils
+      - name: Measure coverage
+        run: make coverage PYTHON=python
+      - name: Write job summary
+        run: |
+          {
+            echo '## Coverage'
+            echo
+            echo 'Rust unit tests and Python binding tests, without documentation'
+            echo 'tests and generated models.'
+            echo
+            echo 'Lines as Codecov counts them, without the PyO3 attribute lines:'
+            echo
+            echo '```text'
+            cat coverage/lines.txt
+            echo '```'
+            echo
+            echo 'All metrics of cargo-llvm-cov, with the PyO3 attribute lines:'
+            echo
+            echo '```text'
+            cat coverage/summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: error
+
+  # Uploads the `coverage` artifact to Codecov with an OIDC token of the run
+  # instead of a stored secret. A job of its own, so that only this job,
+  # which builds no code, may request OIDC tokens. The action uploads from
+  # forks without a token; Dependabot runs may get no OIDC token. Upload errors
+  # don't fail the job (`continue-on-error`), so that a Codecov outage
+  # doesn't block merges; `fail_ci_if_error` makes the action stop when it
+  # can't verify the Codecov CLI it downloads.
+  codecov:
+    name: Upload coverage
+    needs: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A job-level block replaces the workflow-level permissions
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Codecov maps the report's paths to the sources
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage
+          path: coverage/
+      - name: Upload to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: coverage/lcov.info
+          disable_search: true
+          use_oidc: true
+          fail_ci_if_error: true
+
+  # Hooks from `.pre-commit-config.yaml`; the Rust hooks are skipped, because
+  # the `lint` job runs the same commands
+  pre-commit:
+    name: Pre-commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      # Not bumped by Dependabot (no Python manifest); update manually
+      - name: Install pre-commit
+        run: python -m pip install 'pre-commit==4.7.0'
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run pre-commit hooks
+        env:
+          SKIP: cargo-fmt,cargo-clippy
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  # The documentation site as Read the Docs builds it (`.readthedocs.yaml`):
+  # the Rust API reference, then the strict MkDocs build, which fails on
+  # warnings such as broken links and anchors
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Python version of Read the Docs (`.readthedocs.yaml`)
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Install MkDocs
+        run: |
+          python -m pip install --upgrade 'pip>=25.1'
+          python -m pip install --group python/pyproject.toml:docs
+      - name: Install toolchain
+        run: rustup toolchain install
+      - name: Test hooks and API reference
+        run: python -m pytest docs
+      - name: Build documentation
+        run: make site
+
+  # The example crate in `examples/downstream-sdk/`, built against the
+  # library and the CLI as a downstream crate would (see docs/downstream.md)
+  downstream:
+    name: Downstream example
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check, lint and test the example
+        run: make downstream
+
+  passed:
+    name: CI passed
+    needs: [lint, test, build, advisories, python, wheels, binaries, image, integration, coverage, codecov, pre-commit, docs, downstream]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check all jobs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          results = {name: job['result'] for name, job in json.loads(os.environ['NEEDS']).items()}
+          for name, result in results.items():
+              print(f'{name}: {result}')
+          expected = {
+              'lint', 'test', 'build', 'advisories', 'python', 'wheels', 'binaries', 'image',
+              'integration', 'coverage', 'codecov', 'pre-commit', 'docs', 'downstream',
+          }
+          expected_results = {name: 'success' for name in expected}
+          if os.environ['EVENT_NAME'] == 'pull_request':
+              expected_results['wheels'] = 'skipped'
+              expected_results['binaries'] = 'skipped'
+          if set(results) != expected or any(
+              results[name] != expected_results[name] for name in expected
+          ):
+              sys.exit(1)
+          PY

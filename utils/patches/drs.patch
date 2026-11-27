@@ -1,0 +1,62 @@
+Hand edits of the DRS 1.4.0 models, applied by utils/build_models.sh.
+
+- `AccessMethod.available`: the committed models were generated from a
+  development version of the spec that had it. The `drs-1.4.0` tag doesn't
+  define it; DRS 1.5.0 does.
+- `Checksum.type`, `ContentsObject.name` and `DrsObject.name`: the
+  AsciiDoc links (`url[text]`) become Markdown links, so that rustdoc
+  renders them and doesn't warn about bare URLs or unresolved links.
+
+--- a/models/access_method.rs
++++ b/models/access_method.rs
+@@ -26,6 +26,9 @@
+     /// Name of the region in the cloud service provider that the object belongs to.
+     #[serde(rename = "region", skip_serializing_if = "Option::is_none")]
+     pub region: Option<String>,
++    /// Availablity of file in the cloud. This label defines if this file is immediately accessible via DRS. Any delay or requirement of thawing mechanism if the file is in offline/archival storage is classified as 0 or unavailable.
++    #[serde(rename = "available", skip_serializing_if = "Option::is_none")]
++    pub available: Option<bool>,
+     #[serde(rename = "authorizations", skip_serializing_if = "Option::is_none")]
+     pub authorizations: Option<Box<models::AccessMethodAuthorizations>>,
+     /// Fields that the spec doesn't define, kept as received, so that writing
+@@ -41,6 +44,7 @@
+             access_url: None,
+             access_id: None,
+             region: None,
++            available: None,
+             authorizations: None,
+             extra: serde_json::Map::new(),
+         }
+--- a/models/checksum.rs
++++ b/models/checksum.rs
+@@ -18,7 +18,7 @@
+     /// The hex-string encoded checksum for the data
+     #[serde(rename = "checksum")]
+     pub checksum: String,
+-    /// The digest method used to create the checksum. The value (e.g. `sha-256`) SHOULD be listed as `Hash Name String` in the https://www.iana.org/assignments/named-information/named-information.xhtml#hash-alg[IANA Named Information Hash Algorithm Registry]. Other values MAY be used, as long as implementors are aware of the issues discussed in https://tools.ietf.org/html/rfc6920#section-9.4[RFC6920]. GA4GH may provide more explicit guidance for use of non-IANA-registered algorithms in the future. Until then, if implementers do choose such an algorithm (e.g. because it's implemented by their storage provider), they SHOULD use an existing standard `type` value such as `md5`, `etag`, `crc32c`, `trunc512`, or `sha1`.
++    /// The digest method used to create the checksum. The value (e.g. `sha-256`) SHOULD be listed as `Hash Name String` in the [IANA Named Information Hash Algorithm Registry](https://www.iana.org/assignments/named-information/named-information.xhtml#hash-alg). Other values MAY be used, as long as implementors are aware of the issues discussed in [RFC6920](https://tools.ietf.org/html/rfc6920#section-9.4). GA4GH may provide more explicit guidance for use of non-IANA-registered algorithms in the future. Until then, if implementers do choose such an algorithm (e.g. because it's implemented by their storage provider), they SHOULD use an existing standard `type` value such as `md5`, `etag`, `crc32c`, `trunc512`, or `sha1`.
+     #[serde(rename = "type")]
+     pub r#type: String,
+     /// Fields that the spec doesn't define, kept as received, so that writing
+--- a/models/contents_object.rs
++++ b/models/contents_object.rs
+@@ -15,7 +15,7 @@
+ 
+ #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct ContentsObject {
+-    /// A name declared by the bundle author that must be used when materialising this object, overriding any name directly associated with the object itself. The name must be unique within the containing bundle. This string is made up of uppercase and lowercase letters, decimal digits, hyphen, period, and underscore [A-Za-z0-9.-_]. See http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap03.html#tag_03_282[portable filenames].
++    /// A name declared by the bundle author that must be used when materialising this object, overriding any name directly associated with the object itself. The name must be unique within the containing bundle. This string is made up of uppercase and lowercase letters, decimal digits, hyphen, period, and underscore [A-Za-z0-9.-_]. See [portable filenames](http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap03.html#tag_03_282).
+     #[serde(rename = "name")]
+     pub name: String,
+     /// A DRS identifier of a `DrsObject` (either a single blob or a nested bundle). If this ContentsObject is an object within a nested bundle, then the id is optional. Otherwise, the id is required.
+--- a/models/drs_object.rs
++++ b/models/drs_object.rs
+@@ -18,7 +18,7 @@
+     /// An identifier unique to this `DrsObject`
+     #[serde(rename = "id")]
+     pub id: String,
+-    /// A string that can be used to name a `DrsObject`. This string is made up of uppercase and lowercase letters, decimal digits, hyphen, period, and underscore [A-Za-z0-9.-_]. See http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap03.html#tag_03_282[portable filenames].
++    /// A string that can be used to name a `DrsObject`. This string is made up of uppercase and lowercase letters, decimal digits, hyphen, period, and underscore [A-Za-z0-9.-_]. See [portable filenames](http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap03.html#tag_03_282).
+     #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
+     pub name: Option<String>,
+     /// A drs:// hostname-based URI, as defined in the DRS documentation, that tells clients how to access this object. The intent of this field is to make DRS objects self-contained, and therefore easier for clients to store and pass around.  For example, if you arrive at this DRS JSON by resolving a compact identifier-based DRS URI, the `self_uri` presents you with a hostname and properly encoded DRS ID for use in subsequent `access` endpoint calls.

@@ -1,1 +1,1388 @@
-pub mod models;
+//! Client for GA4GH TRS 2.0.1 and 2.0.2, with per-connection compatibility.
+//!
+//! `Configuration.base_path` is the TRS API root, including the service's
+//! path prefix, with or without a trailing slash, for example
+//! `https://workflowhub.eu/ga4gh/trs/v2` or
+//! `https://dockstore.org/api/ga4gh/trs/v2`. All requests are resolved below
+//! that root. Tool IDs, version IDs and relative paths are sent as single,
+//! percent-encoded path segments, so IDs such as Dockstore's
+//! `#workflow/github.com/org/repo` work unchanged.
+//!
+//! # Examples
+//!
+//! List workflows and fetch the bare descriptor of a version:
+//!
+//! ```no_run
+//! use ga4gh_sdk::clients::trs::models::{DescriptorType, DescriptorTypeWithPlain};
+//! use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
+//! use ga4gh_sdk::utils::configuration::Configuration;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Configuration::new(url::Url::parse("https://workflowhub.eu/ga4gh/trs/v2")?);
+//! let trs = TRS::new(&config).await?;
+//!
+//! let filter = ToolFilter {
+//!     tool_class: Some("Workflow".to_string()),
+//!     limit: Some(10),
+//!     ..Default::default()
+//! };
+//! for tool in trs.list_tools(&filter).await? {
+//!     println!("{} {}", tool.id, tool.name.unwrap_or_default());
+//! }
+//!
+//! let descriptor = trs
+//!     .get_descriptor("2", "1", DescriptorTypeWithPlain::PlainGalaxy)
+//!     .await?;
+//! println!("{}", descriptor.content.unwrap_or_default());
+//!
+//! // All files of a CWL version as one ZIP archive, at most 10 MiB.
+//! let archive = trs
+//!     .get_files_zip("2", "1", DescriptorType::Cwl, 10 * 1024 * 1024)
+//!     .await?;
+//! println!("{} bytes", archive.len());
+//! # Ok(())
+//! # }
+//! ```
+
+mod compatibility;
+pub mod responses;
+mod wire;
+use crate::compatibility::CapabilityOverride;
+pub use compatibility::{TrsCompatibility, TrsOptions, TrsVersion};
+pub use wire::v2_0_1::models;
+
+use crate::clients::serviceinfo::models::Service;
+use crate::clients::trs::models::{
+    DescriptorType, DescriptorTypeWithPlain, FileWrapper, Tool, ToolClass, ToolFile, ToolVersion,
+};
+use crate::utils::configuration::Configuration;
+use crate::utils::transport::{read_bounded, urlencode, Transport};
+use serde::de::DeserializeOwned;
+use serde::{Serialize, Serializer};
+use serde_json::Value;
+
+impl ToolVersion {
+    /// String description when supplied by a registry. TRS 2.0.2 defines it;
+    /// both profiles retain the original value as extension data, even if a
+    /// server supplies a non-string value. Such values return `None` here but
+    /// remain available in `extra` and in serialized JSON.
+    pub fn description(&self) -> Option<&str> {
+        self.extra.get("description").and_then(Value::as_str)
+    }
+}
+
+// Encodes a path parameter as one URL path segment. Empty values and dot
+// segments would change the path that the URL resolves to, so they are
+// rejected before any request.
+fn segment(name: &str, value: &str) -> crate::Result<String> {
+    if value.is_empty() || value == "." || value == ".." {
+        return Err(format!("TRS {name} must not be empty, '.' or '..'").into());
+    }
+    Ok(urlencode(value))
+}
+
+fn version_path(id: &str, version_id: &str) -> crate::Result<String> {
+    Ok(format!(
+        "tools/{}/versions/{}",
+        segment("tool ID", id)?,
+        segment("version ID", version_id)?
+    ))
+}
+
+// Checks that service info describes a TRS. Some registries (e.g. Dockstore)
+// report the artifact as `TRS`, so the match ignores case.
+fn is_trs(service: &Service) -> bool {
+    service.r#type.group == "org.ga4gh" && service.r#type.artifact.eq_ignore_ascii_case("trs")
+}
+
+// Descriptor types that the spec doesn't define count as plain if they use the
+// spec's `PLAIN_` prefix.
+fn is_plain(descriptor_type: &DescriptorTypeWithPlain) -> bool {
+    match descriptor_type {
+        DescriptorTypeWithPlain::PlainCwl
+        | DescriptorTypeWithPlain::PlainWdl
+        | DescriptorTypeWithPlain::PlainNfl
+        | DescriptorTypeWithPlain::PlainGalaxy
+        | DescriptorTypeWithPlain::PlainSmk => true,
+        DescriptorTypeWithPlain::Unrecognized(value) => value.starts_with("PLAIN_"),
+        _ => false,
+    }
+}
+
+// Plain descriptor types return the bare file, not a JSON `FileWrapper`.
+fn plain_file(content: String) -> FileWrapper {
+    FileWrapper {
+        content: Some(content),
+        ..FileWrapper::default()
+    }
+}
+
+// The `PLAIN_*` tests endpoint may return a JSON array of `FileWrapper`s or
+// the bare test file. Every field of `FileWrapper` is optional, so an array
+// counts as wrappers only if each element has `content` or `url`.
+fn plain_tests(body: String) -> Vec<FileWrapper> {
+    match serde_json::from_str::<Vec<FileWrapper>>(&body) {
+        Ok(files)
+            if !files.is_empty()
+                && files.iter().all(|f| f.content.is_some() || f.url.is_some()) =>
+        {
+            files
+        }
+        _ => vec![plain_file(body)],
+    }
+}
+
+// `tags` is a query array with `explode: false`: one comma-separated value.
+fn join_tags<S: Serializer>(tags: &[String], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&tags.join(","))
+}
+
+/// Query parameters for [`TRS::list_tools`], as defined by TRS 2.0.2.
+///
+/// Every field is optional; unset fields and an empty `tags` list are not
+/// sent. `offset` is a string because registries may page by values other
+/// than numbers. [`ToolFilter::query`] checks the tags and is the supported
+/// way to turn a filter into query parameters, also for
+/// [`responses::list_tools_page`]; serializing a filter directly skips the
+/// check.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct ToolFilter {
+    /// A tool ID, scoped to the registry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// A tool alias, for registries that support aliases.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    /// The name of the tool class, e.g. `Workflow` or `CommandLineTool`.
+    #[serde(rename = "toolClass", skip_serializing_if = "Option::is_none")]
+    pub tool_class: Option<String>,
+    /// The descriptor type, e.g. CWL or WDL.
+    #[serde(rename = "descriptorType", skip_serializing_if = "Option::is_none")]
+    pub descriptor_type: Option<DescriptorType>,
+    /// The image registry that contains the image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
+    /// The organization in the registry that published the image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    /// The name of the image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The name of the tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub toolname: Option<String>,
+    /// The description of the tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The author of the tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Return only checker workflows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checker: Option<bool>,
+    /// Registry-specific tags (TRS 2.0.2). They are sent as one
+    /// comma-separated value, so a tag must not be empty or contain a comma.
+    #[serde(skip_serializing_if = "Vec::is_empty", serialize_with = "join_tags")]
+    pub tags: Vec<String>,
+    /// The start index of the page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<String>,
+    /// The number of records per page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i32>,
+}
+
+impl ToolFilter {
+    /// Returns the filter as query parameters for
+    /// [`Transport`] requests, or `None`
+    /// if no field is set.
+    ///
+    /// # Errors
+    /// If a tag is empty or contains a comma, which `tags` can't send.
+    pub fn query(&self) -> crate::Result<Option<Value>> {
+        if self
+            .tags
+            .iter()
+            .any(|tag| tag.is_empty() || tag.contains(','))
+        {
+            return Err("TRS tags must not be empty or contain a comma".into());
+        }
+        let params = serde_json::to_value(self)?;
+        Ok(match params.as_object() {
+            Some(object) if !object.is_empty() => Some(params),
+            _ => None,
+        })
+    }
+}
+
+/// A TRS connection with an immutable transport, discovery snapshot, and profile.
+/// Use accessors to inspect them; create a new client to change the API root.
+#[derive(Debug)]
+pub struct TRS {
+    transport: Transport,
+    service: Option<Service>,
+    compatibility: TrsCompatibility,
+}
+
+impl TRS {
+    /// Discover a TRS and select its profile. Unknown declarations use the
+    /// 2.0.1 read contract with unverified compatibility; tags need an override.
+    /// Use [`TrsOptions`] for strict or explicit version selection.
+    pub async fn new(config: &Configuration) -> crate::Result<Self> {
+        Self::with_options(config, TrsOptions::default()).await
+    }
+
+    /// Discover a TRS with explicit version/capability policy.
+    pub async fn with_options(config: &Configuration, options: TrsOptions) -> crate::Result<Self> {
+        Self::with_transport_and_options(Transport::new(config), options).await
+    }
+
+    /// Discover a TRS using the supplied transport, retaining its configuration
+    /// and authentication policy for discovery and subsequent operations.
+    pub async fn with_transport(transport: Transport) -> crate::Result<Self> {
+        Self::with_transport_and_options(transport, TrsOptions::default()).await
+    }
+
+    /// Discover a TRS with a supplied transport and compatibility options.
+    pub async fn with_transport_and_options(
+        transport: Transport,
+        options: TrsOptions,
+    ) -> crate::Result<Self> {
+        let service = Self::fetch_service_info(&transport).await?;
+        if !is_trs(&service) {
+            return Err(crate::Error::UnexpectedService(
+                "The endpoint is not an instance of TRS".to_owned(),
+            ));
+        }
+        let compatibility = TrsCompatibility::select(Some(&service.r#type.version), options)?;
+        Ok(Self {
+            transport,
+            service: Some(service),
+            compatibility,
+        })
+    }
+
+    /// Connect under a caller-selected contract without a discovery request.
+    /// This does not verify service identity. Use it for a known deployment with
+    /// absent or incompatible service-info; discovery errors never select it
+    /// automatically. Configure credentials and the API root on `transport`.
+    pub fn without_discovery(transport: Transport, version: TrsVersion) -> Self {
+        Self {
+            transport,
+            service: None,
+            compatibility: TrsCompatibility::without_discovery(version),
+        }
+    }
+
+    /// Apply independently established knowledge of this server's tag filter.
+    /// This consumes the client and does not change its selected wire profile.
+    pub fn with_tag_filter_override(mut self, value: CapabilityOverride) -> Self {
+        self.compatibility.override_tags(value);
+        self
+    }
+
+    /// The transport configuration that determines this connection's identity.
+    pub fn configuration(&self) -> &Configuration {
+        self.transport.configuration()
+    }
+    /// Shared transport for lower-level operations. Passing `self` to the typed
+    /// pagination helpers also preserves this client's compatibility policy.
+    pub fn transport(&self) -> &Transport {
+        &self.transport
+    }
+    /// Initial discovery snapshot; absent for [`TRS::without_discovery`].
+    pub fn discovered_service_info(&self) -> Option<&Service> {
+        self.service.as_ref()
+    }
+    /// Selected profile, its provenance, and deployment capabilities.
+    pub fn compatibility(&self) -> &TrsCompatibility {
+        &self.compatibility
+    }
+
+    // `path` is relative to the API root; `Transport` resolves it below
+    // `base_path`, with or without a trailing slash.
+    async fn get_text(&self, path: &str, params: Option<Value>) -> crate::Result<String> {
+        self.transport.get(path, params).await
+    }
+
+    async fn get_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        params: Option<Value>,
+    ) -> crate::Result<T> {
+        let (_, value) = responses::json(&self.transport, path, params, Default::default()).await?;
+        Ok(value)
+    }
+
+    /// Fetches the service info of the registry (`GET /service-info`), within
+    /// the `discovery` limit of the transport's configuration.
+    ///
+    /// Dockstore sends `createdAt` and `updatedAt` as numbers, while
+    /// service-info defines them as strings; such non-string values are
+    /// dropped instead of failing the whole response.
+    pub async fn service_info(&self) -> crate::Result<Service> {
+        Self::fetch_service_info(&self.transport).await
+    }
+
+    async fn fetch_service_info(transport: &Transport) -> crate::Result<Service> {
+        let mut value: Value = transport
+            .get_json_within("service-info", transport.configuration().timeouts.discovery)
+            .await?;
+        if let Some(object) = value.as_object_mut() {
+            for key in ["createdAt", "updatedAt"] {
+                if object.get(key).is_some_and(|v| !v.is_string()) {
+                    log::debug!("Ignoring non-string TRS service-info field {key}");
+                    object.remove(key);
+                }
+            }
+        }
+        Ok(serde_json::from_value(value)?)
+    }
+
+    /// Lists the tool classes of the registry (`GET /toolClasses`).
+    pub async fn list_tool_classes(&self) -> crate::Result<Vec<ToolClass>> {
+        self.get_json("toolClasses", None).await
+    }
+
+    /// Lists tools, filtered by `filter` (`GET /tools`).
+    ///
+    /// Returns one page; use `filter.offset` and `filter.limit` to page.
+    /// Fails before sending a request if a tag can't be sent (see
+    /// [`ToolFilter::query`]).
+    pub async fn list_tools(&self, filter: &ToolFilter) -> crate::Result<Vec<Tool>> {
+        let params = filter.query()?;
+        if !filter.tags.is_empty() {
+            self.compatibility.tag_filter().require("TRS", "tags")?;
+        }
+        self.get_json("tools", params).await
+    }
+
+    /// Fetches one tool, including its versions (`GET /tools/{id}`).
+    pub async fn get_tool(&self, id: &str) -> crate::Result<Tool> {
+        let path = format!("tools/{}", segment("tool ID", id)?);
+        self.get_json(&path, None).await
+    }
+
+    /// Lists the versions of a tool (`GET /tools/{id}/versions`).
+    pub async fn list_versions(&self, id: &str) -> crate::Result<Vec<ToolVersion>> {
+        let path = format!("tools/{}/versions", segment("tool ID", id)?);
+        self.get_json(&path, None).await
+    }
+
+    /// Fetches one version of a tool (`GET /tools/{id}/versions/{version_id}`).
+    pub async fn get_version(&self, id: &str, version_id: &str) -> crate::Result<ToolVersion> {
+        let path = version_path(id, version_id)?;
+        self.get_json(&path, None).await
+    }
+
+    /// Fetches the primary descriptor of a tool version
+    /// (`GET /tools/{id}/versions/{version_id}/{type}/descriptor`).
+    ///
+    /// For `PLAIN_*` types the registry returns the bare file; it is returned
+    /// as a `FileWrapper` with only `content` set.
+    pub async fn get_descriptor(
+        &self,
+        id: &str,
+        version_id: &str,
+        descriptor_type: DescriptorTypeWithPlain,
+    ) -> crate::Result<FileWrapper> {
+        let path = format!(
+            "{}/{}/descriptor",
+            version_path(id, version_id)?,
+            segment("descriptor type", &descriptor_type.to_string())?
+        );
+        self.get_file(&path, descriptor_type).await
+    }
+
+    /// Fetches a descriptor or other file by its path relative to the primary
+    /// descriptor
+    /// (`GET /tools/{id}/versions/{version_id}/{type}/descriptor/{relative_path}`).
+    ///
+    /// `relative_path` (e.g. `tools/align.cwl`) is sent as one encoded path
+    /// segment. `PLAIN_*` types are handled as in [`TRS::get_descriptor`].
+    pub async fn get_descriptor_file(
+        &self,
+        id: &str,
+        version_id: &str,
+        descriptor_type: DescriptorTypeWithPlain,
+        relative_path: &str,
+    ) -> crate::Result<FileWrapper> {
+        let path = format!(
+            "{}/{}/descriptor/{}",
+            version_path(id, version_id)?,
+            segment("descriptor type", &descriptor_type.to_string())?,
+            segment("relative path", relative_path)?
+        );
+        self.get_file(&path, descriptor_type).await
+    }
+
+    async fn get_file(
+        &self,
+        path: &str,
+        descriptor_type: DescriptorTypeWithPlain,
+    ) -> crate::Result<FileWrapper> {
+        if is_plain(&descriptor_type) {
+            Ok(plain_file(self.get_text(path, None).await?))
+        } else {
+            self.get_json(path, None).await
+        }
+    }
+
+    /// Lists the test parameter files of a tool version
+    /// (`GET /tools/{id}/versions/{version_id}/{type}/tests`).
+    ///
+    /// For `PLAIN_*` types, registries such as Dockstore return the bare test
+    /// file (possibly several joined into one body); it is returned as a
+    /// single `FileWrapper` with only `content` set. A body that is a JSON
+    /// array of file wrappers, as the spec also allows, is returned as such.
+    pub async fn list_tests(
+        &self,
+        id: &str,
+        version_id: &str,
+        descriptor_type: DescriptorTypeWithPlain,
+    ) -> crate::Result<Vec<FileWrapper>> {
+        let path = format!(
+            "{}/{}/tests",
+            version_path(id, version_id)?,
+            segment("descriptor type", &descriptor_type.to_string())?
+        );
+        if is_plain(&descriptor_type) {
+            Ok(plain_tests(self.get_text(&path, None).await?))
+        } else {
+            self.get_json(&path, None).await
+        }
+    }
+
+    /// Lists the files of a tool version with their paths and file types
+    /// (`GET /tools/{id}/versions/{version_id}/{type}/files`).
+    ///
+    /// To download the files themselves, use [`TRS::get_files_zip`].
+    pub async fn list_files(
+        &self,
+        id: &str,
+        version_id: &str,
+        descriptor_type: DescriptorType,
+    ) -> crate::Result<Vec<ToolFile>> {
+        let path = format!(
+            "{}/{}/files",
+            version_path(id, version_id)?,
+            segment("descriptor type", &descriptor_type.to_string())?
+        );
+        self.get_json(&path, None).await
+    }
+
+    /// Downloads all files of a tool version as one ZIP archive
+    /// (`GET /tools/{id}/versions/{version_id}/{type}/files?format=zip`).
+    ///
+    /// The archive is read into memory, at most `limit` bytes; a larger body
+    /// fails with a [`BodyLimitError`](crate::utils::transport::BodyLimitError).
+    /// A response without a ZIP file signature (for example the JSON file
+    /// list of a registry that ignores `format`) is an error. This does not
+    /// validate the archive's contents or extract it. To stream large
+    /// archives instead, use
+    /// [`responses::files_zip`] with `self.transport`.
+    pub async fn get_files_zip(
+        &self,
+        id: &str,
+        version_id: &str,
+        descriptor_type: DescriptorType,
+        limit: usize,
+    ) -> crate::Result<Vec<u8>> {
+        // Validate before building the request, with the same messages as
+        // the other methods (`files_zip` checks again, more generally).
+        version_path(id, version_id)?;
+        let response =
+            responses::files_zip(&self.transport, id, version_id, descriptor_type).await?;
+        let body = read_bounded(response, limit).await?.body;
+        // Local-file and empty-archive signatures. A bare `PK` prefix is not
+        // enough to distinguish an archive from an arbitrary response body.
+        if !body.starts_with(b"PK\x03\x04") && !body.starts_with(b"PK\x05\x06") {
+            return Err("TRS response is not a ZIP archive".into());
+        }
+        Ok(body)
+    }
+
+    /// Fetches the container specifications, e.g. Dockerfiles, of a tool
+    /// version (`GET /tools/{id}/versions/{version_id}/containerfile`).
+    pub async fn get_containerfiles(
+        &self,
+        id: &str,
+        version_id: &str,
+    ) -> crate::Result<Vec<FileWrapper>> {
+        let path = format!("{}/containerfile", version_path(id, version_id)?);
+        self.get_json(&path, None).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clients::trs::models::tool_file::FileType;
+    use crate::utils::auth::FixedToken;
+    use crate::utils::transport::BodyLimitError;
+    use mockito::{Matcher, Mock};
+    use url::Url;
+
+    // A Dockstore-style ID and a version ID that both need encoding.
+    const TOOL_ID: &str = "#workflow/github.com/org/repo";
+    const TOOL_ID_ENCODED: &str = "%23workflow%2Fgithub.com%2Forg%2Frepo";
+    const VERSION_ID: &str = "v1/rc 1";
+    const VERSION_ID_ENCODED: &str = "v1%2Frc%201";
+
+    fn tool_json() -> Value {
+        serde_json::json!({
+            "url": "https://example.org/tools/1",
+            "id": TOOL_ID,
+            "organization": "org",
+            "toolclass": { "id": "1", "name": "Workflow" },
+            "versions": [version_json()]
+        })
+    }
+
+    fn version_json() -> Value {
+        serde_json::json!({
+            "url": "https://example.org/tools/1/versions/1",
+            "id": VERSION_ID,
+            "descriptor_type": ["CWL"],
+            "description": "First release"
+        })
+    }
+
+    fn service_info_json(artifact: &str) -> Value {
+        serde_json::json!({
+            "id": "org.example.trs",
+            "name": "Example TRS",
+            "type": { "group": "org.ga4gh", "artifact": artifact, "version": "2.0.2" },
+            "organization": { "name": "Example", "url": "https://example.org" },
+            "version": "1.0.0"
+        })
+    }
+
+    // Clients for the API root `<mock server>/<prefix>/ga4gh/trs/v2`, without
+    // and with a trailing slash.
+    fn clients(server: &mockito::ServerGuard, prefix: &str) -> Vec<TRS> {
+        ["", "/"]
+            .iter()
+            .map(|slash| {
+                let base = format!("{}/{prefix}/ga4gh/trs/v2{slash}", server.url());
+                let config = Configuration::new(Url::parse(&base).unwrap());
+                TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2)
+            })
+            .collect()
+    }
+
+    fn path(prefix: &str, api_path: &str) -> String {
+        format!("/{prefix}/ga4gh/trs/v2/{api_path}")
+    }
+
+    // The API path of the test tool version, plus `rest` if not empty.
+    fn tool_version(rest: &str) -> String {
+        let base = format!("tools/{TOOL_ID_ENCODED}/versions/{VERSION_ID_ENCODED}");
+        if rest.is_empty() {
+            base
+        } else {
+            format!("{base}/{rest}")
+        }
+    }
+
+    // Mocks a GET that must be called once by each client from `clients`.
+    fn get_mock(
+        server: &mut mockito::ServerGuard,
+        prefix: &str,
+        api_path: &str,
+        body: &str,
+    ) -> Mock {
+        server
+            .mock("GET", path(prefix, api_path).as_str())
+            .with_status(200)
+            .with_body(body)
+            .expect(2)
+            .create()
+    }
+
+    #[test]
+    fn test_debug_output() {
+        let config = crate::utils::configuration::config_with_markers();
+        let trs = TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2);
+        let output = format!("{:?}", trs);
+        assert!(output.starts_with("TRS { transport:"), "{output}");
+        assert!(!output.contains("SENTINEL"), "{output}");
+    }
+
+    #[test]
+    fn test_url_preserves_encoded_base_path() {
+        for slash in ["", "/"] {
+            let base = Url::parse(&format!("https://example.org/a%20b/trs/v2{slash}")).unwrap();
+            let config = Configuration::new(base);
+            let trs = TRS::without_discovery(Transport::new(&config), TrsVersion::V2_0_2);
+            assert_eq!(
+                trs.transport.endpoint("tools/a%2Fb").unwrap().as_str(),
+                "https://example.org/a%20b/trs/v2/tools/a%2Fb"
+            );
+        }
+    }
+
+    #[test]
+    fn test_urlencode_encodes_path_separators() {
+        assert_eq!(urlencode(TOOL_ID), TOOL_ID_ENCODED);
+        assert_eq!(urlencode(VERSION_ID), VERSION_ID_ENCODED);
+        assert_eq!(urlencode("a?b%c"), "a%3Fb%25c");
+    }
+
+    #[tokio::test]
+    async fn test_new_checks_service_info_below_api_root() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "new",
+            "service-info",
+            &service_info_json("trs").to_string(),
+        );
+        for client in clients(&server, "new") {
+            let trs = TRS::new(client.configuration()).await.unwrap();
+            assert_eq!(trs.service.unwrap().r#type.artifact, "trs");
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn token_provider_authenticates_discovery_and_tool_reads() {
+        let mut server = mockito::Server::new_async().await;
+        let prefix = "provider";
+        let info = server
+            .mock("GET", path(prefix, "service-info").as_str())
+            .match_header("authorization", "Bearer good")
+            .with_body(service_info_json("trs").to_string())
+            .create();
+        let tools = server
+            .mock("GET", path(prefix, "tools").as_str())
+            .match_header("authorization", "Bearer good")
+            .with_body("[]")
+            .create();
+        let config = Configuration::new(
+            Url::parse(&format!("{}/{prefix}/ga4gh/trs/v2", server.url())).unwrap(),
+        )
+        .with_token_provider(FixedToken("good"));
+        let trs = TRS::new(&config).await.unwrap();
+        assert!(trs
+            .list_tools(&ToolFilter::default())
+            .await
+            .unwrap()
+            .is_empty());
+        info.assert();
+        tools.assert();
+    }
+
+    #[tokio::test]
+    async fn test_old_trs_service_and_version_without_description() {
+        let mut server = mockito::Server::new_async().await;
+        let mut info = service_info_json("trs");
+        info["type"]["version"] = serde_json::json!("2.0.1");
+        let service = get_mock(&mut server, "trs-201", "service-info", &info.to_string());
+        let mut version = version_json();
+        version.as_object_mut().unwrap().remove("description");
+        let response = get_mock(
+            &mut server,
+            "trs-201",
+            &tool_version(""),
+            &version.to_string(),
+        );
+        for client in clients(&server, "trs-201") {
+            let trs = TRS::new(client.configuration()).await.unwrap();
+            assert_eq!(trs.service.as_ref().unwrap().r#type.version, "2.0.1");
+            assert_eq!(
+                trs.get_version(TOOL_ID, VERSION_ID)
+                    .await
+                    .unwrap()
+                    .description(),
+                None
+            );
+        }
+        service.assert();
+        response.assert();
+    }
+
+    #[tokio::test]
+    async fn test_new_accepts_dockstore_service_info() {
+        let mut server = mockito::Server::new_async().await;
+        let mut info = service_info_json("TRS");
+        info["createdAt"] = serde_json::json!(1593648000000u64);
+        info["updatedAt"] = serde_json::json!("2026-11-09T00:00:00Z");
+        let mut numeric_update = info.clone();
+        numeric_update["updatedAt"] = serde_json::json!(1794200849592u64);
+        let m = get_mock(&mut server, "dockstore", "service-info", &info.to_string());
+        for client in clients(&server, "dockstore") {
+            let service = TRS::new(client.configuration())
+                .await
+                .unwrap()
+                .service
+                .unwrap();
+            assert_eq!(service.created_at, None);
+            assert_eq!(service.updated_at.as_deref(), Some("2026-11-09T00:00:00Z"));
+        }
+        m.assert();
+        let m = get_mock(
+            &mut server,
+            "dockstore-2",
+            "service-info",
+            &numeric_update.to_string(),
+        );
+        for client in clients(&server, "dockstore-2") {
+            let service = TRS::new(client.configuration())
+                .await
+                .unwrap()
+                .service
+                .unwrap();
+            assert_eq!((service.created_at, service.updated_at), (None, None));
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_new_rejects_other_services() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "not-trs",
+            "service-info",
+            &service_info_json("wes").to_string(),
+        );
+        for client in clients(&server, "not-trs") {
+            let error = TRS::new(client.configuration()).await.unwrap_err();
+            assert!(
+                error.to_string().contains("not an instance of TRS"),
+                "{error}"
+            );
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_new_fails_without_service_info() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", path("no-info", "service-info").as_str())
+            .with_status(404)
+            .create();
+        for client in clients(&server, "no-info") {
+            assert!(TRS::new(client.configuration()).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_service_info() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "info",
+            "service-info",
+            &service_info_json("trs").to_string(),
+        );
+        for client in clients(&server, "info") {
+            assert_eq!(client.service_info().await.unwrap().name, "Example TRS");
+        }
+        m.assert();
+    }
+
+    /// A service-info body that isn't an object fails to parse.
+    #[tokio::test]
+    async fn test_service_info_rejects_non_objects() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(&mut server, "info-array", "service-info", "[]");
+        for client in clients(&server, "info-array") {
+            let error = client.service_info().await.unwrap_err();
+            assert!(matches!(error, crate::Error::Parse(_)), "{error:?}");
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_list_tool_classes() {
+        let mut server = mockito::Server::new_async().await;
+        let body = r#"[{"id":"1","name":"Workflow","description":"A workflow"}]"#;
+        let m = get_mock(&mut server, "classes", "toolClasses", body);
+        for client in clients(&server, "classes") {
+            let classes = client.list_tool_classes().await.unwrap();
+            assert_eq!(classes[0].name.as_deref(), Some("Workflow"));
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_list_tools_without_filter_sends_no_query() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", path("tools-all", "tools").as_str())
+            .match_query(Matcher::Missing)
+            .with_status(200)
+            .with_body(serde_json::json!([tool_json()]).to_string())
+            .expect(2)
+            .create();
+        for client in clients(&server, "tools-all") {
+            let tools = client.list_tools(&ToolFilter::default()).await.unwrap();
+            assert_eq!(tools[0].id, TOOL_ID);
+            assert_eq!(tools[0].versions[0].id, VERSION_ID);
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_list_tools_sends_filters() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", path("tools-filter", "tools").as_str())
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("id".into(), "a/b".into()),
+                Matcher::UrlEncoded("alias".into(), "x y".into()),
+                Matcher::UrlEncoded("toolClass".into(), "Workflow".into()),
+                Matcher::UrlEncoded("descriptorType".into(), "NFL".into()),
+                Matcher::UrlEncoded("registry".into(), "quay.io".into()),
+                Matcher::UrlEncoded("organization".into(), "org".into()),
+                Matcher::UrlEncoded("name".into(), "image".into()),
+                Matcher::UrlEncoded("toolname".into(), "tool".into()),
+                Matcher::UrlEncoded("description".into(), "a&b".into()),
+                Matcher::UrlEncoded("author".into(), "Ada".into()),
+                Matcher::UrlEncoded("checker".into(), "false".into()),
+                Matcher::UrlEncoded("offset".into(), "abc".into()),
+                Matcher::UrlEncoded("limit".into(), "5".into()),
+                // `explode: false`: one comma-separated value.
+                Matcher::UrlEncoded("tags".into(), "a b,c&d".into()),
+            ]))
+            .with_status(200)
+            .with_body("[]")
+            .expect(2)
+            .create();
+        let filter = ToolFilter {
+            id: Some("a/b".into()),
+            alias: Some("x y".into()),
+            tool_class: Some("Workflow".into()),
+            descriptor_type: Some(DescriptorType::Nfl),
+            registry: Some("quay.io".into()),
+            organization: Some("org".into()),
+            name: Some("image".into()),
+            toolname: Some("tool".into()),
+            description: Some("a&b".into()),
+            author: Some("Ada".into()),
+            checker: Some(false),
+            tags: vec!["a b".into(), "c&d".into()],
+            offset: Some("abc".into()),
+            limit: Some(5),
+        };
+        for client in clients(&server, "tools-filter") {
+            assert!(client.list_tools(&filter).await.unwrap().is_empty());
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_get_tool() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "tool",
+            &format!("tools/{TOOL_ID_ENCODED}"),
+            &tool_json().to_string(),
+        );
+        for client in clients(&server, "tool") {
+            let tool = client.get_tool(TOOL_ID).await.unwrap();
+            assert_eq!(tool.id, TOOL_ID);
+            assert_eq!(tool.toolclass.name.as_deref(), Some("Workflow"));
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_get_tool_returns_http_errors() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", path("tool-404", "tools/missing").as_str())
+            .with_status(404)
+            .with_body(r#"{"code":404,"message":"not found"}"#)
+            .create();
+        for client in clients(&server, "tool-404") {
+            let error = client.get_tool("missing").await.unwrap_err();
+            assert!(error.to_string().contains("404"), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_returns_errors_for_bodies_that_are_not_json() {
+        let mut server = mockito::Server::new_async().await;
+        let _invalid = server
+            .mock("GET", path("bad-body", "toolClasses").as_str())
+            .with_status(200)
+            .with_body("[{\"id\":")
+            .create();
+        let _html = server
+            .mock("GET", path("bad-body", "tools").as_str())
+            .with_status(500)
+            .with_header("content-type", "text/html")
+            .with_body("<html>Internal Server Error</html>")
+            .create();
+        let _info = server
+            .mock("GET", path("bad-body", "service-info").as_str())
+            .with_status(200)
+            .with_body("<html>Not a TRS</html>")
+            .create();
+        for client in clients(&server, "bad-body") {
+            assert!(client.list_tool_classes().await.is_err());
+            let error = client.list_tools(&ToolFilter::default()).await.unwrap_err();
+            assert!(error.to_string().contains("500"), "{error}");
+            assert!(TRS::new(client.configuration()).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rejects_ids_that_change_the_path() {
+        let server = mockito::Server::new_async().await;
+        // No mock: these must fail before any request is sent.
+        for client in clients(&server, "bad-ids") {
+            for id in ["", ".", ".."] {
+                let error = client.get_tool(id).await.unwrap_err();
+                assert!(error.to_string().contains("tool ID"), "{error}");
+                let error = client.get_version("1", id).await.unwrap_err();
+                assert!(error.to_string().contains("version ID"), "{error}");
+                let error = client
+                    .get_descriptor_file("1", "1", DescriptorTypeWithPlain::Cwl, id)
+                    .await
+                    .unwrap_err();
+                assert!(error.to_string().contains("relative path"), "{error}");
+                let error = client
+                    .get_descriptor("1", "1", DescriptorTypeWithPlain::Unrecognized(id.into()))
+                    .await
+                    .unwrap_err();
+                assert!(error.to_string().contains("descriptor type"), "{error}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unrecognized_descriptor_types_are_one_encoded_segment() {
+        let mut server = mockito::Server::new_async().await;
+        let json = get_mock(
+            &mut server,
+            "unrecognized",
+            &tool_version("JUPYTER%2F..%3Fx/descriptor"),
+            r#"{"content":"notebook"}"#,
+        );
+        let plain = get_mock(
+            &mut server,
+            "unrecognized",
+            &tool_version("PLAIN_JUPYTER/descriptor"),
+            "notebook",
+        );
+        for client in clients(&server, "unrecognized") {
+            let file = client
+                .get_descriptor(
+                    TOOL_ID,
+                    VERSION_ID,
+                    DescriptorTypeWithPlain::Unrecognized("JUPYTER/..?x".into()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(file.content.as_deref(), Some("notebook"));
+            // The spec's `PLAIN_` prefix marks a bare file, also for types that
+            // the spec doesn't define.
+            let file = client
+                .get_descriptor(
+                    TOOL_ID,
+                    VERSION_ID,
+                    DescriptorTypeWithPlain::Unrecognized("PLAIN_JUPYTER".into()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(file, plain_file("notebook".into()));
+        }
+        json.assert();
+        plain.assert();
+    }
+
+    #[tokio::test]
+    async fn test_list_versions() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "versions",
+            &format!("tools/{TOOL_ID_ENCODED}/versions"),
+            &serde_json::json!([version_json()]).to_string(),
+        );
+        for client in clients(&server, "versions") {
+            let versions = client.list_versions(TOOL_ID).await.unwrap();
+            assert_eq!(versions[0].id, VERSION_ID);
+            assert_eq!(versions[0].descriptor_type, Some(vec![DescriptorType::Cwl]));
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_get_version() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "version",
+            &tool_version(""),
+            &version_json().to_string(),
+        );
+        for client in clients(&server, "version") {
+            let version = client.get_version(TOOL_ID, VERSION_ID).await.unwrap();
+            assert_eq!(version.id, VERSION_ID);
+            assert_eq!(version.description(), Some("First release"));
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_get_version_preserves_non_string_optional_description() {
+        let mut server = mockito::Server::new_async().await;
+        let mut version = version_json();
+        version["description"] = serde_json::json!(42);
+        let m = get_mock(
+            &mut server,
+            "bad-description",
+            &tool_version(""),
+            &version.to_string(),
+        );
+        for client in clients(&server, "bad-description") {
+            let actual = client.get_version(TOOL_ID, VERSION_ID).await.unwrap();
+            assert_eq!(actual.description(), None);
+            assert_eq!(actual.extra["description"], 42);
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_get_descriptor_per_type() {
+        let mut server = mockito::Server::new_async().await;
+        let cases = [
+            (DescriptorTypeWithPlain::Cwl, "CWL"),
+            (DescriptorTypeWithPlain::Wdl, "WDL"),
+            (DescriptorTypeWithPlain::Nfl, "NFL"),
+            (DescriptorTypeWithPlain::Galaxy, "GALAXY"),
+            (DescriptorTypeWithPlain::Smk, "SMK"),
+        ];
+        for (descriptor_type, name) in cases {
+            let body = serde_json::json!({
+                "content": format!("{name} content"),
+                "checksum": [{ "checksum": "abc", "type": "sha-256" }],
+                "url": "https://example.org/main"
+            });
+            let m = get_mock(
+                &mut server,
+                "descriptor",
+                &tool_version(&format!("{name}/descriptor")),
+                &body.to_string(),
+            );
+            for client in clients(&server, "descriptor") {
+                let file = client
+                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(file.content, Some(format!("{name} content")));
+                assert_eq!(file.checksum.unwrap()[0].checksum, "abc");
+            }
+            m.assert();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_plain_descriptor_per_type() {
+        let mut server = mockito::Server::new_async().await;
+        let cases = [
+            (DescriptorTypeWithPlain::PlainCwl, "PLAIN_CWL"),
+            (DescriptorTypeWithPlain::PlainWdl, "PLAIN_WDL"),
+            (DescriptorTypeWithPlain::PlainNfl, "PLAIN_NFL"),
+            (DescriptorTypeWithPlain::PlainGalaxy, "PLAIN_GALAXY"),
+            (DescriptorTypeWithPlain::PlainSmk, "PLAIN_SMK"),
+        ];
+        for (descriptor_type, name) in cases {
+            // A bare file that isn't JSON must not be parsed as JSON.
+            let body = format!("#!/usr/bin/env runner\n{name}: [\n");
+            let m = get_mock(
+                &mut server,
+                "plain-descriptor",
+                &tool_version(&format!("{name}/descriptor")),
+                &body,
+            );
+            for client in clients(&server, "plain-descriptor") {
+                let file = client
+                    .get_descriptor(TOOL_ID, VERSION_ID, descriptor_type.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(file, plain_file(body.clone()));
+            }
+            m.assert();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_descriptor_file() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "relative",
+            &tool_version("WDL/descriptor/tasks%2Falign%20v2.wdl"),
+            r#"{"content":"task align {}"}"#,
+        );
+        let plain = get_mock(
+            &mut server,
+            "relative",
+            &tool_version("PLAIN_WDL/descriptor/tasks%2Falign%20v2.wdl"),
+            "task align {}",
+        );
+        for client in clients(&server, "relative") {
+            for descriptor_type in [
+                DescriptorTypeWithPlain::Wdl,
+                DescriptorTypeWithPlain::PlainWdl,
+            ] {
+                let file = client
+                    .get_descriptor_file(TOOL_ID, VERSION_ID, descriptor_type, "tasks/align v2.wdl")
+                    .await
+                    .unwrap();
+                assert_eq!(file.content.as_deref(), Some("task align {}"));
+            }
+        }
+        m.assert();
+        plain.assert();
+    }
+
+    #[tokio::test]
+    async fn test_list_tests() {
+        let mut server = mockito::Server::new_async().await;
+        let m = get_mock(
+            &mut server,
+            "tests",
+            &tool_version("CWL/tests"),
+            r#"[{"content":"{\"input\":1}"},{"url":"https://example.org/t2.json"}]"#,
+        );
+        let plain = get_mock(
+            &mut server,
+            "tests",
+            &tool_version("PLAIN_CWL/tests"),
+            "{\"input\":1}",
+        );
+        for client in clients(&server, "tests") {
+            let tests = client
+                .list_tests(TOOL_ID, VERSION_ID, DescriptorTypeWithPlain::Cwl)
+                .await
+                .unwrap();
+            assert_eq!(tests.len(), 2);
+            assert_eq!(tests[1].url.as_deref(), Some("https://example.org/t2.json"));
+            let tests = client
+                .list_tests(TOOL_ID, VERSION_ID, DescriptorTypeWithPlain::PlainCwl)
+                .await
+                .unwrap();
+            assert_eq!(tests, vec![plain_file("{\"input\":1}".to_string())]);
+        }
+        m.assert();
+        plain.assert();
+    }
+
+    #[test]
+    fn test_plain_tests_accepts_wrapped_and_bare_bodies() {
+        let wrapped = r#"[{"content":"{}"},{"url":"https://example.org/t.json"}]"#;
+        assert_eq!(plain_tests(wrapped.to_string()).len(), 2);
+        // A bare test file that is itself a JSON array stays one file.
+        for bare in [r#"[{"input":1}]"#, "[]", "input: 1"] {
+            assert_eq!(
+                plain_tests(bare.to_string()),
+                vec![plain_file(bare.to_string())]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_list_files() {
+        let mut server = mockito::Server::new_async().await;
+        let body = serde_json::json!([
+            { "path": "main.nf", "file_type": "PRIMARY_DESCRIPTOR",
+              "checksum": { "checksum": "abc", "type": "sha-256" } },
+            { "path": "Dockerfile", "file_type": "CONTAINERFILE" }
+        ]);
+        let m = get_mock(
+            &mut server,
+            "files",
+            &tool_version("NFL/files"),
+            &body.to_string(),
+        );
+        for client in clients(&server, "files") {
+            let files = client
+                .list_files(TOOL_ID, VERSION_ID, DescriptorType::Nfl)
+                .await
+                .unwrap();
+            assert_eq!(files[0].path.as_deref(), Some("main.nf"));
+            assert_eq!(files[0].file_type, Some(FileType::PrimaryDescriptor));
+            assert_eq!(files[1].file_type, Some(FileType::Containerfile));
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_list_tools_rejects_tags_that_cannot_be_sent() {
+        let server = mockito::Server::new_async().await;
+        // No mock: these must fail before any request is sent.
+        for client in clients(&server, "bad-tags") {
+            for tag in ["", "a,b"] {
+                let filter = ToolFilter {
+                    tags: vec!["ok".into(), tag.into()],
+                    ..Default::default()
+                };
+                let error = client.list_tools(&filter).await.unwrap_err();
+                assert!(error.to_string().contains("TRS tag"), "{error}");
+            }
+        }
+    }
+
+    // The shared query encoding percent-encodes the separating comma
+    // (`tags=a%2Cb`); servers decode the value before splitting it.
+    #[tokio::test]
+    async fn test_list_tools_sends_tags_with_an_encoded_comma() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", path("tags-wire", "tools").as_str())
+            .match_query(Matcher::Exact("tags=a%2Cb".into()))
+            .with_status(200)
+            .with_body("[]")
+            .expect(2)
+            .create();
+        let filter = ToolFilter {
+            tags: vec!["a".into(), "b".into()],
+            ..Default::default()
+        };
+        for client in clients(&server, "tags-wire") {
+            assert!(client.list_tools(&filter).await.unwrap().is_empty());
+        }
+        m.assert();
+    }
+
+    #[test]
+    fn test_tool_filter_query() {
+        assert_eq!(ToolFilter::default().query().unwrap(), None);
+        let filter = ToolFilter {
+            tags: vec!["x".into(), "y".into()],
+            limit: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            filter.query().unwrap(),
+            Some(serde_json::json!({ "tags": "x,y", "limit": 1 }))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_files_zip() {
+        let mut server = mockito::Server::new_async().await;
+        let bytes = include_bytes!("../../../../tests/fixtures/trs/workflow.zip");
+        let m = server
+            .mock("GET", path("zip", &tool_version("CWL/files")).as_str())
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_header("content-type", "application/zip")
+            .with_body(bytes.as_slice())
+            .expect(2)
+            .create();
+        for client in clients(&server, "zip") {
+            let archive = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, bytes.len())
+                .await
+                .unwrap();
+            assert_eq!(archive, bytes);
+        }
+        m.assert();
+    }
+
+    #[tokio::test]
+    async fn test_get_files_zip_checks_limit_and_body() {
+        let mut server = mockito::Server::new_async().await;
+        let too_large = server
+            .mock(
+                "GET",
+                path("zip-limit", &tool_version("CWL/files")).as_str(),
+            )
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_body("PK\x03\x04 more than ten bytes")
+            .expect(2)
+            .create();
+        let not_zip = server
+            .mock("GET", path("zip-json", &tool_version("CWL/files")).as_str())
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_body(r#"[{"path":"main.cwl"}]"#)
+            .expect(2)
+            .create();
+        let fake_zip = server
+            .mock("GET", path("zip-fake", &tool_version("CWL/files")).as_str())
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(200)
+            .with_body("PK not an archive")
+            .expect(2)
+            .create();
+        let missing = server
+            .mock("GET", path("zip-404", &tool_version("CWL/files")).as_str())
+            .match_query(Matcher::UrlEncoded("format".into(), "zip".into()))
+            .with_status(404)
+            .expect(2)
+            .create();
+        for client in clients(&server, "zip-limit") {
+            let error = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 10)
+                .await
+                .unwrap_err();
+            assert!(error.downcast_ref::<BodyLimitError>().is_some(), "{error}");
+        }
+        for client in clients(&server, "zip-json") {
+            let error = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("not a ZIP archive"), "{error}");
+        }
+        for client in clients(&server, "zip-fake") {
+            let error = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("not a ZIP archive"), "{error}");
+        }
+        for client in clients(&server, "zip-404") {
+            let error = client
+                .get_files_zip(TOOL_ID, VERSION_ID, DescriptorType::Cwl, 1024)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("404"), "{error}");
+        }
+        for client in clients(&server, "zip-ids") {
+            let error = client
+                .get_files_zip("..", VERSION_ID, DescriptorType::Cwl, 1024)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("tool ID"), "{error}");
+        }
+        too_large.assert();
+        not_zip.assert();
+        fake_zip.assert();
+        missing.assert();
+    }
+
+    #[tokio::test]
+    async fn test_get_containerfiles() {
+        let mut server = mockito::Server::new_async().await;
+        let body = serde_json::json!([
+            { "content": "FROM alpine", "image_type": "Docker" }
+        ]);
+        let m = get_mock(
+            &mut server,
+            "containerfile",
+            &tool_version("containerfile"),
+            &body.to_string(),
+        );
+        for client in clients(&server, "containerfile") {
+            let files = client
+                .get_containerfiles(TOOL_ID, VERSION_ID)
+                .await
+                .unwrap();
+            assert_eq!(files[0].content.as_deref(), Some("FROM alpine"));
+        }
+        m.assert();
+    }
+}

@@ -1,0 +1,692 @@
+# Usage guide
+
+This guide covers the configuration file, the `ga4gh-cli` command-line tool
+and the Rust library (`ga4gh-lib`, imported as `ga4gh_sdk`). For the Python
+bindings, see the [Python README](../python/README.md). For installation, see
+the [README](../README.md#installation). To build your own SDK or CLI on top
+of this one, see [Build on this SDK](downstream.md).
+
+## Available interfaces
+
+| API | Rust library | CLI | Python bindings |
+| --- | --- | --- | --- |
+| Service Info | `ServiceInfo` | `service-info --service <SECTION>` | `ServiceInfo` |
+| TES | Tasks, listing, and polling | `tes create`, `list`, `get`, `status`, `cancel`, `files`, `log`, `save` | TES |
+| DRS | Objects, access URLs, bulk, and `drs://` URIs | `drs get`, `access` | `DRS`, `DrsResolver` |
+| WES | Runs and attachments | `wes run`, `list`, `get`, `status`, `cancel` | `WES`, `Run` |
+| TRS | Tools and descriptors | `trs tools`, `tool`, `versions`, `version`, `descriptor`, `files`, `tests` | `TRS` |
+| Service Registry | `ServiceRegistry` | `registry list`, `get`, `types` | Not yet |
+
+`ServiceInfo` reads the discovery endpoint of one configured service. The
+separate GA4GH Service Registry lists services from a registry deployment.
+The CLI reads one service section from the configuration file for each command.
+
+## API root (`base_path`)
+
+`Configuration.base_path` identifies the **API root** of one service.
+The API root includes the service's deployment path.
+
+Before configuring the client, obtain the API root from the service operator
+or the deployment documentation. The example URLs below illustrate the path
+structure. They are not live services.
+
+1. Set `base_path` to the service's full API root. If the service is behind a
+   gateway or reverse proxy, keep its full path prefix. For example, use
+   `https://gateway.example.org/my-tes/ga4gh/tes/v1`.
+2. Do not put credentials, a query string, or a fragment in `base_path`. The
+   SDK rejects them before it sends a request. Configure credentials as
+   described in [Configured authentication](authentication.md).
+
+A trailing slash is optional. The SDK resolves endpoint paths below the
+configured root. The following table shows the expected request paths:
+
+| Service | Example `base_path`                  | Requests go to                        |
+| ------- | ------------------------------------ | ------------------------------------- |
+| TES     | `https://example.org/ga4gh/tes/v1`   | `…/ga4gh/tes/v1/service-info`, `…/tasks` |
+| WES     | `https://example.org/ga4gh/wes/v1`   | `…/ga4gh/wes/v1/service-info`, `…/runs`  |
+| DRS     | `https://example.org/ga4gh/drs/v1`   | `…/ga4gh/drs/v1/service-info`, `…/objects` |
+| TRS     | `https://example.org/ga4gh/trs/v2`   | `…/ga4gh/trs/v2/service-info`, `…/tools` |
+| Registry | `https://example.org/ga4gh/registry/v1` | `…/ga4gh/registry/v1/service-info`, `…/services` |
+
+When a client successfully retrieves `service-info`, it has reached that
+endpoint under the configured root. If the response includes service identity
+fields, check that they identify the intended deployment.
+
+To read the identity fields, run `ga4gh-cli service-info --service TES` (or
+another section name), or use `ServiceInfo` from Rust or Python. Other
+commands discover their service without printing `service-info`: success of
+`ga4gh-cli tes list` shows that discovery reached the configured API root.
+Some commands can skip discovery, such as TRS with `--no-discovery`; their
+success does not establish service identity.
+
+A host-only root such as `https://example.org` resolves `service-info` to
+`https://example.org/service-info`. If the service uses a path prefix, that
+request targets the wrong location and can return `404 Not Found`.
+If discovery returns 404, verify the API root against the deployment's
+documented URL. For TES and DRS, the error message then ends with
+`Check that base_path is the TES API root` or the DRS equivalent;
+for `service-info`, with `Check that base_path is the API root of section 'TES'`
+or the name of the section it read.
+A 404 response alone does not identify the cause.
+
+## Configuration file
+
+The CLI, Rust `Configuration::from_file` and Python `Configuration.from_file()`
+read `~/.ga4gh-cli/config.json`. The file holds one object per service, keyed by
+the section name: `TES`, `WES`, `DRS`, `TRS`, `AAI`, or `REGISTRY` for
+built-in services, or any other name for a custom service:
+
+```json
+{
+  "TES": {
+    "base_path": "https://example.org/ga4gh/tes/v1",
+    "basic_auth": {"username": "alice", "password": "change-me"},
+    "timeouts": {"discovery": 30, "submission": 600}
+  },
+  "MY_SERVICE": {
+    "base_path": "https://example.org/my-service/v1",
+    "oauth_access_token_env": "MY_SERVICE_TOKEN",
+    "queue": "long"
+  }
+}
+```
+
+- `base_path` (string, required): the API root described above.
+- `basic_auth` (object, optional): `username` (string) and an optional
+  `password` (string).
+- `oauth_access_token` (string, optional): an access token.
+- `oauth_access_token_env` (string, optional): the name of an environment
+  variable that holds the access token, so that the token needn't be in the
+  file. Use it in place of `oauth_access_token`, not together with it. If the
+  variable isn't set, reading the section is an error.
+- `bearer_access_token` or `bearer_access_token_env` (string, optional): a
+  generic bearer token, or the name of the variable that holds it.
+- `oidc` (object, optional, CLI only): the OpenID Connect provider that the
+  CLI's `login` command logs in with, in place of the credentials above. The
+  library and Python keep it in `extra` and don't use it. See
+  [Logging in with OpenID Connect](../cli/README.md#logging-in-with-openid-connect).
+- `timeouts` (object, optional): time limits in seconds, as positive numbers:
+  `connect`, `request`, `discovery` and `submission`. Limits that the object
+  doesn't name keep their defaults; see [Timeouts](#timeouts).
+- Any other key: kept with its JSON value in `Configuration::extra` (Python:
+  `Configuration.get_extra()`), for settings that the SDK doesn't use itself,
+  such as those of a downstream crate. In the example, `extra` holds
+  `queue`. Rust's `Debug` output shows only the keys, but `extra`
+  and `get_extra()` themselves return the values as they are, so don't log
+  them if they can hold credentials. The file doesn't set `user_agent`.
+  `api_key` is recognized but rejected because its header contract is not
+  defined.
+
+A missing file or section, or a field of the wrong type, is an error. Rust
+reads a custom section with `ServiceType::Custom("MY_SERVICE".into())`, Python
+with `config.from_file("MY_SERVICE")`. `Configuration::from_path(path, "TES")`
+reads a section from another file. One section may use one credential source:
+Basic, OAuth bearer, or generic bearer. Sources cannot be combined.
+The [authentication guide](authentication.md) describes how credentials reach
+Rust, Python, and CLI requests, and the behavior of redirects and injected
+clients. Previously stored credentials now take effect on requests. Rust and
+Python callers can instead set a [token provider](#token-providers); the
+configuration file can't set one. The CLI uses one for sections with `oidc`
+settings, with the tokens stored by its `login` command.
+
+The file can hold credentials, so keep it private, for example with
+`chmod 600 ~/.ga4gh-cli/config.json`.
+
+### Profiles
+
+To switch between sets of services, such as local and remote deployments,
+put the sections into named profiles under a top-level `profiles` object.
+Each profile holds sections with the keys described above, and
+`default_profile` names the profile to use when none is selected:
+
+```json
+{
+  "default_profile": "local",
+  "profiles": {
+    "local": {
+      "TES": {"base_path": "http://localhost:8000/ga4gh/tes/v1"}
+    },
+    "remote": {
+      "TES": {
+        "base_path": "https://tes.example.org/ga4gh/tes/v1",
+        "oauth_access_token_env": "REMOTE_TES_TOKEN"
+      },
+      "WES": {"base_path": "https://wes.example.org/ga4gh/wes/v1"}
+    }
+  }
+}
+```
+
+- The CLI uses the profile given with `--profile NAME`, else the one in the
+  environment variable `GA4GH_CLI_PROFILE`, else `default_profile`, else the
+  profile `default`. An empty variable or `--profile ""` is an error, so a
+  mistyped selection cannot silently use another service.
+  `--profile` and the variable apply to the CLI and `ga4gh_cli::CliContext`
+  only, not to the Rust and Python library functions below.
+- Rust `Configuration::from_path_with_profile(path, Some("remote"), "TES")`
+  reads a section of a given profile; with `None`, and in
+  `Configuration::from_path` and `from_file`, it reads the default profile
+  (`default_profile`, else `default`). Python `Configuration.from_file()`
+  reads the default profile as well.
+- A file without `profiles`, with its sections at the top level as in
+  [Configuration file](#configuration-file), counts as one profile named
+  `default`, so existing files keep working. Existing custom service sections
+  named `profiles` or `default_profile` remain valid when they have a
+  `base_path`. A `default_profile` setting without a profile map is an error.
+  A file with a profile map can't also have top-level
+  sections (keys starting with `$`, such as `$schema`, are allowed), and
+  naming a profile the file doesn't have is an error that lists the
+  profiles it has.
+- Profiles change only which sections are read. To keep a profile's tokens
+  out of the file, name an environment variable per section with
+  `oauth_access_token_env`, as `remote` does above; credentials are sent only
+  where described in the previous section.
+
+## Command-line tool
+
+The CLI has TES commands (`create`, `list`, `get`, `status`, `cancel`), WES
+commands (`run`, `list`, `get`, `status`, `cancel`), DRS commands (`get`,
+`access`), TRS commands (`tools`, `tool`, `versions`, `version`, `descriptor`,
+`files`, `tests`), and Service Registry commands (`list`, `get`, `types`). It
+reads the matching `TES`, `WES`, `DRS`, `TRS`, or `REGISTRY` configuration
+section, including its `timeouts`. `service-info --service <SECTION>` prints
+the service info of any configured section, built-in or custom, as JSON.
+`login` and `logout` get and delete tokens from an OpenID Connect provider for
+sections with `oidc` settings. The [CLI README](../cli/README.md) describes
+each command, its output and exit codes. `ServiceInfo` is also available from
+the Rust library below.
+
+## Timeouts
+
+Every request has a time limit. `Configuration` holds them as `Timeouts`; the
+Rust clients, the CLI and the Python bindings read them from there:
+
+| Limit | Default | Applies to |
+| --- | --- | --- |
+| `connect` | 10 s | Opening each connection, including TLS, within any of the limits below. |
+| `request` | 60 s | Each request that none of the limits below applies to, from sending it to reading the whole response. |
+| `discovery` | 10 s | The `service-info` request with which the TES, WES, DRS and TRS clients check a service: `new`, `with_transport`, `with_artifact`, `WES::from_transport`, `discover`, `discover_with_transport` and `refresh`, and `TRS::service_info`; also `ServiceInfo::get`, `get_at` and `get_raw`, and the CLI's `service-info` command. |
+| `submission` | 300 s | One TES task or WES run submission: `TES::create`, `TES::create_as`, `TES::create_value`, `WES::run_workflow`, `WES::run_workflow_with_attachments`, and the CLI and Python calls built on them, including uploads. |
+
+`discovery` and `submission` replace `request` for their requests, so they can
+be longer or shorter than `request`. Calls that take an `Operation`, such as
+`WES::run_workflow_streaming` and `Transport::send_once`, use its deadline in
+the same way. Waiting (`WaitOptions`), paging (`PagingOptions`) and DRS
+resolution have a budget of their own for the whole call; each of their
+requests also has the `request` limit, and whichever ends first stops it.
+Other settings are not time limits of requests and don't depend on these: the
+`max_age` of capability snapshots says how long cached service info counts as
+current, and the `Retry-After` delays of retries stay within the call's budget.
+
+A submission is sent once and never repeated. If it runs out of time, or
+loses its connection, after its request started, it fails with
+`AmbiguousSubmissionError` (Python: `RuntimeError` with "submission may have
+been accepted"): the service may have created the task or run, so look for it,
+for example by its tags, before you submit it again. This includes failures
+while connecting, which the SDK doesn't tell apart. Only a submission that ran
+out of time or was cancelled before its request started fails with
+`OperationError`; it sent nothing.
+
+Set the limits in Rust with `Configuration::with_timeouts`, in a configuration
+file section with `timeouts` (see [above](#configuration-file)), and in Python
+with `Configuration.set_timeouts()`:
+
+```rust
+use ga4gh_sdk::utils::timeouts::Timeouts;
+use std::time::Duration;
+
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_timeouts(Timeouts {
+        discovery: Duration::from_secs(30),
+        submission: Duration::from_secs(600),
+        ..Default::default()
+    });
+let tes = TES::new(&config).await?;
+```
+
+A client reads the limits when it is built: change them in the
+`Configuration` before you build the client or `Transport`.
+`Transport::with_timeouts(&config, connect, request)` builds a transport with
+other `connect` and `request` limits. For other HTTP settings, such as TLS
+roots, a proxy or default headers, build a `reqwest::Client`, wrap it with
+`Transport::with_client(&config, client)` and pass the transport to
+`TES::with_transport`, `WES::with_transport` (also available as
+`WES::from_transport`), `DRS::with_transport` or
+`TRS::with_transport` (and `TES::discover_with_transport`,
+`WES::discover_with_transport`). The client's own connect and request timeouts
+then replace `connect` and `request`; `discovery` and `submission` still come
+from the transport's configuration.
+If the configuration also has credentials, use
+`Transport::with_client_and_configured_auth(&config, client)` to opt into
+applying them. The injected client's redirect policy remains yours; see the
+[authentication guide](authentication.md#request-boundary-and-failures).
+
+## Rust library
+
+Add this repository's library as a Git dependency. The package is `ga4gh-lib`;
+its crate name is `ga4gh_sdk`. The clients are
+`async`, so you also need an async runtime such as Tokio:
+
+```toml
+[dependencies]
+ga4gh-lib = { git = "https://github.com/ga4gh/ga4gh-sdk" }
+tokio = { version = "1", features = ["full"] }
+url = "2"
+serde_json = "1"
+```
+
+TES, WES, DRS, and TRS clients check the service's `service-info` when created
+and return an error if the endpoint isn't reachable or has the wrong type. The
+check and all other requests have time limits; see [Timeouts](#timeouts).
+
+### Configuration
+
+```rust
+use ga4gh_sdk::utils::configuration::{BasicAuth, Configuration};
+use url::Url;
+
+// No authentication
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?);
+
+// The selected bearer token is sent to this service's API root.
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_oauth_access_token("my-token".to_owned());
+
+// The token from an environment variable of your choice
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_oauth_access_token_from_env("MY_SERVICE_TOKEN")?;
+
+// A generic bearer token is another exclusive source.
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_bearer_access_token_from_env("MY_SERVICE_TOKEN")?;
+
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_basic_auth(BasicAuth {
+        username: "alice".to_owned(),
+        password: Some("change-me".to_owned()),
+    });
+
+// From ~/.ga4gh-cli/config.json
+use ga4gh_sdk::clients::ServiceType;
+let config = Configuration::from_file(ServiceType::TES)?;
+
+// A custom section and its other keys
+let config = Configuration::from_file(ServiceType::Custom("MY_SERVICE".into()))?;
+let queue = config.extra.get("queue").and_then(|value| value.as_str());
+```
+
+`ServiceType` is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm.
+
+### Token providers
+
+A token provider gives the SDK a bearer token for each request, so that a
+client can live longer than one token, and can use a different token for each
+service, for example from OAuth 2.0 token exchange. Implement
+`ga4gh_sdk::utils::auth::TokenProvider` and set it with
+`Configuration::with_token_provider` (or `with_shared_token_provider` for one
+`Arc` that several configurations use). How the provider gets its tokens
+(a device flow, token exchange, refresh) is up to the application; the SDK
+only asks it.
+
+```rust
+use ga4gh_sdk::utils::auth::{AccessToken, BoxError, TokenProvider, TokenRequest};
+use ga4gh_sdk::utils::configuration::Configuration;
+use std::time::{Duration, Instant};
+use url::Url;
+
+struct MyProvider;
+
+#[async_trait::async_trait]
+impl TokenProvider for MyProvider {
+    async fn token(&self, request: &TokenRequest<'_>) -> Result<AccessToken, BoxError> {
+        let token = get_token_for(request.audience).await?; // your code
+        // Let the SDK reuse it until 30 seconds before it expires (here in 5 minutes).
+        let until = Instant::now() + Duration::from_secs(300 - 30);
+        Ok(AccessToken::new(token).reusable_until(until))
+    }
+}
+
+// In a function that returns a `Result`:
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/tes/v1")?)
+    .with_token_provider(MyProvider)
+    // Optional: the audience to ask for; without it, it is the API root.
+    .with_token_audience("https://example.org/ga4gh/tes".to_owned());
+```
+
+The trait uses the [`async-trait`](https://docs.rs/async-trait) crate. The
+contract:
+
+- **When the provider is asked.** Before each request, including the
+  `service-info` check when a client is created, with the configured
+  `token_audience` or, without one, the API root without user, password, query
+  and fragment (`Configuration::token_audience()` gives it). The token is sent
+  as `Authorization: Bearer <token>`.
+- **Reuse.** A token returned with `reusable_until(instant)` is reused for its
+  audience until that instant, by every transport and client built from clones
+  of the configuration. Without it, the provider is asked for every request.
+- **`401 Unauthorized`.** The SDK stops reusing the rejected token and asks the
+  provider with `TokenRequest::after_rejection` set the next time. A
+  replayable request is sent once more right away with a current token: a `GET`
+  or `HEAD` of `Transport`'s helpers, discovery and pages, or a request of
+  `Transport::request_with_policy` with `ReplaySafety::ReadOnly`. Other
+  requests, such as task and run submissions, are never sent twice; their
+  `401` comes back as an `HttpError`.
+- **Time limits.** Asking the provider counts towards the time limit of
+  discovery, of a page and of a submission (see [Timeouts](#timeouts)).
+  Running out of time there is an `OperationError`, not an
+  `AmbiguousSubmissionError`, as nothing was sent.
+- **One credential source.** A token provider can't be combined with
+  `basic_auth`, `oauth_access_token`, `bearer_access_token`, `api_key` or a
+  user or password in `base_path`; requests then fail with an
+  `AuthConflictError` before anything is sent. Without a token provider,
+  nothing changes.
+- **Injected clients.** A token provider in the configuration of
+  `Transport::with_client` requires explicit opt-in through
+  `Transport::with_client_and_configured_auth`. The provider's
+  `Authorization` header then takes the place of a client's default header.
+  The caller remains responsible for that client's redirect policy.
+- **Errors.** If the provider fails, or gives an empty token or one that
+  has characters other than visible ASCII (as RFC 6750 requires of bearer
+  tokens), the request fails with a
+  `TokenProviderError` and the pending request is not sent. If this happens
+  after a read-only request received `401`, that first attempt was sent. Its
+  default `Display` and `Debug` output omits the provider's error text and
+  audience, which may be sensitive.
+  Rust callers may inspect its underlying source error explicitly.
+- **Your own requests.** `Transport::request_builder` returns an error when a
+  provider is configured. Use `Transport::authorized_request_builder` (`async`)
+  for requests that you build yourself. They are sent once, as you send them.
+  Fetches of
+  workflow descriptors and result artifacts from other URLs never carry the
+  token.
+
+Python sets a callable with `Configuration.set_token_provider()`; see the
+[Python README](../python/README.md#token-providers). The CLI uses a token
+provider only for sections with `oidc` settings (see
+[Logging in with OpenID Connect](../cli/README.md#logging-in-with-openid-connect)).
+
+### ServiceInfo
+
+```rust
+use ga4gh_sdk::clients::serviceinfo::ServiceInfo;
+
+let info = ServiceInfo::new(&config)?.get().await?;
+println!("{} ({} {})", info.name, info.r#type.artifact, info.r#type.version);
+```
+
+`info.version` is the version of the service software; `info.r#type.version`
+is the version of the API named by `type.group` and `type.artifact`.
+`ServiceInfo` returns any service type as declared, keeps undefined fields in
+`extra`, and returns an error for a missing required field, a value of the
+wrong type, malformed JSON or a body that isn't valid UTF-8. See
+[Service Info](api_compatibility.md#service-info) for the full contract.
+
+`get_raw()` returns the response body of the same request as received,
+unparsed, for callers that print or store it. The CLI's
+[`service-info` command](../cli/README.md#service-info-command) prints a JSON
+object from this raw response, including native WES service info that the
+generic typed model does not accept.
+
+### Service Registry
+
+Use the registry's API root to discover service URLs. The registry client does
+not require a token for public reads; an individual deployment may require
+authentication.
+
+```rust
+use ga4gh_sdk::clients::registry::ServiceRegistry;
+use ga4gh_sdk::utils::configuration::Configuration;
+
+let root = url::Url::parse("https://registry.example.org/ga4gh/registry/v1")?;
+let registry = ServiceRegistry::new(&Configuration::new(root));
+for service in registry.list_services().await? {
+    println!("{} {}", service.id, service.url);
+}
+```
+
+`list_service_types()` and `get_service(id)` read the remaining registry
+endpoints. For the CLI equivalent, see [Service Registry commands](../cli/README.md#service-registry-commands).
+
+### TES
+
+```rust
+use ga4gh_sdk::clients::tes::models::{ListTasksParams, TesTask};
+use ga4gh_sdk::clients::tes::{TesView, TES};
+
+let tes = TES::new(&config).await?;
+
+// From the repository root, with a TES service running as in the quick start:
+let task_json = std::fs::read_to_string("examples/tes-hello.json")?;
+let task: TesTask = serde_json::from_str(&task_json)?;
+let task = tes.create(task).await?;
+println!("created {}", task.id);
+println!("state {:?}", task.status().await?);
+
+let params = ListTasksParams {
+    name_prefix: None,
+    state: None,
+    tag_key: None,
+    tag_value: None,
+    page_size: Some(10),
+    page_token: None,
+    view: Some(TesView::Minimal),
+};
+let tasks = tes.list_tasks(Some(params)).await?;
+
+let details = tes.get(TesView::Full, &task.id).await?;
+```
+
+To cancel a task that is still running, call `task.cancel().await?`.
+
+`create_as` and `get_as` take and return other types than `TesTask`, for
+example a downstream type that adds fields of its own (see
+[Build on this SDK](downstream.md#a-model-that-extends-testask)):
+`tes.create_as(&my_task).await?` and
+`let mine: MyTask = tes.get_as(TesView::Full, id).await?;`.
+For a service whose service info names another artifact than `tes`, use
+`TES::with_artifact(transport, "my-artifact")`.
+
+### WES
+
+```rust
+use ga4gh_sdk::clients::wes::models::RunRequest;
+use ga4gh_sdk::clients::wes::WES;
+
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/wes/v1")?);
+let wes = WES::new(&config).await?;
+
+let mut request = RunRequest::new(
+    "CWL".to_owned(),
+    "v1.2".to_owned(),
+    "https://example.org/workflows/hello.cwl".to_owned(),
+);
+request.workflow_params = Some(serde_json::json!({}));
+let run = wes.run_workflow(request).await?;
+
+println!("state {:?}", run.status().await?);
+let runs = wes.list_runs(None, Some(10)).await?; // page token, page size
+let log = wes.get_run(&run.id).await?;
+run.cancel().await?;
+```
+
+`WES::run_workflow_with_attachments` uploads workflow files along with the
+request, for services that accept `workflow_attachment`. Use a workflow URL and
+type/version supported by the target WES service. `WES::get_run_as` and
+`Run::log_as` read a run log into another type than `RunLog`, and
+`WES::with_artifact` accepts a service whose service info names another
+artifact than `wes`.
+
+### DRS
+
+```rust
+use ga4gh_sdk::clients::drs::DRS;
+
+let config = Configuration::new(Url::parse("https://example.org/ga4gh/drs/v1")?);
+let drs = DRS::new(&config).await?;
+
+let object = drs.get_object("my-object-id").await?;
+println!("{} ({} bytes)", object.id, object.size);
+let access = drs.get_access_url("my-object-id", "my-access-id").await?;
+// Use access.url and any access headers to fetch the bytes; do not log signed URLs.
+```
+
+`get_object_once` and `get_access_url_once` return `Resolution::Pending` while the
+server prepares an answer (`202 Accepted`); `resolve_object` and `resolve_access_url`
+wait for it within an `Operation` budget. `get_bulk_objects` and
+`get_bulk_access_urls` use the DRS 1.4 bulk endpoints and report an outcome per ID
+under a `BulkPolicy`; an invalid policy fails before any request, also without
+IDs. `uri::DrsResolver` plans access for hostname-based `drs://<host>/<id>` URIs,
+whose host is a name or an IPv4 address, without a port. IPv6 literals are
+rejected as malformed. The `_raw` variants (`get_object_raw`, `get_access_url_raw`,
+`resolve_reference_raw`, `get_bulk_objects_raw`, `get_bulk_access_urls_raw`) keep the
+server's JSON, including fields that the models don't know, and `get_object_as`
+reads an object into another type than `DrsObject`. `DRS::with_artifact`
+accepts a service whose service info names another artifact than `drs`, in any
+group; `new` and `with_transport` require the group `org.ga4gh`.
+
+### TRS
+
+```rust
+use ga4gh_sdk::clients::trs::models::DescriptorType;
+use ga4gh_sdk::clients::trs::{ToolFilter, TRS};
+
+let config = Configuration::new(Url::parse("https://workflowhub.eu/ga4gh/trs/v2")?);
+let trs = TRS::new(&config).await?;
+let tools = trs.list_tools(&ToolFilter {
+    tool_class: Some("Workflow".to_owned()),
+    limit: Some(10),
+    ..Default::default()
+}).await?;
+for tool in tools {
+    println!("{}", tool.id);
+}
+
+// All files of one version as a ZIP archive, at most 10 MiB.
+let archive = trs
+    .get_files_zip("TOOL_ID", "VERSION_ID", DescriptorType::Cwl, 10 * 1024 * 1024)
+    .await?;
+```
+
+The client selects a TRS 2.0.1 or 2.0.2 API profile from the API version
+in `service-info.type.version`. An unknown declaration uses the 2.0.1 read
+contract and records compatibility as unverified. Use `TrsOptions` to require
+a known declaration or select a profile explicitly. Selection belongs to each
+client; one process can connect to different versions at the same time. See
+[API compatibility](api_compatibility.md) for options, limitations, and migration.
+
+The `tags` filter requires the 2.0.2 contract or an explicit deployment override.
+Tags are registry-specific and sent as one comma-separated value, so a tag
+must not be empty or contain a comma. A declared version is evidence of intended
+support, not proof that the server implements filtering correctly.
+
+`ToolVersion::description()` returns a string description when present; the
+original value remains in `extra` and in serialized JSON. If a registry sends
+a non-string value, `description()` returns `None` while the raw value stays
+available in `extra` under either profile. This tolerance is limited to an
+optional field; malformed JSON and invalid required fields still return errors.
+The existing public model fields remain unchanged.
+
+`get_files_zip` reads the response into memory and returns bytes without
+extracting them. A body larger than the caller's limit, or one without a ZIP
+signature, is an error. The archive's contents are not fully validated. ZIP
+responses are defined in both supported TRS versions; actual provider support
+can differ.
+
+### Models
+
+The request and response models (`clients::<api>::models`) are generated from
+the specs. Servers often send more than the spec defines; the models keep it:
+
+- Every model struct has a field `extra` (a `serde_json::Map`) with the
+  fields that its spec doesn't define, at every level. Writing a model back,
+  for example a task that was read, sends them again. To add a field of your
+  own, insert it into `extra`. Don't use names of fields that the model
+  defines: the JSON would then have the key twice.
+- Enums keep values that the spec doesn't define in their `Unrecognized`
+  variant, for example `DescriptorType::Unrecognized("JUPYTER")`, and write
+  them back unchanged. `Display` gives the value as received. TRS clients
+  send an unrecognized descriptor type as one encoded path segment and reject
+  empty values, `.` and `..`.
+- TES and WES task and run states are the exception: a state that the spec
+  doesn't define reads as `TesState::Unknown` or `State::Unknown`, which both
+  specs define as the safe default, and is written back as `UNKNOWN`. The
+  server's value is lost; the Python `TesTask.to_dict()` still has it. The TES
+  CLI and the Python bindings still reject unknown state names as list
+  filters.
+
+```rust
+use ga4gh_sdk::clients::tes::models::{TesExecutor, TesTask};
+
+let mut task = TesTask::new(vec![TesExecutor::new(
+    "alpine".to_owned(),
+    vec!["echo".to_owned(), "hello".to_owned()],
+)]);
+task.extra.insert("x-queue".to_owned(), serde_json::json!("long"));
+```
+
+Build models with their `new` function or with `..Default::default()`, so that
+fields added later, such as `extra`, don't break your code. For WES,
+`RunRequest.extra` fields are sent as further parts of the `multipart/form-data`
+request: strings as they are, other values as JSON. Names of parts that the
+request already has are an error.
+
+### Errors
+
+Clients, the transport and the configuration return `ga4gh_sdk::Error`
+(`ga4gh_sdk::Result<T>` for short). Its variants are the kinds of failure:
+
+| Variant | Failure |
+|---|---|
+| `Http(HttpError)` | The service answered with a non-2xx status; `HttpError` (formerly `HttpStatusError`, still available under that name) has the status code and body. Distinguish, for example, a `404` from a network error with it. |
+| `Transport(reqwest::Error)` | No response: a connection or TLS failure, or the HTTP client's timeout. |
+| `Endpoint(EndpointError)` | A path or `base_path` that can't be used for a request. |
+| `Parse(serde_json::Error)` | A body that isn't valid JSON for its model. |
+| `Configuration(..)` | A configuration file, section or environment variable that can't be used. |
+| `UnexpectedService(String)` | The service info names another type of service. |
+| `Other(..)` | Anything else, for example the time limits' `OperationError` or `AmbiguousSubmissionError`. |
+
+More variants may be added, so a `match` needs a wildcard arm. `downcast_ref`
+finds an error of a given type in any variant, and in its sources:
+
+```rust
+use ga4gh_sdk::utils::operation::AmbiguousSubmissionError;
+use ga4gh_sdk::Error;
+
+match tes.create(task).await {
+    Ok(task) => println!("created {}", task.id),
+    Err(Error::Http(http)) if http.status == 401 => eprintln!("check the token"),
+    Err(error) if error.downcast_ref::<AmbiguousSubmissionError>().is_some() => {
+        eprintln!("the task may have been created: {error}")
+    }
+    Err(error) => eprintln!("{error}"),
+}
+```
+
+`ga4gh_sdk::Error` is `Send + Sync`, so the clients and their futures can move
+between threads, for example into `tokio::spawn`. The exception is
+`PreparedBundle::prepare` with a `DescriptorFetcher`, whose futures aren't
+`Send`. If the service answers the service-info request of `DRS::new` or
+`WES::new` with an error status, the error is `Other`, with a hint on the API
+root for a 404, not `Http`; `downcast_ref::<HttpError>()` still returns the
+HTTP error. Other failures of that request, such as a failed connection, keep
+their own variant, as for `TES::new` and `TRS::new`.
+
+A `Box<dyn Error>` made from the SDK error holds a `ga4gh_sdk::Error`, so its
+own `downcast_ref::<HttpError>()` returns `None`. The same holds for an
+`anyhow::Error` and for the errors that `source()` chains yield: the SDK error
+displays as the error it holds and doesn't list it as a source. Downcast to
+`ga4gh_sdk::Error` first, then call that error's `downcast_ref`, or call it
+before boxing.
+
+Code of your own that the SDK calls, such as a `DescriptorFetcher` or the
+attempts passed to `resolve_until`, returns `ga4gh_sdk::Error` too: `?`
+converts the SDK's errors and many standard ones, and `Error::other(error)`
+wraps any other error.
+
+`HttpError`'s `Display` and `Debug` output omits the server body, because the
+server may echo a credential. The public `body` field retains the bounded raw
+response for explicit inspection; treat it as sensitive and do not log it by
+default. With a token provider, `ga4gh_sdk::utils::auth::TokenProviderError`
+(in `Other`) means that the pending request was not sent; a prior read-only
+attempt may have received `401`. `AuthConflictError` means the configured
+sources conflict before any request. See [Token providers](#token-providers).

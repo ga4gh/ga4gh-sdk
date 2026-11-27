@@ -1,8 +1,6 @@
 target/
 debug/
 
-Cargo.lock
-
 openapitools.json
 *.log
 funnel-work-dir/
@@ -16,3 +14,13 @@ venv/
 package.json
 package-lock.json
 node_modules/
+
+# Coverage reports (`make coverage`)
+coverage/
+
+# Documentation site (`make site`) and the bytecode of its hooks
+site/
+__pycache__/
+
+# Copied from the root by `make downstream` (see docs/downstream.md)
+examples/downstream-sdk/Cargo.lock
