@@ -288,7 +288,8 @@ context()
     .subcommand(Command::new("quota"))
 ```
 
-`cli::run`, which the binary calls, handles its own commands and leaves
+After dispatching installed commands, the binary calls `cli::run` for the
+remaining matches. It handles its own commands and leaves
 everything else to the SDK:
 
 - For `tes usage`, it reads the `TES` section with
@@ -373,3 +374,20 @@ artifact paths and shared typed configuration. It checks a missing required
 extension and the public runtime types' `Send + Sync` contract. The C ABI,
 resolver, instance lifecycle, and experimental Rust ABI migration are described
 in the extension guide.
+
+`ga4gh_cli::workflow::{command, run}` is no longer a built-in API. Install the
+[workflow provider](workflow-contracts.md#install-the-cli-extension) using your
+downstream binary's `extension add` and `extension enable` commands. The old
+`command`, `dispatch[_to]` and `dispatch_with_config[_to]` APIs still work for
+built-ins and do not implicitly rediscover plugins from bare `ArgMatches`.
+
+For runtime commands, pass the final tree (including your commands) to
+`context.parse_from(tree, argv)`. The returned `ParsedCli` owns the matches,
+profile selection and provider binding. Call `parsed.dispatch_to(stdout, stderr)`
+for both installed commands and built-ins, or call
+`parsed.dispatch_extension(Some(&wes_config))` to inject configuration. For
+a preconfigured WES transport use `parsed.dispatch_extension_with_wes(&wes)`.
+`dispatch_extension(None)` reads the context's WES configuration only if the
+provider requests submission. `None` **returned** by either extension dispatcher
+leaves `parsed.matches()` for your existing dispatch path; do not parse again.
+See `examples/downstream-sdk/src/main.rs` for this pattern.

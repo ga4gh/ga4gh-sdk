@@ -160,7 +160,12 @@ unsafe fn copy_and_free_output(
     module: &LoadedModule,
     instance: *mut c_void,
     bytes: abi::OwnedBytes,
+    limit: usize,
 ) -> ExtensionResult<Vec<u8>> {
+    if bytes.len > limit {
+        unsafe { (module.free)(instance, bytes) };
+        return Err(invalid_api());
+    }
     let copied = unsafe {
         borrow_bytes(abi::Bytes {
             data: bytes.data,
@@ -215,7 +220,8 @@ impl ExtensionInstance {
         // SAFETY: this module passed the explicit native trust boundary. Different
         // creations may overlap, as required by the plugin contract.
         let status = unsafe { (module.create)(abi::Bytes::new(config), &mut instance, &mut error) };
-        let error_bytes = unsafe { copy_and_free_output(&module, ptr::null_mut(), error) };
+        let error_bytes =
+            unsafe { copy_and_free_output(&module, ptr::null_mut(), error, usize::MAX) };
         let empty_error = error_bytes.as_ref().is_ok_and(Vec::is_empty);
         let valid_instance = !instance.is_null();
         if status != abi::OK || !empty_error || !valid_instance {
@@ -254,6 +260,17 @@ impl ExtensionInstance {
         operation: &str,
         input: &[u8],
     ) -> ExtensionResult<Vec<u8>> {
+        self.invoke_bounded(capability, operation, input, usize::MAX)
+    }
+
+    /// Invokes a method without copying success or error buffers larger than `limit`.
+    pub fn invoke_bounded(
+        &self,
+        capability: &str,
+        operation: &str,
+        input: &[u8],
+        limit: usize,
+    ) -> ExtensionResult<Vec<u8>> {
         let revision = *self
             .inner
             .capabilities
@@ -272,7 +289,7 @@ impl ExtensionInstance {
                 &mut result,
             )
         };
-        let bytes = unsafe { copy_and_free_output(module, instance.0, result) }?;
+        let bytes = unsafe { copy_and_free_output(module, instance.0, result, limit) }?;
         if status != abi::OK {
             return Err(ExtensionError::plugin(
                 ExtensionErrorKind::InvocationFailed,

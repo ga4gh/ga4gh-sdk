@@ -9,6 +9,16 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
-    let matches = cli::command().get_matches();
-    cli::run(&matches, &mut std::io::stdout(), &mut std::io::stderr()).await
+    let parsed = cli::context()
+        .parse_from(cli::command(), std::env::args_os())
+        .unwrap_or_else(|error| error.exit());
+    if let Some(output) = parsed.dispatch_extension(None).await? {
+        return Ok(output.write_to(&mut std::io::stdout(), &mut std::io::stderr())?);
+    }
+    cli::run(
+        parsed.matches(),
+        &mut std::io::stdout(),
+        &mut std::io::stderr(),
+    )
+    .await
 }

@@ -75,7 +75,7 @@ pub type FreeBuffer = unsafe extern "C" fn(instance: *mut c_void, buffer: OwnedB
 pub struct ApiV1 {
     /// Validate this prefix before accessing any other fields.
     pub header: Header,
-    /// UTF-8 JSON: name, version, target, abi_version, capabilities (revision sets).
+    /// UTF-8 JSON: name, version, target, abi_version, capabilities and optional capability_metadata.
     pub descriptor: Bytes,
     /// Required non-null function pointer.
     pub create_instance: Option<CreateInstance>,

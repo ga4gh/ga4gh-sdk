@@ -759,6 +759,7 @@ dependencies = [
  "dirs",
  "env_logger",
  "futures-util",
+ "ga4gh-cli-protocol",
  "ga4gh-lib",
  "log",
  "mockito",
@@ -768,9 +769,20 @@ dependencies = [
  "reqwest 0.13.5",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "ga4gh-cli-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ga4gh-lib",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

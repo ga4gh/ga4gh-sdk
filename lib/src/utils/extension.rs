@@ -155,6 +155,9 @@ pub struct Extension {
     pub artifact: ArtifactIdentity,
     /// Advertised capability revisions.
     pub capabilities: Capabilities,
+    /// Opaque declarative metadata, keyed by capability and advertised revision.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub capability_metadata: BTreeMap<String, BTreeMap<u32, serde_json::Value>>,
     /// Installation source; persisted manifests use the managed library filename.
     pub path: String,
     /// Optional descriptive metadata.
@@ -185,6 +188,9 @@ pub struct ExtensionDescriptor {
     pub abi_version: u32,
     /// Advertised capability revisions.
     pub capabilities: Capabilities,
+    /// Declarative interfaces bound to this binary, checked against the installed manifest.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub capability_metadata: BTreeMap<String, BTreeMap<u32, serde_json::Value>>,
 }
 
 impl Extension {
@@ -230,6 +236,13 @@ impl Extension {
                 return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
             }
         }
+        for (name, metadata) in &self.capability_metadata {
+            if !self.capabilities.get(name).is_some_and(|revisions| {
+                metadata.keys().all(|revision| revisions.contains(revision))
+            }) {
+                return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
+            }
+        }
         Ok(())
     }
 
@@ -254,6 +267,7 @@ impl Extension {
             target: self.artifact.target.clone(),
             abi_version: self.artifact.abi_version,
             capabilities,
+            capability_metadata: self.capability_metadata.clone(),
         }
     }
 }

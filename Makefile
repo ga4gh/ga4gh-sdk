@@ -61,6 +61,15 @@ lint: fmt-check clippy ## Check formatting and run Clippy
 
 check: lint build test ## Run the standard checks from AGENTS.md
 
+.PHONY: workflow-extension
+workflow-extension: ## Package and test the workflow provider independently of the CLI
+	$(CARGO) fmt --manifest-path extensions/workflow/Cargo.toml --check
+	CARGO_TARGET_DIR=$(abspath target) $(CARGO) clippy --locked --manifest-path extensions/workflow/Cargo.toml --all-targets -- -D warnings
+	CARGO_TARGET_DIR=$(abspath target) python3 extensions/workflow/package.py --debug target/workflow-package
+	$(CARGO) clippy --locked -p ga4gh-cli --features workflow-extension-tests --test workflow -- -D warnings
+	GA4GH_WORKFLOW_MANIFEST=$(abspath target/workflow-package/manifest.json) $(CARGO) test --locked -p ga4gh-cli --features workflow-extension-tests --test workflow
+	$(CARGO) test --locked -p ga4gh-lib --features workflow-contracts --lib --test result_reuse --test workflow_contracts
+
 coverage: ## Measure the coverage of the Rust and Python tests (see docs/development.md)
 	mkdir -p $(COVERAGE_DIR) $(COVERAGE_WHEELS)
 	rm -f $(COVERAGE_WHEELS)/ga4gh_sdk-*.whl

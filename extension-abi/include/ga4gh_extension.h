@@ -24,7 +24,8 @@ typedef struct {
 typedef struct Ga4ghExtensionApiV1 {
     Ga4ghHeader header;
     /* Borrowed UTF-8 JSON: name, version, target, abi_version, capabilities.
-       capabilities maps identifiers to arrays of positive integer revisions. */
+       capabilities maps identifiers to arrays of positive integer revisions.
+       Optional capability_metadata matches the manifest by identifier and revision. */
     Ga4ghBytes descriptor;
     int32_t (*create_instance)(Ga4ghBytes config, void **instance, Ga4ghOwnedBytes *error);
     int32_t (*invoke)(void *instance, Ga4ghBytes capability, uint32_t revision,

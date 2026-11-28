@@ -95,6 +95,65 @@ configuration and never load plugin code, including when enabling or selecting.
 instances and invocation handles continue working in both cases. Physical
 cleanup is a separate, future mechanism because other processes may use files.
 
+## CLI command providers
+
+Enabling a trusted provider grants the CLI permission to execute its native
+code when a user invokes one of its commands. Root help, command help and
+management use installed metadata, not the library. Selection changes after
+parsing do not redirect an invocation; disablement or removal before instance
+creation prevents it. There is no fallback to a different artifact.
+
+`ga4gh.cli.commands` revision 1 declares groups in both the installation
+manifest and exported descriptor. For a minimal `words echo <word>`:
+
+```json
+{
+  "capabilities": {"ga4gh.cli.commands": [1]},
+  "capability_metadata": {"ga4gh.cli.commands": {"1": [{
+    "name": "words", "about": "Word tools", "commands": [{
+      "name": "echo", "arguments": [{"name": "word", "required": true}]
+    }]
+  }]}}
+}
+```
+
+The manager persists `capability_metadata` per artifact and advertised revision,
+and compares it with the binary descriptor on load. The CLI interprets it.
+Metadata is public: do not include tokens, private file paths or other secrets.
+Group, command and argument names start with a lowercase ASCII letter and
+contain up to 64 lowercase letters, digits or hyphens. Groups have 1–64 commands,
+each with at most 64 string arguments. Positionals are required, in array order;
+`long: true` defines `--name`, `repeat: true` collects occurrences, `requires`
+names a companion argument, and `help` is display text. A group cannot shadow a
+built-in, downstream command/alias or another enabled provider. Disable one of
+the conflicting providers using `extension disable` to recover.
+
+**Invocation.** A fresh instance receives `{}` as its config. Within the v1 C ABI,
+the capability name, negotiated revision **1**, and operation identify each UTF-8
+JSON message (64 MiB maximum per request or reply). `execute` receives, for example,
+`{"group":"words","command":"echo","profile":null,"arguments":{"word":["hello"]}}`.
+The profile is the explicit selection or profile variable; `null` means use the
+host's default. Missing arguments are absent. Return ABI success and
+`{"complete":{"stdout":"hello\n","stderr":"","exit_status":0}}` for a command
+result, including expected validation failures with a nonzero exit status. The
+host escapes text (retaining a final newline), validates and escapes JSON stdout
+when `json_stdout` is true, and writes to caller-owned streams. A nonzero ABI
+status is an internal plugin failure: its private bytes are not user diagnostics.
+
+**WES action.** Only a command declaring `wes_submit: true` may instead return
+`{"wes_submit":{"request": <WES RunRequest>, "attachments": [{"filename":"main.cwl",
+"base64":"..."}]}}`. Attachment data is standard padded Base64, not paths. The
+host submits those bytes once with its WES client. It calls `wes_outcome` on the
+same instance with either `{"submitted":{"run_id":"..."}}` or
+`{"failed":{"message":"..."}}`. This operation must return the bare output object,
+never another action. An ambiguous response or failed completion does not replay
+the POST. The workflow provider validates inputs and descriptor bytes before this
+handoff and keeps the prepared invocation in the instance until completion.
+
+Maintained provider sources live in `extensions/`. See the [workflow installation
+guide](workflow-contracts.md#install-the-cli-extension) for packaging and the
+[downstream guide](downstream.md#native-extensions-at-runtime) for composition.
+
 ## Rust loading and invocation
 
 ```rust
@@ -219,4 +278,4 @@ old registry and files until old processes stop using them. Unsupported metadata
 is rejected without automatic conversion, rewriting, or deletion.
 
 TLS handshakes, EA/EXPat, connection pools, request gates, appraisal policies,
-TES task rules, and plugin-provided CLI commands remain separate adapter work.
+and TES task rules remain separate adapter work.

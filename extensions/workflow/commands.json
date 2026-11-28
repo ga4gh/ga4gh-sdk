@@ -1,0 +1,20 @@
+[{"name":"workflow","about":"Client-side workflow contracts; submission uses WES","commands":[
+  {"name":"prepare","arguments":[
+    {"name":"schema","required":true},{"name":"request","required":true},{"name":"workflow-identity","required":true},
+    {"name":"descriptor-digest","long":true},{"name":"profile-revision","long":true,"required":true},{"name":"vocabulary-revision","long":true,"required":true}
+  ]},
+  {"name":"submit","wes_submit":true,"arguments":[
+    {"name":"schema","required":true},{"name":"request","required":true},{"name":"workflow-identity","required":true},
+    {"name":"descriptor-digest","long":true},{"name":"profile-revision","long":true,"required":true},{"name":"vocabulary-revision","long":true,"required":true},
+    {"name":"attachment","long":true,"repeat":true,"help":"Explicit filename=local-path attachment"}
+  ]},
+  {"name":"results","arguments":[
+    {"name":"schema","required":true},{"name":"run-log","required":true},{"name":"run-reference","required":true},
+    {"name":"profile-revision","long":true,"required":true},{"name":"vocabulary-revision","long":true,"required":true}
+  ]},
+  {"name":"verify","arguments":[
+    {"name":"result","required":true},{"name":"pointer","required":true},{"name":"bytes","required":true},
+    {"name":"sha256","long":true,"requires":"evidence-source"},{"name":"evidence-source","long":true,"requires":"sha256"}
+  ]},
+  {"name":"compare","arguments":[{"name":"policy","required":true},{"name":"left","required":true},{"name":"right","required":true}]}
+]}]

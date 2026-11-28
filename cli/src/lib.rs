@@ -38,6 +38,7 @@
 pub mod drs;
 pub mod extension;
 mod login;
+mod native;
 pub mod registry;
 mod render;
 pub mod service_info;
@@ -45,7 +46,7 @@ pub mod tes;
 mod tes_files;
 pub mod trs;
 pub mod wes;
-pub mod workflow;
+pub use native::ParsedCli;
 
 pub use render::printable;
 
@@ -488,7 +489,6 @@ impl CliContext {
             .subcommand(tes::command())
             .subcommand(trs::command())
             .subcommand(wes::command())
-            .subcommand(workflow::command())
             .subcommand(registry::command())
             .subcommand(service_info::command())
             .subcommand(login::login_command())
@@ -519,11 +519,6 @@ impl CliContext {
         let context = self.with_profile_from(matches);
         match matches.subcommand() {
             Some(("extension", sub)) => return extension::run(sub, &context).await.map(Some),
-            Some(("workflow", sub)) => {
-                return workflow::run_with_context(sub, None, &context)
-                    .await
-                    .map(Some);
-            }
             Some(("login", _)) => {
                 anyhow::bail!("Interactive login requires CliContext::dispatch_to")
             }
@@ -552,7 +547,6 @@ impl CliContext {
         let context = self.with_profile_from(matches);
         let output = match matches.subcommand() {
             Some(("extension", sub)) => Some(extension::run(sub, &context).await?),
-            Some(("workflow", sub)) => Some(workflow::run_with_context(sub, None, &context).await?),
             Some(("login", sub)) => Some(login::run_login(sub, &context, stderr).await?),
             Some(("logout", sub)) => Some(login::run_logout(sub, &context)?),
             _ => None,
@@ -613,7 +607,6 @@ pub async fn dispatch_with_config(
 ) -> anyhow::Result<Option<CommandOutput>> {
     match matches.subcommand() {
         Some(("drs", sub)) => drs::run(sub, config).await.map(Some),
-        Some(("workflow", sub)) => workflow::run(sub, Some(config)).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
         Some(("trs", sub)) => trs::run(sub, config).await.map(Some),
         Some(("wes", sub)) => wes::run(sub, config).await.map(Some),

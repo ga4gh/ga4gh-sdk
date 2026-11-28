@@ -56,6 +56,7 @@ bump them, so update this guide when you change them.
 | `make coverage` | Coverage report of the Rust and Python tests in `coverage/` (see below) |
 | `make clean-coverage` | Removes coverage data and `coverage/` |
 | `make downstream` | Formatting, Clippy and tests of the [downstream example](downstream.md#checks) |
+| `make workflow-extension` | Build the independent workflow package and exercise its installed CLI commands |
 | `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
 | `make site` | The documentation site in `site/` (see [Documentation](#documentation)) |
 | `make models` | Runs `utils/build_models_wrapper.sh`; run `make fmt` afterwards |
@@ -203,7 +204,7 @@ hand-written:
 (`#![deny(missing_docs)]`), so every build fails on them, not only
 `make clippy` and CI. Document every new public item. Items behind the
 `workflow-contracts` feature are checked only in builds that enable it,
-such as workspace builds (the CLI enables it). The generated `models`
+such as `make workflow-extension` (the core CLI does not enable it). The generated `models`
 modules are exempt, as the generator writes their docs from the OpenAPI
 specifications: the `models` module of every client carries
 `#[allow(missing_docs)]`, together with the Clippy allows above where
@@ -313,7 +314,7 @@ on pushes to `main` and on manual dispatch:
 | --- | --- | --- |
 | `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` with `-D warnings` |
 | `test` | Test | `cargo test --workspace --locked` |
-| `build` | Build | Lockfile check, standalone library and CLI builds |
+| `build` | Build | Lockfile check, standalone library and CLI builds, CLI feature boundary and `make workflow-extension` |
 | `advisories` | Advisories | `cargo deny --locked check advisories` (see [Dependency advisories](#dependency-advisories)) |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
 | `wheels` | Python wheels | Full platform wheel and sdist matrix on `main` pushes and manual runs; skipped on PRs |
@@ -341,7 +342,7 @@ The manual run builds artifacts but does not publish them.
 
 ## Dependency advisories
 
-The `advisories` job checks every crate in `Cargo.lock`, with all features,
+The `advisories` job checks the core and workflow provider lockfiles, with all features,
 against the [RustSec advisory database](https://rustsec.org/): known
 vulnerabilities, and crates marked unmaintained or unsound. It runs on every
 pull request and push to `main`, so a new advisory fails the next run even

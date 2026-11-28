@@ -702,6 +702,13 @@ async fn native_abi_lifetimes_instances_admission_and_process_versions() {
     assert_eq!(failed.status, Some(8));
     assert_eq!(failed.private_payload(), b"SECRET_RESULT");
     assert!(!format!("{failed:?} {failed}").contains("SECRET_RESULT"));
+    for operation in ["echo", "fail"] {
+        let oversized = instance
+            .invoke_bounded("test", operation, b"private", 4)
+            .unwrap_err();
+        assert_eq!(oversized.kind, ExtensionErrorKind::InvalidApi);
+        assert!(oversized.private_payload().is_empty());
+    }
     let dropped = dir.path().join("destroyed");
     instance
         .invoke("test", "set_drop_path", &input(&dropped))
