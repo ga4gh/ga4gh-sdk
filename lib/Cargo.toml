@@ -37,7 +37,7 @@ libloading = "0.8.5"
 
 num-bigint = { version = "0.4", optional = true }
 num-rational = { version = "0.4", optional = true }
-jsonschema = { version = "0.61", default-features = false, optional = true }
+jsonschema = { version = "0.63", default-features = false, optional = true }
 
 # `charset`, `http2` and `system-proxy` keep what reqwest 0.11 always did:
 # decode response text by its charset, offer HTTP/2 and use the system proxy
