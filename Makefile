@@ -35,7 +35,7 @@ DOWNSTREAM_LISTS = $(DOWNSTREAM_DIR)/target/lockfile-check
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test fmt fmt-check clippy lint check coverage docs site \
+.PHONY: help build test fmt fmt-check clippy lint check coverage docs site-rustdoc site \
 	models pre-commit clean-coverage downstream
 
 help: ## Show this list of targets
@@ -66,6 +66,7 @@ workflow-extension: ## Package and test the workflow provider independently of t
 	$(CARGO) fmt --manifest-path extensions/workflow/Cargo.toml --check
 	CARGO_TARGET_DIR=$(abspath target) $(CARGO) clippy --locked --manifest-path extensions/workflow/Cargo.toml --all-targets -- -D warnings
 	CARGO_TARGET_DIR=$(abspath target) python3 extensions/workflow/package.py --debug target/workflow-package
+	cmp extensions/workflow/README.md target/workflow-package/README.md
 	$(CARGO) clippy --locked -p ga4gh-cli --features workflow-extension-tests --test workflow -- -D warnings
 	GA4GH_WORKFLOW_MANIFEST=$(abspath target/workflow-package/manifest.json) $(CARGO) test --locked -p ga4gh-cli --features workflow-extension-tests --test workflow
 	$(CARGO) test --locked -p ga4gh-lib --features workflow-contracts --lib --test result_reuse --test workflow_contracts
@@ -118,13 +119,15 @@ downstream: ## Check, lint and test the downstream example crate
 	$(CARGO) test --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml --locked
 
 docs: ## Build the API documentation (target/doc)
-	$(CARGO) doc --workspace --no-deps --locked
+	$(CARGO) doc --workspace --no-deps --locked --features ga4gh-lib/workflow-contracts
 
 # As Read the Docs (`.readthedocs.yaml`) and the CI `docs` job build it.
 # Any unsuppressed rustdoc warning fails it.
-site: ## Build the documentation site in site/, strictly (needs MkDocs)
+site-rustdoc: ## Build the Rust API reference for the documentation site
 	RUSTDOCFLAGS="$${RUSTDOCFLAGS:-} -D warnings" \
-		$(CARGO) doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli
+		$(CARGO) doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli --features ga4gh-lib/workflow-contracts
+
+site: site-rustdoc ## Build the documentation site in site/, strictly (needs MkDocs)
 	$(MKDOCS) build --strict
 	@# The hook must keep the theme's files (styles and scripts)
 	@ls site/assets/javascripts/bundle.*.min.js > /dev/null

@@ -156,8 +156,8 @@ the host reports the run ID so the caller can inspect it instead of resubmitting
 The workflow provider validates inputs and descriptor bytes before this
 handoff and keeps the prepared invocation in the instance until completion.
 
-Maintained provider sources live in `extensions/`. See the [workflow installation
-guide](workflow-contracts.md#install-the-cli-extension) for packaging and the
+Maintained provider sources live in `extensions/`. See the [workflow extension
+guide](../extensions/workflow/README.md) for installation and commands and the
 [downstream guide](downstream.md#native-extensions-at-runtime) for composition.
 
 ## Rust loading and invocation

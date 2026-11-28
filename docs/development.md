@@ -57,7 +57,7 @@ bump them, so update this guide when you change them.
 | `make clean-coverage` | Removes coverage data and `coverage/` |
 | `make downstream` | Formatting, Clippy and tests of the [downstream example](downstream.md#checks) |
 | `make workflow-extension` | Build the independent workflow package and exercise its installed CLI commands |
-| `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
+| `make docs` | Workspace Rust API documentation, including `ga4gh_sdk::workflow` (in `target/doc/`) |
 | `make site` | The documentation site in `site/` (see [Documentation](#documentation)) |
 | `make models` | Runs `utils/build_models_wrapper.sh`; run `make fmt` afterwards |
 | `make pre-commit` | `pre-commit run --all-files` |
@@ -241,7 +241,16 @@ Docs project is configured as described below, it serves `latest` from
   pinned toolchain, `cargo doc`, then MkDocs.
 
 A new guide needs an entry in `nav`; link to it with its relative path, as
-on GitHub. To build the site locally into `site/` as CI does, install the
+on GitHub. For a maintained extension, keep its user guide in
+`extensions/<name>/README.md`, publish it under **Extensions** in `mkdocs.yml`,
+and ship that same file beside the package manifest. Describe host compatibility,
+installation and enablement, commands, inputs and outputs, and which commands
+contact a service. Include a runnable example and identify any credentials or
+configuration it needs. Keep the extension manager and SDK API reference separate
+from the extension's user guide. The [workflow extension](../extensions/workflow/README.md)
+is an example.
+
+To build the site locally into `site/` as CI does, install the
 tools (pip 25.1 or later) and run `make site`:
 
 ```sh
@@ -251,8 +260,9 @@ make site
 
 `make site` runs two strict builds:
 
-- `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` with
-  `RUSTDOCFLAGS="-D warnings"`, so that any unsuppressed rustdoc warning fails it, such as
+- `make site-rustdoc` builds the SDK and CLI references and explicitly enables
+  `ga4gh-lib/workflow-contracts` for documentation, not for the CLI binary.
+  It sets `RUSTDOCFLAGS="-D warnings"`, so any unsuppressed rustdoc warning fails it, such as
   a bare URL (write `<https://...>` or `[text](https://...)`) or an
   unresolved link. `make docs` builds the whole workspace and stays lenient.
   Fixes in the docs of generated models go into their patch in

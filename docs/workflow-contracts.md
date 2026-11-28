@@ -13,26 +13,10 @@ The [example file map](../examples/sequence-qc/README.md) and
 [upstream schema provenance](../lib/src/workflow/schemas/README.md) identify the
 inputs used below.
 
-## Install the CLI extension
-
-From the repository root, build a package for this machine with Rust and Python 3:
-
-```sh
-python3 extensions/workflow/package.py target/workflow-package
-cargo run -p ga4gh-cli -- extension add target/workflow-package/manifest.json
-cargo run -p ga4gh-cli -- extension enable ga4gh-workflow-extension
-cargo run -p ga4gh-cli -- workflow --help
-```
-
-Alternatively, install a trusted package built for your CLI's target triple:
-keep the manifest beside its library and use your installed CLI for the last
-three commands. `add` alone does not enable a new provider. No WES login or
-service configuration is needed for installation or local commands. Install
-once per CLI configuration directory, not once per profile. Existing scripts
-keep the same five command names, arguments and revision pins after installation.
-Each input file still has an 8 MiB limit. An entire handoff message must fit in
-64 MiB, including Base64-encoded attachments, request fields and JSON syntax.
-See [downstream migration](downstream.md#native-extensions-at-runtime) for embedding.
+The CLI examples below require the [workflow extension](../extensions/workflow/README.md).
+Its guide covers installation, command syntax and input limits. Existing scripts keep
+the same five command names, arguments and revision pins after installation. See
+[downstream migration](downstream.md#native-extensions-at-runtime) for embedding.
 
 ## Prepare and explicitly submit
 

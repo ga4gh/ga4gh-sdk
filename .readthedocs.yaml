@@ -31,10 +31,7 @@ build:
       - >-
         "$HOME/rustup-init" -y --no-modify-path --profile minimal
         --default-toolchain none
-      - >-
-        RUSTDOCFLAGS="-D warnings"
-        "$HOME/.cargo/bin/cargo" doc --no-deps --locked
-        -p ga4gh-lib -p ga4gh-cli
+      - make site-rustdoc CARGO="$HOME/.cargo/bin/cargo"
 
 mkdocs:
   configuration: mkdocs.yml

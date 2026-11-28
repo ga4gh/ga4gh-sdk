@@ -41,8 +41,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO_URL = "https://github.com/ga4gh/ga4gh-sdk"
 # Static files served at their paths in the repository
 ASSETS = ("images",)
-# Crates of the Rust API reference (`cargo doc --no-deps -p ...`)
-CRATES = ("ga4gh_sdk", "ga4gh_cli")
+RUSTDOC_INDEXES = ("ga4gh_sdk", "ga4gh_cli", "ga4gh_sdk/workflow")
 RUSTDOC_PREFIX = "rust"
 # The type stubs, and the directory of the stub-only package made from them
 # (`paths` of the mkdocstrings handler in `mkdocs.yml`)
@@ -209,10 +208,10 @@ def on_files(files: Files, config: MkDocsConfig) -> Files:
             if asset.is_file():
                 _add(site, asset.relative_to(ROOT).as_posix(), config)
     rustdoc = _rustdoc_dir()
-    if not all((rustdoc / crate / "index.html").is_file() for crate in CRATES):
+    missing = [path for path in RUSTDOC_INDEXES if not (rustdoc / path / "index.html").is_file()]
+    if missing:
         log.warning(
-            "The Rust API reference is missing; run "
-            "'cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli' first"
+            "Missing Rust API reference for %s; run 'make site-rustdoc' first", ", ".join(missing)
         )
         return site
     # The crates' pages and the files they share (search index, styles,

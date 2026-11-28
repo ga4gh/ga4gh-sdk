@@ -17,7 +17,7 @@ CLI commands, and limits of the evidence.
 The profile keeps its existing `urn:ga4gh:qc-demo:1` `$id`; moving the files
 does not change the profile bytes or the recorded schema digest.
 
-After [installing the CLI extension](../../docs/workflow-contracts.md#install-the-cli-extension),
+After [installing the CLI extension](../../extensions/workflow/README.md#install-and-enable),
 preparation is offline and needs no WES service:
 
 ```sh

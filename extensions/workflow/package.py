@@ -30,6 +30,7 @@ def main():
                       if message["reason"] == "build-script-executed"
                       and message["package_id"] == build["package_id"])
     args.destination.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(package / "README.md", args.destination / "README.md")
     library = args.destination / artifact.name
     shutil.copyfile(artifact, library)
     with library.open("rb") as content:

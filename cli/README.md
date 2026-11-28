@@ -836,7 +836,7 @@ with exit code 2.
 ## Experimental workflow contracts
 
 `wes` operates the WES service API: submit a run and inspect its state and
-outputs. [Install and enable the workflow extension](../docs/workflow-contracts.md#install-the-cli-extension)
+outputs. [Install and enable the workflow extension](../extensions/workflow/README.md#install-and-enable)
 to use `workflow`. It provides client-side contracts around a run: validate a
 pinned request, submit it explicitly through WES, project and verify selected
 results, and compare runs against a policy. It is not a second workflow

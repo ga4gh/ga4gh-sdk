@@ -376,7 +376,7 @@ resolver, instance lifecycle, and experimental Rust ABI migration are described
 in the extension guide.
 
 `ga4gh_cli::workflow::{command, run}` is no longer a built-in API. Install the
-[workflow provider](workflow-contracts.md#install-the-cli-extension) using your
+[workflow provider](../extensions/workflow/README.md#install-and-enable) using your
 downstream binary's `extension add` and `extension enable` commands. The old
 `command`, `dispatch[_to]` and `dispatch_with_config[_to]` APIs still work for
 built-ins and do not implicitly rediscover plugins from bare `ArgMatches`.

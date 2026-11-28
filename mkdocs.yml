@@ -21,6 +21,7 @@ hooks:
 watch:
   - README.md
   - cli/README.md
+  - extensions/workflow/README.md
   - examples
   - images
   - python/README.md
@@ -115,15 +116,18 @@ nav:
       - Python bindings: python/README.md
       - Downstream use: docs/downstream.md
       - Experimental:
-          - Native extensions: docs/extensions.md
           - Extension Manager v1 design: docs/extension-manager-v1.md
           - Workflow contracts: docs/workflow-contracts.md
           - Result reuse: docs/result-reuse.md
           - Sequence QC example: examples/sequence-qc/README.md
           - Result reuse example: examples/result-reuse/README.md
+  - Extensions:
+      - Managing native extensions: docs/extensions.md
+      - Workflow CLI extension: extensions/workflow/README.md
   - API reference:
       # Built by `cargo doc` before the site (see `docs/development.md`)
       - Rust library: rust/ga4gh_sdk/index.html
+      - Rust workflow contracts: rust/ga4gh_sdk/workflow/index.html
       - Rust CLI library: rust/ga4gh_cli/index.html
       # Rendered from the type stubs by mkdocstrings (see `plugins`)
       - Python bindings: python/api.md
