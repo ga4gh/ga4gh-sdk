@@ -35,7 +35,7 @@ fn command_has_the_binary_name_version_and_built_in_commands() {
         command.get_about().map(ToString::to_string).as_deref(),
         Some("Another CLI")
     );
-    for name in ["drs", "tes", "trs", "wes", "workflow", "registry"] {
+    for name in ["drs", "tes", "trs", "wes", "registry"] {
         assert!(command.find_subcommand(name).is_some(), "missing {name}");
     }
     command.clone().debug_assert();
@@ -338,73 +338,4 @@ fn write_to_writes_both_streams_and_returns_the_exit_code() {
     assert_eq!(exit_code, ExitCode::FAILURE);
     assert_eq!(stdout, b"out");
     assert_eq!(stderr, b"err");
-}
-
-/// `workflow submit` is the one command that sends a configured token, so it
-/// shows that the token variable reaches the service.
-#[tokio::test]
-async fn workflow_submission_uses_the_context_file_and_token_variable() {
-    let mut server = mockito::Server::new_async().await;
-    const VAR: &str = "GA4GH_CLI_TEST_CONTEXT_TOKEN_WORKFLOW";
-    let info = json!({
-        "workflow_type_versions": {"CWL": {"workflow_type_version": ["v1.2"]}},
-        "supported_wes_versions": ["1.0.0"],
-        "supported_filesystem_protocols": ["file"],
-        "workflow_engine_versions": {},
-        "default_workflow_engine_parameters": [],
-        "system_state_counts": {},
-        "tags": {}
-    });
-    let service = server
-        .mock("GET", "/context-wes/service-info")
-        .match_header("authorization", "Bearer token-from-variable")
-        .with_body(info.to_string())
-        .expect(1)
-        .create();
-    let submission = server
-        .mock("POST", "/context-wes/runs")
-        .match_header("authorization", "Bearer token-from-variable")
-        .with_body(r#"{"run_id":"context-run"}"#)
-        .expect(1)
-        .create();
-    let dir = tempfile::tempdir().unwrap();
-    let base_path = format!("{}/context-wes", server.url());
-    let path = write_config(dir.path(), json!({"WES": {"base_path": base_path}}));
-    std::env::set_var(VAR, "token-from-variable");
-    let context = context(&path).with_token_env(VAR, [ServiceType::WES]);
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let schema = root.join("examples/sequence-qc/profile.json");
-    let request = root.join("examples/sequence-qc/request.json");
-    let pin = "45d41324353cb4900fdd999c307c2e36a3f2a410";
-    let matches = context
-        .command()
-        .try_get_matches_from([
-            "other-cli",
-            "workflow",
-            "submit",
-            schema.to_str().unwrap(),
-            request.to_str().unwrap(),
-            "public-qc@1",
-            "--profile-revision",
-            pin,
-            "--vocabulary-revision",
-            pin,
-        ])
-        .unwrap();
-
-    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-    let exit_code = context
-        .dispatch_to(&matches, &mut stdout, &mut stderr)
-        .await
-        .unwrap();
-    assert_eq!(
-        exit_code,
-        Some(ExitCode::SUCCESS),
-        "{}",
-        String::from_utf8_lossy(&stderr)
-    );
-    let response: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
-    assert_eq!(response["run_id"], "context-run");
-    service.assert();
-    submission.assert();
 }

@@ -114,6 +114,19 @@ fn workflow_form(mut request: RunRequest) -> crate::Result<Form> {
     Ok(form)
 }
 
+pub(crate) fn validate_filenames<'a>(
+    filenames: impl Iterator<Item = &'a str>,
+) -> crate::Result<()> {
+    let mut names = HashSet::new();
+    for filename in filenames {
+        validate_filename(filename)?;
+        if !names.insert(filename) {
+            return Err("duplicate workflow attachment filename".into());
+        }
+    }
+    Ok(())
+}
+
 /// The parts of a RunWorkflow request that `RunRequest.extra` must not
 /// replace: the `RunRequest` fields and the attachments. Keep in step with
 /// `workflow_form` and the attachment parts.
@@ -139,13 +152,11 @@ impl WES {
         attachments: Vec<StreamingAttachment>,
         operation: &Operation,
     ) -> crate::Result<Run> {
-        let mut names = HashSet::new();
-        for attachment in &attachments {
-            validate_filename(&attachment.filename)?;
-            if !names.insert(&attachment.filename) {
-                return Err("duplicate workflow attachment filename".into());
-            }
-        }
+        validate_filenames(
+            attachments
+                .iter()
+                .map(|attachment| attachment.filename.as_str()),
+        )?;
         let mut form = workflow_form(request)?;
         let form = operation
             .run(async {

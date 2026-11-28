@@ -40,6 +40,9 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check dependency lockfile
@@ -48,6 +51,15 @@ jobs:
         run: cargo build --locked -p ga4gh-lib
       - name: Build CLI alone
         run: cargo build --locked -p ga4gh-cli
+      - name: Verify CLI feature boundary
+        run: |
+          features=$(cargo tree --locked -p ga4gh-cli -e normal,build -i ga4gh-lib --depth 0 --format '{f}')
+          if [[ ",$features," == *,workflow-contracts,* ]]; then
+            echo '::error::The standalone CLI enables ga4gh-lib/workflow-contracts'
+            exit 1
+          fi
+      - name: Exercise the independently built workflow provider
+        run: make workflow-extension
 
   # Known advisories (RustSec) for the crates in `Cargo.lock`; accepted ones
   # are listed with a reason in `deny.toml`.
@@ -64,6 +76,8 @@ jobs:
           tool: cargo-deny@0.20.2
       - name: Check advisories
         run: cargo deny --locked check advisories
+      - name: Check workflow provider lockfile
+        run: cargo deny --manifest-path extensions/workflow/Cargo.toml --config "$PWD/deny.toml" --locked check advisories
 
   python:
     name: Python tests (Python ${{ matrix.python }})

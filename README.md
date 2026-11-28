@@ -510,7 +510,7 @@ See the [named Toil integration check](tests/README.md) for an actual CWL execut
 
 Enable `ga4gh-lib/workflow-contracts` for pinned local I/O validation, immutable
 WES invocation plans, typed results with selected artifact evidence, and explicit
-scientific comparison policies. The CLI exposes `workflow prepare`, `submit`,
+scientific comparison policies. The separately installed [workflow extension](extensions/workflow/README.md) provides `workflow prepare`, `submit`,
 `results`, `verify` and `compare`. See the [workflow guide](docs/workflow-contracts.md)
 for the public sequence-QC example, offline commands and evidence boundaries.
 The same optional feature provides [exact result reuse](docs/result-reuse.md)

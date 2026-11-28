@@ -1,7 +1,8 @@
 # Experimental workflow contracts
 
-Enable the library's `workflow-contracts` feature. The CLI enables it for the
-`workflow` subcommands. This optional client-side layer consumes the I/O Profile
+Rust applications can continue to enable the library's `workflow-contracts`
+feature and use `ga4gh_sdk::workflow`; the core CLI does not enable it.
+This optional client-side layer consumes the I/O Profile
 and UI vocabulary at revision `45d41324353cb4900fdd999c307c2e36a3f2a410`.
 The separate `wes` commands operate the WES service API directly; `workflow`
 adds local validation, result evidence and comparison around an explicit WES
@@ -11,6 +12,11 @@ TES command generation. The workflow engine owns staging and execution.
 The [example file map](../examples/sequence-qc/README.md) and
 [upstream schema provenance](../lib/src/workflow/schemas/README.md) identify the
 inputs used below.
+
+The CLI examples below require the [workflow extension](../extensions/workflow/README.md).
+Its guide covers installation, command syntax and input limits. Existing scripts keep
+the same five command names, arguments and revision pins after installation. See
+[downstream migration](downstream.md#native-extensions-at-runtime) for embedding.
 
 ## Prepare and explicitly submit
 
@@ -51,11 +57,12 @@ prove which bytes an engine fetches later from a mutable remote URL.
 
 Explicit CLI submission uses the `WES` section of `~/.ga4gh-cli/config.json`.
 Downstream CLI callers can instead supply a `Configuration` through
-`ga4gh_cli::dispatch_with_config()`.
+`ParsedCli::dispatch_extension(Some(&config))`.
 For OAuth, set `oauth_access_token` to the current token. `workflow submit`
 uses the same WES client and authentication path as `wes run`, including Basic
-and generic bearer sources. The CLI does not implement login or token refresh.
-For custom HTTP policy, use `WES::from_transport` with a caller-owned client;
+and generic bearer sources. The host resolves the selected profile and handles
+OIDC login refresh; the extension receives neither the configuration nor tokens.
+For custom HTTP policy, pass a caller-owned WES client to `ParsedCli::dispatch_extension_with_wes`;
 see the [authentication guide](authentication.md):
 
 ```sh

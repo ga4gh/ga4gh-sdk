@@ -324,7 +324,6 @@ fn cli_keeps_the_built_in_commands_and_adds_its_own() {
         "drs",
         "trs",
         "wes",
-        "workflow",
         "registry",
         "service-info",
         "login",

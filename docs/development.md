@@ -56,7 +56,8 @@ bump them, so update this guide when you change them.
 | `make coverage` | Coverage report of the Rust and Python tests in `coverage/` (see below) |
 | `make clean-coverage` | Removes coverage data and `coverage/` |
 | `make downstream` | Formatting, Clippy and tests of the [downstream example](downstream.md#checks) |
-| `make docs` | `cargo doc --workspace --no-deps --locked` (in `target/doc/`) |
+| `make workflow-extension` | Build the independent workflow package and exercise its installed CLI commands |
+| `make docs` | Workspace Rust API documentation, including `ga4gh_sdk::workflow` (in `target/doc/`) |
 | `make site` | The documentation site in `site/` (see [Documentation](#documentation)) |
 | `make models` | Runs `utils/build_models_wrapper.sh`; run `make fmt` afterwards |
 | `make pre-commit` | `pre-commit run --all-files` |
@@ -203,7 +204,7 @@ hand-written:
 (`#![deny(missing_docs)]`), so every build fails on them, not only
 `make clippy` and CI. Document every new public item. Items behind the
 `workflow-contracts` feature are checked only in builds that enable it,
-such as workspace builds (the CLI enables it). The generated `models`
+such as `make workflow-extension` (the core CLI does not enable it). The generated `models`
 modules are exempt, as the generator writes their docs from the OpenAPI
 specifications: the `models` module of every client carries
 `#[allow(missing_docs)]`, together with the Clippy allows above where
@@ -240,7 +241,16 @@ Docs project is configured as described below, it serves `latest` from
   pinned toolchain, `cargo doc`, then MkDocs.
 
 A new guide needs an entry in `nav`; link to it with its relative path, as
-on GitHub. To build the site locally into `site/` as CI does, install the
+on GitHub. For a maintained extension, keep its user guide in
+`extensions/<name>/README.md`, publish it under **Extensions** in `mkdocs.yml`,
+and ship that same file beside the package manifest. Describe host compatibility,
+installation and enablement, commands, inputs and outputs, and which commands
+contact a service. Include a runnable example and identify any credentials or
+configuration it needs. Keep the extension manager and SDK API reference separate
+from the extension's user guide. The [workflow extension](../extensions/workflow/README.md)
+is an example.
+
+To build the site locally into `site/` as CI does, install the
 tools (pip 25.1 or later) and run `make site`:
 
 ```sh
@@ -250,8 +260,9 @@ make site
 
 `make site` runs two strict builds:
 
-- `cargo doc --no-deps --locked -p ga4gh-lib -p ga4gh-cli` with
-  `RUSTDOCFLAGS="-D warnings"`, so that any unsuppressed rustdoc warning fails it, such as
+- `make site-rustdoc` builds the SDK and CLI references and explicitly enables
+  `ga4gh-lib/workflow-contracts` for documentation, not for the CLI binary.
+  It sets `RUSTDOCFLAGS="-D warnings"`, so any unsuppressed rustdoc warning fails it, such as
   a bare URL (write `<https://...>` or `[text](https://...)`) or an
   unresolved link. `make docs` builds the whole workspace and stays lenient.
   Fixes in the docs of generated models go into their patch in
@@ -313,7 +324,7 @@ on pushes to `main` and on manual dispatch:
 | --- | --- | --- |
 | `lint` | Lint | `cargo fmt --all --check`, `cargo clippy` with `-D warnings` |
 | `test` | Test | `cargo test --workspace --locked` |
-| `build` | Build | Lockfile check, standalone library and CLI builds |
+| `build` | Build | Lockfile check, standalone library and CLI builds, CLI feature boundary and `make workflow-extension` |
 | `advisories` | Advisories | `cargo deny --locked check advisories` (see [Dependency advisories](#dependency-advisories)) |
 | `python` | Python tests | Builds and installs the wheel, runs `pytest` in `python/` |
 | `wheels` | Python wheels | Full platform wheel and sdist matrix on `main` pushes and manual runs; skipped on PRs |
@@ -341,7 +352,7 @@ The manual run builds artifacts but does not publish them.
 
 ## Dependency advisories
 
-The `advisories` job checks every crate in `Cargo.lock`, with all features,
+The `advisories` job checks the core and workflow provider lockfiles, with all features,
 against the [RustSec advisory database](https://rustsec.org/): known
 vulnerabilities, and crates marked unmaintained or unsound. It runs on every
 pull request and push to `main`, so a new advisory fails the next run even

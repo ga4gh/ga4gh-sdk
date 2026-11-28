@@ -38,12 +38,14 @@ admission during disable/removal, process version pins, and immutable updates.
 Python's `tests/test_extensions.py` compiles and calls the same C fixture through
 the bindings; it also requires a host C compiler. The CLI's
 [`extensions.rs`](../cli/tests/extensions.rs) checks caller-owned paths and command
-output. Both suites run with the default workspace tests and need no external
+output. On Unix, `native_commands.rs` also compiles a command provider with
+`cc` and checks lazy loading, selection, collisions, and recovery. These suites
+run with the default workspace tests and need no external
 services:
 
 ```sh
 cargo test --locked -p ga4gh-lib --test extensions
-cargo test --locked -p ga4gh-cli --test extensions
+cargo test --locked -p ga4gh-cli --test extensions --test native_commands
 ```
 
 ## Funnel/TES
@@ -367,12 +369,13 @@ attachment handling remains unsupported for this bundle scenario.
 ## Workflow contracts and two local QC executions
 
 ```sh
-cargo test -p ga4gh-lib --features workflow-contracts --test workflow_contracts
-cargo test -p ga4gh-cli --test workflow
+make workflow-extension
 python3 tests/run-workflow-contracts-qc.py
 ```
 
-The first two commands exercise offline Draft 2020-12 validation, pinned upstream
+`make workflow-extension` requires Python 3 and the workspace Rust toolchain. It
+builds the provider in its own Cargo workspace, packages it, installs it in
+temporary registries, and exercises offline Draft 2020-12 validation, pinned upstream
 fixtures, actual CLI JSON/errors, partial output delivery and comparison policies.
 The [fixture README](fixtures/io-profile/README.md) records their upstream revision
 and checksums; the [example README](../examples/sequence-qc/README.md) maps the

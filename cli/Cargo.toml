@@ -11,8 +11,9 @@ readme.workspace = true
 license-file.workspace = true
 
 [dependencies]
-ga4gh-lib = { path = "../lib", features = ["workflow-contracts"] }
-clap = "4"
+ga4gh-lib = { path = "../lib" }
+ga4gh-cli-protocol = { path = "../cli-protocol" }
+clap = { version = "4", features = ["string"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "^1.0"
@@ -39,6 +40,7 @@ object_store = { version = "0.14", default-features = false, features = ["aws-ba
 object-store-reqwest = { package = "reqwest", version = "0.13", default-features = false, features = ["native-tls", "system-proxy"] }
 
 [features]
+workflow-extension-tests = []
 # Runs the CLI against Starter Kit WES; see tests/README.md.
 wes_docker_integration_tests = []
 # Runs the `tes` commands against proTES with an access token; see
@@ -53,7 +55,12 @@ keycloak_integration_tests = []
 
 [dev-dependencies]
 mockito = "1.7"
+sha2 = "0.11"
 
 [[bin]]
 name = "ga4gh-cli"
 path = "src/main.rs"
+
+[[test]]
+name = "workflow"
+required-features = ["workflow-extension-tests"]

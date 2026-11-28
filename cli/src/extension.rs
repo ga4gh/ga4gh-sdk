@@ -2,7 +2,6 @@
 
 use crate::{CliContext, CommandOutput};
 use clap::{Arg, ArgMatches, Command};
-use ga4gh_sdk::utils::extension_manager::ExtensionManager;
 
 /// Builds the `extension` command family.
 pub fn command() -> Command {
@@ -47,12 +46,7 @@ pub fn command() -> Command {
 /// Returns configuration, input, download and filesystem errors. Callers own
 /// output streams and decide how to display the returned output or error.
 pub async fn run(matches: &ArgMatches, context: &CliContext) -> anyhow::Result<CommandOutput> {
-    let config = context.config_path()?;
-    let registry = config
-        .parent()
-        .unwrap_or(std::path::Path::new(""))
-        .join("extensions.json");
-    let mut manager = ExtensionManager::open(registry)?;
+    let mut manager = context.extension_manager()?;
     let Some((command, sub)) = matches.subcommand() else {
         anyhow::bail!("An extension subcommand is required");
     };

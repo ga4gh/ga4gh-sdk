@@ -177,18 +177,46 @@ impl ExtensionManager {
         digest: Option<&str>,
         required: &Capabilities,
     ) -> ExtensionResult<ResolvedExtension> {
-        extension::validate_name(name)?;
+        Self::validate_requirements(name, required)?;
         let requirement = version
             .map(semver::VersionReq::parse)
             .transpose()
             .map_err(|_| ExtensionError::new(ExtensionErrorKind::InvalidMetadata))?;
+        let registry = Registry::read(&self.registry)?;
+        self.resolve_in(&registry, name, requirement.as_ref(), digest, required)
+    }
+
+    /// Resolves the selection seen by [`Self::get_extensions`] without reading the registry again.
+    /// Use this when interpreting metadata from that snapshot; [`Self::create_instance`] still
+    /// checks the complete installation and current enablement before executing native code.
+    pub fn resolve_selected_from_snapshot(
+        &self,
+        name: &str,
+        required: &Capabilities,
+    ) -> ExtensionResult<ResolvedExtension> {
+        Self::validate_requirements(name, required)?;
+        self.resolve_in(&self.snapshot, name, None, None, required)
+    }
+
+    fn validate_requirements(name: &str, required: &Capabilities) -> ExtensionResult<()> {
+        extension::validate_name(name)?;
         for (name, revisions) in required {
             extension::validate_name(name)?;
             if revisions.is_empty() || revisions.contains(&0) {
                 return Err(ExtensionError::new(ExtensionErrorKind::InvalidMetadata));
             }
         }
-        let registry = Registry::read(&self.registry)?;
+        Ok(())
+    }
+
+    fn resolve_in(
+        &self,
+        registry: &Registry,
+        name: &str,
+        requirement: Option<&semver::VersionReq>,
+        digest: Option<&str>,
+        required: &Capabilities,
+    ) -> ExtensionResult<ResolvedExtension> {
         let record = registry
             .extensions
             .iter()
@@ -198,7 +226,7 @@ impl ExtensionManager {
             return Err(ExtensionError::new(ExtensionErrorKind::Disabled));
         }
         let (installation, capabilities) =
-            resolution::select_artifact(record, requirement.as_ref(), digest, required)?;
+            resolution::select_artifact(record, requirement, digest, required)?;
         Ok(ResolvedExtension {
             installation,
             capabilities,

@@ -12,6 +12,7 @@
 !extension-abi/
 !lib/
 !cli/
+!cli-protocol/
 !python/
 !.env.example
 

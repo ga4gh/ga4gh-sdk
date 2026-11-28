@@ -4,6 +4,7 @@ members = [
     "extension-abi",
     "lib",
     "cli",
+    "cli-protocol",
     "python"
 ]
 

@@ -38,6 +38,7 @@
 pub mod drs;
 pub mod extension;
 mod login;
+mod native;
 pub mod registry;
 mod render;
 pub mod service_info;
@@ -45,7 +46,7 @@ pub mod tes;
 mod tes_files;
 pub mod trs;
 pub mod wes;
-pub mod workflow;
+pub use native::ParsedCli;
 
 pub use render::printable;
 
@@ -133,9 +134,8 @@ impl CommandOutput {
 /// configuration file, profile and token variable.
 ///
 /// [`CliContext::default`] describes `ga4gh-cli`. A downstream binary creates
-/// its own and uses its [`command`](Self::command),
-/// [`dispatch`](Self::dispatch) and [`dispatch_to`](Self::dispatch_to) in
-/// place of the free functions of the same names, which use the default:
+/// its own and passes its final [`command`](Self::command) tree to
+/// [`parse_from`](Self::parse_from) to include installed commands:
 ///
 /// ```no_run
 /// use clap::Command;
@@ -145,9 +145,10 @@ impl CommandOutput {
 /// let context = CliContext::new("my-cli", env!("CARGO_PKG_VERSION"))
 ///     .with_about("CLI for my services")
 ///     .with_token_env("MY_CLI_TOKEN", [ServiceType::Custom("MY_SERVICE".into())]);
-/// let matches = context.command().subcommand(Command::new("custom")).get_matches();
+/// let tree = context.command().subcommand(Command::new("custom"));
+/// let parsed = context.parse_from(tree, std::env::args_os())?;
 /// let mut stdout = std::io::stdout();
-/// match context.dispatch_to(&matches, &mut stdout, &mut std::io::stderr()).await? {
+/// match parsed.dispatch_to(&mut stdout, &mut std::io::stderr()).await? {
 ///     Some(exit_code) => Ok(exit_code),
 ///     // Handle the custom subcommand, for example with the section
 ///     // `context.load_config(ServiceType::Custom("MY_SERVICE".into()))`.
@@ -488,7 +489,6 @@ impl CliContext {
             .subcommand(tes::command())
             .subcommand(trs::command())
             .subcommand(wes::command())
-            .subcommand(workflow::command())
             .subcommand(registry::command())
             .subcommand(service_info::command())
             .subcommand(login::login_command())
@@ -519,11 +519,6 @@ impl CliContext {
         let context = self.with_profile_from(matches);
         match matches.subcommand() {
             Some(("extension", sub)) => return extension::run(sub, &context).await.map(Some),
-            Some(("workflow", sub)) => {
-                return workflow::run_with_context(sub, None, &context)
-                    .await
-                    .map(Some);
-            }
             Some(("login", _)) => {
                 anyhow::bail!("Interactive login requires CliContext::dispatch_to")
             }
@@ -552,7 +547,6 @@ impl CliContext {
         let context = self.with_profile_from(matches);
         let output = match matches.subcommand() {
             Some(("extension", sub)) => Some(extension::run(sub, &context).await?),
-            Some(("workflow", sub)) => Some(workflow::run_with_context(sub, None, &context).await?),
             Some(("login", sub)) => Some(login::run_login(sub, &context, stderr).await?),
             Some(("logout", sub)) => Some(login::run_logout(sub, &context)?),
             _ => None,
@@ -613,7 +607,6 @@ pub async fn dispatch_with_config(
 ) -> anyhow::Result<Option<CommandOutput>> {
     match matches.subcommand() {
         Some(("drs", sub)) => drs::run(sub, config).await.map(Some),
-        Some(("workflow", sub)) => workflow::run(sub, Some(config)).await.map(Some),
         Some(("tes", sub)) => tes::run(sub, config).await.map(Some),
         Some(("trs", sub)) => trs::run(sub, config).await.map(Some),
         Some(("wes", sub)) => wes::run(sub, config).await.map(Some),

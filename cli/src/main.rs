@@ -76,8 +76,14 @@ async fn main() -> anyhow::Result<ExitCode> {
         })
         .init();
 
-    let matches = ga4gh_cli::command().get_matches();
-    match ga4gh_cli::dispatch_to(&matches, &mut std::io::stdout(), &mut std::io::stderr()).await? {
+    let context = ga4gh_cli::CliContext::default();
+    let parsed = context
+        .parse_from(context.command(), std::env::args_os())
+        .unwrap_or_else(|error| error.exit());
+    match parsed
+        .dispatch_to(&mut std::io::stdout(), &mut std::io::stderr())
+        .await?
+    {
         Some(exit_code) => Ok(exit_code),
         None => {
             error!("Error: Unrecognized command or option");

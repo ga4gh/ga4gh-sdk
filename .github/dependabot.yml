@@ -4,11 +4,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
-  # Rust crates in the workspace's `Cargo.lock`, including those of the
+  # Rust crates in the core and workflow provider lockfiles, including those of the
   # Python bindings. Semver-compatible updates come as one PR; each
   # incompatible update, such as a new 0.x minor version, comes on its own.
   - package-ecosystem: cargo
-    directory: /
+    directories:
+      - /
+      - /extensions/workflow
     schedule:
       interval: weekly
     groups:

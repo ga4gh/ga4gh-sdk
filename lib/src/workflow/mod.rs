@@ -489,6 +489,17 @@ impl PreparedInvocation {
         wes: &WES,
         attachments: Vec<WorkflowAttachment>,
     ) -> Result<Run, ContractError> {
+        self.validate_attachments(&attachments)?;
+        wes.run_workflow_with_attachments(self.request.clone(), attachments)
+            .await
+    }
+
+    /// Checks attachment names and the primary descriptor digest without performing I/O.
+    /// For submissions without uploads, use the semantics of [`Self::submit`] instead.
+    pub fn validate_attachments(
+        &self,
+        attachments: &[WorkflowAttachment],
+    ) -> Result<(), ContractError> {
         if let Some(expected) = &self.identity.descriptor_digest {
             let expected = expected
                 .strip_prefix("sha256:")
@@ -501,8 +512,11 @@ impl PreparedInvocation {
                 return Err("primary descriptor digest mismatch; prepare a new invocation".into());
             }
         }
-        wes.run_workflow_with_attachments(self.request.clone(), attachments)
-            .await
+        crate::clients::wes::attachments::validate_filenames(
+            attachments
+                .iter()
+                .map(|attachment| attachment.filename.as_str()),
+        )
     }
     /// Submits the run request to `wes`, as [`WES::run_workflow`] does.
     /// Doesn't check `descriptor_digest`, as nothing is uploaded.

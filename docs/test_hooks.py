@@ -50,6 +50,22 @@ def test_nav_paths() -> None:
     assert hooks._nav_paths(nav) == ["README.md", "cli/README.md", "docs/usage.md"]
 
 
+def test_rustdoc_without_workflow_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Both crate indexes are present even when rustdoc omits the optional workflow API."""
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path))
+    for crate in ("ga4gh_sdk", "ga4gh_cli"):
+        directory = tmp_path / "doc" / crate
+        directory.mkdir(parents=True)
+        (directory / "index.html").touch()
+    config = SimpleNamespace(
+        nav=[], docs_dir=str(tmp_path), site_dir=str(tmp_path / "site"), use_directory_urls=True
+    )
+    hooks.on_files(hooks.Files([]), config)
+    assert "Missing Rust API reference for ga4gh_sdk/workflow" in caplog.text
+
+
 def test_tracked_file_outside_site() -> None:
     """A link to a tracked file that is no page goes to GitHub."""
     assert _render("[x](LICENSE)") == f"[x]({BLOB}/LICENSE)"
