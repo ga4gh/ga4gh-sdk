@@ -1,4 +1,6 @@
 //! Workflow provider for the GA4GH C ABI v1.
+#[cfg(feature = "workflow-api-preview")]
+mod programmatic;
 mod workflow;
 
 use ga4gh_cli_protocol::{encode, Output, Reply, CAPABILITY, MAX_MESSAGE};
@@ -10,7 +12,12 @@ use std::{
     ptr,
 };
 
-type Pending = Option<PreparedInvocation>;
+#[derive(Default)]
+struct State {
+    cli: Option<PreparedInvocation>,
+    #[cfg(feature = "workflow-api-preview")]
+    api: programmatic::Preparations,
+}
 
 unsafe fn bytes<'a>(input: abi::Bytes) -> Option<&'a [u8]> {
     if input.len == 0 {
@@ -27,7 +34,7 @@ unsafe extern "C" fn create(
     instance: *mut *mut c_void,
     _: *mut abi::OwnedBytes,
 ) -> i32 {
-    unsafe { instance.write(Box::into_raw(Box::new(Pending::None)).cast()) };
+    unsafe { instance.write(Box::into_raw(Box::new(State::default())).cast()) };
     abi::OK
 }
 
@@ -40,12 +47,22 @@ unsafe extern "C" fn invoke(
     output: *mut abi::OwnedBytes,
 ) -> i32 {
     let reply = catch_unwind(AssertUnwindSafe(|| -> Option<Vec<u8>> {
-        if revision != 1 || unsafe { bytes(capability)? } != CAPABILITY.as_bytes() {
+        if revision != 1 {
             return None;
         }
-        let pending = unsafe { instance.cast::<Pending>().as_mut()? };
+        let state = unsafe { instance.cast::<State>().as_mut()? };
+        let capability = unsafe { bytes(capability)? };
+        let operation = unsafe { bytes(operation)? };
         let input = unsafe { bytes(input)? };
-        match unsafe { bytes(operation)? } {
+        #[cfg(feature = "workflow-api-preview")]
+        if capability == b"ga4gh.workflow" {
+            return state.api.invoke(operation, input);
+        }
+        if capability != CAPABILITY.as_bytes() {
+            return None;
+        }
+        let pending = &mut state.cli;
+        match operation {
             b"execute" => {
                 let invocation = serde_json::from_slice(input).ok()?;
                 let reply = workflow::execute(invocation, pending)
@@ -73,7 +90,7 @@ unsafe extern "C" fn invoke(
 }
 
 unsafe extern "C" fn destroy(instance: *mut c_void) {
-    unsafe { drop(Box::from_raw(instance.cast::<Pending>())) };
+    unsafe { drop(Box::from_raw(instance.cast::<State>())) };
 }
 unsafe extern "C" fn free(_: *mut c_void, buffer: abi::OwnedBytes) {
     if !buffer.data.is_null() {

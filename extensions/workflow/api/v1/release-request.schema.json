@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ga4gh.workflow revision 1: release request",
+  "type": "object",
+  "required": ["state_ref"],
+  "additionalProperties": false,
+  "properties": {"state_ref": {"type": "string", "minLength": 1}}
+}

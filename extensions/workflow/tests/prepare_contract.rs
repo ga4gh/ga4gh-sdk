@@ -7,6 +7,16 @@ fn validator(source: &str) -> jsonschema::Validator {
 }
 
 #[test]
+fn default_build_does_not_advertise_the_preview() {
+    let descriptor: Value =
+        serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/descriptor.json"))).unwrap();
+    assert_eq!(
+        descriptor["capabilities"].get("ga4gh.workflow").is_some(),
+        cfg!(feature = "workflow-api-preview")
+    );
+}
+
+#[test]
 fn prepare_envelopes_preserve_profile_bytes_records_and_diagnostics() {
     let input = validator(include_str!("../api/v1/prepare-request.schema.json"));
     let output = validator(include_str!("../api/v1/prepare-reply.schema.json"));

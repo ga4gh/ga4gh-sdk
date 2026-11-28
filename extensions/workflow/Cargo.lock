@@ -627,7 +627,12 @@ dependencies = [
  "ga4gh-extension-abi",
  "ga4gh-lib",
  "jsonschema",
+ "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

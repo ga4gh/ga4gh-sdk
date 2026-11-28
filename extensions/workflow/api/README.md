@@ -1,8 +1,10 @@
 # Programmatic workflow contract
 
 This directory defines the in-memory protocol for `ga4gh.workflow`, independently
-of `ga4gh.cli.commands`. Revision 1 is in development; the current native provider
-does **not** advertise it. Do not fall back to CLI invocation when negotiation fails.
+of `ga4gh.cli.commands`. Revision 1 is in development; the default package
+does **not** advertise it. A developer build with the Cargo feature
+`workflow-api-preview` exposes `prepare` and `release` for integration tests.
+Do not fall back to CLI invocation when negotiation fails.
 
 ## Preparation (revision 1)
 
@@ -29,3 +31,13 @@ Validation errors may include JSON-pointer diagnostics. Their public messages
 must not expose private native error payloads. ABI failures and unsupported
 capability revisions are loader errors, not workflow error replies. WES errors
 are separate: `prepare` does not submit anything.
+
+The preview keeps at most one live preparation per instance. A second `prepare`
+returns `state_in_use` without replacing the first plan. Call `release` with
+`{"state_ref":"<reference>"}` on that instance; success returns `{"released":true}`.
+A stale or foreign reference returns `invalid_state` in the workflow error
+envelope and leaves any live plan untouched. A malformed release returns
+`invalid_request`. Destroying the instance also releases its preparation.
+An oversized prepared reply returns `result_too_large` without allocating a
+live-state reference for the caller. Input-schema failures retain their JSON
+pointers without echoing rejected parameter values in their messages.

@@ -2,6 +2,9 @@
 
 Rust applications can continue to enable the library's `workflow-contracts`
 feature and use `ga4gh_sdk::workflow`; the core CLI does not enable it.
+Rust callers of `Profile::prepare` can use `error.downcast_ref::<InputValidationError>()`
+with `ga4gh_sdk::workflow::InputValidationError` to inspect input-schema diagnostics
+without parsing the error's display text.
 This optional client-side layer consumes the I/O Profile
 and UI vocabulary at revision `45d41324353cb4900fdd999c307c2e36a3f2a410`.
 The separate `wes` commands operate the WES service API directly; `workflow`

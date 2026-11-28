@@ -96,6 +96,18 @@ pub struct Diagnostic {
     /// A description of the error.
     pub message: String,
 }
+
+/// Input-schema failures from [`Profile::prepare`]. Display retains the CLI's JSON diagnostics.
+#[derive(Debug)]
+pub struct InputValidationError(pub Vec<Diagnostic>);
+
+impl std::fmt::Display for InputValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&serde_json::to_string(&self.0).map_err(|_| std::fmt::Error)?)
+    }
+}
+
+impl Error for InputValidationError {}
 #[derive(Clone)]
 struct LocalResources(HashMap<String, Value>);
 impl Retrieve for LocalResources {
@@ -392,7 +404,7 @@ impl Profile {
                 .ok_or("request requires workflow_params")?,
         );
         if !errors.is_empty() {
-            return Err(serde_json::to_string(&errors)?.into());
+            return Err(ContractError::Other(Box::new(InputValidationError(errors))));
         }
         let mut prepared = PreparedInvocation {
             format_version: 1,

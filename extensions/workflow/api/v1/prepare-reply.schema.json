@@ -31,7 +31,7 @@
       "additionalProperties": false,
       "required": ["code", "message", "diagnostics"],
       "properties": {
-        "code": {"enum": ["invalid_request", "validation_failed"]},
+        "code": {"enum": ["invalid_request", "validation_failed", "state_in_use", "result_too_large"]},
         "message": {"type": "string"},
         "diagnostics": {
           "type": "array",
