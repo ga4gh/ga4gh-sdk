@@ -33,7 +33,7 @@ futures-util = "0.3"
 # Maintained fork of serde_yaml; keep the existing Rust import path.
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 percent-encoding = "2"
-libloading = "0.8.5"
+libloading = "0.9.1"
 
 num-bigint = { version = "0.4", optional = true }
 num-rational = { version = "0.4", optional = true }
