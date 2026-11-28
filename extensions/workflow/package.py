@@ -37,13 +37,17 @@ def main():
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
     package = Path(__file__).resolve().parent
-    command = [
-        "cargo", "build", "--locked",
-        "--manifest-path", str(package / "Cargo.toml"), "--message-format=json-render-diagnostics",
-    ]
-    if not args.debug:
-        command.append("--release")
-    messages = [json.loads(line) for line in subprocess.check_output(command, text=True).splitlines()]
+    if args.debug:
+        output = subprocess.check_output(
+            ["cargo", "build", "--locked", "--message-format=json-render-diagnostics"],
+            cwd=package, text=True,
+        )
+    else:
+        output = subprocess.check_output(
+            ["cargo", "build", "--locked", "--message-format=json-render-diagnostics", "--release"],
+            cwd=package, text=True,
+        )
+    messages = [json.loads(line) for line in output.splitlines()]
     build = next(message for message in messages if message["reason"] == "compiler-artifact"
                  and message["target"]["name"] == "ga4gh_workflow_extension")
     artifact = next(Path(name) for name in build["filenames"]

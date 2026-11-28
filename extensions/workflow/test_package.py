@@ -13,16 +13,16 @@ from package import main, publish
 class PackageTest(unittest.TestCase):
     def test_destination_and_cargo_environment_do_not_enter_build_command(self):
         destination = 'output directory; not a command'
-        with patch.dict(os.environ, {'CARGO': 'other-build-tool'}), \
-                patch.object(sys, 'argv', ['package.py', destination, '--debug']), \
-                patch('package.subprocess.check_output', side_effect=OSError) as build:
-            with self.assertRaises(OSError):
-                main()
-        build.assert_called_once_with([
-            'cargo', 'build', '--locked', '--manifest-path',
-            str(Path(__file__).resolve().with_name('Cargo.toml')),
-            '--message-format=json-render-diagnostics',
-        ], text=True)
+        for options, profile in [(['--debug'], []), ([], ['--release'])]:
+            with self.subTest(options=options), \
+                    patch.dict(os.environ, {'CARGO': 'other-build-tool'}), \
+                    patch.object(sys, 'argv', ['package.py', destination, *options]), \
+                    patch('package.subprocess.check_output', side_effect=OSError) as build:
+                with self.assertRaises(OSError):
+                    main()
+                build.assert_called_once_with([
+                    'cargo', 'build', '--locked', '--message-format=json-render-diagnostics', *profile,
+                ], cwd=Path(__file__).resolve().parent, text=True)
 
     def test_interrupted_rebuild_preserves_published_artifact(self):
         with tempfile.TemporaryDirectory() as temporary:
