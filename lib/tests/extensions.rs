@@ -280,6 +280,11 @@ async fn snapshot_resolution_cannot_admit_replaced_metadata_for_the_same_bytes()
     );
     writer.add_extension(&path).await.unwrap();
     writer.enable_extension(name).unwrap();
+    let persisted = || {
+        serde_json::from_slice::<Value>(&fs::read(dir.path().join("registry.json")).unwrap())
+            .unwrap()
+    };
+    assert_eq!(persisted()["registry_version"], 1);
     let reader = manager(dir.path());
 
     writer.remove_extension(name).unwrap();
@@ -293,6 +298,12 @@ async fn snapshot_resolution_cannot_admit_replaced_metadata_for_the_same_bytes()
     });
     replacement.add_extension(&path).await.unwrap();
     replacement.enable_extension(name).unwrap();
+    assert_eq!(persisted()["registry_version"], 2);
+    assert_eq!(
+        persisted()["extensions"][0]["artifacts"][0]["manifest"]["capability_metadata"]["test"]
+            ["2"],
+        "new metadata"
+    );
 
     let from_snapshot = reader
         .resolve_selected_from_snapshot(name, &caps())

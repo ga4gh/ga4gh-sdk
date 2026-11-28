@@ -67,6 +67,10 @@ always read current metadata. Rust hosts can use `resolve_selected_from_snapshot
 to interpret metadata and resolve the selection from the same snapshot instead.
 This does not change the admission check.
 
+Registries start at version 1. Installing an artifact with capability metadata
+upgrades the registry to version 2. Older managers reject that version rather
+than silently discarding metadata when they update an unrelated extension.
+
 A first installation starts disabled. Installing another artifact selects it
 and preserves enablement. It keeps earlier artifacts registered. If persistence
 fails after replacement, `JsonStoreIoError::replacement_completed()` remains
@@ -130,7 +134,8 @@ each with at most 64 string arguments. Positionals are required, in array order;
 `long: true` defines `--name`, `repeat: true` collects occurrences, `requires`
 names a companion argument, and `help` is display text. A group cannot shadow a
 built-in, downstream command/alias or another enabled provider. Disable one of
-the conflicting providers using `extension disable` to recover.
+the conflicting providers using `extension disable` to recover. Built-in and
+downstream commands and their help remain available if discovery fails.
 
 **Invocation.** A fresh instance receives `{}` as its config. Within the v1 C ABI,
 the capability name, negotiated revision **1**, and operation identify each UTF-8
@@ -151,8 +156,10 @@ host submits those bytes once with its WES client. It calls `wes_outcome` on the
 same instance with either `{"submitted":{"run_id":"..."}}` or
 `{"failed":{"message":"..."}}`. This operation must return the bare output object,
 never another action. An ambiguous response or failed completion does not replay
-the POST. If WES accepted the run but the provider returned an unusable result,
-the host reports the run ID so the caller can inspect it instead of resubmitting.
+the POST. If WES accepted the run but the provider returned an unusable result
+or a nonzero exit status, the host reports the run ID so the caller can inspect
+it instead of resubmitting. A provider cannot turn a host submission error into
+success; it receives a generic failure notification, not private error details.
 The workflow provider validates inputs and descriptor bytes before this
 handoff and keeps the prepared invocation in the instance until completion.
 

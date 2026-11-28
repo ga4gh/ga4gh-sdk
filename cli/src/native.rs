@@ -13,8 +13,9 @@ use ga4gh_sdk::{
         ServiceType,
     },
     utils::{
-        configuration::Configuration, extension::ExtensionInstance,
-        extension_manager::ExtensionManager,
+        acknowledgement::AcknowledgementError, configuration::Configuration,
+        extension::ExtensionInstance, extension_manager::ExtensionManager,
+        operation::AmbiguousSubmissionError,
     },
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -58,8 +59,9 @@ impl CliContext {
                 (matches, binding.map(|binding| (manager, binding)))
             }
             Err(error) => match root.try_get_matches_from(args) {
-                Ok(matches) if matches.subcommand_name() == Some("extension") => (matches, None),
-                _ => {
+                Ok(matches) => (matches, None),
+                Err(parse) if parse.kind() != ErrorKind::InvalidSubcommand => return Err(parse),
+                Err(_) => {
                     return Err(clap::Error::raw(
                         ErrorKind::InvalidValue,
                         format!("{error}\n"),
@@ -89,6 +91,7 @@ impl ParsedCli {
 
     /// Dispatch an installed command only. Built-ins and downstream commands return `None`.
     /// A supplied WES configuration takes precedence over this invocation's context.
+    /// WES submission failures retain their SDK error, even if the provider returns success.
     /// Enabling a provider authorizes native execution; only install trusted libraries.
     pub async fn dispatch_extension(
         &self,
@@ -124,17 +127,45 @@ impl ParsedCli {
                 attachments,
             } => {
                 anyhow::ensure!(wes_submit, "Undeclared WES submission action");
-                let submit = source.submit(&context, *request, attachments).await;
-                let outcome = match submit {
-                    Ok(run_id) => SubmissionOutcome::Submitted { run_id },
-                    Err(error) => SubmissionOutcome::Failed {
-                        message: error.to_string(),
-                    },
+                let run_id = match source.submit(&context, *request, attachments).await {
+                    Ok(run_id) => run_id,
+                    Err(error) => {
+                        let uncertain =
+                            error
+                                .downcast_ref::<ga4gh_sdk::Error>()
+                                .is_some_and(|source| {
+                                    source.downcast_ref::<AmbiguousSubmissionError>().is_some()
+                                        || source.downcast_ref::<AcknowledgementError>().is_some()
+                                });
+                        let outcome = SubmissionOutcome::Failed {
+                            message: if uncertain {
+                                "WES may have accepted the run; reconcile before retrying"
+                            } else {
+                                "WES submission failed"
+                            }
+                            .into(),
+                        };
+                        let _ = exchange::<_, Output>(&instance, "wes_outcome", &outcome);
+                        return Err(error);
+                    }
                 };
-                exchange(&instance, "wes_outcome", &outcome).and_then(render).map_err(|_| match outcome {
-                    SubmissionOutcome::Submitted { run_id } => anyhow::anyhow!("WES accepted run '{}', but the extension could not report its result; do not resubmit", printable(&run_id)),
-                    SubmissionOutcome::Failed { message } => anyhow::anyhow!("WES submission failed: {}. The extension could not report the result; reconcile before retrying", printable(&message)),
-                })?
+                let outcome = SubmissionOutcome::Submitted {
+                    run_id: run_id.clone(),
+                };
+                let warning = || {
+                    format!("WES accepted run '{}', but the extension could not report its result; do not resubmit", printable(&run_id))
+                };
+                let mut output = exchange(&instance, "wes_outcome", &outcome)
+                    .and_then(render)
+                    .map_err(|_| anyhow::anyhow!(warning()))?;
+                if output.exit_code != ExitCode::SUCCESS {
+                    if !output.stderr.is_empty() && !output.stderr.ends_with('\n') {
+                        output.stderr.push('\n');
+                    }
+                    output.stderr.push_str(&warning());
+                    output.stderr.push('\n');
+                }
+                output
             }
         };
         Ok(Some(result))
@@ -146,9 +177,12 @@ impl ParsedCli {
         stdout: &mut dyn Write,
         stderr: &mut dyn Write,
     ) -> anyhow::Result<Option<ExitCode>> {
-        match self.dispatch_extension(None).await? {
-            Some(output) => Ok(Some(output.write_to(stdout, stderr)?)),
-            None => {
+        match self.dispatch_extension(None).await {
+            Err(error) => Ok(Some(
+                CommandOutput::failure(error).write_to(stdout, stderr)?,
+            )),
+            Ok(Some(output)) => Ok(Some(output.write_to(stdout, stderr)?)),
+            Ok(None) => {
                 self.context
                     .dispatch_to(&self.matches, stdout, stderr)
                     .await

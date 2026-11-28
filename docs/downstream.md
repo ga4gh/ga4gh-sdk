@@ -390,6 +390,9 @@ a preconfigured WES transport use `parsed.dispatch_extension_with_wes(&wes)`.
 `dispatch_extension(None)` reads the context's WES configuration only if the
 provider requests submission. `None` **returned** by either extension dispatcher
 leaves `parsed.matches()` for your existing dispatch path; do not parse again.
+On a WES submission failure, the extension dispatchers preserve the SDK error:
+downcast to `ga4gh_sdk::Error` to inspect the cause. An `AmbiguousSubmissionError`
+or `AcknowledgementError` means the run may already exist; reconcile it before retrying.
 See `examples/downstream-sdk/src/main.rs` for this pattern.
 
 Rust hosts building their own command catalogs can pair `get_extensions()` with

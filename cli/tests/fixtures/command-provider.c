@@ -25,11 +25,13 @@ static int32_t invoke(void *instance, Ga4ghBytes capability, uint32_t revision,
     int submit = execute && strstr(request, "\"word\":[\"submit\"]");
     int outcome = revision == 1 && operation.len == 11 && !memcmp(operation.data, "wes_outcome", 11)
         && strstr(request, "\"submitted\"");
+    int nonzero = outcome && strstr(request, "accepted-43");
     free(request);
     const char *reply = "PRIVATE-NATIVE-DETAIL";
     if (echo) reply = "{\"complete\":{\"stdout\":\"ok\\u001b\",\"stderr\":\"warning\\n\",\"exit_status\":3}}";
     if (submit) reply = "{\"wes_submit\":{\"request\":{\"workflow_params\":{},\"workflow_type\":\"CWL\",\"workflow_type_version\":\"v1.2\",\"workflow_url\":\"main.cwl\"},\"attachments\":[]}}";
     if (outcome) reply = "{\"stdout\":\"PRIVATE-INVALID-JSON\",\"json_stdout\":true,\"stderr\":\"\",\"exit_status\":0}";
+    if (nonzero) reply = "{\"stdout\":\"\",\"stderr\":\"completion failed\",\"exit_status\":4}";
     output->len = strlen(reply);
     output->data = malloc(output->len);
     if (!output->data) { output->len = 0; return 1; }

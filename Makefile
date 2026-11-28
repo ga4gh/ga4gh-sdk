@@ -63,6 +63,7 @@ check: lint build test ## Run the standard checks from AGENTS.md
 
 .PHONY: workflow-extension
 workflow-extension: ## Package and test the workflow provider independently of the CLI
+	python3 -B -m unittest discover -s extensions/workflow -p 'test_package.py'
 	$(CARGO) fmt --manifest-path extensions/workflow/Cargo.toml --check
 	CARGO_TARGET_DIR=$(abspath target) $(CARGO) clippy --locked --manifest-path extensions/workflow/Cargo.toml --all-targets -- -D warnings
 	CARGO_TARGET_DIR=$(abspath target) python3 extensions/workflow/package.py --debug target/workflow-package

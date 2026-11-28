@@ -3,10 +3,32 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
+
+
+def publish(destination, artifact, descriptor, readme):
+    destination.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=destination) as temporary:
+        stage = Path(temporary)
+        library = stage / artifact.name
+        digest = hashlib.sha512()
+        with artifact.open("rb") as source, library.open("wb") as target:
+            for chunk in iter(lambda: source.read(1 << 20), b""):
+                digest.update(chunk)
+                target.write(chunk)
+        hexdigest = digest.hexdigest()
+        name = f"{artifact.stem}-{hexdigest}{artifact.suffix}"
+        manifest = dict(json.loads(descriptor.read_text()), manifest_version=1,
+                        path=name, digest=hexdigest)
+        (stage / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        shutil.copyfile(readme, stage / "README.md")
+        library.replace(destination / name)
+        (stage / "README.md").replace(destination / "README.md")
+        (stage / "manifest.json").replace(destination / "manifest.json")
+    return destination / "manifest.json"
 
 
 def main():
@@ -16,7 +38,7 @@ def main():
     args = parser.parse_args()
     package = Path(__file__).resolve().parent
     command = [
-        os.environ.get("CARGO", "cargo"), "build", "--locked",
+        "cargo", "build", "--locked",
         "--manifest-path", str(package / "Cargo.toml"), "--message-format=json-render-diagnostics",
     ]
     if not args.debug:
@@ -29,19 +51,7 @@ def main():
     descriptor = next(Path(message["out_dir"]) / "descriptor.json" for message in messages
                       if message["reason"] == "build-script-executed"
                       and message["package_id"] == build["package_id"])
-    args.destination.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(package / "README.md", args.destination / "README.md")
-    library = args.destination / artifact.name
-    shutil.copyfile(artifact, library)
-    with library.open("rb") as content:
-        digest = hashlib.sha512()
-        for chunk in iter(lambda: content.read(1 << 20), b""):
-            digest.update(chunk)
-    manifest = dict(json.loads(descriptor.read_text()), manifest_version=1,
-                    path=library.name, digest=digest.hexdigest())
-    path = args.destination / "manifest.json"
-    path.write_text(json.dumps(manifest, indent=2) + "\n")
-    print(path)
+    print(publish(args.destination, artifact, descriptor, package / "README.md"))
 
 
 if __name__ == "__main__":

@@ -337,14 +337,20 @@ async fn workflow_submit_reports_failed_oidc_refresh_before_sending() {
             ],
         )
         .unwrap();
-    let output = matches.dispatch_extension(None).await.unwrap().unwrap();
-    assert_eq!(output.exit_code, std::process::ExitCode::FAILURE);
-    assert!(
-        output.stderr.contains("run 'test-cli login WES' again"),
-        "{}",
-        output.stderr
+    let mut stderr = Vec::new();
+    assert_eq!(
+        matches
+            .dispatch_to(&mut Vec::new(), &mut stderr)
+            .await
+            .unwrap(),
+        Some(ExitCode::FAILURE)
     );
-    assert!(!output.stderr.contains("expired-refresh"));
+    let stderr = String::from_utf8(stderr).unwrap();
+    assert!(
+        stderr.contains("run 'test-cli login WES' again"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("expired-refresh"));
     refresh.assert();
     service.assert();
     submission.assert();
@@ -653,12 +659,17 @@ async fn only_validated_bytes_reach_the_injected_client_even_when_the_acknowledg
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    let output = parse(&format!("sha256:{digest}"))
+    let error = parse(&format!("sha256:{digest}"))
         .dispatch_extension_with_wes(&wes)
         .await
-        .unwrap()
+        .err()
         .unwrap();
-    assert_failure(&output, "Reconcile before retrying");
+    assert!(error
+        .downcast_ref::<ga4gh_sdk::Error>()
+        .unwrap()
+        .downcast_ref::<ga4gh_sdk::utils::acknowledgement::AcknowledgementError>()
+        .is_some());
+    assert!(error.to_string().contains("Reconcile before retrying"));
     assert_eq!(
         std::fs::read_to_string(file).unwrap(),
         "changed after preparation"

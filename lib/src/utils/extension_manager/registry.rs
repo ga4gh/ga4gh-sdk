@@ -32,7 +32,10 @@ impl Registry {
         else {
             return Ok(Registry::default());
         };
-        if value.get("registry_version").and_then(|v| v.as_u64()) != Some(1) {
+        if !matches!(
+            value.get("registry_version").and_then(|v| v.as_u64()),
+            Some(1 | 2)
+        ) {
             return Err(ExtensionError::new(ExtensionErrorKind::UnsupportedManifest));
         }
         let registry: Registry = serde_json::from_value(value)
@@ -64,6 +67,9 @@ impl Registry {
     }
 
     pub(super) fn register(&mut self, installation: InstalledArtifact) -> ExtensionResult<()> {
+        if !installation.manifest.capability_metadata.is_empty() {
+            self.registry_version = 2;
+        }
         let name = installation.manifest.artifact.name.clone();
         let digest = installation.manifest.artifact.digest.clone();
         if let Some(record) = self

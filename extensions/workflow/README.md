@@ -24,6 +24,10 @@ Use `target/workflow-package/manifest.json` for `extension add`. If the CLI is
 not on your `PATH`, run `cargo run -p ga4gh-cli --` in place of `ga4gh-cli`
 from the repository root.
 
+Rebuilding in the same package directory publishes the manifest last. Earlier
+libraries keep their digest-based names, so a reader that already opened the
+old manifest can still install the matching library.
+
 Install once per CLI configuration directory; profiles share the installation.
 `extension list` shows the installed artifact and whether the provider is enabled.
 Enabling authorizes native execution; displaying help does not load the library.

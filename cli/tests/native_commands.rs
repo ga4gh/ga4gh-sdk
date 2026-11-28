@@ -30,7 +30,12 @@ fn compile(dir: &Path, descriptor: &Value) {
     )
     .unwrap();
     assert!(Command::new("cc")
-        .args(["-shared", "-fPIC", "-I"])
+        .arg(if cfg!(target_os = "macos") {
+            "-dynamiclib"
+        } else {
+            "-shared"
+        })
+        .args(["-fPIC", "-I"])
         .arg(dir)
         .arg("-I")
         .arg(root.join("../extension-abi/include"))
@@ -194,6 +199,39 @@ async fn wes_actions_require_declaration_and_keep_the_accepted_run_id_if_output_
     assert!(error.to_string().contains("do not resubmit"));
     assert!(!format!("{error:?}").contains("PRIVATE"));
     post.assert();
+    post.remove();
+    let accepted = server
+        .mock("POST", "/runs")
+        .with_body(r#"{"run_id":"accepted-43"}"#)
+        .expect(1)
+        .create();
+    let output = parse("run")
+        .dispatch_extension_with_wes(&wes)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(output.exit_code, ExitCode::from(4));
+    assert!(output
+        .stderr
+        .contains("completion failed\nWES accepted run 'accepted-43'"));
+    assert!(output.stderr.contains("do not resubmit"));
+    accepted.assert();
+    accepted.remove();
+    let rejected = server
+        .mock("POST", "/runs")
+        .with_status(403)
+        .expect(1)
+        .create();
+    let error = parse("run")
+        .dispatch_extension_with_wes(&wes)
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(
+        error.downcast_ref::<ga4gh_sdk::Error>(),
+        Some(ga4gh_sdk::Error::Http(_))
+    ));
+    rejected.assert();
 }
 
 #[tokio::test]
@@ -219,7 +257,19 @@ async fn collisions_fail_without_loading_and_management_can_recover() {
         manager
             .enable_extension(&format!("collides-{name}"))
             .unwrap();
-        assert!(parse().contains("collision"));
+        assert!(parse().contains("Usage:"));
+        assert!(context
+            .parse_from(context.command(), ["cli", "tes", "--help"])
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Usage:"));
+        assert!(context
+            .parse_from(context.command(), ["cli", "words", "echo", "hello"])
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("collision"));
         let parsed = context
             .parse_from(
                 context.command(),
@@ -232,4 +282,15 @@ async fn collisions_fail_without_loading_and_management_can_recover() {
             .unwrap();
         assert!(parse().contains("Word tools"));
     }
+    fs::write(path.join("extensions.json"), b"not a registry").unwrap();
+    assert!(parse().contains("Usage:"));
+    let parsed = context
+        .parse_from(
+            context
+                .command()
+                .subcommand(clap::Command::new("downstream")),
+            ["cli", "downstream"],
+        )
+        .unwrap();
+    assert_eq!(parsed.matches().subcommand_name(), Some("downstream"));
 }
