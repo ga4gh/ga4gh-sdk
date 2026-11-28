@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ga4gh.workflow revision 1: prepare request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile_utf8", "pins", "request", "identity"],
+  "properties": {
+    "profile_utf8": {"type": "string"},
+    "pins": {
+      "type": "object",
+      "required": ["profile_revision", "vocabulary_revision"],
+      "additionalProperties": false,
+      "properties": {
+        "profile_revision": {"type": "string"},
+        "vocabulary_revision": {"type": "string"}
+      }
+    },
+    "request": {"type": "object"},
+    "identity": {
+      "type": "object",
+      "required": ["workflow"],
+      "additionalProperties": false,
+      "properties": {
+        "workflow": {"type": "string"},
+        "descriptor_digest": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

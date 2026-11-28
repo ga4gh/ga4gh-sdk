@@ -103,6 +103,14 @@ jobs:
       - name: Run Python tests
         working-directory: python
         run: python -m pytest
+      - name: Compare installed Python and Rust workflow bindings
+        if: matrix.python == '3.11'
+        env:
+          CARGO_PROFILE_DEV_DEBUG: '0'
+          CARGO_PROFILE_TEST_DEBUG: '0'
+        run: |
+          python -m pip install --no-deps ./extensions/workflow/bindings/python
+          make workflow-bindings PYTHON=python
 
   # Build the full release matrix after merges to main and on manual dispatch.
   # PRs keep the Python binding tests above; maintainers can dispatch CI on a

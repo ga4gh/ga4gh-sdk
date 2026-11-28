@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ga4gh.workflow revision 1: prepare reply",
+  "type": "object",
+  "additionalProperties": false,
+  "oneOf": [{"required": ["prepared"]}, {"required": ["error"]}],
+  "properties": {
+    "prepared": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state_ref", "record"],
+      "properties": {
+        "state_ref": {"type": "string", "minLength": 1},
+        "record": {
+          "type": "object",
+          "required": ["format_version", "identity", "pins", "schema_digest", "request", "expected_outputs", "profile_document", "fingerprint"],
+          "properties": {
+            "format_version": {"const": 1},
+            "schema_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "identity": {"type": "object"},
+            "pins": {"type": "object"},
+            "request": {"type": "object"},
+            "profile_document": {"type": "object"}
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "diagnostics"],
+      "properties": {
+        "code": {"enum": ["invalid_request", "validation_failed", "state_in_use", "result_too_large"]},
+        "message": {"type": "string"},
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["instance_location", "schema_location", "message"],
+            "properties": {
+              "instance_location": {"type": "string"},
+              "schema_location": {"type": "string"},
+              "message": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@ fn main() {
     let descriptor = json!({
         "name": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION"),
         "abi_version": 1, "target": env::var("TARGET").unwrap(),
-        "capabilities": {"ga4gh.cli.commands": [1]},
+        "capabilities": {"ga4gh.cli.commands": [1], "ga4gh.workflow": [1]},
         "capability_metadata": {"ga4gh.cli.commands": {"1": commands}}
     });
     fs::write(

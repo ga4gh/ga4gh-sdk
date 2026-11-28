@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ga4gh.workflow revision 1: release reply",
+  "type": "object",
+  "oneOf": [{"required": ["released"]}, {"required": ["error"]}],
+  "additionalProperties": false,
+  "properties": {
+    "released": {"const": true},
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "diagnostics"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {"enum": ["invalid_request", "invalid_state"]},
+        "message": {"type": "string"},
+        "diagnostics": {"const": []}
+      }
+    }
+  }
+}

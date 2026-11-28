@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Select the $defs entry named after the negotiated ABI operation and direction. Operation names are not fields in messages.",
+  "$defs": {
+    "pins": {"type":"object","required":["profile_revision","vocabulary_revision"],"properties":{"profile_revision":{"type":"string"},"vocabulary_revision":{"type":"string"}}},
+    "record": {"type":"object","required":["format_version","schema_digest","run_reference","execution_state","outputs","artifacts","contract_diagnostics","context"],"properties":{"format_version":{"const":1},"schema_digest":{"type":"string"},"run_reference":{"type":"string"},"execution_state":{"type":"string"},"outputs":{"type":"object"},"artifacts":{"type":"object"},"contract_diagnostics":{"type":"array"},"context":{"type":"object"}}},
+    "attachment": {"type":"object","required":["filename","base64"],"properties":{"filename":{"type":"string"},"base64":{"type":"string","contentEncoding":"base64"}}},
+    "attachments": {"type":"array","items":{"$ref":"#/$defs/attachment"}},
+    "ref": {"type":"string","minLength":1},
+    "results_request": {"type":"object","additionalProperties":false,"required":["profile_utf8","pins","run_reference","state","outputs"],"properties":{"profile_utf8":{"type":"string"},"pins":{"$ref":"#/$defs/pins"},"run_reference":{"type":"string"},"state":{"type":"string"},"outputs":{}}},
+    "verify_request": {"type":"object","additionalProperties":false,"required":["record","pointer","base64"],"properties":{"record":{"$ref":"#/$defs/record"},"pointer":{"type":"string"},"base64":{"type":"string","contentEncoding":"base64"},"expected":{"oneOf":[{"type":"null"},{"type":"object","required":["algorithm","digest","evidence_source"],"properties":{"algorithm":{"type":"string"},"digest":{"type":"string"},"evidence_source":{"type":"string"}}}]}}},
+    "policy": {"type":"object","required":["id","version","outputs","required_context"],"properties":{"id":{"type":"string"},"version":{"const":1},"outputs":{"type":"object"},"required_context":{"type":"array","items":{"type":"string"}}}},
+    "compare_request": {"type":"object","additionalProperties":false,"required":["policy","left","right"],"properties":{"policy":{"$ref":"#/$defs/policy"},"left":{"$ref":"#/$defs/record"},"right":{"$ref":"#/$defs/record"}}},
+    "begin_submit_request": {"type":"object","additionalProperties":false,"required":["state_ref","attachments"],"properties":{"state_ref":{"$ref":"#/$defs/ref"},"attachments":{"$ref":"#/$defs/attachments"}}},
+    "finish_submit_request": {"type":"object","additionalProperties":false,"required":["state_ref","outcome"],"properties":{"state_ref":{"$ref":"#/$defs/ref"},"outcome":{"oneOf":[{"const":"failed"},{"type":"object","additionalProperties":false,"required":["submitted"],"properties":{"submitted":{"type":"object","required":["run_id"],"properties":{"run_id":{"type":"string","minLength":1}}}}}]}}},
+    "error": {"type":"object","required":["error"],"additionalProperties":false,"properties":{"error":{"type":"object","required":["code","message","diagnostics"],"properties":{"code":{"enum":["invalid_state","invalid_request","validation_failed","result_too_large"]},"message":{"type":"string"},"diagnostics":{"type":"array"}}}}},
+    "record_reply": {"oneOf":[{"$ref":"#/$defs/error"},{"type":"object","additionalProperties":false,"required":["ok"],"properties":{"ok":{"$ref":"#/$defs/record"}}}]},
+    "results_reply": {"$ref":"#/$defs/record_reply"},
+    "verify_reply": {"$ref":"#/$defs/record_reply"},
+    "compare_reply": {"oneOf":[{"$ref":"#/$defs/error"},{"type":"object","additionalProperties":false,"required":["ok"],"properties":{"ok":{"type":"object","required":["policy","left","right","outcome","outputs","context_drift","missing_context"],"properties":{"policy":{"$ref":"#/$defs/policy"},"outcome":{"enum":["different","inconclusive","equivalent_under_policy"]}}}}}]},
+    "begin_submit_reply": {"oneOf":[{"$ref":"#/$defs/error"},{"type":"object","additionalProperties":false,"required":["ok"],"properties":{"ok":{"type":"object","required":["request","attachments"],"properties":{"request":{"type":"object"},"attachments":{"$ref":"#/$defs/attachments"}}}}}]},
+    "finish_submit_reply": {"oneOf":[{"$ref":"#/$defs/error"},{"type":"object","additionalProperties":false,"required":["ok"],"properties":{"ok":{"oneOf":[{"const":false},{"type":"object","required":["run_id","invocation"],"properties":{"run_id":{"type":"string"},"invocation":{"type":"object"}}}]}}}]}
+  }
+}

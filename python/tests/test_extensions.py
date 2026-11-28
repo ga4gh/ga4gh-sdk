@@ -72,6 +72,9 @@ def test_instances_handles_errors_and_restart(tmp_path):
     first = manager.create_instance(resolved, b"first")
     second = manager.create_instance(resolved, b"second")
     assert first.invoke("test", "configuration", b"") == b"first"
+    with pytest.raises(ExtensionError):
+        first.invoke("test", "configuration", b"", max_output_bytes=4)
+    assert first.invoke("test", "configuration", b"", max_output_bytes=5) == b"first"
     assert second.invoke("test", "configuration", b"") == b"second"
     with pytest.raises(ExtensionError) as failure:
         first.invoke("test", "fail", b"SECRET")

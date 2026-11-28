@@ -274,19 +274,24 @@ impl PyExtensionInstance {
     ///     capability: Negotiated capability name.
     ///     operation: Adapter-defined operation name.
     ///     input: Opaque operation input bytes.
+    ///     max_output_bytes: Optional limit checked before copying a native reply.
+    #[pyo3(signature = (capability, operation, input, *, max_output_bytes=None))]
     fn invoke(
         &self,
         py: Python<'_>,
         capability: String,
         operation: String,
         input: Vec<u8>,
+        max_output_bytes: Option<usize>,
     ) -> PyResult<Py<PyBytes>> {
         let result = py
             .detach(|| {
-                self.inner
-                    .as_ref()
-                    .expect("live instance")
-                    .invoke(&capability, &operation, &input)
+                self.inner.as_ref().expect("live instance").invoke_bounded(
+                    &capability,
+                    &operation,
+                    &input,
+                    max_output_bytes.unwrap_or(usize::MAX),
+                )
             })
             .map_err(|e| error(py, e))?;
         Ok(PyBytes::new(py, &result).unbind())

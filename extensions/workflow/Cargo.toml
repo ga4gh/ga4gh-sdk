@@ -1,4 +1,6 @@
 [workspace]
+members = ["bindings/rust"]
+resolver = "2"
 
 [package]
 name = "ga4gh-workflow-extension"
@@ -11,11 +13,21 @@ description = "Native GA4GH CLI workflow commands"
 crate-type = ["cdylib"]
 
 [dependencies]
+base64 = "0.22"
 ga4gh-cli-protocol = { path = "../../cli-protocol" }
 ga4gh-extension-abi = { path = "../../extension-abi" }
 ga4gh-lib = { path = "../../lib", features = ["workflow-contracts"] }
 serde_json = "1"
 anyhow = "1"
+jsonschema = { version = "0.61", default-features = false }
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 serde_json = "1"
+
+[dev-dependencies]
+jsonschema = { version = "0.61", default-features = false }
+sha2 = "0.11"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }

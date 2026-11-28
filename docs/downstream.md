@@ -341,7 +341,8 @@ in a downstream repository; the workspace commands such as `make check`
 leave it out. It has no lockfile of its own: the target copies the repository's
 `Cargo.lock` into it, lets Cargo add the example's own entry, and fails if
 any other package isn't locked at a version and source from the root
-lockfile. The example thus builds with the SDK's dependency versions; a
+lockfile, except for the local `ga4gh-workflow` package whose version is
+checked against the provider workspace lockfile. The example thus builds with the SDK's dependency versions; a
 dependency that only the example needs must be added to the workspace
 first. Without `make downstream`, Cargo resolves the example's dependencies
 afresh.
@@ -364,6 +365,40 @@ this guide in the same pull request.
   remaining steps for downstream SDKs.
 
 ## Native extensions at runtime
+
+For typed workflow operations, use `ga4gh_workflow::Workflow` in Rust or
+`ga4gh_workflow.Workflow` in Python. Neither implementation needs CLI arguments,
+temporary files, stdout parsing or WES credentials for local operations.
+Both require the matching base SDK and a separately installed, enabled native
+provider. The Rust crate does not enable `ga4gh-lib/workflow-contracts`.
+
+```python
+from ga4gh_workflow import Workflow
+
+workflow = Workflow(manager)  # Explicitly resolve and load trusted native code.
+with workflow.prepare(profile_bytes, pins, request, identity) as plan:
+    print(plan.record["fingerprint"])
+    receipt = plan.submit(wes, {"main.cwl": descriptor_bytes})
+```
+
+In Rust, use `unsafe { Workflow::open(&manager)? }` only for a trusted artifact,
+then `let plan = workflow.prepare(profile_bytes, &pins, &request, &identity)?;`
+and `plan.submit(&wes, attachments).await?`. Both bindings retain the native
+instance for the plan. Rust drop or Python context exit releases an unused
+plan; re-prepare from the original bytes to import an exported record.
+The Python API is synchronous, including `submit`: releasing the GIL does not
+make it awaitable. If the application runs it in a worker thread, cancelling
+the await does not cancel an in-flight POST. Reconcile with WES, never replay
+automatically. Cancelling the Rust future after dispatch can likewise leave a
+remote run even when no receipt is returned.
+
+Run the standalone Rust example from the repository root with a trusted
+installation (no login or network access is needed):
+
+```sh
+cargo run --manifest-path examples/downstream-sdk/Cargo.toml --example workflow-prepare -- \
+  "$HOME/.ga4gh-cli/extensions.json" examples/sequence-qc
+```
 
 The [experimental extension manager](extensions.md) loads shared libraries at
 runtime. It is separate from this guide's composition through downstream crates.

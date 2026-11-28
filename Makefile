@@ -64,13 +64,27 @@ check: lint build test ## Run the standard checks from AGENTS.md
 .PHONY: workflow-extension
 workflow-extension: ## Package and test the workflow provider independently of the CLI
 	python3 -B -m unittest discover -s extensions/workflow -p 'test_package.py'
-	$(CARGO) fmt --manifest-path extensions/workflow/Cargo.toml --check
-	CARGO_TARGET_DIR=$(abspath target) $(CARGO) clippy --locked --manifest-path extensions/workflow/Cargo.toml --all-targets -- -D warnings
+	$(CARGO) fmt --manifest-path extensions/workflow/Cargo.toml --all --check
+	CARGO_TARGET_DIR=$(abspath target) $(CARGO) clippy --locked --manifest-path extensions/workflow/Cargo.toml --workspace --all-targets -- -D warnings
+	CARGO_TARGET_DIR=$(abspath target) $(CARGO) build --locked --manifest-path extensions/workflow/Cargo.toml
+	GA4GH_WORKFLOW_LIB_DIR=$(abspath target/debug) CARGO_TARGET_DIR=$(abspath target) $(CARGO) test --locked --manifest-path extensions/workflow/Cargo.toml --test native_prepare
+	CARGO_TARGET_DIR=$(abspath target) $(CARGO) test --locked --manifest-path extensions/workflow/Cargo.toml --lib --test prepare_contract
 	CARGO_TARGET_DIR=$(abspath target) python3 extensions/workflow/package.py --debug target/workflow-package
 	cmp extensions/workflow/README.md target/workflow-package/README.md
+	$(MAKE) workflow-rust-binding
 	$(CARGO) clippy --locked -p ga4gh-cli --features workflow-extension-tests --test workflow -- -D warnings
 	GA4GH_WORKFLOW_MANIFEST=$(abspath target/workflow-package/manifest.json) $(CARGO) test --locked -p ga4gh-cli --features workflow-extension-tests --test workflow
 	$(CARGO) test --locked -p ga4gh-lib --features workflow-contracts --lib --test result_reuse --test workflow_contracts
+
+.PHONY: workflow-rust-binding workflow-bindings
+workflow-rust-binding:
+	@features=$$($(CARGO) tree --locked --manifest-path extensions/workflow/Cargo.toml -p ga4gh-workflow -e normal,build -i ga4gh-lib --depth 0 --format '{f}') && case ",$$features," in *,workflow-contracts,*) echo 'Typed binding enables workflow implementation' >&2; exit 1;; esac
+	GA4GH_WORKFLOW_MANIFEST=$(abspath target/workflow-package/manifest.json) GA4GH_WORKFLOW_PARITY=$(abspath target/workflow-parity.json) CARGO_TARGET_DIR=$(abspath target) $(CARGO) test --locked --manifest-path extensions/workflow/Cargo.toml -p ga4gh-workflow
+
+workflow-bindings: ## Compare installed Rust and Python clients against the same native artifact
+	CARGO_TARGET_DIR=$(abspath target) python3 extensions/workflow/package.py --debug target/workflow-package
+	$(MAKE) workflow-rust-binding
+	GA4GH_WORKFLOW_MANIFEST=$(abspath target/workflow-package/manifest.json) GA4GH_WORKFLOW_PARITY=$(abspath target/workflow-parity.json) $(PYTHON) -m pytest -q extensions/workflow/bindings/python/tests
 
 coverage: ## Measure the coverage of the Rust and Python tests (see docs/development.md)
 	mkdir -p $(COVERAGE_DIR) $(COVERAGE_WHEELS)
@@ -106,7 +120,7 @@ downstream: ## Check, lint and test the downstream example crate
 	$(CARGO) metadata --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml \
 		--format-version 1 > /dev/null
 	mkdir -p $(DOWNSTREAM_LISTS)
-	$(call LOCK_PACKAGES,Cargo.lock) > $(DOWNSTREAM_LISTS)/root.txt
+	{ $(call LOCK_PACKAGES,Cargo.lock); $(call LOCK_PACKAGES,extensions/workflow/Cargo.lock) | awk '$$1 == "ga4gh-workflow" && NF == 2'; } | sort -u > $(DOWNSTREAM_LISTS)/root.txt
 	$(call LOCK_PACKAGES,$(DOWNSTREAM_DIR)/Cargo.lock) > $(DOWNSTREAM_LISTS)/example.txt
 	grep -q '^ga4gh-lib ' $(DOWNSTREAM_LISTS)/root.txt
 	@extra=$$(comm -13 $(DOWNSTREAM_LISTS)/root.txt $(DOWNSTREAM_LISTS)/example.txt \
