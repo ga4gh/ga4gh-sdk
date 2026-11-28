@@ -140,6 +140,63 @@ async fn help_management_and_parsing_do_not_load_and_execution_uses_the_parsed_a
 }
 
 #[tokio::test]
+async fn wes_actions_require_declaration_and_keep_the_accepted_run_id_if_output_is_invalid() {
+    use ga4gh_sdk::{
+        clients::wes::WES,
+        utils::{configuration::Configuration, transport::Transport},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let context = CliContext::default().with_config_path(dir.path().join("unused.json"));
+    let mut manager = ExtensionManager::open(dir.path().join("extensions.json")).unwrap();
+    let mut manifest = descriptor("jobs");
+    manifest["name"] = json!("action-provider");
+    let commands = manifest["capability_metadata"]["ga4gh.cli.commands"]["1"][0]["commands"]
+        .as_array_mut()
+        .unwrap();
+    let mut submit = commands[0].clone();
+    submit["name"] = json!("run");
+    submit["wes_submit"] = json!(true);
+    commands.push(submit);
+    compile(dir.path(), &manifest);
+    add(&mut manager, dir.path(), manifest).await.unwrap();
+    manager.enable_extension("action-provider").unwrap();
+
+    let mut server = mockito::Server::new_async().await;
+    let post = server
+        .mock("POST", "/runs")
+        .with_body(r#"{"run_id":"accepted-42"}"#)
+        .expect(1)
+        .create();
+    let config = Configuration::new(server.url().parse().unwrap());
+    let wes = WES::without_discovery(Transport::new(&config), Default::default());
+    let parse = |command| {
+        context
+            .parse_from(context.command(), ["cli", "jobs", command, "submit"])
+            .unwrap()
+    };
+    let error = parse("echo")
+        .dispatch_extension_with_wes(&wes)
+        .await
+        .err()
+        .unwrap();
+    assert!(error
+        .to_string()
+        .contains("Undeclared WES submission action"));
+    let error = parse("run")
+        .dispatch_extension_with_wes(&wes)
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        error.to_string().contains("WES accepted run 'accepted-42'"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("do not resubmit"));
+    assert!(!format!("{error:?}").contains("PRIVATE"));
+    post.assert();
+}
+
+#[tokio::test]
 async fn collisions_fail_without_loading_and_management_can_recover() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path();

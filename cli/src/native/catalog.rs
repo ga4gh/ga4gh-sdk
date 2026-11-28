@@ -8,6 +8,7 @@ use ga4gh_sdk::utils::{
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,7 +105,7 @@ impl Group {
 
 pub(super) struct Binding {
     group: Group,
-    artifact: Result<ResolvedExtension, ExtensionErrorKind>,
+    artifact: Result<Arc<ResolvedExtension>, ExtensionErrorKind>,
 }
 
 impl Binding {
@@ -163,6 +164,7 @@ impl Catalog {
             names.extend(builtin.get_all_aliases().map(str::to_owned));
         }
         let records = manager.get_extensions();
+        let required = [(CAPABILITY.into(), vec![1])].into();
         for record in records
             .iter()
             .filter(|record| record.enabled)
@@ -198,12 +200,8 @@ impl Catalog {
                 anyhow::bail!("Invalid or missing CLI metadata for '{}'", record.name);
             };
             let artifact = manager
-                .resolve(
-                    &record.name,
-                    None,
-                    Some(&record.selected),
-                    &[(CAPABILITY.into(), vec![1])].into(),
-                )
+                .resolve_selected_from_snapshot(&record.name, &required)
+                .map(Arc::new)
                 .map_err(|error| error.kind);
             for group in groups {
                 if !record.enabled && names.contains(&group.name) {

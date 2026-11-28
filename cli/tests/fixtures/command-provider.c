@@ -19,15 +19,22 @@ static int32_t invoke(void *instance, Ga4ghBytes capability, uint32_t revision,
     char *request = calloc(input.len + 1, 1);
     if (!request) return 1;
     memcpy(request, input.data, input.len);
-    int success = revision == 1 && operation.len == 7 && !memcmp(operation.data, "execute", 7)
+    int execute = revision == 1 && operation.len == 7 && !memcmp(operation.data, "execute", 7);
+    int echo = execute
         && strstr(request, "\"profile\":\"remote\"") && strstr(request, "\"word\":[\"hello\"]");
+    int submit = execute && strstr(request, "\"word\":[\"submit\"]");
+    int outcome = revision == 1 && operation.len == 11 && !memcmp(operation.data, "wes_outcome", 11)
+        && strstr(request, "\"submitted\"");
     free(request);
-    const char *reply = success ? "{\"complete\":{\"stdout\":\"ok\\u001b\",\"stderr\":\"warning\\n\",\"exit_status\":3}}" : "PRIVATE-NATIVE-DETAIL";
+    const char *reply = "PRIVATE-NATIVE-DETAIL";
+    if (echo) reply = "{\"complete\":{\"stdout\":\"ok\\u001b\",\"stderr\":\"warning\\n\",\"exit_status\":3}}";
+    if (submit) reply = "{\"wes_submit\":{\"request\":{\"workflow_params\":{},\"workflow_type\":\"CWL\",\"workflow_type_version\":\"v1.2\",\"workflow_url\":\"main.cwl\"},\"attachments\":[]}}";
+    if (outcome) reply = "{\"stdout\":\"PRIVATE-INVALID-JSON\",\"json_stdout\":true,\"stderr\":\"\",\"exit_status\":0}";
     output->len = strlen(reply);
     output->data = malloc(output->len);
     if (!output->data) { output->len = 0; return 1; }
     memcpy(output->data, reply, output->len);
-    return success ? 0 : 9;
+    return echo || submit || outcome ? 0 : 9;
 }
 
 static void release(void *instance, Ga4ghOwnedBytes buffer) { free(buffer.data); }

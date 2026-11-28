@@ -266,6 +266,48 @@ async fn download_failures_and_concurrent_registry_updates() {
 }
 
 #[tokio::test]
+async fn snapshot_resolution_cannot_admit_replaced_metadata_for_the_same_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut writer = manager(dir.path());
+    let name = "snapshot-provider";
+    let library = compile(dir.path(), name, "1.0.0", &[]);
+    let path = manifest(
+        dir.path(),
+        name,
+        "1.0.0",
+        library.to_str().unwrap(),
+        &fs::read(&library).unwrap(),
+    );
+    writer.add_extension(&path).await.unwrap();
+    writer.enable_extension(name).unwrap();
+    let reader = manager(dir.path());
+
+    writer.remove_extension(name).unwrap();
+    let mut replacement = ExtensionManager::with_paths(
+        dir.path().join("registry.json"),
+        dir.path().join("replacement-artifacts"),
+    )
+    .unwrap();
+    edit(&path, |value| {
+        value["capability_metadata"] = json!({"test": {"2": "new metadata"}})
+    });
+    replacement.add_extension(&path).await.unwrap();
+    replacement.enable_extension(name).unwrap();
+
+    let from_snapshot = reader
+        .resolve_selected_from_snapshot(name, &caps())
+        .unwrap();
+    let fresh = reader.resolve(name, None, None, &caps()).unwrap();
+    assert_eq!(from_snapshot.artifact(), fresh.artifact());
+    assert_ne!(from_snapshot.library_path(), fresh.library_path());
+    assert_eq!(
+        unsafe { reader.load(&from_snapshot) }.unwrap_err().kind,
+        ExtensionErrorKind::StaleResolution
+    );
+    assert!(!reader.is_loaded(name));
+}
+
+#[tokio::test]
 async fn explicit_resolution_negotiates_compatible_releases_without_fallback() {
     let dir = tempfile::tempdir().unwrap();
     let mut m = manager(dir.path());

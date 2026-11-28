@@ -118,7 +118,7 @@ impl ParsedCli {
         let (resolved, invocation, wes_submit) = binding.invocation(&self.matches, profile)?;
         let instance = unsafe { manager.create_instance(resolved, b"{}") }?;
         let result = match exchange(&instance, "execute", &invocation)? {
-            Reply::Complete(output) => output,
+            Reply::Complete(output) => render(output)?,
             Reply::WesSubmit {
                 request,
                 attachments,
@@ -131,24 +131,13 @@ impl ParsedCli {
                         message: error.to_string(),
                     },
                 };
-                exchange::<_, Output>(&instance, "wes_outcome", &outcome).map_err(|_| match outcome {
+                exchange(&instance, "wes_outcome", &outcome).and_then(render).map_err(|_| match outcome {
                     SubmissionOutcome::Submitted { run_id } => anyhow::anyhow!("WES accepted run '{}', but the extension could not report its result; do not resubmit", printable(&run_id)),
                     SubmissionOutcome::Failed { message } => anyhow::anyhow!("WES submission failed: {}. The extension could not report the result; reconcile before retrying", printable(&message)),
                 })?
             }
         };
-        let stdout = if result.json_stdout {
-            let output = CommandOutput::json(result.stdout);
-            anyhow::ensure!(output.stderr.is_empty(), "Invalid JSON from extension");
-            output.stdout.replace('\r', " ")
-        } else {
-            text(&result.stdout)
-        };
-        Ok(Some(CommandOutput {
-            stdout,
-            stderr: text(&result.stderr),
-            exit_code: ExitCode::from(result.exit_status),
-        }))
+        Ok(Some(result))
     }
 
     /// Dispatch an installed command or stream a built-in command to caller-owned sinks.
@@ -203,6 +192,21 @@ impl WesSource<'_> {
             .await?
             .id)
     }
+}
+
+fn render(result: Output) -> anyhow::Result<CommandOutput> {
+    let stdout = if result.json_stdout {
+        let output = CommandOutput::json(result.stdout);
+        anyhow::ensure!(output.stderr.is_empty(), "Invalid JSON from extension");
+        output.stdout.replace('\r', " ")
+    } else {
+        text(&result.stdout)
+    };
+    Ok(CommandOutput {
+        stdout,
+        stderr: text(&result.stderr),
+        exit_code: ExitCode::from(result.exit_status),
+    })
 }
 
 fn text(value: &str) -> String {

@@ -391,3 +391,9 @@ a preconfigured WES transport use `parsed.dispatch_extension_with_wes(&wes)`.
 provider requests submission. `None` **returned** by either extension dispatcher
 leaves `parsed.matches()` for your existing dispatch path; do not parse again.
 See `examples/downstream-sdk/src/main.rs` for this pattern.
+
+Rust hosts building their own command catalogs can pair `get_extensions()` with
+`resolve_selected_from_snapshot(name, required)` on the same manager. This binds
+the selection to the metadata being displayed without another registry read.
+Use `resolve` instead when you want the current on-disk selection. Both paths
+check the installed artifact and enablement again before creating an instance.

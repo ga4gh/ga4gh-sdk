@@ -62,8 +62,10 @@ Publishing an artifact uses the shared `JsonStore` lock mechanism for that
 artifact. Registration and selection use one atomic registry update. Copying,
 network I/O, and hashing do not hold the registry lock. Mutations reload the latest
 registry, so stale managers preserve unrelated changes. `get_extensions()` is a
-metadata snapshot; `refresh()` reloads it. Resolution and instance admission
-always read current metadata.
+metadata snapshot; `refresh()` reloads it. `resolve()` and instance admission
+always read current metadata. Rust hosts can use `resolve_selected_from_snapshot()`
+to interpret metadata and resolve the selection from the same snapshot instead.
+This does not change the admission check.
 
 A first installation starts disabled. Installing another artifact selects it
 and preserves enablement. It keeps earlier artifacts registered. If persistence
@@ -99,9 +101,11 @@ cleanup is a separate, future mechanism because other processes may use files.
 
 Enabling a trusted provider grants the CLI permission to execute its native
 code when a user invokes one of its commands. Root help, command help and
-management use installed metadata, not the library. Selection changes after
-parsing do not redirect an invocation; disablement or removal before instance
-creation prevents it. There is no fallback to a different artifact.
+management use installed metadata, not the library. The host reads command
+definitions and resolves their providers from one registry snapshot. Selection
+changes after parsing do not redirect an invocation; disablement, removal or
+replacement of the parsed installation before instance creation prevents it.
+There is no fallback to a different artifact.
 
 `ga4gh.cli.commands` revision 1 declares groups in both the installation
 manifest and exported descriptor. For a minimal `words echo <word>`:
@@ -147,7 +151,9 @@ host submits those bytes once with its WES client. It calls `wes_outcome` on the
 same instance with either `{"submitted":{"run_id":"..."}}` or
 `{"failed":{"message":"..."}}`. This operation must return the bare output object,
 never another action. An ambiguous response or failed completion does not replay
-the POST. The workflow provider validates inputs and descriptor bytes before this
+the POST. If WES accepted the run but the provider returned an unusable result,
+the host reports the run ID so the caller can inspect it instead of resubmitting.
+The workflow provider validates inputs and descriptor bytes before this
 handoff and keeps the prepared invocation in the instance until completion.
 
 Maintained provider sources live in `extensions/`. See the [workflow installation

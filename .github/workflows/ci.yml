@@ -53,8 +53,11 @@ jobs:
         run: cargo build --locked -p ga4gh-cli
       - name: Verify CLI feature boundary
         run: |
-          cargo tree --locked -p ga4gh-cli -e features > cli-features.txt
-          ! grep -F 'ga4gh-lib feature "workflow-contracts"' cli-features.txt
+          features=$(cargo tree --locked -p ga4gh-cli -e normal,build -i ga4gh-lib --depth 0 --format '{f}')
+          if [[ ",$features," == *,workflow-contracts,* ]]; then
+            echo '::error::The standalone CLI enables ga4gh-lib/workflow-contracts'
+            exit 1
+          fi
       - name: Exercise the independently built workflow provider
         run: make workflow-extension
 

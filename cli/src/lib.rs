@@ -134,9 +134,8 @@ impl CommandOutput {
 /// configuration file, profile and token variable.
 ///
 /// [`CliContext::default`] describes `ga4gh-cli`. A downstream binary creates
-/// its own and uses its [`command`](Self::command),
-/// [`dispatch`](Self::dispatch) and [`dispatch_to`](Self::dispatch_to) in
-/// place of the free functions of the same names, which use the default:
+/// its own and passes its final [`command`](Self::command) tree to
+/// [`parse_from`](Self::parse_from) to include installed commands:
 ///
 /// ```no_run
 /// use clap::Command;
@@ -146,9 +145,10 @@ impl CommandOutput {
 /// let context = CliContext::new("my-cli", env!("CARGO_PKG_VERSION"))
 ///     .with_about("CLI for my services")
 ///     .with_token_env("MY_CLI_TOKEN", [ServiceType::Custom("MY_SERVICE".into())]);
-/// let matches = context.command().subcommand(Command::new("custom")).get_matches();
+/// let tree = context.command().subcommand(Command::new("custom"));
+/// let parsed = context.parse_from(tree, std::env::args_os())?;
 /// let mut stdout = std::io::stdout();
-/// match context.dispatch_to(&matches, &mut stdout, &mut std::io::stderr()).await? {
+/// match parsed.dispatch_to(&mut stdout, &mut std::io::stderr()).await? {
 ///     Some(exit_code) => Ok(exit_code),
 ///     // Handle the custom subcommand, for example with the section
 ///     // `context.load_config(ServiceType::Custom("MY_SERVICE".into()))`.
