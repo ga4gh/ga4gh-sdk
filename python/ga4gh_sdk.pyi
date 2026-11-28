@@ -2452,13 +2452,14 @@ class ExtensionInstance:
         """Return a copy of the instance capability interface revisions."""
         ...
 
-    def invoke(self, capability: str, operation: str, input: bytes) -> bytes:
+    def invoke(self, capability: str, operation: str, input: bytes, *, max_output_bytes: int | None = None) -> bytes:
         """Invoke a negotiated interface without the GIL and copy its result.
 
         Args:
             capability: Negotiated capability name.
             operation: Adapter-defined operation name.
-            input: Opaque operation input bytes."""
+            input: Opaque operation input bytes.
+            max_output_bytes: Optional limit checked before copying a native reply."""
         ...
 
     def method(self, capability: str, operation: str) -> ExtensionMethod:

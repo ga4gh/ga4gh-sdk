@@ -373,6 +373,11 @@ make workflow-extension
 python3 tests/run-workflow-contracts-qc.py
 ```
 
+With the matching base SDK wheel and the `ga4gh-workflow` Python distribution
+installed in the active environment, run `make workflow-bindings PYTHON=python`.
+This compares both typed clients' plan, diagnostics, result record and comparison
+report from the same installed provider, and tests submission failure handling.
+
 `make workflow-extension` requires Python 3 and the workspace Rust toolchain. It
 builds the provider in its own Cargo workspace, packages it, installs it in
 temporary registries, and exercises offline Draft 2020-12 validation, pinned upstream

@@ -7,13 +7,10 @@ fn validator(source: &str) -> jsonschema::Validator {
 }
 
 #[test]
-fn default_build_does_not_advertise_the_preview() {
+fn default_build_advertises_the_workflow_revision() {
     let descriptor: Value =
         serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/descriptor.json"))).unwrap();
-    assert_eq!(
-        descriptor["capabilities"].get("ga4gh.workflow").is_some(),
-        cfg!(feature = "workflow-api-preview")
-    );
+    assert_eq!(descriptor["capabilities"]["ga4gh.workflow"], json!([1]));
 }
 
 #[test]

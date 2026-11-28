@@ -1,7 +1,10 @@
-use ga4gh_cli_protocol::encode;
+use base64::{engine::general_purpose::STANDARD, Engine};
+use ga4gh_cli_protocol::{encode, Attachment};
 use ga4gh_sdk::{
-    clients::wes::models::RunRequest,
+    clients::wes::{models::RunRequest, WorkflowAttachment},
     workflow::{
+        compare::ComparisonPolicy,
+        results::{ExpectedChecksum, ResultRecord},
         Diagnostic, InputValidationError, InvocationIdentity, Pins, PreparedInvocation, Profile,
     },
 };
@@ -65,20 +68,214 @@ fn error(code: &'static str, message: &'static str, diagnostics: &[Diagnostic]) 
 }
 
 #[derive(Default)]
-pub(super) struct Preparations(Option<(String, PreparedInvocation)>);
+pub(super) struct Preparations {
+    live: Option<Live>,
+}
+
+struct Live {
+    key: String,
+    plan: PreparedInvocation,
+    action_issued: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Projection {
+    profile_utf8: String,
+    pins: Pins,
+    run_reference: String,
+    state: String,
+    outputs: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Verification {
+    record: ResultRecord,
+    pointer: String,
+    base64: String,
+    expected: Option<ExpectedChecksum>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Comparison {
+    policy: ComparisonPolicy,
+    left: ResultRecord,
+    right: ResultRecord,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Submission {
+    state_ref: String,
+    attachments: Vec<Attachment>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Completion {
+    state_ref: String,
+    outcome: Outcome,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Outcome {
+    Submitted { run_id: String },
+    Failed,
+}
+
+fn success(value: &impl Serialize) -> Option<Vec<u8>> {
+    #[derive(Serialize)]
+    struct Success<'a, T> {
+        ok: &'a T,
+    }
+    encode(&Success { ok: value }).ok().or_else(|| {
+        error(
+            "result_too_large",
+            "Workflow reply exceeds message limit",
+            &[],
+        )
+    })
+}
 
 impl Preparations {
     pub(super) fn invoke(&mut self, operation: &[u8], input: &[u8]) -> Option<Vec<u8>> {
-        if !matches!(operation, b"prepare" | b"release") {
-            return None;
-        }
         let invalid = || error("invalid_request", "Malformed workflow request", &[]);
+        let validation = || {
+            error(
+                "validation_failed",
+                "Invalid workflow operation inputs",
+                &[],
+            )
+        };
+        let state_error = || {
+            error(
+                "invalid_state",
+                "Unknown, released, or already submitted preparation",
+                &[],
+            )
+        };
         let Ok(value) = serde_json::from_slice::<Value>(input) else {
             return invalid();
         };
         match operation {
+            b"results" => {
+                let Ok(req) = serde_json::from_value::<Projection>(value) else {
+                    return invalid();
+                };
+                let Ok(record) = Profile::from_slice(req.profile_utf8.as_bytes(), req.pins)
+                    .and_then(|profile| {
+                        profile.project_results(&req.run_reference, &req.state, &req.outputs)
+                    })
+                else {
+                    return validation();
+                };
+                success(&record)
+            }
+            b"verify" => {
+                let Ok(mut req) = serde_json::from_value::<Verification>(value) else {
+                    return invalid();
+                };
+                let Ok(bytes) = STANDARD.decode(req.base64) else {
+                    return invalid();
+                };
+                if req.record.format_version != 1
+                    || req
+                        .record
+                        .verify_bytes(&req.pointer, &bytes, req.expected)
+                        .is_err()
+                {
+                    return validation();
+                }
+                success(&req.record)
+            }
+            b"compare" => {
+                let Ok(req) = serde_json::from_value::<Comparison>(value) else {
+                    return invalid();
+                };
+                if req.left.format_version != 1 || req.right.format_version != 1 {
+                    return validation();
+                }
+                let Ok(report) = req.policy.compare(&req.left, &req.right) else {
+                    return validation();
+                };
+                success(&report)
+            }
+            b"begin_submit" => {
+                let Ok(req) = serde_json::from_value::<Submission>(value) else {
+                    return invalid();
+                };
+                let Some(live) = self
+                    .live
+                    .as_mut()
+                    .filter(|live| live.key == req.state_ref && !live.action_issued)
+                else {
+                    return state_error();
+                };
+                let Ok(files) = req
+                    .attachments
+                    .into_iter()
+                    .map(WorkflowAttachment::try_from)
+                    .collect::<Result<Vec<_>, _>>()
+                else {
+                    return invalid();
+                };
+                if live.plan.validate_attachments(&files).is_err() {
+                    return validation();
+                }
+                #[derive(Serialize)]
+                struct Action<'a> {
+                    request: &'a RunRequest,
+                    attachments: Vec<Attachment>,
+                }
+                #[derive(Serialize)]
+                struct ActionReply<'a> {
+                    ok: Action<'a>,
+                }
+                let Ok(reply) = encode(&ActionReply {
+                    ok: Action {
+                        request: live.plan.request(),
+                        attachments: files.into_iter().map(Into::into).collect(),
+                    },
+                }) else {
+                    return error(
+                        "result_too_large",
+                        "Submission action exceeds message limit",
+                        &[],
+                    );
+                };
+                live.action_issued = true;
+                Some(reply)
+            }
+            b"finish_submit" => {
+                let Ok(req) = serde_json::from_value::<Completion>(value) else {
+                    return invalid();
+                };
+                if !self
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| live.action_issued && live.key == req.state_ref)
+                {
+                    return state_error();
+                }
+                if matches!(&req.outcome, Outcome::Submitted {run_id} if run_id.trim().is_empty()) {
+                    return invalid();
+                }
+                let plan = self.live.take()?.plan;
+                match req.outcome {
+                    Outcome::Failed => success(&false),
+                    Outcome::Submitted { run_id } => {
+                        #[derive(Serialize)]
+                        struct Receipt {
+                            run_id: String,
+                            invocation: PreparedInvocation,
+                        }
+                        success(&Receipt {
+                            run_id,
+                            invocation: plan,
+                        })
+                    }
+                }
+            }
             b"prepare" => {
-                if self.0.is_some() {
+                if self.live.is_some() {
                     return error("state_in_use", "Release the current preparation first", &[]);
                 }
                 if !PREPARE.is_valid(&value) {
@@ -120,7 +317,11 @@ impl Preparations {
                         &[],
                     );
                 };
-                self.0 = Some((key, record));
+                self.live = Some(Live {
+                    key,
+                    plan: record,
+                    action_issued: false,
+                });
                 Some(reply)
             }
             b"release" => {
@@ -133,10 +334,10 @@ impl Preparations {
                 else {
                     return invalid();
                 };
-                if !self.0.as_ref().is_some_and(|(held, _)| held == key) {
+                if !self.live.as_ref().is_some_and(|live| live.key == key) {
                     return error("invalid_state", "Unknown or released preparation", &[]);
                 }
-                self.0 = None;
+                self.live = None;
                 encode(&Reply::Released(true)).ok()
             }
             _ => None,

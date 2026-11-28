@@ -1,9 +1,9 @@
 # Programmatic workflow contract
 
 This directory defines the in-memory protocol for `ga4gh.workflow`, independently
-of `ga4gh.cli.commands`. Revision 1 is in development; the default package
-does **not** advertise it. A developer build with the Cargo feature
-`workflow-api-preview` exposes `prepare` and `release` for integration tests.
+of `ga4gh.cli.commands`. The provider advertises revision 1 alongside the CLI
+capability. ABI v1, capability revision, provider release and binding versions
+are independent. Always negotiate the capability on the exact installed artifact.
 Do not fall back to CLI invocation when negotiation fails.
 
 ## Preparation (revision 1)
@@ -32,7 +32,7 @@ must not expose private native error payloads. ABI failures and unsupported
 capability revisions are loader errors, not workflow error replies. WES errors
 are separate: `prepare` does not submit anything.
 
-The preview keeps at most one live preparation per instance. A second `prepare`
+Each instance keeps at most one live preparation. A second `prepare`
 returns `state_in_use` without replacing the first plan. Call `release` with
 `{"state_ref":"<reference>"}` on that instance; success returns `{"released":true}`.
 A stale or foreign reference returns `invalid_state` in the workflow error
@@ -41,3 +41,21 @@ envelope and leaves any live plan untouched. A malformed release returns
 An oversized prepared reply returns `result_too_large` without allocating a
 live-state reference for the caller. Input-schema failures retain their JSON
 pointers without echoing rejected parameter values in their messages.
+
+## Results and submission
+
+`v1/operations.schema.json` names each request and reply in `$defs`. `results`
+projects the supplied run reference, state and named outputs; `verify` adds
+evidence to a result record using supplied bytes (padded standard Base64);
+`compare` returns the existing policy report. These calls perform no I/O.
+Success returns `{"ok": ...}`; a workflow error uses the `error` envelope.
+
+`begin_submit` accepts the live reference and attachment bytes, validates them
+and returns the WES request and bytes to send. With a pinned descriptor digest
+the primary attachment is mandatory. Once it returns an action the instance
+rejects another `begin_submit` for this plan, even if acknowledgement is lost.
+The host calls its own WES client once and invokes `finish_submit` on the same
+instance with either `{"submitted":{"run_id":"..."}}` or `"failed"`. Completion
+consumes the plan. The host retains the actual WES error, or the acknowledged
+run ID if the provider fails to produce a matching receipt. No credentials,
+service URLs from configuration, or private failure diagnostics are sent to the provider.

@@ -6,6 +6,21 @@ to verify and compare results you already have. Only `submit` contacts WES.
 For ordinary WES operations without profile validation, use the built-in `wes`
 commands instead.
 
+## Programmatic callers
+
+The same installed artifact also provides `ga4gh.workflow` revision 1. Use the
+optional Rust crate `ga4gh-workflow` or Python distribution `ga4gh-workflow`
+(`import ga4gh_workflow`) for typed operations on bytes and records. Install
+and enable the provider first; importing a binding does neither. The direct
+Rust `ga4gh_sdk::workflow` library instead links the implementation at build
+time. Generic `ExtensionInstance.invoke` exposes raw versioned messages and
+leaves serialization, lifecycle and outcome handling to the caller.
+
+In a source checkout use `extensions/workflow/bindings/rust` as a Cargo path
+dependency, or install the matching base Python SDK wheel and run
+`python -m pip install ./extensions/workflow/bindings/python`. See the
+[downstream guide](https://ga4gh-sdk.readthedocs.io/en/latest/downstream/) for composition.
+
 ## Install and enable
 
 You need a CLI that supports `ga4gh.cli.commands` revision 1 and a trusted

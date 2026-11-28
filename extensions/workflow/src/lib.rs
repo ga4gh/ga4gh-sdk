@@ -1,5 +1,4 @@
 //! Workflow provider for the GA4GH C ABI v1.
-#[cfg(feature = "workflow-api-preview")]
 mod programmatic;
 mod workflow;
 
@@ -15,7 +14,6 @@ use std::{
 #[derive(Default)]
 struct State {
     cli: Option<PreparedInvocation>,
-    #[cfg(feature = "workflow-api-preview")]
     api: programmatic::Preparations,
 }
 
@@ -54,7 +52,6 @@ unsafe extern "C" fn invoke(
         let capability = unsafe { bytes(capability)? };
         let operation = unsafe { bytes(operation)? };
         let input = unsafe { bytes(input)? };
-        #[cfg(feature = "workflow-api-preview")]
         if capability == b"ga4gh.workflow" {
             return state.api.invoke(operation, input);
         }

@@ -1,5 +1,3 @@
-#![cfg(feature = "workflow-api-preview")]
-
 use ga4gh_sdk::{
     utils::{extension::ExtensionInstance, extension_manager::ExtensionManager},
     workflow::{digest, Pins},
@@ -20,12 +18,24 @@ fn invoke(instance: &ExtensionInstance, operation: &str, request: &Value) -> Val
         )
         .unwrap();
     let value = serde_json::from_slice(&reply).unwrap();
-    let schema: Value = serde_json::from_str(match operation {
-        "prepare" => include_str!("../api/v1/prepare-reply.schema.json"),
-        "release" => include_str!("../api/v1/release-reply.schema.json"),
-        _ => panic!("unexpected operation"),
-    })
-    .unwrap();
+    let schema: Value = match operation {
+        "prepare" => {
+            serde_json::from_str(include_str!("../api/v1/prepare-reply.schema.json")).unwrap()
+        }
+        "release" => {
+            serde_json::from_str(include_str!("../api/v1/release-reply.schema.json")).unwrap()
+        }
+        _ => {
+            let mut schema: Value =
+                serde_json::from_str(include_str!("../api/v1/operations.schema.json")).unwrap();
+            schema["$ref"] = json!(format!("#/$defs/{operation}_request"));
+            assert!(jsonschema::validator_for(&schema)
+                .unwrap()
+                .is_valid(request));
+            schema["$ref"] = json!(format!("#/$defs/{operation}_reply"));
+            schema
+        }
+    };
     assert!(
         jsonschema::validator_for(&schema).unwrap().is_valid(&value),
         "{value}"
@@ -87,6 +97,51 @@ async fn preparation_is_validated_and_owned_by_the_instance() {
     let second = invoke(&other, "prepare", &request);
     assert_eq!(second["prepared"]["record"], *record);
     assert_ne!(second["prepared"]["state_ref"], key["state_ref"]);
+    let submitter = instance();
+    let prepared = invoke(&submitter, "prepare", &request);
+    let state = &prepared["prepared"]["state_ref"];
+    let begin = json!({"state_ref":state,"attachments":[]});
+    let finish = json!({"state_ref":state,"outcome":{"submitted":{"run_id":"accepted"}}});
+    assert_eq!(
+        invoke(&submitter, "finish_submit", &finish)["error"]["code"],
+        "invalid_state"
+    );
+    assert_eq!(
+        invoke(&submitter, "begin_submit", &begin)["ok"]["request"],
+        request["request"]
+    );
+    assert_eq!(
+        invoke(&submitter, "begin_submit", &begin)["error"]["code"],
+        "invalid_state"
+    );
+    assert_eq!(
+        invoke(&submitter, "finish_submit", &finish)["ok"]["invocation"],
+        *record
+    );
+    assert_eq!(
+        invoke(&submitter, "finish_submit", &finish)["error"]["code"],
+        "invalid_state"
+    );
+    let result = invoke(
+        &submitter,
+        "results",
+        &json!({"profile_utf8":text,"pins":Pins::reference(),"run_reference":"run-1","state":"COMPLETE","outputs":{}}),
+    );
+    let verified = invoke(
+        &submitter,
+        "verify",
+        &json!({"record":result["ok"],"pointer":"/report","base64":""}),
+    );
+    let policy: Value =
+        serde_json::from_str(include_str!("../../../examples/sequence-qc/policy.json")).unwrap();
+    assert_eq!(
+        invoke(
+            &submitter,
+            "compare",
+            &json!({"left":verified["ok"],"right":verified["ok"],"policy":policy})
+        )["ok"]["outcome"],
+        "inconclusive"
+    );
     assert_eq!(
         invoke(&other, "release", &key)["error"]["code"],
         "invalid_state"
