@@ -66,6 +66,7 @@ workflow-extension: ## Package and test the workflow provider independently of t
 	python3 -B -m unittest discover -s extensions/workflow -p 'test_package.py'
 	$(CARGO) fmt --manifest-path extensions/workflow/Cargo.toml --check
 	CARGO_TARGET_DIR=$(abspath target) $(CARGO) clippy --locked --manifest-path extensions/workflow/Cargo.toml --all-targets -- -D warnings
+	CARGO_TARGET_DIR=$(abspath target) $(CARGO) test --locked --manifest-path extensions/workflow/Cargo.toml --test prepare_contract
 	CARGO_TARGET_DIR=$(abspath target) python3 extensions/workflow/package.py --debug target/workflow-package
 	cmp extensions/workflow/README.md target/workflow-package/README.md
 	$(CARGO) clippy --locked -p ga4gh-cli --features workflow-extension-tests --test workflow -- -D warnings

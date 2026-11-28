@@ -626,6 +626,7 @@ dependencies = [
  "ga4gh-cli-protocol",
  "ga4gh-extension-abi",
  "ga4gh-lib",
+ "jsonschema",
  "serde_json",
 ]
 
