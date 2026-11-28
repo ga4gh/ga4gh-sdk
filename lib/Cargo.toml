@@ -52,7 +52,7 @@ cc = "1"
 # Polls a reqwest body directly, for a body error in the tests of `error.rs`
 http-body-util = "0.1"
 mockito = "1.7"
-mockall = "0.10.2"
+mockall = "0.15.0"
 tempfile = "3.2"
 tokio = { version = "1", features = ["test-util"] }
 
