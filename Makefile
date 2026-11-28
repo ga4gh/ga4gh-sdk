@@ -68,7 +68,7 @@ workflow-extension: ## Package and test the workflow provider independently of t
 	CARGO_TARGET_DIR=$(abspath target) $(CARGO) clippy --locked --manifest-path extensions/workflow/Cargo.toml --workspace --all-targets -- -D warnings
 	CARGO_TARGET_DIR=$(abspath target) $(CARGO) build --locked --manifest-path extensions/workflow/Cargo.toml
 	GA4GH_WORKFLOW_LIB_DIR=$(abspath target/debug) CARGO_TARGET_DIR=$(abspath target) $(CARGO) test --locked --manifest-path extensions/workflow/Cargo.toml --test native_prepare
-	CARGO_TARGET_DIR=$(abspath target) $(CARGO) test --locked --manifest-path extensions/workflow/Cargo.toml --test prepare_contract
+	CARGO_TARGET_DIR=$(abspath target) $(CARGO) test --locked --manifest-path extensions/workflow/Cargo.toml --lib --test prepare_contract
 	CARGO_TARGET_DIR=$(abspath target) python3 extensions/workflow/package.py --debug target/workflow-package
 	cmp extensions/workflow/README.md target/workflow-package/README.md
 	$(MAKE) workflow-rust-binding
@@ -120,7 +120,7 @@ downstream: ## Check, lint and test the downstream example crate
 	$(CARGO) metadata --manifest-path $(DOWNSTREAM_DIR)/Cargo.toml \
 		--format-version 1 > /dev/null
 	mkdir -p $(DOWNSTREAM_LISTS)
-	$(call LOCK_PACKAGES,Cargo.lock) > $(DOWNSTREAM_LISTS)/root.txt
+	{ $(call LOCK_PACKAGES,Cargo.lock); $(call LOCK_PACKAGES,extensions/workflow/Cargo.lock) | awk '$$1 == "ga4gh-workflow" && NF == 2'; } | sort -u > $(DOWNSTREAM_LISTS)/root.txt
 	$(call LOCK_PACKAGES,$(DOWNSTREAM_DIR)/Cargo.lock) > $(DOWNSTREAM_LISTS)/example.txt
 	grep -q '^ga4gh-lib ' $(DOWNSTREAM_LISTS)/root.txt
 	@extra=$$(comm -13 $(DOWNSTREAM_LISTS)/root.txt $(DOWNSTREAM_LISTS)/example.txt \

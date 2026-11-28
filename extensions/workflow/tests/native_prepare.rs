@@ -82,11 +82,34 @@ async fn preparation_is_validated_and_owned_by_the_instance() {
             .unwrap()
     };
     let owner = instance();
+    {
+        let mut input = vec![b' '; ga4gh_cli_protocol::MAX_MESSAGE];
+        input[..2].copy_from_slice(b"{}");
+        let at_limit = owner.invoke(CAPABILITY, "prepare", &input).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&at_limit).unwrap()["error"]["code"],
+            "invalid_request"
+        );
+        input.push(b' ');
+        assert!(owner.invoke(CAPABILITY, "prepare", &input).is_err());
+    }
     let other = instance();
     let text = include_str!("../../../examples/sequence-qc/profile.json");
     let mut request = json!({"pins":Pins::reference(),"identity":{"workflow":"public-qc@1"},"profile_utf8":text,
         "request":serde_json::from_str::<Value>(include_str!("../../../examples/sequence-qc/request.json")).unwrap()});
     let first = invoke(&owner, "prepare", &request);
+    let mut changed = request.clone();
+    let crlf = text.replace("\r\n", "\n").replace('\n', "\r\n");
+    changed["profile_utf8"] = json!(crlf);
+    let alternate = invoke(&instance(), "prepare", &changed);
+    assert_eq!(
+        alternate["prepared"]["record"]["schema_digest"],
+        digest(crlf.as_bytes())
+    );
+    assert_ne!(
+        alternate["prepared"]["record"]["fingerprint"],
+        first["prepared"]["record"]["fingerprint"]
+    );
     let record = &first["prepared"]["record"];
     assert_eq!(record["schema_digest"], digest(text.as_bytes()));
     let key = json!({"state_ref":first["prepared"]["state_ref"].as_str().unwrap()});
@@ -109,6 +132,14 @@ async fn preparation_is_validated_and_owned_by_the_instance() {
     assert_eq!(
         invoke(&submitter, "begin_submit", &begin)["ok"]["request"],
         request["request"]
+    );
+    assert_eq!(
+        invoke(&submitter, "release", &json!({"state_ref":state}))["error"]["code"],
+        "invalid_state"
+    );
+    assert_eq!(
+        invoke(&submitter, "prepare", &request)["error"]["code"],
+        "state_in_use"
     );
     assert_eq!(
         invoke(&submitter, "begin_submit", &begin)["error"]["code"],

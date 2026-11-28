@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Aarav Mehta <aarav05mehta@gmail.com>", "Pavel Nikonorov <pavel@genxt.network>", "ELIXIR Cloud & AAI <cloud-service@elixir-europe.org> (ELIXIR Europe)"]
 edition = "2021"
 readme = "./README.md"

@@ -5,7 +5,7 @@ import base64
 import json
 from pathlib import Path
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Mapping, NotRequired, Self, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, Mapping, NotRequired, Self, TypedDict
 
 if TYPE_CHECKING:
     from ga4gh_sdk import ExtensionInstance, ExtensionManager, WES
@@ -25,6 +25,9 @@ class Identity(TypedDict):
 
 
 class PlanRecord(TypedDict):
+    format_version: int
+    profile_document: dict[str, Any]
+    expected_outputs: Any | None
     fingerprint: str
     schema_digest: str
     request: dict[str, Any]
@@ -37,8 +40,10 @@ class ResultRecord(TypedDict):
     run_reference: str
     execution_state: str
     schema_digest: str
-    outputs: dict[str, Any]
-    artifacts: dict[str, Any]
+    outputs: dict[str, TypedOutput]
+    artifacts: dict[str, Evidence]
+    contract_document: dict[str, Any]
+    contract_diagnostics: list[Diagnostic]
     context: dict[str, str]
 
 
@@ -48,6 +53,24 @@ class Checksum(TypedDict):
     evidence_source: str
 
 
+class TypedOutput(TypedDict):
+    value: Any | None
+    annotations: Any
+    access_details_redacted: bool
+    contract_status: Literal["conformant", "missing", "invalid"]
+    diagnostics: list[Diagnostic]
+
+
+class Evidence(TypedDict):
+    pointer: str
+    stable_identity: str | None
+    access_status: Literal["not_checked", "available", "inaccessible", "missing"]
+    integrity_status: Literal["unverified", "verified", "mismatch"]
+    expected: Checksum | None
+    computed_sha256: str | None
+    detail: str | None
+
+
 class Policy(TypedDict):
     id: str
     version: int
@@ -55,10 +78,17 @@ class Policy(TypedDict):
     required_context: list[str]
 
 
+Outcome = Literal["different", "inconclusive", "equivalent_under_policy"]
+
+
 class Report(TypedDict):
     policy: Policy
-    outcome: str
-    outputs: dict[str, str]
+    left: str
+    right: str
+    context_drift: dict[str, list[str | None]]
+    missing_context: list[str]
+    outcome: Outcome
+    outputs: dict[str, Outcome]
 
 
 class Receipt(TypedDict):
@@ -167,7 +197,7 @@ class Prepared:
             try:
                 self._client._call("finish_submit", {"state_ref": key, "outcome": "failed"})
             except BaseException:
-                self._release_quietly(key)
+                pass
             raise
         run_id = run.id
         try:
@@ -176,11 +206,4 @@ class Prepared:
                 raise ProtocolError("Invalid workflow receipt")
             return receipt
         except Exception:
-            self._release_quietly(key)
             raise AcceptedRunError(run_id) from None
-
-    def _release_quietly(self, key: str) -> None:
-        try:
-            self._client._call("release", {"state_ref": key}, "released")
-        except BaseException:
-            pass

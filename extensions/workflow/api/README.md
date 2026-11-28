@@ -55,7 +55,10 @@ and returns the WES request and bytes to send. With a pinned descriptor digest
 the primary attachment is mandatory. Once it returns an action the instance
 rejects another `begin_submit` for this plan, even if acknowledgement is lost.
 The host calls its own WES client once and invokes `finish_submit` on the same
-instance with either `{"submitted":{"run_id":"..."}}` or `"failed"`. Completion
+instance with either `{"submitted":{"run_id":"..."}}` or `"failed"`. Ordinary
+release is rejected once an action has been issued. If the host loses the
+outcome, the instance remains blocked; reconcile before creating another instance.
+Completion
 consumes the plan. The host retains the actual WES error, or the acknowledged
 run ID if the provider fails to produce a matching receipt. No credentials,
 service URLs from configuration, or private failure diagnostics are sent to the provider.

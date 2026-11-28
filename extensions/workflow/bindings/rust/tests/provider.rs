@@ -55,7 +55,7 @@ async fn typed_provider_and_wes_handoff() {
         .verify(&projected, "/report/location", b"report", None)
         .unwrap();
     assert_eq!(
-        verified.artifacts["/report/location"]["access_status"],
+        verified.artifacts["/report/location"].access_status,
         "available"
     );
     let policy: Policy = serde_json::from_slice(&read("policy.json")).unwrap();
@@ -120,4 +120,30 @@ async fn typed_provider_and_wes_handoff() {
         matches!(prepare().submit(&wes,vec![]).await, Err(Error::Wes(cause)) if cause.downcast_ref::<AcknowledgementError>().is_some())
     );
     missing.assert();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let config = Configuration::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    );
+    let delayed = WES::without_discovery(Transport::new(&config), Default::default());
+    {
+        let post = prepare().submit(&delayed, vec![]);
+        tokio::pin!(post);
+        let received = async {
+            use tokio::io::AsyncReadExt;
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut prefix = [0; 4];
+            socket.read_exact(&mut prefix).await.unwrap();
+            assert_eq!(&prefix, b"POST");
+            socket
+        };
+        tokio::select! { biased;
+            socket = tokio::time::timeout(std::time::Duration::from_secs(10),received) => {let _socket=socket.unwrap();},
+            _ = &mut post => panic!("submission unexpectedly completed"),
+        }
+    }
+    assert!(
+        matches!(client.prepare(&profile,&pins,&request,&identity),Err(Error::Workflow(failure)) if failure.code=="state_in_use")
+    );
 }

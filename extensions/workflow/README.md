@@ -17,7 +17,8 @@ time. Generic `ExtensionInstance.invoke` exposes raw versioned messages and
 leaves serialization, lifecycle and outcome handling to the caller.
 
 In a source checkout use `extensions/workflow/bindings/rust` as a Cargo path
-dependency, or install the matching base Python SDK wheel and run
+dependency, or install the matching base Python SDK wheel (0.1.1 or later,
+with bounded native replies) and run
 `python -m pip install ./extensions/workflow/bindings/python`. See the
 [downstream guide](https://ga4gh-sdk.readthedocs.io/en/latest/downstream/) for composition.
 

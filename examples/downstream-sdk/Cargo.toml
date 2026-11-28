@@ -16,6 +16,7 @@ publish = false
 [dependencies]
 ga4gh-lib = { path = "../../lib" }
 ga4gh-cli = { path = "../../cli" }
+ga4gh-workflow = { path = "../../extensions/workflow/bindings/rust" }
 anyhow = "1"
 clap = "4"
 serde = { version = "1", features = ["derive"] }

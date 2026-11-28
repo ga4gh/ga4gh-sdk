@@ -1,4 +1,17 @@
 //! Typed client for `ga4gh.workflow` revision 1. No installation or WES discovery is implicit.
+//!
+//! ```no_run
+//! use ga4gh_sdk::{clients::wes::models::RunRequest, utils::extension_manager::ExtensionManager};
+//! use ga4gh_workflow::{Error, Identity, Pins, Workflow};
+//!
+//! # unsafe fn inspect(manager: &ExtensionManager, profile: &[u8], pins: &Pins, request: &RunRequest) -> Result<(), Error> {
+//! let client = unsafe { Workflow::open(manager)? }; // The application trusts this installation.
+//! let identity = Identity { workflow: "public-qc@1".into(), descriptor_digest: None };
+//! let plan = client.prepare(profile, pins, request, &identity)?;
+//! println!("{}", plan.record().fingerprint);
+//! plan.release()?;
+//! # Ok(()) }
+//! ```
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ga4gh_cli_protocol::{encode, Attachment, MAX_MESSAGE};
 use ga4gh_sdk::{
@@ -54,6 +67,9 @@ pub enum Error {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanRecord {
+    pub format_version: u32,
+    pub profile_document: Value,
+    pub expected_outputs: Option<Value>,
     pub fingerprint: String,
     pub schema_digest: String,
     pub request: RunRequest,
@@ -68,10 +84,31 @@ pub struct ResultRecord {
     pub execution_state: String,
     pub schema_digest: String,
     pub format_version: u32,
-    pub outputs: BTreeMap<String, Value>,
-    pub artifacts: BTreeMap<String, Value>,
+    pub outputs: BTreeMap<String, TypedOutput>,
+    pub artifacts: BTreeMap<String, Evidence>,
+    pub contract_document: Value,
+    pub contract_diagnostics: Vec<Diagnostic>,
+    pub context: BTreeMap<String, String>,
     #[serde(flatten)]
     pub fields: BTreeMap<String, Value>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypedOutput {
+    pub access_details_redacted: bool,
+    pub value: Option<Value>,
+    pub contract_status: String,
+    pub annotations: Value,
+    pub diagnostics: Vec<Diagnostic>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Evidence {
+    pub pointer: String,
+    pub stable_identity: Option<String>,
+    pub access_status: String,
+    pub integrity_status: String,
+    pub expected: Option<Checksum>,
+    pub computed_sha256: Option<String>,
+    pub detail: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checksum {
@@ -95,6 +132,11 @@ pub enum Outcome {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
+    pub policy: Policy,
+    pub left: String,
+    pub right: String,
+    pub context_drift: BTreeMap<String, (Option<String>, Option<String>)>,
+    pub missing_context: Vec<String>,
     pub outcome: Outcome,
     pub outputs: BTreeMap<String, Outcome>,
     #[serde(flatten)]
@@ -141,6 +183,9 @@ impl Workflow {
         serde_json::from_value(envelope.remove(field).ok_or(Error::Protocol)?)
             .map_err(|_| Error::Protocol)
     }
+    /// Validate original UTF-8 profile bytes, revision pins, WES request and identity without I/O.
+    /// Returns an instance-owned preparation. Invalid inputs return [`Error::Workflow`]; invalid
+    /// UTF-8 or an oversized envelope returns [`Error::Protocol`]. A live plan must be released first.
     pub fn prepare(
         &self,
         profile: &[u8],
@@ -162,6 +207,8 @@ impl Workflow {
             record: live.record,
         })
     }
+    /// Read the profile without reformatting it and call [`Self::prepare`]. A read failure is
+    /// [`Error::File`]; validation and protocol errors are the same as for the in-memory call.
     pub fn prepare_file(
         &self,
         profile: &Path,
@@ -171,6 +218,9 @@ impl Workflow {
     ) -> Result<Prepared> {
         self.prepare(&std::fs::read(profile)?, pins, request, identity)
     }
+    /// Project the supplied run reference, state and output values under the pinned profile.
+    /// No WES call is made. An invalid profile returns a workflow error; delivery diagnostics
+    /// on individual outputs are retained in a successful record.
     pub fn results(
         &self,
         profile: &[u8],
@@ -183,6 +233,9 @@ impl Workflow {
         let input = json!({"profile_utf8":text,"pins":pins,"run_reference":run_reference,"state":state,"outputs":outputs});
         self.call("results", &input, "ok")
     }
+    /// Return a new record with evidence for `pointer` using exactly `bytes` and the optional
+    /// trusted checksum. Invalid checksum metadata returns a workflow error; a checksum mismatch
+    /// is an integrity finding in the record, not a transport failure.
     pub fn verify(
         &self,
         record: &ResultRecord,
@@ -193,6 +246,8 @@ impl Workflow {
         let input = json!({"record":record,"pointer":pointer,"base64":STANDARD.encode(bytes),"expected":expected});
         self.call("verify", &input, "ok")
     }
+    /// Compare two records under the supplied versioned policy. An invalid policy or unsupported
+    /// record version is a workflow error; missing evidence can yield an inconclusive report.
     pub fn compare(
         &self,
         policy: &Policy,
@@ -207,15 +262,18 @@ impl Workflow {
     }
 }
 
+/// One validated preparation retaining its exact native instance. Dropping it releases unused state.
 pub struct Prepared {
     client: Workflow,
     key: String,
     record: PlanRecord,
 }
 impl Prepared {
+    /// Borrow the exportable record without invoking the provider. It is not a submission handle.
     pub fn record(&self) -> &PlanRecord {
         &self.record
     }
+    /// Consume the preparation without submitting. Unlike drop, report native or protocol failures.
     pub fn release(mut self) -> Result<()> {
         let released: bool =
             self.client
@@ -226,7 +284,10 @@ impl Prepared {
         self.key.clear();
         Ok(())
     }
-    /// Consumes the preparation; cancellation never causes an automatic retry.
+    /// Consume the preparation, validate the attachments, then send the approved bytes once with `wes`.
+    /// Validation fails before submission. [`Error::Wes`] retains the actual submission failure;
+    /// [`Error::Accepted`] names the accepted run if the provider cannot complete. Cancellation
+    /// after dispatch may leave a remote run and never causes an automatic retry.
     pub async fn submit(
         mut self,
         wes: &WES,
@@ -240,12 +301,20 @@ impl Prepared {
         let files: Vec<_> = attachments.into_iter().map(Attachment::from).collect();
         let input = json!({"state_ref":self.key,"attachments":files});
         let action: Action = self.client.call("begin_submit", &input, "ok")?;
+        let issued_key = std::mem::take(&mut self.key);
         let files = action
             .attachments
             .into_iter()
             .map(WorkflowAttachment::try_from)
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|_| Error::Protocol)?;
+            .collect::<std::result::Result<_, _>>();
+        let Ok(files) = files else {
+            let _ = self.client.call::<bool>(
+                "finish_submit",
+                &json!({"state_ref":issued_key,"outcome":"failed"}),
+                "ok",
+            );
+            return Err(Error::Protocol);
+        };
         match wes
             .run_workflow_with_attachments(action.request, files)
             .await
@@ -253,7 +322,7 @@ impl Prepared {
             Err(cause) => {
                 let _ = self.client.call::<bool>(
                     "finish_submit",
-                    &json!({"state_ref":self.key,"outcome":"failed"}),
+                    &json!({"state_ref":issued_key,"outcome":"failed"}),
                     "ok",
                 );
                 Err(Error::Wes(cause))
@@ -261,7 +330,7 @@ impl Prepared {
             Ok(run) => {
                 let reply = self.client.call::<Receipt>(
                     "finish_submit",
-                    &json!({"state_ref":self.key,"outcome":{"submitted":{"run_id":run.id}}}),
+                    &json!({"state_ref":issued_key,"outcome":{"submitted":{"run_id":run.id}}}),
                     "ok",
                 );
                 match reply {
@@ -269,7 +338,6 @@ impl Prepared {
                         if receipt.run_id == run.id
                             && receipt.invocation.fingerprint == self.record.fingerprint =>
                     {
-                        self.key.clear();
                         Ok(receipt)
                     }
                     _ => Err(Error::Accepted { run_id: run.id }),

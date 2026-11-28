@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "ga4gh"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "ga4gh-lib",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "ga4gh-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "ga4gh-cli-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "ga4gh-lib",
@@ -787,11 +787,11 @@ dependencies = [
 
 [[package]]
 name = "ga4gh-extension-abi"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "ga4gh-lib"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "cc",

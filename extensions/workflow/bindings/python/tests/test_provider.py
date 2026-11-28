@@ -82,5 +82,6 @@ def test_completion_cannot_erase_wes_outcome(workflow, monkeypatch, accepted):
     else:
         assert failure.value is original
     wes.run.assert_called_once()
-    with prepare(workflow):
-        pass
+    with pytest.raises(WorkflowError) as blocked:
+        prepare(workflow)
+    assert blocked.value.code == "state_in_use"

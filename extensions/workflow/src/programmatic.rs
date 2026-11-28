@@ -52,6 +52,25 @@ enum Reply<'a> {
 }
 
 fn error(code: &'static str, message: &'static str, diagnostics: &[Diagnostic]) -> Option<Vec<u8>> {
+    let oversized = || {
+        encode(&Reply::Error {
+            code: "result_too_large",
+            message: "Workflow diagnostics exceed the message limit",
+            diagnostics: Vec::new(),
+        })
+        .ok()
+    };
+    if diagnostics
+        .iter()
+        .try_fold(0usize, |size, item| {
+            size.checked_add(64)?
+                .checked_add(item.instance_location.len())?
+                .checked_add(item.schema_location.len())
+        })
+        .is_none_or(|size| size > ga4gh_cli_protocol::MAX_MESSAGE)
+    {
+        return oversized();
+    }
     encode(&Reply::Error {
         code,
         message,
@@ -65,6 +84,25 @@ fn error(code: &'static str, message: &'static str, diagnostics: &[Diagnostic]) 
             .collect(),
     })
     .ok()
+    .or_else(oversized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_diagnostic_stays_a_workflow_error() {
+        let diagnostic = Diagnostic {
+            instance_location: "x".repeat(ga4gh_cli_protocol::MAX_MESSAGE),
+            schema_location: String::new(),
+            message: String::new(),
+        };
+        let reply = error("validation_failed", "Invalid inputs", &[diagnostic]).unwrap();
+        let value: Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(value["error"]["code"], "result_too_large");
+        assert_eq!(value["error"]["diagnostics"], serde_json::json!([]));
+    }
 }
 
 #[derive(Default)]
@@ -336,6 +374,13 @@ impl Preparations {
                 };
                 if !self.live.as_ref().is_some_and(|live| live.key == key) {
                     return error("invalid_state", "Unknown or released preparation", &[]);
+                }
+                if self.live.as_ref().is_some_and(|live| live.action_issued) {
+                    return error(
+                        "invalid_state",
+                        "An issued action requires a submission outcome",
+                        &[],
+                    );
                 }
                 self.live = None;
                 encode(&Reply::Released(true)).ok()

@@ -341,7 +341,8 @@ in a downstream repository; the workspace commands such as `make check`
 leave it out. It has no lockfile of its own: the target copies the repository's
 `Cargo.lock` into it, lets Cargo add the example's own entry, and fails if
 any other package isn't locked at a version and source from the root
-lockfile. The example thus builds with the SDK's dependency versions; a
+lockfile, except for the local `ga4gh-workflow` package whose version is
+checked against the provider workspace lockfile. The example thus builds with the SDK's dependency versions; a
 dependency that only the example needs must be added to the workspace
 first. Without `make downstream`, Cargo resolves the example's dependencies
 afresh.
@@ -390,6 +391,14 @@ make it awaitable. If the application runs it in a worker thread, cancelling
 the await does not cancel an in-flight POST. Reconcile with WES, never replay
 automatically. Cancelling the Rust future after dispatch can likewise leave a
 remote run even when no receipt is returned.
+
+Run the standalone Rust example from the repository root with a trusted
+installation (no login or network access is needed):
+
+```sh
+cargo run --manifest-path examples/downstream-sdk/Cargo.toml --example workflow-prepare -- \
+  "$HOME/.ga4gh-cli/extensions.json" examples/sequence-qc
+```
 
 The [experimental extension manager](extensions.md) loads shared libraries at
 runtime. It is separate from this guide's composition through downstream crates.

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ga4gh-workflow"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["ga4gh-sdk>=0.1.0"]
+dependencies = ["ga4gh-sdk>=0.1.1"]
 description = "Synchronous typed bindings for the native GA4GH workflow provider"
 
 [tool.setuptools]
